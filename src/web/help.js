@@ -200,4 +200,5 @@ export function installHelp() {
     return entry;
   }) || []);
   document.getElementById('btn-symbols')?.addEventListener('click', () => helpDialog.close(), true);
+  document.getElementById('btn-built-in-drawings')?.addEventListener('click', () => helpDialog.close(), true);
 }

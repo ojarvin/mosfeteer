@@ -89,8 +89,11 @@ function drawingOf(circuit, refs, source, match, context) {
   for (const net of context.targetNets) {
     const pins = net.terminals.filter((t) => wanted.has(t.comp));
     const images = pins.map((t) => pinOf(t.comp, t.term));
-    const there = sourceNets.get(`${images[0].refdes}.${images[0].term}`);
-    const paths = there ? wiresJoining(there.paths(), images.map((p) => p.point)) : (pins.length > 1 ? null : []);
+    // One net there carries them all, or no wires there join them (pins on
+    // two symbols of one rail are one net, but not one wire).
+    const there = new Set(images.map((p) => sourceNets.get(`${p.refdes}.${p.term}`)));
+    const [only] = there;
+    const paths = there.size === 1 && only ? wiresJoining(only.paths(), images.map((p) => p.point)) : (pins.length > 1 ? null : []);
     nets.push({ id: net.id, pins, external: pins.length < net.terminals.length, paths });
   }
   // The shift that best lays the drawing over the parts where they are.

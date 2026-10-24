@@ -41,6 +41,7 @@ export const EDITOR_COMMANDS = [
   { name: 'page-guide', aliases: ['pageguide', 'column', 'ieee'], choices: ['none', 'ieee-1col', 'ieee-2col', 'a4'], help: 'frame the drawing for a page: none, ieee-1col, ieee-2col, or a4' },
   { name: 'atlas', aliases: ['atlas-view', 'collage', 'overview', 'gallery', 'all-designs'], help: 'all designs in the workspace, at their real size (Shift+Backspace)' },
   { name: 'symbols', aliases: ['symbol-sheet', 'symbol-reference', 'library', 'legend'], help: 'all symbols, drawn from the registry (Learn → Symbols)' },
+  { name: 'built-in-drawings', aliases: ['drawings', 'cells', 'built-in-cells'], help: 'the built-in drawings Shift+Q arranges parts like (Learn → Symbols)' },
   { name: 'fit', aliases: ['zoom-fit', 'zoom', 'fit-view'], help: 'fit the view to the drawing (f)' },
   { name: 'shortcuts', aliases: ['keys', 'keybindings', 'hotkeys', 'cheatsheet', 'keymap'], help: 'show the keyboard shortcuts (?)' },
   { name: 'check', aliases: ['design-check', 'drc', 'lint', 'verify'], help: 'run Design Check (x)' },

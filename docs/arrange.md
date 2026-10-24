@@ -21,11 +21,16 @@ cells), `src/web/arrange-ui.js` (the picker); tests: `test/arrange.test.js`,
 ## Recognizing a topology
 
 - A topology is the parts' shapes (type and pin places, so a block's or a
-  transfer function's size counts) and which of their pins share a physical
-  net. Solder dots are not parts.
+  transfer function's size counts) and which of their pins share a net.
+  Nets are electrical (`Circuit#netGroupKey`): two symbols of one rail, or
+  two wires with one name, are one net. Solder dots are not parts.
 - A drawing of it is a one-to-one map onto parts of the same shapes under
   which two pins share a net exactly when their images do. The parts there
   may connect to more (a mirror inside an amplifier is still a mirror).
+- An unconnected pin may map onto a pin of any net there that no connected
+  pin maps onto (several unconnected pins may share one).
+- A drawing with another part's body within the outline of the parts it
+  maps is passed over (two legs of a mirror with a third drawn between).
 - A resistor or capacitor maps its pins either way round (its symbol draws
   the same turned half round). A MOS never swaps source and drain.
 - Of the maps onto one set of parts (a pair maps either way round), the one
@@ -36,7 +41,8 @@ cells), `src/web/arrange-ui.js` (the picker); tests: `test/arrange.test.js`,
 - Sources, in order: the open design (outside the selection), the
   workspace's other designs by when they were last saved, newest first, then
   the built-in cells (current mirrors, differential pairs, a cascode, a
-  five-transistor OTA).
+  five-transistor OTA). Learn → Symbols → Built-in drawings (`:built-in-drawings`)
+  shows them in the Atlas viewer, as the symbol sheet is shown.
 - Two drawings that place the parts, turn them, place their labels, and wire
   them alike are one candidate, listed where it first appears, with the
   number of drawings (`×N`).

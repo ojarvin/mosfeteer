@@ -18,7 +18,7 @@ import { fitView } from './canvas-view.js';
 import { showHelp } from './help.js';
 import { runCheck } from './design-check-ui.js';
 import { openFind, openReplace } from './find-replace-ui.js';
-import { toggleAtlas, toggleSymbolSheet } from './atlas.js';
+import { toggleAtlas, toggleBuiltInDrawings, toggleSymbolSheet } from './atlas.js';
 import { activateAlign, activateAnnotation, activateCopy, activateEquation, activateHighlight, activateMove, activateNetLabel, activatePlace,
   activateShapeAnnotation, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render,
   repeatLastAction, restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, tidyNow, undo } from './main.js';
@@ -77,6 +77,7 @@ export const ACTIONS = {
     : openMenu('btn-settings')),
   atlas: () => toggleAtlas(),
   symbols: () => toggleSymbolSheet(),
+  'built-in-drawings': () => toggleBuiltInDrawings(),
   fit: () => fitView({ animate: true }),
   shortcuts: () => showHelp(),
   check: () => runCheck(),

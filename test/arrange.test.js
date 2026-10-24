@@ -51,6 +51,30 @@ test('the recognizer keeps every net: gates tied without a diode are not a mirro
   assert.deepEqual(findTopology(neatMirror(), ['M1', 'M2'], target), []);
 });
 
+test('two rail symbols of one supply are one net: a mirror on two VDD symbols is no stacked pair', () => {
+  const target = new Circuit();
+  run(target, 'add pmos M4 --at 0 0', 'add pmos M5 --at 400 0', 'add supply --at 0 -160', 'add supply --at 400 -160',
+    'connect M4.g M5.g', 'connect M4.d M4.g', 'connect M4.s SUPPLY1.p', 'connect M5.s SUPPLY2.p');
+  // A bias stack: M22 diode-connected over M24, which has its own source node.
+  const stack = new Circuit();
+  run(stack, 'add pmos M22 --at 0 0', 'add pmos M24 --at 0 400', 'add supply --at 0 -160', 'add resistor R1 --at 0 720 --rot 90',
+    'connect M22.g M24.g', 'connect M22.d M22.g', 'connect M22.s SUPPLY1.p', 'connect M24.s R1.a');
+  assert.deepEqual(findTopology(target, ['M4', 'M5'], stack), []);
+  const mirror = new Circuit();
+  run(mirror, 'add pmos M1 --at 0 0', 'add pmos M2 --at 400 0', 'add supply --at 0 -160', 'add supply --at 400 -160',
+    'connect M1.g M2.g', 'connect M1.d M1.g', 'connect M1.s SUPPLY1.p', 'connect M2.s SUPPLY2.p');
+  assert.equal(findTopology(target, ['M4', 'M5'], mirror).length, 1);
+});
+
+test('a drawing with another part drawn among its parts is passed over', () => {
+  // A three-leg mirror in a row: M1 with M2 is a mirror drawn alone, M1 with M3 has M2 between.
+  const source = new Circuit();
+  run(source, 'add nmos M1 --at 0 0 --mirrorX', 'add nmos M2 --at 400 0', 'add nmos M3 --at 800 0',
+    'connect M1.g M2.g M3.g', 'connect M1.d M1.g');
+  const images = findTopology(messyMirror(), ['MA', 'MB'], source).map((m) => m.parts.get('MB').refdes);
+  assert.deepEqual(images, ['M2']);
+});
+
 test('a resistor matches wired either way round; a MOS never swaps source and drain', () => {
   const source = new Circuit();
   run(source, 'add nmos M1 --at 0 0', 'add resistor R1 --at 0 -240 --rot 90', 'connect M1.d R1.b');

@@ -255,6 +255,11 @@ row per category and family, built from the registry each time it opens, so
 it is never out of date and never a document. `GET /api/symbols.svg` serves
 the same sheet for scripted visual checks.
 
+*Built-in drawings* beside it (or `:built-in-drawings`) opens the viewer on
+the cells `arrange` offers (`src/core/arrange-builtins.js`,
+[`arrange.md`](arrange.md)), one card each under its name. Both sheet views
+open no design: a double-click zooms to a card, Esc returns.
+
 ## How it stays fast
 
 - **The same size open or not**: the design open in the editor is drawn

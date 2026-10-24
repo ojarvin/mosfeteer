@@ -20,6 +20,7 @@ import { svgString } from '../core/render.js';
 import { designIndex, parseTags, searchDesign, tagsText } from '../core/design-index.js';
 import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
 import { symbolSheet } from '../core/symbol-sheet.js';
+import { builtInDrawings } from '../core/arrange-builtins.js';
 import { GRID } from '../core/grid.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { relatednessOf } from '../core/design-related.js';
@@ -83,7 +84,12 @@ const HINTS = {
   // The few keys that get around; Learn (?) lists them all.
   workspace: 'Drag to move · double-click opens · / searches · F fits all · Shift+Backspace returns · ? lists the keys',
   symbols: 'All symbols · drag to move · F fits all · Esc returns · ? lists the keys',
+  drawings: 'The built-in drawings Shift+Q arranges like · drag to move · F fits all · Esc returns',
 };
+
+/** Views of a sheet built on the spot (no workspace): the symbols, and the
+ *  built-in drawings of core/arrange-builtins.js. */
+const isSheet = (source) => source === 'symbols' || source === 'drawings';
 
 /** Live SVGs at most at once; the rest stay on their large images. */
 const MAX_VECTOR_TILES = 6;
@@ -326,6 +332,24 @@ async function drawingFor(documentInfo, edited) {
   const index = designIndex(circuit);
   if (key) await Promise.all([cached ? null : cachePut(key, svg), cachePut(indexKey, index)]);
   return { svg, index, revision: documentInfo.revision };
+}
+
+/** The built-in drawings `arrange` offers (Shift+Q), each on a card of its
+ *  own under its name. */
+function loadDrawings() {
+  titleEl.textContent = 'Built-in drawings';
+  scheduleToolbarFit();
+  titleEl.title = '';
+  const entries = builtInDrawings().map(({ circuit, name }, index) => {
+    const svg = drawingSvg(circuit);
+    return { id: `drawing-${index}`, name, path: null, revision: null, current: false, svg, box: viewBoxOf(svg) };
+  });
+  const { tiles, bounds } = placeDrawings(entries);
+  state.entries = new Map(entries.map((entry) => [entry.id, entry]));
+  state.tiles = tiles;
+  state.bounds = bounds;
+  statusEl.textContent = `${entries.length} built-in drawings`;
+  return true;
 }
 
 /** The symbol reference: one sheet, built from the registry on the spot. */
@@ -601,7 +625,7 @@ function syncBackButton() {
   if (!backEl || state.opening) return;
   const name = editor.currentCircuitName || 'Untitled';
   const onDesk = state.tiles.some((tile) => state.entries.get(tile.id)?.current);
-  const label = `Back to ${name}${onDesk || state.source === 'symbols' ? '' : ' (not in this workspace)'}`;
+  const label = `Back to ${name}${onDesk || isSheet(state.source) ? '' : ' (not in this workspace)'}`;
   if (backEl.textContent !== label) {
     // Its icon stays: only the words change.
     backEl.replaceChildren(...backEl.querySelectorAll('.button-icon'), label);
@@ -2930,7 +2954,7 @@ async function openDesk(generation, source, animate, startup) {
   }
   let ready = false;
   try {
-    ready = source === 'symbols' ? loadSymbols() : await loadWorkspace(generation);
+    ready = source === 'symbols' ? loadSymbols() : source === 'drawings' ? loadDrawings() : await loadWorkspace(generation);
   } catch (err) {
     logLine(`Could not show the workspace: ${err.message}`, 'error');
   }
@@ -2941,7 +2965,7 @@ async function openDesk(generation, source, animate, startup) {
   showEmptyDesk();
   const currentTile = state.tiles.find((tile) => state.entries.get(tile.id).current);
   // The open design starts picked; otherwise nothing is until you choose.
-  state.selected = source === 'symbols' ? null : currentTile?.id || null;
+  state.selected = isSheet(source) ? null : currentTile?.id || null;
   if (!state.tiles.length) {
     // An empty desk shows its own card: the paper stays where it is.
     state.flight = null;
@@ -3126,11 +3150,17 @@ export function toggleSymbolSheet() {
   else void openAtlas({ source: 'symbols' });
 }
 
+/** Learn → Symbols → built-in drawings (and `:built-in-drawings`). */
+export function toggleBuiltInDrawings() {
+  if (state) void closeAtlas();
+  else void openAtlas({ source: 'drawings' });
+}
+
 /** Open `tile`'s design. What the search found in it becomes the
  *  selection there, or the parts `select` names (the workspace check's). */
 async function openTile(tile, { select = null } = {}) {
   clearTimeout(state.arrangeTimer);
-  if (state.source === 'symbols') {
+  if (isSheet(state.source)) {
     focusTile(tile, { zoom: true });
     return;
   }
@@ -3284,7 +3314,7 @@ export function onAtlasKey(ev) {
   else if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key.toLowerCase() === 'o' && state.source === 'workspace') void openOntoDesk('files');
   else if (key === 'Escape' && state.matches) clearSearch();
   // The symbol sheet is a reference glanced at: Esc closes it.
-  else if (key === 'Escape' && state.source === 'symbols') void closeAtlas();
+  else if (key === 'Escape' && isSheet(state.source)) void closeAtlas();
   else if (key === 'Escape') {
     state.selected = null;
     requestDraw();
@@ -3542,6 +3572,7 @@ export function installAtlas() {
     }
   });
   document.getElementById('btn-symbols')?.addEventListener('click', () => void openAtlas({ source: 'symbols' }));
+  document.getElementById('btn-built-in-drawings')?.addEventListener('click', () => void openAtlas({ source: 'drawings' }));
   // The theme flips inside a view transition, a frame after the key.
   new MutationObserver(() => requestDraw()).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
 }

@@ -1,12 +1,18 @@
 /**
  * The topology recognizer: where else a set of parts is drawn with the same
  * connections. A topology is the parts' types and shapes and which of their
- * pins share a physical net; a drawing of it in another circuit (or elsewhere
+ * pins share a net; a drawing of it in another circuit (or elsewhere
  * in the same one) is a one-to-one map of the parts onto parts there of the
  * same shape, under which two pins share a net exactly when their images
  * do. The parts there may connect to more than the parts mapped (a mirror
  * inside a larger amplifier is still a mirror); the map never joins or
  * splits a net among the parts it maps.
+ *
+ * Nets are electrical: two rail symbols of one supply, or two wires with one
+ * name, are one net (Circuit#netGroupKey), so a mirror whose sources go to
+ * two VDD symbols is not taken for two parts stacked between other nodes.
+ * A drawing with another part drawn among the parts it maps (inside their
+ * outline) is no drawing of them alone, and is passed over.
  *
  * A two-pin part drawn the same turned half round (a resistor, a capacitor)
  * may map its pins either way, so a resistor wired the other way round still
@@ -19,6 +25,8 @@ const REVERSIBLE = new Set(['resistor', 'capacitor']);
 /** The most drawings one search reports, and the most partial maps it tries:
  *  enough for any real workspace, bounded for a selection of many like parts. */
 const MATCH_LIMIT = 400;
+/** What an unconnected pin holds a net there with. */
+const FREE = Symbol('free');
 const STEP_LIMIT = 200000;
 
 /** A part's shape: its type and where its pins are (a block's or a transfer
@@ -40,18 +48,20 @@ function pinMaps(component) {
   return [{ pins: identity, swapped: false }, { pins: new Map([[names[0], names[1]], [names[1], names[0]]]), swapped: true }];
 }
 
-/** A circuit's parts by shape and every pin's net, for searching it. A pin on
- *  no net gets a net of its own (`~ref.pin`), which no other pin shares. */
+/** A circuit's parts by shape and every pin's electrical net, for searching
+ *  it. A pin on no net gets a net of its own (`~ref.pin`), which no other
+ *  pin shares. */
 export function topologyIndex(circuit) {
   const pinNet = new Map();
   const netPins = new Map();
   for (const net of circuit.nets.values()) {
+    const group = circuit.netGroupKey(net);
     for (const t of net.terminals) {
       const key = `${t.comp}.${t.term}`;
       if (pinNet.has(key)) continue;
-      pinNet.set(key, net.id);
-      if (!netPins.has(net.id)) netPins.set(net.id, []);
-      netPins.get(net.id).push(t);
+      pinNet.set(key, group);
+      if (!netPins.has(group)) netPins.set(group, []);
+      netPins.get(group).push(t);
     }
   }
   const byShape = new Map();
@@ -125,10 +135,25 @@ export function findTopology(targetCircuit, refs, sourceCircuit, { exclude = [],
     return shaped;
   };
 
+  // The parts mapped onto are drawn by themselves: no other part's body
+  // lies within their outline.
+  const bodies = [...sourceCircuit.components.values()].filter((c) => c.type !== 'solder').map((c) => [c.refdes, c.bboxWorld()]);
+  const alone = (map) => {
+    const mapped = new Set([...map.values()].map((p) => p.refdes));
+    let box = null;
+    for (const [ref, r] of bodies) {
+      if (!mapped.has(ref)) continue;
+      box = box ? { x0: Math.min(box.x0, r.x), y0: Math.min(box.y0, r.y), x1: Math.max(box.x1, r.x + r.w), y1: Math.max(box.y1, r.y + r.h) }
+        : { x0: r.x, y0: r.y, x1: r.x + r.w, y1: r.y + r.h };
+    }
+    return !bodies.some(([ref, r]) => !mapped.has(ref)
+      && r.x < box.x1 && r.x + r.w > box.x0 && r.y < box.y1 && r.y + r.h > box.y0);
+  };
+
   const visit = (index) => {
     if (found.length >= limit || ++steps > STEP_LIMIT) return;
     if (index === order.length) {
-      found.push({ parts: new Map(assigned) });
+      if (alone(assigned)) found.push({ parts: new Map(assigned) });
       return;
     }
     const ref = order[index];
@@ -136,10 +161,18 @@ export function findTopology(targetCircuit, refs, sourceCircuit, { exclude = [],
       if (used.has(candidate) || excluded.has(candidate)) continue;
       for (const map of maps.get(ref)) {
         const bound = [];
+        const reserved = [];
         let fits = true;
         for (const term of pins.get(ref)) {
           const from = target.netOf(ref, term);
           const to = source.netOf(candidate, map.pins.get(term));
+          // An unconnected pin says nothing of its net: it may share one
+          // with other unconnected pins there, never with a wired one's.
+          if (from.startsWith('~')) {
+            if (netBack.has(to) && netBack.get(to) !== FREE) { fits = false; break; }
+            if (!netBack.has(to)) { netBack.set(to, FREE); reserved.push(to); }
+            continue;
+          }
           const known = netMap.get(from);
           if (known !== undefined) {
             if (known !== to) { fits = false; break; }
@@ -161,6 +194,7 @@ export function findTopology(targetCircuit, refs, sourceCircuit, { exclude = [],
           netBack.delete(netMap.get(from));
           netMap.delete(from);
         }
+        for (const to of reserved) netBack.delete(to);
         if (found.length >= limit || steps > STEP_LIMIT) return;
       }
     }

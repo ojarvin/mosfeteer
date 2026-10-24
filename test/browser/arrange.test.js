@@ -70,6 +70,15 @@ describe('arrange like', { skip: browserSkip() }, () => {
     assert.deepEqual(await places(), before);
   });
 
+  test('Learn → Symbols shows the built-in drawings, one card each under its name', async () => {
+    await h.evaluate(`document.getElementById('btn-built-in-drawings').click()`);
+    await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !!s && !s.busy && s.tiles.length > 0; })`, 10000);
+    const names = await h.evaluate(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot().tiles.map((t) => t.name))`);
+    assert.ok(names.includes('NMOS current mirror') && names.includes('Five-transistor OTA'), names.join(', '));
+    await h.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+    await h.until(`${h.module('atlas.js')}.then((m) => !m.atlasSnapshot())`, 10000);
+  });
+
   test('a single part is not arranged, and says how', async () => {
     await h.evaluate(`${h.module('main.js')}.then((m) => m.setSelection(['MA']))`);
     await h.key('Q', { shiftKey: true });

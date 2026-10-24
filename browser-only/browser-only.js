@@ -17849,8 +17849,11 @@ function drawingOf(circuit, refs, source, match, context) {
   for (const net of context.targetNets) {
     const pins = net.terminals.filter((t) => wanted.has(t.comp));
     const images = pins.map((t) => pinOf(t.comp, t.term));
-    const there = sourceNets.get(`${images[0].refdes}.${images[0].term}`);
-    const paths = there ? wiresJoining(there.paths(), images.map((p) => p.point)) : (pins.length > 1 ? null : []);
+    // One net there carries them all, or no wires there join them (pins on
+    // two symbols of one rail are one net, but not one wire).
+    const there = new Set(images.map((p) => sourceNets.get(`${p.refdes}.${p.term}`)));
+    const [only] = there;
+    const paths = there.size === 1 && only ? wiresJoining(only.paths(), images.map((p) => p.point)) : (pins.length > 1 ? null : []);
     nets.push({ id: net.id, pins, external: pins.length < net.terminals.length, paths });
   }
   // The shift that best lays the drawing over the parts where they are.
@@ -41381,12 +41384,18 @@ __exports.wiresJoining = wiresJoining;
 /**
  * The topology recognizer: where else a set of parts is drawn with the same
  * connections. A topology is the parts' types and shapes and which of their
- * pins share a physical net; a drawing of it in another circuit (or elsewhere
+ * pins share a net; a drawing of it in another circuit (or elsewhere
  * in the same one) is a one-to-one map of the parts onto parts there of the
  * same shape, under which two pins share a net exactly when their images
  * do. The parts there may connect to more than the parts mapped (a mirror
  * inside a larger amplifier is still a mirror); the map never joins or
  * splits a net among the parts it maps.
+ *
+ * Nets are electrical: two rail symbols of one supply, or two wires with one
+ * name, are one net (Circuit#netGroupKey), so a mirror whose sources go to
+ * two VDD symbols is not taken for two parts stacked between other nodes.
+ * A drawing with another part drawn among the parts it maps (inside their
+ * outline) is no drawing of them alone, and is passed over.
  *
  * A two-pin part drawn the same turned half round (a resistor, a capacitor)
  * may map its pins either way, so a resistor wired the other way round still
@@ -41399,6 +41408,8 @@ const REVERSIBLE = new Set(['resistor', 'capacitor']);
 /** The most drawings one search reports, and the most partial maps it tries:
  *  enough for any real workspace, bounded for a selection of many like parts. */
 const MATCH_LIMIT = 400;
+/** What an unconnected pin holds a net there with. */
+const FREE = Symbol('free');
 const STEP_LIMIT = 200000;
 
 /** A part's shape: its type and where its pins are (a block's or a transfer
@@ -41420,18 +41431,20 @@ function pinMaps(component) {
   return [{ pins: identity, swapped: false }, { pins: new Map([[names[0], names[1]], [names[1], names[0]]]), swapped: true }];
 }
 
-/** A circuit's parts by shape and every pin's net, for searching it. A pin on
- *  no net gets a net of its own (`~ref.pin`), which no other pin shares. */
+/** A circuit's parts by shape and every pin's electrical net, for searching
+ *  it. A pin on no net gets a net of its own (`~ref.pin`), which no other
+ *  pin shares. */
 function topologyIndex(circuit) {
   const pinNet = new Map();
   const netPins = new Map();
   for (const net of circuit.nets.values()) {
+    const group = circuit.netGroupKey(net);
     for (const t of net.terminals) {
       const key = `${t.comp}.${t.term}`;
       if (pinNet.has(key)) continue;
-      pinNet.set(key, net.id);
-      if (!netPins.has(net.id)) netPins.set(net.id, []);
-      netPins.get(net.id).push(t);
+      pinNet.set(key, group);
+      if (!netPins.has(group)) netPins.set(group, []);
+      netPins.get(group).push(t);
     }
   }
   const byShape = new Map();
@@ -41505,10 +41518,25 @@ function findTopology(targetCircuit, refs, sourceCircuit, { exclude = [], limit 
     return shaped;
   };
 
+  // The parts mapped onto are drawn by themselves: no other part's body
+  // lies within their outline.
+  const bodies = [...sourceCircuit.components.values()].filter((c) => c.type !== 'solder').map((c) => [c.refdes, c.bboxWorld()]);
+  const alone = (map) => {
+    const mapped = new Set([...map.values()].map((p) => p.refdes));
+    let box = null;
+    for (const [ref, r] of bodies) {
+      if (!mapped.has(ref)) continue;
+      box = box ? { x0: Math.min(box.x0, r.x), y0: Math.min(box.y0, r.y), x1: Math.max(box.x1, r.x + r.w), y1: Math.max(box.y1, r.y + r.h) }
+        : { x0: r.x, y0: r.y, x1: r.x + r.w, y1: r.y + r.h };
+    }
+    return !bodies.some(([ref, r]) => !mapped.has(ref)
+      && r.x < box.x1 && r.x + r.w > box.x0 && r.y < box.y1 && r.y + r.h > box.y0);
+  };
+
   const visit = (index) => {
     if (found.length >= limit || ++steps > STEP_LIMIT) return;
     if (index === order.length) {
-      found.push({ parts: new Map(assigned) });
+      if (alone(assigned)) found.push({ parts: new Map(assigned) });
       return;
     }
     const ref = order[index];
@@ -41516,10 +41544,18 @@ function findTopology(targetCircuit, refs, sourceCircuit, { exclude = [], limit 
       if (used.has(candidate) || excluded.has(candidate)) continue;
       for (const map of maps.get(ref)) {
         const bound = [];
+        const reserved = [];
         let fits = true;
         for (const term of pins.get(ref)) {
           const from = target.netOf(ref, term);
           const to = source.netOf(candidate, map.pins.get(term));
+          // An unconnected pin says nothing of its net: it may share one
+          // with other unconnected pins there, never with a wired one's.
+          if (from.startsWith('~')) {
+            if (netBack.has(to) && netBack.get(to) !== FREE) { fits = false; break; }
+            if (!netBack.has(to)) { netBack.set(to, FREE); reserved.push(to); }
+            continue;
+          }
           const known = netMap.get(from);
           if (known !== undefined) {
             if (known !== to) { fits = false; break; }
@@ -41541,6 +41577,7 @@ function findTopology(targetCircuit, refs, sourceCircuit, { exclude = [], limit 
           netBack.delete(netMap.get(from));
           netMap.delete(from);
         }
+        for (const to of reserved) netBack.delete(to);
         if (found.length >= limit || steps > STEP_LIMIT) return;
       }
     }
@@ -46964,6 +47001,7 @@ __exports.closeAtlas = closeAtlas;
 __exports.leaveAtlasNow = leaveAtlasNow;
 __exports.toggleAtlas = toggleAtlas;
 __exports.toggleSymbolSheet = toggleSymbolSheet;
+__exports.toggleBuiltInDrawings = toggleBuiltInDrawings;
 __exports.onAtlasKey = onAtlasKey;
 __exports.installAtlas = installAtlas;
 let loadDocument, relinkDocumentState; __bind(() => { ({ loadDocument, relinkDocumentState } = __require("src/core/document.js")); });
@@ -46975,6 +47013,7 @@ let svgString; __bind(() => { ({ svgString } = __require("src/core/render.js"));
 let designIndex, parseTags, searchDesign, tagsText; __bind(() => { ({ designIndex, parseTags, searchDesign, tagsText } = __require("src/core/design-index.js")); });
 let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __require("src/core/selection-drawing.js")); });
 let symbolSheet; __bind(() => { ({ symbolSheet } = __require("src/core/symbol-sheet.js")); });
+let builtInDrawings; __bind(() => { ({ builtInDrawings } = __require("src/core/arrange-builtins.js")); });
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let relatednessOf; __bind(() => { ({ relatednessOf } = __require("src/core/design-related.js")); });
@@ -47048,6 +47087,7 @@ let onAccentChange; __bind(() => { ({ onAccentChange } = __require("src/web/acce
 
 
 
+
 const rootEl = document.getElementById('atlas');
 const deskEl = document.getElementById('atlas-desk');
 const overlayEl = document.getElementById('atlas-overlays');
@@ -47082,7 +47122,12 @@ const HINTS = {
   // The few keys that get around; Learn (?) lists them all.
   workspace: 'Drag to move · double-click opens · / searches · F fits all · Shift+Backspace returns · ? lists the keys',
   symbols: 'All symbols · drag to move · F fits all · Esc returns · ? lists the keys',
+  drawings: 'The built-in drawings Shift+Q arranges like · drag to move · F fits all · Esc returns',
 };
+
+/** Views of a sheet built on the spot (no workspace): the symbols, and the
+ *  built-in drawings of core/arrange-builtins.js. */
+const isSheet = (source) => source === 'symbols' || source === 'drawings';
 
 /** Live SVGs at most at once; the rest stay on their large images. */
 const MAX_VECTOR_TILES = 6;
@@ -47325,6 +47370,24 @@ async function drawingFor(documentInfo, edited) {
   const index = designIndex(circuit);
   if (key) await Promise.all([cached ? null : cachePut(key, svg), cachePut(indexKey, index)]);
   return { svg, index, revision: documentInfo.revision };
+}
+
+/** The built-in drawings `arrange` offers (Shift+Q), each on a card of its
+ *  own under its name. */
+function loadDrawings() {
+  titleEl.textContent = 'Built-in drawings';
+  scheduleToolbarFit();
+  titleEl.title = '';
+  const entries = builtInDrawings().map(({ circuit, name }, index) => {
+    const svg = drawingSvg(circuit);
+    return { id: `drawing-${index}`, name, path: null, revision: null, current: false, svg, box: viewBoxOf(svg) };
+  });
+  const { tiles, bounds } = placeDrawings(entries);
+  state.entries = new Map(entries.map((entry) => [entry.id, entry]));
+  state.tiles = tiles;
+  state.bounds = bounds;
+  statusEl.textContent = `${entries.length} built-in drawings`;
+  return true;
 }
 
 /** The symbol reference: one sheet, built from the registry on the spot. */
@@ -47600,7 +47663,7 @@ function syncBackButton() {
   if (!backEl || state.opening) return;
   const name = editor.currentCircuitName || 'Untitled';
   const onDesk = state.tiles.some((tile) => state.entries.get(tile.id)?.current);
-  const label = `Back to ${name}${onDesk || state.source === 'symbols' ? '' : ' (not in this workspace)'}`;
+  const label = `Back to ${name}${onDesk || isSheet(state.source) ? '' : ' (not in this workspace)'}`;
   if (backEl.textContent !== label) {
     // Its icon stays: only the words change.
     backEl.replaceChildren(...backEl.querySelectorAll('.button-icon'), label);
@@ -49929,7 +49992,7 @@ async function openDesk(generation, source, animate, startup) {
   }
   let ready = false;
   try {
-    ready = source === 'symbols' ? loadSymbols() : await loadWorkspace(generation);
+    ready = source === 'symbols' ? loadSymbols() : source === 'drawings' ? loadDrawings() : await loadWorkspace(generation);
   } catch (err) {
     logLine(`Could not show the workspace: ${err.message}`, 'error');
   }
@@ -49940,7 +50003,7 @@ async function openDesk(generation, source, animate, startup) {
   showEmptyDesk();
   const currentTile = state.tiles.find((tile) => state.entries.get(tile.id).current);
   // The open design starts picked; otherwise nothing is until you choose.
-  state.selected = source === 'symbols' ? null : currentTile?.id || null;
+  state.selected = isSheet(source) ? null : currentTile?.id || null;
   if (!state.tiles.length) {
     // An empty desk shows its own card: the paper stays where it is.
     state.flight = null;
@@ -50125,11 +50188,17 @@ function toggleSymbolSheet() {
   else void openAtlas({ source: 'symbols' });
 }
 
+/** Learn → Symbols → built-in drawings (and `:built-in-drawings`). */
+function toggleBuiltInDrawings() {
+  if (state) void closeAtlas();
+  else void openAtlas({ source: 'drawings' });
+}
+
 /** Open `tile`'s design. What the search found in it becomes the
  *  selection there, or the parts `select` names (the workspace check's). */
 async function openTile(tile, { select = null } = {}) {
   clearTimeout(state.arrangeTimer);
-  if (state.source === 'symbols') {
+  if (isSheet(state.source)) {
     focusTile(tile, { zoom: true });
     return;
   }
@@ -50283,7 +50352,7 @@ function onAtlasKey(ev) {
   else if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key.toLowerCase() === 'o' && state.source === 'workspace') void openOntoDesk('files');
   else if (key === 'Escape' && state.matches) clearSearch();
   // The symbol sheet is a reference glanced at: Esc closes it.
-  else if (key === 'Escape' && state.source === 'symbols') void closeAtlas();
+  else if (key === 'Escape' && isSheet(state.source)) void closeAtlas();
   else if (key === 'Escape') {
     state.selected = null;
     requestDraw();
@@ -50541,6 +50610,7 @@ function installAtlas() {
     }
   });
   document.getElementById('btn-symbols')?.addEventListener('click', () => void openAtlas({ source: 'symbols' }));
+  document.getElementById('btn-built-in-drawings')?.addEventListener('click', () => void openAtlas({ source: 'drawings' }));
   // The theme flips inside a view transition, a frame after the key.
   new MutationObserver(() => requestDraw()).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
 }
@@ -53461,7 +53531,7 @@ let fitView; __bind(() => { ({ fitView } = __require("src/web/canvas-view.js"));
 let showHelp; __bind(() => { ({ showHelp } = __require("src/web/help.js")); });
 let runCheck; __bind(() => { ({ runCheck } = __require("src/web/design-check-ui.js")); });
 let openFind, openReplace; __bind(() => { ({ openFind, openReplace } = __require("src/web/find-replace-ui.js")); });
-let toggleAtlas, toggleSymbolSheet; __bind(() => { ({ toggleAtlas, toggleSymbolSheet } = __require("src/web/atlas.js")); });
+let toggleAtlas, toggleBuiltInDrawings, toggleSymbolSheet; __bind(() => { ({ toggleAtlas, toggleBuiltInDrawings, toggleSymbolSheet } = __require("src/web/atlas.js")); });
 let activateAlign, activateAnnotation, activateCopy, activateEquation, activateHighlight, activateMove, activateNetLabel, activatePlace, activateShapeAnnotation, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render, repeatLastAction, restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, tidyNow, undo; __bind(() => { ({ activateAlign, activateAnnotation, activateCopy, activateEquation, activateHighlight, activateMove, activateNetLabel, activatePlace, activateShapeAnnotation, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render, repeatLastAction, restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, tidyNow, undo } = __require("src/web/main.js")); });
 let joinSelectedLines, removeAllNetHighlights; __bind(() => { ({ joinSelectedLines, removeAllNetHighlights } = __require("src/web/annotation-tools.js")); });
 let enterLinkedDesign, leaveLinkedDesign, toggleAllLinkBubbles, toggleLinkBubbles; __bind(() => { ({ enterLinkedDesign, leaveLinkedDesign, toggleAllLinkBubbles, toggleLinkBubbles } = __require("src/web/hierarchy.js")); });
@@ -53553,6 +53623,7 @@ const ACTIONS = {
     : openMenu('btn-settings')),
   atlas: () => toggleAtlas(),
   symbols: () => toggleSymbolSheet(),
+  'built-in-drawings': () => toggleBuiltInDrawings(),
   fit: () => fitView({ animate: true }),
   shortcuts: () => showHelp(),
   check: () => runCheck(),
@@ -53834,6 +53905,7 @@ const EDITOR_COMMANDS = [
   { name: 'page-guide', aliases: ['pageguide', 'column', 'ieee'], choices: ['none', 'ieee-1col', 'ieee-2col', 'a4'], help: 'frame the drawing for a page: none, ieee-1col, ieee-2col, or a4' },
   { name: 'atlas', aliases: ['atlas-view', 'collage', 'overview', 'gallery', 'all-designs'], help: 'all designs in the workspace, at their real size (Shift+Backspace)' },
   { name: 'symbols', aliases: ['symbol-sheet', 'symbol-reference', 'library', 'legend'], help: 'all symbols, drawn from the registry (Learn → Symbols)' },
+  { name: 'built-in-drawings', aliases: ['drawings', 'cells', 'built-in-cells'], help: 'the built-in drawings Shift+Q arranges parts like (Learn → Symbols)' },
   { name: 'fit', aliases: ['zoom-fit', 'zoom', 'fit-view'], help: 'fit the view to the drawing (f)' },
   { name: 'shortcuts', aliases: ['keys', 'keybindings', 'hotkeys', 'cheatsheet', 'keymap'], help: 'show the keyboard shortcuts (?)' },
   { name: 'check', aliases: ['design-check', 'drc', 'lint', 'verify'], help: 'run Design Check (x)' },
@@ -60943,6 +61015,7 @@ function installHelp() {
     return entry;
   }) || []);
   document.getElementById('btn-symbols')?.addEventListener('click', () => helpDialog.close(), true);
+  document.getElementById('btn-built-in-drawings')?.addEventListener('click', () => helpDialog.close(), true);
 }
 
 };
