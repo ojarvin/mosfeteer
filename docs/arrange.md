@@ -88,8 +88,10 @@ browser preference (`src/web/arrange-suggest.js`).
 - After a committed edit (and a short quiet time), the cells of the whole
   design are found (`cellsIn`); a cell that was not there before the edit
   is offered when the open design or the workspace's other designs draw it
-  otherwise (`cellDrawing`; never from the built-in drawings), and only if
-  it can be drawn so (tried on a copy first).
+  otherwise in any way, its spacing, wires, or labels' places included
+  (`cellDrawing` with `exact`; never from the built-in drawings), and only
+  if it can be drawn so (tried on a copy first). A cell drawn exactly as
+  there is not offered.
 - The cell is shown faintly in the accent as it would be drawn, and the
   status bar reads `SUGGESTION: MA, MB make a current mirror: like M1, M2 in
   bias · Tab draws it · Esc lets it go`. Tab draws it as one undo step.

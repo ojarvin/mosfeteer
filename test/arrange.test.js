@@ -378,3 +378,19 @@ test('whatever way a messy OTA is arranged, it keeps its connections, reaches it
   }
   assert.ok(drawn > 0, 'some arrangements were drawn');
 });
+
+test('a suggestion offers a cell drawn in its drawing\'s shape but otherwise; one drawn exactly so it leaves', async () => {
+  const { cellDrawing } = await import('../src/core/arrange.js');
+  // Neat, but wider apart than the drawing elsewhere.
+  const circuit = new Circuit();
+  run(circuit, 'add nmos MA --at 0 0 --mirrorX', 'add nmos MB --at 480 0', 'add ground --at 0 120', 'add ground --at 480 120',
+    'connect MA.g MB.g', 'connect MA.d MA.g', 'connect MA.s GROUND1.gnd', 'connect MB.s GROUND2.gnd');
+  const [cell] = cellsIn(circuit, [...circuit.components.keys()], cellPatterns());
+  const source = [{ circuit: builtInDrawings()[0].circuit, name: 'mirror' }];
+  assert.equal(cellDrawing(circuit, cell, source), null, 'by cells leaves its shape alone');
+  assert.ok(cellDrawing(circuit, cell, source, { exact: true }), 'a suggestion offers the spacing');
+  // Drawn exactly as the built-in mirror: nothing to offer.
+  const same = Circuit.fromJSON(builtInDrawings()[0].circuit.toJSON());
+  const [own] = cellsIn(same, [...same.components.keys()], cellPatterns());
+  assert.equal(cellDrawing(same, own, [{ circuit: builtInDrawings()[0].circuit, name: 'mirror' }], { exact: true }), null);
+});

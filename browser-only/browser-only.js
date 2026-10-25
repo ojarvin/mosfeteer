@@ -18404,11 +18404,13 @@ function pinPairs(pins, netOf) {
  * agree best with the cell's own (the same pins joined, the same pins on
  * rails) goes first, then the newer source, then the
  * one that moves the parts least. A cell drawn in that shape already
- * (spacing aside) is left as it is. Its rail symbols go to the rail symbols
- * on the same pins there, where there are any.
+ * (spacing aside) is left as it is; with `exact` only one drawn exactly so
+ * is (a suggestion offers the spacing, the wires, and label places too).
+ * Its rail symbols go to the rail symbols on the same pins there, where
+ * there are any.
  * Returns `{ refs, candidate }`, `refs` the parts it draws.
  */
-function cellDrawing(circuit, cell, sources) {
+function cellDrawing(circuit, cell, sources, { exact = false } = {}) {
   const cellParts = [...cell.map.values()];
   const rails = cell.refs.filter((ref) => !cellParts.includes(ref));
   const nets = pinNets(circuit);
@@ -18456,7 +18458,13 @@ function cellDrawing(circuit, cell, sources) {
   ways.sort((a, b) => a.disagree - b.disagree || a.rank - b.rank || b.refs.length - a.refs.length || a.drawing.cost - b.drawing.cost);
   const [best] = ways;
   const now = (ref) => circuit.components.get(ref).transform;
-  if (sameShape(cellParts, now, (ref) => best.drawing.parts.get(ref))) return null;
+  if (exact) {
+    // Only a cell drawn exactly so is left: anything else (the spacing, the
+    // wires, the labels' places) is offered.
+    const identity = { parts: new Map(best.refs.map((ref) => [ref, { refdes: ref, swapped: false }])) };
+    const context = searchContext(circuit, best.refs);
+    if (drawingKey(best.refs, drawingOf(circuit, best.refs, circuit, identity, context)) === drawingKey(best.refs, best.drawing)) return null;
+  } else if (sameShape(cellParts, now, (ref) => best.drawing.parts.get(ref))) return null;
   const { source } = best;
   return {
     refs: best.refs,
@@ -46904,7 +46912,7 @@ async function look() {
   // The drawing changed while the workspace was read: that edit looks again.
   if (ticket !== looking || circuit !== editor.circuit || revision !== editor.modelRevision) return;
   for (const cell of fresh) {
-    const best = cellDrawing(circuit, cell, sources);
+    const best = cellDrawing(circuit, cell, sources, { exact: true });
     if (!best) continue;
     // Only what can be drawn is offered: tried on a copy first.
     const preview = loadDocument(circuit.toJSON());

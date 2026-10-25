@@ -96,7 +96,7 @@ async function look() {
   // The drawing changed while the workspace was read: that edit looks again.
   if (ticket !== looking || circuit !== editor.circuit || revision !== editor.modelRevision) return;
   for (const cell of fresh) {
-    const best = cellDrawing(circuit, cell, sources);
+    const best = cellDrawing(circuit, cell, sources, { exact: true });
     if (!best) continue;
     // Only what can be drawn is offered: tried on a copy first.
     const preview = loadDocument(circuit.toJSON());
