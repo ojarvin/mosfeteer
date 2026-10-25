@@ -91,31 +91,27 @@ function nameMarkup(text) {
   return source.length >= 2 && source.startsWith('$') && source.endsWith('$') ? source.slice(1, -1) : source;
 }
 
-// Text widths without a DOM, in em, measured in Chromium: names and
-// headers in the labels' bold italic sans-serif, cells in Latin Modern
-// (the math font). Every column is as wide as its widest text, so the gaps
-// between columns are equal where the text is.
-const FACES = {
-  sans: { digit: 0.556, narrow: 0.278, lower: 0.58, wide: 0.889, upper: 0.722, M: 0.833, W: 0.944, space: 0.278, thin: 0.2 },
-  math: { digit: 0.5, narrow: 0.278, lower: 0.52, wide: 0.833, upper: 0.74, M: 0.917, W: 1.028, space: 0.333, thin: 0.2 },
-};
+// Text widths without a DOM, in em, measured in Chromium in Latin Modern
+// (the math font), in which the whole table is set. Every column is as wide
+// as its widest text, so the gaps between columns are equal where the text
+// is.
+const FACE = { digit: 0.5, narrow: 0.278, lower: 0.52, wide: 0.833, upper: 0.74, M: 0.917, W: 1.028, space: 0.333, thin: 0.2 };
 const SCRIPT = 0.62;
 
-function glyphWidth(ch, face) {
-  if (/[0-9]/.test(ch)) return face.digit;
-  if (/[.,:;'|!iljtf()\[\]-]/.test(ch)) return face.narrow;
-  if (ch === THIN_SPACE) return face.thin;
-  if (ch === ' ') return face.space;
-  if (/[mw]/.test(ch)) return face.wide;
-  if (ch === 'M') return face.M;
-  if (ch === 'W') return face.W;
-  if (/[A-ZΩ]/.test(ch)) return face.upper;
-  return face.lower;
+function glyphWidth(ch) {
+  if (/[0-9]/.test(ch)) return FACE.digit;
+  if (/[.,:;'|!iljtf()\[\]-]/.test(ch)) return FACE.narrow;
+  if (ch === THIN_SPACE) return FACE.thin;
+  if (ch === ' ') return FACE.space;
+  if (/[mw]/.test(ch)) return FACE.wide;
+  if (ch === 'M') return FACE.M;
+  if (ch === 'W') return FACE.W;
+  if (/[A-ZΩ]/.test(ch)) return FACE.upper;
+  return FACE.lower;
 }
 
-function textWidth(runs, fontSize, kind) {
-  const face = kind === 'cell' ? FACES.math : FACES.sans;
-  return runs.reduce((sum, run) => sum + [...run.text].reduce((w, ch) => w + glyphWidth(ch, face), 0) * fontSize * (run.sub || run.super ? SCRIPT : 1), 0);
+function textWidth(runs, fontSize) {
+  return runs.reduce((sum, run) => sum + [...run.text].reduce((w, ch) => w + glyphWidth(ch), 0) * fontSize * (run.sub || run.super ? SCRIPT : 1), 0);
 }
 
 /** A cell's text, a value named in label markup (R_{L}) with its subscript. */
@@ -148,9 +144,9 @@ export function partsTableLayout(circuit, table, { width = 'normal' } = {}) {
   if (!rows.length) {
     const runs = [{ text: 'No sized parts' }];
     items.push({ type: 'text', x: 0, y: baseline(0), runs, anchor: 'start', role: 'head' });
-    return { w: ceilGrid(textWidth(runs, fontSize, 'head')), h: ROW_PITCH, items };
+    return { w: ceilGrid(textWidth(runs, fontSize)), h: ROW_PITCH, items };
   }
-  const nameWidth = Math.max(...rows.map((r) => textWidth(r.name, fontSize, 'name')));
+  const nameWidth = Math.max(...rows.map((r) => textWidth(r.name, fontSize)));
   const sized = rows.filter((row) => row.kind === 'size');
   const valued = rows.filter((row) => row.kind === 'value');
   const blocks = [];
@@ -164,8 +160,8 @@ export function partsTableLayout(circuit, table, { width = 'normal' } = {}) {
   for (const block of blocks) {
     // Each column is as wide as its widest cell or header.
     const widths = block.columns.map(([head, key]) => (Math.max(
-      textWidth([{ text: head }], fontSize, 'head'),
-      ...block.rows.map((r) => textWidth(cellRuns(r.cells[key]), fontSize, 'cell')),
+      textWidth([{ text: head }], fontSize),
+      ...block.rows.map((r) => textWidth(cellRuns(r.cells[key]), fontSize)),
     )));
     const rights = [];
     let x = nameWidth;

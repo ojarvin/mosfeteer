@@ -250,6 +250,8 @@ const TIMING_BEAT_FILL = '#0e7c7b';
 /** Outline that gives drawing math the weight of the other labels. */
 const MATH_LABEL_STROKE = '0.02em';
 
+/** A table rule's thickness, in em: the math tables' and the parts table's. */
+const MATH_RULE_EM = 0.09;
 const MATH_FONT_FAMILY = "'Latin Modern Math','Computer Modern','CMU Serif','STIX Two Math','Cambria Math','DejaVu Serif',serif";
 
 function mathMlAtom(value, kind = 'mi', attrs = '') {
@@ -630,19 +632,21 @@ export const isMathTable = (rows) => rows.some((line) => line.trim() === '\\hlin
  * turn, so `A_v &= ...` lines up at its equals signs), `\hline` a rule,
  * and a line without `&` across every column. Spaced columns (`columns`
  * given) are a table's, apart, its rows half an em apart so tall fractions
- * never touch; aligned ones touch.
+ * never touch; aligned ones touch. The cells of a row share a baseline, as
+ * in TeX: centered, a heading with a descender would sit higher than one
+ * without.
  */
 function mathTableHtml(rows, columns, justify) {
   const cells = rows.map((line) => (line.trim() === '\\hline' ? null : mathCells(line)));
   const count = Math.max(1, ...cells.map((row) => row?.length || 0));
   const alignOf = (index) => ({ l: 'flex-start', c: 'center', r: 'flex-end' }[(columns || 'rl'.repeat(count))[index]] || 'flex-start');
-  const cell = (style, tex) => `<div class="schematic-math-line" style="display:flex;align-items:center;${style}">${tex.trim() ? texToMathML(tex) : ''}</div>`;
+  const cell = (style, tex) => `<div class="schematic-math-line" style="display:flex;align-items:baseline;${style}">${tex.trim() ? texToMathML(tex) : ''}</div>`;
   const body = cells.map((row) => {
-    if (!row) return '<div class="schematic-math-rule" style="grid-column:1 / -1;border-top:0.09em solid currentColor;margin:0.2em 0;"></div>';
+    if (!row) return `<div class="schematic-math-rule" style="grid-column:1 / -1;border-top:${MATH_RULE_EM}em solid currentColor;margin:0.2em 0;"></div>`;
     if (row.length === 1) return cell(`grid-column:1 / -1;justify-content:${justify};`, row[0]);
     return Array.from({ length: count }, (_, index) => cell(`justify-content:${alignOf(index)};`, row[index] ?? '')).join('');
   }).join('');
-  return `<div class="schematic-math-table" style="display:grid;grid-template-columns:repeat(${count},max-content);grid-auto-rows:minmax(1.2em,auto);column-gap:${columns ? '1.2em' : '0'};row-gap:${columns ? '0.55em' : '0.3em'};align-items:center;justify-content:${justify};">${body}</div>`;
+  return `<div class="schematic-math-table" style="display:grid;grid-template-columns:repeat(${count},max-content);grid-auto-rows:minmax(1.2em,auto);column-gap:${columns ? '1.2em' : '0'};row-gap:${columns ? '0.55em' : '0.3em'};align-items:baseline;justify-content:${justify};">${body}</div>`;
 }
 
 function mathLabelSvg(label, opacity = '', ink = null) {
@@ -793,26 +797,28 @@ function plotAnnotationSvg(label, opacity = '') {
 }
 
 /**
- * A parts table (parts-table.js): names and headers in the labels' bold
- * italic, sizes and values in the math font, upright, each block under its
- * header and a rule. No border: a table reads by its columns.
+ * A parts table (parts-table.js), set as the math tables are (the
+ * equations, the kT/C noise): all in the math font with math labels'
+ * outline, headers upright as text, names italic as math, sizes and values
+ * upright, each block under its header and a rule as thick as theirs. No
+ * border: a table reads by its columns.
  */
 function partsTableSvg(label, opacity = '') {
   const layout = label.syncTableBox();
   const { x, y } = label.anchor;
   const fontSize = labelFontSize(label.style?.width);
   const color = escapeSvg(resolveColor(label.style?.color || '#111'));
-  const runsSvg = (runs) => runs.map((run) => (run.sub || run.super
-    ? `<tspan baseline-shift="${run.sub ? '-' : ''}${fmt(fontSize * 0.25)}" font-size="${fmt(fontSize * 0.62)}">${escapeSvg(run.text)}</tspan>`
-    : escapeSvg(run.text))).join('');
+  // In an italic name, digits stay upright, as math sets them (M_1).
+  const upright = (text, italic) => (italic
+    ? text.split(/(\d+)/).map((piece) => (/^\d+$/.test(piece) ? `<tspan font-style="normal">${escapeSvg(piece)}</tspan>` : escapeSvg(piece))).join('')
+    : escapeSvg(text));
+  const runsSvg = (runs, italic) => runs.map((run) => (run.sub || run.super
+    ? `<tspan baseline-shift="${run.sub ? '-' : ''}${fmt(fontSize * 0.25)}" font-size="${fmt(fontSize * 0.62)}">${upright(run.text, italic)}</tspan>`
+    : upright(run.text, italic))).join('');
   const parts = layout.items.map((item) => {
-    if (item.type === 'rule') return `<line x1="${fmt(item.x1)}" y1="${fmt(item.y)}" x2="${fmt(item.x2)}" y2="${fmt(item.y)}" stroke="${color}" stroke-width="2" stroke-linecap="butt"/>`;
-    // Names and headers as the labels are; numbers and units as math is, with
-    // math labels' outline to give the light face their weight.
-    const face = item.role === 'cell'
-      ? `font-family="${escapeSvg(MATH_FONT_FAMILY)}" stroke="${color}" stroke-width="${fmt(fontSize * 0.02)}"`
-      : 'font-family="sans-serif" font-weight="bold" font-style="italic" stroke="none"';
-    return `<text x="${fmt(item.x)}" y="${fmt(item.y)}" text-anchor="${item.anchor}" font-size="${fmt(fontSize)}" ${face} fill="${color}">${runsSvg(item.runs)}</text>`;
+    if (item.type === 'rule') return `<line x1="${fmt(item.x1)}" y1="${fmt(item.y)}" x2="${fmt(item.x2)}" y2="${fmt(item.y)}" stroke="${color}" stroke-width="${fmt(fontSize * MATH_RULE_EM)}" stroke-linecap="butt"/>`;
+    const italic = item.role === 'name';
+    return `<text x="${fmt(item.x)}" y="${fmt(item.y)}" text-anchor="${item.anchor}" font-size="${fmt(fontSize)}" font-family="${escapeSvg(MATH_FONT_FAMILY)}"${italic ? ' font-style="italic"' : ''} stroke="${color}" stroke-width="${fmt(fontSize * 0.02)}" fill="${color}">${runsSvg(item.runs, italic)}</text>`;
   }).join('');
   return `<g class="parts-table" transform="translate(${fmt(x)} ${fmt(y)})"${opacity}>${parts}</g>`;
 }
