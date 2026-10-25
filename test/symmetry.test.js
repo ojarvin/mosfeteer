@@ -71,3 +71,42 @@ test('a part removed takes its twin, and draws no wire', () => {
   assert.equal(done.wires, 0);
   assert.deepEqual(placed(circuit).map(([type]) => type), ['ground', 'ground']);
 });
+
+test('a wire deleted is deleted on the other side too', () => {
+  const circuit = new Circuit();
+  run(circuit, 'add nmos M1 --at -200 0', 'add nmos M2 --at 200 0 --mirrorX', 'add ground G1 --at -200 120', 'add ground G2 --at 200 120 --mirrorX');
+  edit(circuit, 'connect M1.s G1.gnd');
+  const left = circuit.netOfTerminal({ comp: 'M1', term: 's' });
+  const before = Circuit.fromJSON(circuit.toJSON());
+  circuit.deleteWireSegments(left.id, left.paths().flatMap((path, branch) => path.slice(1).map((_, i) => ({ branch, segment: i + 1 }))));
+  mirrorEdit(before, circuit, AXIS);
+  assert.equal(circuit.netOfTerminal({ comp: 'M1', term: 's' }), null);
+  assert.equal(circuit.netOfTerminal({ comp: 'M2', term: 's' }), null, 'M2 no longer wired to its ground');
+});
+
+test('a value, a size, or a moved name label changes the twin\'s too', () => {
+  const circuit = new Circuit();
+  run(circuit, 'add nmos M1 --at -200 0', 'add nmos M2 --at 200 0 --mirrorX', 'add capacitor C1 --at -200 -400', 'add capacitor C2 --at 200 -400 --mirrorX');
+  edit(circuit, 'value C1 2p', 'size M1 4u/180n');
+  assert.equal(circuit.components.get('C2').value, '2p');
+  assert.deepEqual(circuit.components.get('M2').size, circuit.components.get('M1').size);
+  const before = Circuit.fromJSON(circuit.toJSON());
+  circuit.labelOf('M1').offset = { x: 80, y: -120 };
+  mirrorEdit(before, circuit, AXIS);
+  assert.deepEqual(circuit.labelOf('M2').offset, { x: 80, y: -120 }, 'the same place on the twin: the mirror image');
+});
+
+test('about a horizontal axis, a part on it is its own twin: wires to one input are mirrored to the other', () => {
+  const axis = { operation: 'mirrorY', pin: { x: 0, y: 0 } };
+  const circuit = new Circuit();
+  const step = (...lines) => { const before = Circuit.fromJSON(circuit.toJSON()); run(circuit, ...lines); return mirrorEdit(before, circuit, axis); };
+  step('add opamp_diff OTA --at 0 0');
+  assert.equal(circuit.components.size, 1, 'no twin for a part on the axis');
+  step('add capacitor CF1 --at 0 -280');
+  step('connect CF1.a OTA.ip', 'connect CF1.b OTA.om');
+  step('add capacitor CS1 --at -560 -40');
+  step('connect CS1.b OTA.ip');
+  // Twins named in their originals' series.
+  assert.deepEqual(circuit.netOfTerminal({ comp: 'OTA', term: 'im' }).terminals.map((t) => `${t.comp}.${t.term}`).sort(), ['CF2.a', 'CS2.b', 'OTA.im']);
+  assert.deepEqual(circuit.netOfTerminal({ comp: 'OTA', term: 'op' }).terminals.map((t) => `${t.comp}.${t.term}`).sort(), ['CF2.b', 'OTA.op']);
+});

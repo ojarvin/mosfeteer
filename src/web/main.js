@@ -82,7 +82,7 @@ import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQ
 import { openArrangePicker } from './arrange-ui.js';
 import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } from './toolbar-ui.js';
 import { installNetBeams, mountNetBeams, syncNetBeams } from './net-beams.js';
-import { axisPlacement, mirrorRecordedEdit, mountSymmetryAxis, syncSymmetryAxis, toggleSymmetryAxis } from './symmetry-axis.js';
+import { axisPlacement, cycleSymmetryAxis, mirrorRecordedEdit, mountSymmetryAxis, syncSymmetryAxis } from './symmetry-axis.js';
 import { acceptArrangeSuggestion, dismissArrangeSuggestion, installArrangeSuggestions, mountArrangeSuggestion, noteDrawingEdit, noteDrawingReplaced, syncArrangeSuggestion } from './arrange-suggest.js';
 import { shortNetsAtPlacedSolder, askNameForNewNetNameConflict } from './net-names.js';
 import { installRenumberUi } from './renumber-ui.js';
@@ -6792,9 +6792,10 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
-  // |: hold a symmetry axis (or release it): edits are mirrored about it.
-  if (key === '|') {
-    toggleSymmetryAxis();
+  // k: hold a vertical symmetry axis, turn it horizontal, release it: edits
+  // are mirrored about it.
+  if (key === 'k') {
+    cycleSymmetryAxis();
     return;
   }
 

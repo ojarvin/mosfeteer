@@ -1,5 +1,5 @@
 /**
- * The symmetry axis (`|`, `:symmetry-axis`): an axis held until released,
+ * The symmetry axis (`k`, `:symmetry-axis`): an axis held until released,
  * about which every edit is mirrored (core/symmetry.js mirrorEdit). It goes
  * through the middle of the selection, or the cursor, on a grid or a
  * half-grid line, so mirror images stay on the grid. While it is held a
@@ -31,15 +31,29 @@ export function symmetryAxisLabel(held = axis) {
   return held.operation === 'mirrorX' ? `x=${held.pin.x}` : `y=${held.pin.y}`;
 }
 
-/** Hold an axis ('mirrorX': vertical, 'mirrorY': horizontal) through the
- *  middle of the selected parts, else the cursor; with one held, release it. */
-export function toggleSymmetryAxis(operation = 'mirrorX') {
-  if (axis) {
+/** k: hold a vertical axis, then turn it horizontal (about the same
+ *  point), then release it. */
+export function cycleSymmetryAxis() {
+  if (!axis) return setSymmetryAxis('mirrorX');
+  if (axis.operation === 'mirrorX') return setSymmetryAxis('mirrorY', axis.pin);
+  return setSymmetryAxis(null);
+}
+
+/** Hold an axis ('mirrorX': vertical, 'mirrorY': horizontal) through `pin`,
+ *  else the middle of the selected parts, else the cursor; null releases it. */
+export function setSymmetryAxis(operation, pin = null) {
+  clearSymmetry();
+  if (!operation) {
     axis = null;
-    clearSymmetry();
     hintLine('symmetry axis released');
     render();
     return false;
+  }
+  if (pin) {
+    axis = { operation, pin: { ...pin } };
+    logLine(`symmetry axis at ${symmetryAxisLabel()} · k releases`);
+    render();
+    return true;
   }
   const parts = selectedComps();
   let center = editor.cursor;
@@ -54,7 +68,7 @@ export function toggleSymmetryAxis(operation = 'mirrorX') {
   // On a grid or half-grid line: a grid point's mirror image is on the grid.
   const half = GRID / 2;
   axis = { operation, pin: { x: Math.round(center.x / half) * half, y: Math.round(center.y / half) * half } };
-  logLine(`symmetry axis at ${symmetryAxisLabel()}: what is drawn on one side is drawn on the other · | releases`);
+  logLine(`symmetry axis at ${symmetryAxisLabel()}: what is drawn on one side is drawn on the other · k turns it, then releases it`);
   render();
   return true;
 }
@@ -74,7 +88,7 @@ export function mirrorRecordedEdit(startSnapshot) {
   queueMicrotask(() => {
     if (axis !== held || editor.circuit !== circuit) return;
     const done = mirrorEdit(loadDocument(JSON.parse(startSnapshot)), circuit, held);
-    if (!done.added.length && !done.moved.length && !done.removed.length && !done.wires) return;
+    if (!done.added.length && !done.moved.length && !done.removed.length && !done.changed.length && !done.wires) return;
     markModelChanged();
     render();
   });
@@ -82,7 +96,7 @@ export function mirrorRecordedEdit(startSnapshot) {
 
 /** The status bar's line while an axis is held, or null. */
 export function symmetryAxisHint() {
-  return axis ? `AXIS ${symmetryAxisLabel()}: edits are mirrored · | releases` : null;
+  return axis ? `AXIS ${symmetryAxisLabel()}: edits are mirrored · k ${axis.operation === 'mirrorX' ? 'turns it' : 'releases'}` : null;
 }
 
 /** A fresh layer in a newly built canvas, under the editor overlay. */

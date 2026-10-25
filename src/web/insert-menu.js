@@ -4,6 +4,7 @@
  * double-click opens in empty space.
  */
 
+import { symmetryAxis } from './symmetry-axis.js';
 import { Circuit } from '../core/model.js';
 import { getSymbol, symbolTypeNames } from '../core/components/index.js';
 import { symbolCategories } from '../core/components/categories.js';
@@ -114,8 +115,9 @@ export function onInsertKey(key, shiftKey = false) {
   }
 
   // Escape peels one layer at a time: the mirror axis first, so a new one can
-  // be started without losing the ghost, then the ghost, then insert mode.
-  if (editor.symmetry && key === 'Escape') {
+  // be started without losing the ghost, then the ghost, then insert mode. A
+  // held symmetry axis (k) is not peeled: it stays until k releases it.
+  if (editor.symmetry && key === 'Escape' && !symmetryAxis()) {
     clearSymmetry();
     logLine('symmetry axis cleared');
     render();

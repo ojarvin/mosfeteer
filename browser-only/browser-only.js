@@ -40456,7 +40456,7 @@ __exports.mirrorEdit = mirrorEdit;
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let applyTransform; __bind(() => { ({ applyTransform } = __require("src/core/geometry.js")); });
 let transformComponentWorld; __bind(() => { ({ transformComponentWorld } = __require("src/core/model.js")); });
-let captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets; __bind(() => { ({ captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets } = __require("src/core/part-moves.js")); });
+let captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets, setPartValue; __bind(() => { ({ captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets, setPartValue } = __require("src/core/part-moves.js")); });
 /**
  * The symmetry axis: while one is held, an edit on one side of it is made
  * on the other side too, mirrored. Nothing remembers which part is whose
@@ -40468,10 +40468,13 @@ let captureComponentTerminalPositions, captureNetTerminalPositions, componentTer
  * - a part added gets a twin, unless it sits on the axis or one is there;
  * - a part moved, turned, or mirrored has its twin follow, mirrored;
  * - a part removed takes its twin with it;
+ * - a part's value or size changed changes its twin's, and its own labels
+ *   moved move its twin's;
  * - a wire drawn is drawn again, mirrored, from and to the twins of what it
- *   joins, unless it is its own mirror image (a wire across the axis).
+ *   joins, unless it is its own mirror image (a wire across the axis), and a
+ *   wire deleted is deleted there too (a wire moved is both).
  *
- * Wires deleted and labels are left to the hand. An axis is
+ * Net names and free text are left to the hand. An axis is
  * `{ operation, pin }`: 'mirrorX' about the vertical line through `pin`,
  * 'mirrorY' about the horizontal one.
  */
@@ -40613,6 +40616,16 @@ function corners(run) {
   return out;
 }
 
+/** A twin's name: the next in its original's series (CS1's twin is CS2,
+ *  R5's R6), else the first free one of the series; null for a rail
+ *  symbol or a name with no number. */
+function twinName(circuit, refdes) {
+  const match = refdes.match(/^(.*?)(\d+)$/);
+  if (!match || !match[1] || /^(GROUND|SUPPLY|VCM|J)$/.test(match[1])) return null;
+  const next = `${match[1]}${Number(match[2]) + 1}`;
+  return circuit.components.has(next) || circuit.labels.has(next) ? circuit.nextRefdes(match[1]) : next;
+}
+
 /** The pin at a point, as `REF.TERM`, or null. */
 function pinAt(circuit, p) {
   for (const c of circuit.components.values()) {
@@ -40630,7 +40643,7 @@ function pinAt(circuit, p) {
  * that cannot be made is left out, and the rest stands.
  */
 function mirrorEdit(before, circuit, axis) {
-  const done = { added: [], moved: [], removed: [], wires: 0 };
+  const done = { added: [], moved: [], removed: [], changed: [], wires: 0 };
   const was = twins(before, axis);
   const changed = new Set();
   // Parts removed take their twins.
@@ -40670,6 +40683,35 @@ function mirrorEdit(before, circuit, axis) {
       for (const ref of refs) changed.add(ref);
     }
   }
+  // Values, sizes, and own labels changed on a part change its twin's,
+  // unless the edit changed the twin's too.
+  const sameSize = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
+  for (const c of [...circuit.components.values()]) {
+    const old = before.components.get(c.refdes);
+    const twin = was.get(c.refdes);
+    if (!old || !twin || twin === c.refdes || !circuit.components.has(twin) || !before.components.has(twin)) continue;
+    const other = circuit.components.get(twin);
+    const otherOld = before.components.get(twin);
+    try {
+      if (c.value !== old.value && other.value === otherOld.value) { setPartValue(circuit, twin, c.value); done.changed.push(twin); }
+      if (!sameSize(c.size, old.size) && sameSize(other.size, otherOld.size)) { circuit.setComponentSize(twin, c.size ? { ...c.size } : null); done.changed.push(twin); }
+    } catch {
+      // A value or size its twin cannot take is left to the hand.
+    }
+    for (const label of circuit.labels.values()) {
+      if (label.owner !== c.refdes || !label.offset) continue;
+      const was0 = before.labels.get(label.id);
+      if (!was0 || (was0.offset?.x === label.offset.x && was0.offset?.y === label.offset.y && was0.align === label.align)) continue;
+      const mate = [...circuit.labels.values()].find((l) => l.owner === twin && (l.role || null) === (label.role || null));
+      const mateWas = mate && before.labels.get(mate.id);
+      if (!mate || !mateWas || mateWas.offset?.x !== mate.offset?.x || mateWas.offset?.y !== mate.offset?.y || mateWas.align !== mate.align) continue;
+      // The same place on the twin is the mirror image of this one.
+      mate.offset = { ...label.offset };
+      const flip = axis.operation === 'mirrorX' ? { left: 'right', right: 'left' } : {};
+      mate.align = flip[label.align] || label.align;
+      done.changed.push(twin);
+    }
+  }
   // Parts added get twins.
   const now = twins(circuit, axis);
   const added = [...circuit.components.values()].filter((c) => c.type !== 'solder' && !before.components.has(c.refdes));
@@ -40677,6 +40719,7 @@ function mirrorEdit(before, circuit, axis) {
     if (now.has(c.refdes)) continue;
     const t = mirrorTransform(c.transform, axis);
     const twin = circuit.addComponent(c.type, {
+      ...(twinName(circuit, c.refdes) ? { refdes: twinName(circuit, c.refdes) } : {}),
       x: t.x, y: t.y, rotation: t.rotation, mirrorX: t.mirrorX, mirrorY: t.mirrorY,
       ...(c.value !== undefined ? { value: c.value } : {}),
       ...(c.size ? { size: { ...c.size } } : {}),
@@ -40693,6 +40736,34 @@ function mirrorEdit(before, circuit, axis) {
   const skip = new Set(removedAny ? circuit.nets.keys() : []);
   for (const ref of changed) {
     for (const net of circuit.nets.values()) if (net.terminals.some((t) => t.comp === ref)) skip.add(net.id);
+  }
+  // Wire deleted (or moved off) is deleted there too: each segment there
+  // whose every step is the mirror image of a step gone.
+  const skipBefore = new Set(removedAny ? before.nets.keys() : []);
+  for (const ref of changed) {
+    for (const net of before.nets.values()) if (net.terminals.some((t) => t.comp === ref)) skipBefore.add(net.id);
+  }
+  const nowSteps = wireSteps(circuit);
+  const gone = new Set([...wireSteps(before)]
+    .filter(([k, step]) => !nowSteps.has(k) && !skipBefore.has(step.net))
+    .map(([, step]) => [key(mirrorPoint(step.a, axis)), key(mirrorPoint(step.b, axis))].sort().join('-')));
+  if (gone.size) {
+    for (const net of [...circuit.nets.values()]) {
+      const cut = [];
+      net.paths().forEach((path, branch) => {
+        for (let segment = 1; segment < path.length; segment++) {
+          const segmentSteps = wireSteps({ nets: new Map([['s', { id: 's', paths: () => [[path[segment - 1], path[segment]]] }]]) });
+          if (segmentSteps.size && [...segmentSteps.keys()].every((k) => gone.has(k))) cut.push({ branch, segment });
+        }
+      });
+      if (!cut.length) continue;
+      try {
+        circuit.deleteWireSegments(net.id, cut);
+        done.wires += cut.length;
+      } catch {
+        // A mirrored deletion that cannot be made is left to the hand.
+      }
+    }
   }
   const present = () => wireSteps(circuit);
   for (const run of drawnRuns(before, circuit, skip)) {
@@ -40717,7 +40788,7 @@ function mirrorEdit(before, circuit, axis) {
       // A mirrored wire that cannot be drawn is left to the hand.
     }
   }
-  if (done.added.length || done.moved.length || done.removed.length || done.wires) {
+  if (done.added.length || done.moved.length || done.removed.length || done.changed.length || done.wires) {
     circuit.reconnectCoincidentNets();
     circuit.syncJunctionSolders();
   }
@@ -54470,7 +54541,7 @@ let applyLogDrawerEvent, hintLine, logCommand, logLine; __bind(() => { ({ applyL
 let toggleTheme, setGrid, setCrosshair, setGuides; __bind(() => { ({ toggleTheme, setGrid, setCrosshair, setGuides } = __require("src/web/toolbar-ui.js")); });
 let netBeamsShown, setNetBeams; __bind(() => { ({ netBeamsShown, setNetBeams } = __require("src/web/net-beams.js")); });
 let arrangeSuggestionsOn, setArrangeSuggestions; __bind(() => { ({ arrangeSuggestionsOn, setArrangeSuggestions } = __require("src/web/arrange-suggest.js")); });
-let toggleSymmetryAxis; __bind(() => { ({ toggleSymmetryAxis } = __require("src/web/symmetry-axis.js")); });
+let setSymmetryAxis, symmetryAxis; __bind(() => { ({ setSymmetryAxis, symmetryAxis } = __require("src/web/symmetry-axis.js")); });
 let setSidePanelVisible, sidePanelVisible; __bind(() => { ({ setSidePanelVisible, sidePanelVisible } = __require("src/web/side-panel.js")); });
 let toggleAnalysisDock; __bind(() => { ({ toggleAnalysisDock } = __require("src/web/analysis-ui.js")); });
 let addBeatHere, flipSelectedSwitches, openPresenter, stepBeat, toggleBeatStrip, toggleSelectionInBeat; __bind(() => { ({ addBeatHere, flipSelectedSwitches, openPresenter, stepBeat, toggleBeatStrip, toggleSelectionInBeat } = __require("src/web/beats-ui.js")); });
@@ -54627,7 +54698,7 @@ const ACTIONS = {
   stubs: () => stubSelection(),
   swap: () => openSwapPicker(swapTargets()),
   'arrange-like': () => void openArrangePicker(),
-  'symmetry-axis': (direction) => toggleSymmetryAxis(/^h/i.test(direction || '') ? 'mirrorY' : 'mirrorX'),
+  'symmetry-axis': (direction) => setSymmetryAxis(/^off/i.test(direction || '') || (!direction && symmetryAxis()) ? null : /^h/i.test(direction || '') ? 'mirrorY' : 'mirrorX'),
   repeat: () => repeatLastAction(),
   tidy: () => tidyNow(),
   edit: () => editSelectionText(),
@@ -54914,7 +54985,7 @@ const EDITOR_COMMANDS = [
   { name: 'clear-highlights', aliases: ['uncolor', 'remove-highlights'], canvas: true, help: 'remove all net highlights (8)' },
   { name: 'stubs', aliases: ['wire-stubs'], canvas: true, help: 'labeled wire stubs on the selected parts\' unconnected pins (Space)' },
   { name: 'swap', aliases: ['change-type', 'replace-part'], canvas: true, help: 'change the selected parts\' type, keeping their wiring (q)' },
-  { name: 'symmetry-axis', aliases: ['axis', 'mirror-axis', 'symmetric'], canvas: true, help: 'hold a symmetry axis through the selection (horizontal: a horizontal one); what is drawn on one side is drawn on the other (|)' },
+  { name: 'symmetry-axis', aliases: ['axis', 'mirror-axis', 'symmetric'], canvas: true, help: 'symmetry-axis [vertical|horizontal|off]: hold an axis through the selection; what is drawn on one side is drawn on the other (k)' },
   { name: 'arrange-like', aliases: ['arrange-as', 'draw-like', 'redraw-like'], canvas: true, help: 'draw the selected parts as another drawing of them does (Shift+Q)' },
   { name: 'tidy', aliases: ['clean-up', 'cleanup', 'neaten', 'straighten'], canvas: true, help: 're-lay the selection\'s nets and move its crowded labels clear (Shift+T)' },
   { name: 'repeat', aliases: ['again'], canvas: true, help: 'repeat the last rotate, mirror, swap, rail, or stubs (.)' },
@@ -63681,6 +63752,7 @@ __exports.openQuickAdd = openQuickAdd;
 __exports.closeQuickAdd = closeQuickAdd;
 __exports.openSwapPicker = openSwapPicker;
 __exports.swapParts = swapParts;
+let symmetryAxis; __bind(() => { ({ symmetryAxis } = __require("src/web/symmetry-axis.js")); });
 let Circuit; __bind(() => { ({ Circuit } = __require("src/core/model.js")); });
 let getSymbol, symbolTypeNames; __bind(() => { ({ getSymbol, symbolTypeNames } = __require("src/core/components/index.js")); });
 let symbolCategories; __bind(() => { ({ symbolCategories } = __require("src/core/components/categories.js")); });
@@ -63701,6 +63773,7 @@ let activatePlace, applyJson, clearSymmetry, commit, rememberAction, setSelectio
  * categories, and recent placements, and the quick-add menu a pin drag or a
  * double-click opens in empty space.
  */
+
 
 
 
@@ -63812,8 +63885,9 @@ function onInsertKey(key, shiftKey = false) {
   }
 
   // Escape peels one layer at a time: the mirror axis first, so a new one can
-  // be started without losing the ghost, then the ghost, then insert mode.
-  if (editor.symmetry && key === 'Escape') {
+  // be started without losing the ghost, then the ghost, then insert mode. A
+  // held symmetry axis (k) is not peeled: it stays until k releases it.
+  if (editor.symmetry && key === 'Escape' && !symmetryAxis()) {
     clearSymmetry();
     logLine('symmetry axis cleared');
     render();
@@ -65754,7 +65828,7 @@ let onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickA
 let openArrangePicker; __bind(() => { ({ openArrangePicker } = __require("src/web/arrange-ui.js")); });
 let toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi; __bind(() => { ({ toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } = __require("src/web/toolbar-ui.js")); });
 let installNetBeams, mountNetBeams, syncNetBeams; __bind(() => { ({ installNetBeams, mountNetBeams, syncNetBeams } = __require("src/web/net-beams.js")); });
-let axisPlacement, mirrorRecordedEdit, mountSymmetryAxis, syncSymmetryAxis, toggleSymmetryAxis; __bind(() => { ({ axisPlacement, mirrorRecordedEdit, mountSymmetryAxis, syncSymmetryAxis, toggleSymmetryAxis } = __require("src/web/symmetry-axis.js")); });
+let axisPlacement, cycleSymmetryAxis, mirrorRecordedEdit, mountSymmetryAxis, syncSymmetryAxis; __bind(() => { ({ axisPlacement, cycleSymmetryAxis, mirrorRecordedEdit, mountSymmetryAxis, syncSymmetryAxis } = __require("src/web/symmetry-axis.js")); });
 let acceptArrangeSuggestion, dismissArrangeSuggestion, installArrangeSuggestions, mountArrangeSuggestion, noteDrawingEdit, noteDrawingReplaced, syncArrangeSuggestion; __bind(() => { ({ acceptArrangeSuggestion, dismissArrangeSuggestion, installArrangeSuggestions, mountArrangeSuggestion, noteDrawingEdit, noteDrawingReplaced, syncArrangeSuggestion } = __require("src/web/arrange-suggest.js")); });
 let shortNetsAtPlacedSolder, askNameForNewNetNameConflict; __bind(() => { ({ shortNetsAtPlacedSolder, askNameForNewNetNameConflict } = __require("src/web/net-names.js")); });
 let installRenumberUi; __bind(() => { ({ installRenumberUi } = __require("src/web/renumber-ui.js")); });
@@ -72559,9 +72633,10 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
-  // |: hold a symmetry axis (or release it): edits are mirrored about it.
-  if (key === '|') {
-    toggleSymmetryAxis();
+  // k: hold a vertical symmetry axis, turn it horizontal, release it: edits
+  // are mirrored about it.
+  if (key === 'k') {
+    cycleSymmetryAxis();
     return;
   }
 
@@ -83651,7 +83726,8 @@ function installSwitchedCapUi() {
 __modules["src/web/symmetry-axis.js"] = function (__require, __exports) {
 __exports.symmetryAxis = symmetryAxis;
 __exports.symmetryAxisLabel = symmetryAxisLabel;
-__exports.toggleSymmetryAxis = toggleSymmetryAxis;
+__exports.cycleSymmetryAxis = cycleSymmetryAxis;
+__exports.setSymmetryAxis = setSymmetryAxis;
 __exports.axisPlacement = axisPlacement;
 __exports.mirrorRecordedEdit = mirrorRecordedEdit;
 __exports.symmetryAxisHint = symmetryAxisHint;
@@ -83665,7 +83741,7 @@ let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); 
 let clearSymmetry, markModelChanged, render, selectedComps; __bind(() => { ({ clearSymmetry, markModelChanged, render, selectedComps } = __require("src/web/main.js")); });
 let hintLine, logLine; __bind(() => { ({ hintLine, logLine } = __require("src/web/status-bar-ui.js")); });
 /**
- * The symmetry axis (`|`, `:symmetry-axis`): an axis held until released,
+ * The symmetry axis (`k`, `:symmetry-axis`): an axis held until released,
  * about which every edit is mirrored (core/symmetry.js mirrorEdit). It goes
  * through the middle of the selection, or the cursor, on a grid or a
  * half-grid line, so mirror images stay on the grid. While it is held a
@@ -83697,15 +83773,29 @@ function symmetryAxisLabel(held = axis) {
   return held.operation === 'mirrorX' ? `x=${held.pin.x}` : `y=${held.pin.y}`;
 }
 
-/** Hold an axis ('mirrorX': vertical, 'mirrorY': horizontal) through the
- *  middle of the selected parts, else the cursor; with one held, release it. */
-function toggleSymmetryAxis(operation = 'mirrorX') {
-  if (axis) {
+/** k: hold a vertical axis, then turn it horizontal (about the same
+ *  point), then release it. */
+function cycleSymmetryAxis() {
+  if (!axis) return setSymmetryAxis('mirrorX');
+  if (axis.operation === 'mirrorX') return setSymmetryAxis('mirrorY', axis.pin);
+  return setSymmetryAxis(null);
+}
+
+/** Hold an axis ('mirrorX': vertical, 'mirrorY': horizontal) through `pin`,
+ *  else the middle of the selected parts, else the cursor; null releases it. */
+function setSymmetryAxis(operation, pin = null) {
+  clearSymmetry();
+  if (!operation) {
     axis = null;
-    clearSymmetry();
     hintLine('symmetry axis released');
     render();
     return false;
+  }
+  if (pin) {
+    axis = { operation, pin: { ...pin } };
+    logLine(`symmetry axis at ${symmetryAxisLabel()} · k releases`);
+    render();
+    return true;
   }
   const parts = selectedComps();
   let center = editor.cursor;
@@ -83720,7 +83810,7 @@ function toggleSymmetryAxis(operation = 'mirrorX') {
   // On a grid or half-grid line: a grid point's mirror image is on the grid.
   const half = GRID / 2;
   axis = { operation, pin: { x: Math.round(center.x / half) * half, y: Math.round(center.y / half) * half } };
-  logLine(`symmetry axis at ${symmetryAxisLabel()}: what is drawn on one side is drawn on the other · | releases`);
+  logLine(`symmetry axis at ${symmetryAxisLabel()}: what is drawn on one side is drawn on the other · k turns it, then releases it`);
   render();
   return true;
 }
@@ -83740,7 +83830,7 @@ function mirrorRecordedEdit(startSnapshot) {
   queueMicrotask(() => {
     if (axis !== held || editor.circuit !== circuit) return;
     const done = mirrorEdit(loadDocument(JSON.parse(startSnapshot)), circuit, held);
-    if (!done.added.length && !done.moved.length && !done.removed.length && !done.wires) return;
+    if (!done.added.length && !done.moved.length && !done.removed.length && !done.changed.length && !done.wires) return;
     markModelChanged();
     render();
   });
@@ -83748,7 +83838,7 @@ function mirrorRecordedEdit(startSnapshot) {
 
 /** The status bar's line while an axis is held, or null. */
 function symmetryAxisHint() {
-  return axis ? `AXIS ${symmetryAxisLabel()}: edits are mirrored · | releases` : null;
+  return axis ? `AXIS ${symmetryAxisLabel()}: edits are mirrored · k ${axis.operation === 'mirrorX' ? 'turns it' : 'releases'}` : null;
 }
 
 /** A fresh layer in a newly built canvas, under the editor overlay. */
@@ -85413,7 +85503,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['dd', 'delete the selected object set'],
     ['q', 'change the type of the selected parts (nmos to pmos, R to C); wiring stays'],
     ['g / v (on a pin)', 'wire a ground / supply to the unconnected pin under the cursor'],
-    ['|', 'hold a symmetry axis through the selection or the cursor (again releases it): what is drawn on one side is drawn on the other'],
+    ['k', 'hold a vertical symmetry axis through the selection or the cursor; again turns it horizontal, again releases it: what is drawn on one side is drawn on the other'],
     ['Shift+Q', 'arrange the selected parts like another drawing of them: this design, the workspace, or a built-in one'],
     ['Shift+T', 'tidy the selection: re-lay its nets fresh and move its crowded labels clear, as one undo'],
     ['o', 'show or hide the selected part\'s linked design beside the drawing'],

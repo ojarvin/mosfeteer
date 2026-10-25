@@ -9,10 +9,13 @@
  * - a part added gets a twin, unless it sits on the axis or one is there;
  * - a part moved, turned, or mirrored has its twin follow, mirrored;
  * - a part removed takes its twin with it;
+ * - a part's value or size changed changes its twin's, and its own labels
+ *   moved move its twin's;
  * - a wire drawn is drawn again, mirrored, from and to the twins of what it
- *   joins, unless it is its own mirror image (a wire across the axis).
+ *   joins, unless it is its own mirror image (a wire across the axis), and a
+ *   wire deleted is deleted there too (a wire moved is both).
  *
- * Wires deleted and labels are left to the hand. An axis is
+ * Net names and free text are left to the hand. An axis is
  * `{ operation, pin }`: 'mirrorX' about the vertical line through `pin`,
  * 'mirrorY' about the horizontal one.
  */
@@ -20,7 +23,7 @@
 import { GRID } from './grid.js';
 import { applyTransform } from './geometry.js';
 import { transformComponentWorld } from './model.js';
-import { captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets } from './part-moves.js';
+import { captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets, setPartValue } from './part-moves.js';
 
 const key = (p) => `${p.x},${p.y}`;
 
@@ -154,6 +157,16 @@ function corners(run) {
   return out;
 }
 
+/** A twin's name: the next in its original's series (CS1's twin is CS2,
+ *  R5's R6), else the first free one of the series; null for a rail
+ *  symbol or a name with no number. */
+function twinName(circuit, refdes) {
+  const match = refdes.match(/^(.*?)(\d+)$/);
+  if (!match || !match[1] || /^(GROUND|SUPPLY|VCM|J)$/.test(match[1])) return null;
+  const next = `${match[1]}${Number(match[2]) + 1}`;
+  return circuit.components.has(next) || circuit.labels.has(next) ? circuit.nextRefdes(match[1]) : next;
+}
+
 /** The pin at a point, as `REF.TERM`, or null. */
 function pinAt(circuit, p) {
   for (const c of circuit.components.values()) {
@@ -171,7 +184,7 @@ function pinAt(circuit, p) {
  * that cannot be made is left out, and the rest stands.
  */
 export function mirrorEdit(before, circuit, axis) {
-  const done = { added: [], moved: [], removed: [], wires: 0 };
+  const done = { added: [], moved: [], removed: [], changed: [], wires: 0 };
   const was = twins(before, axis);
   const changed = new Set();
   // Parts removed take their twins.
@@ -211,6 +224,35 @@ export function mirrorEdit(before, circuit, axis) {
       for (const ref of refs) changed.add(ref);
     }
   }
+  // Values, sizes, and own labels changed on a part change its twin's,
+  // unless the edit changed the twin's too.
+  const sameSize = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
+  for (const c of [...circuit.components.values()]) {
+    const old = before.components.get(c.refdes);
+    const twin = was.get(c.refdes);
+    if (!old || !twin || twin === c.refdes || !circuit.components.has(twin) || !before.components.has(twin)) continue;
+    const other = circuit.components.get(twin);
+    const otherOld = before.components.get(twin);
+    try {
+      if (c.value !== old.value && other.value === otherOld.value) { setPartValue(circuit, twin, c.value); done.changed.push(twin); }
+      if (!sameSize(c.size, old.size) && sameSize(other.size, otherOld.size)) { circuit.setComponentSize(twin, c.size ? { ...c.size } : null); done.changed.push(twin); }
+    } catch {
+      // A value or size its twin cannot take is left to the hand.
+    }
+    for (const label of circuit.labels.values()) {
+      if (label.owner !== c.refdes || !label.offset) continue;
+      const was0 = before.labels.get(label.id);
+      if (!was0 || (was0.offset?.x === label.offset.x && was0.offset?.y === label.offset.y && was0.align === label.align)) continue;
+      const mate = [...circuit.labels.values()].find((l) => l.owner === twin && (l.role || null) === (label.role || null));
+      const mateWas = mate && before.labels.get(mate.id);
+      if (!mate || !mateWas || mateWas.offset?.x !== mate.offset?.x || mateWas.offset?.y !== mate.offset?.y || mateWas.align !== mate.align) continue;
+      // The same place on the twin is the mirror image of this one.
+      mate.offset = { ...label.offset };
+      const flip = axis.operation === 'mirrorX' ? { left: 'right', right: 'left' } : {};
+      mate.align = flip[label.align] || label.align;
+      done.changed.push(twin);
+    }
+  }
   // Parts added get twins.
   const now = twins(circuit, axis);
   const added = [...circuit.components.values()].filter((c) => c.type !== 'solder' && !before.components.has(c.refdes));
@@ -218,6 +260,7 @@ export function mirrorEdit(before, circuit, axis) {
     if (now.has(c.refdes)) continue;
     const t = mirrorTransform(c.transform, axis);
     const twin = circuit.addComponent(c.type, {
+      ...(twinName(circuit, c.refdes) ? { refdes: twinName(circuit, c.refdes) } : {}),
       x: t.x, y: t.y, rotation: t.rotation, mirrorX: t.mirrorX, mirrorY: t.mirrorY,
       ...(c.value !== undefined ? { value: c.value } : {}),
       ...(c.size ? { size: { ...c.size } } : {}),
@@ -234,6 +277,34 @@ export function mirrorEdit(before, circuit, axis) {
   const skip = new Set(removedAny ? circuit.nets.keys() : []);
   for (const ref of changed) {
     for (const net of circuit.nets.values()) if (net.terminals.some((t) => t.comp === ref)) skip.add(net.id);
+  }
+  // Wire deleted (or moved off) is deleted there too: each segment there
+  // whose every step is the mirror image of a step gone.
+  const skipBefore = new Set(removedAny ? before.nets.keys() : []);
+  for (const ref of changed) {
+    for (const net of before.nets.values()) if (net.terminals.some((t) => t.comp === ref)) skipBefore.add(net.id);
+  }
+  const nowSteps = wireSteps(circuit);
+  const gone = new Set([...wireSteps(before)]
+    .filter(([k, step]) => !nowSteps.has(k) && !skipBefore.has(step.net))
+    .map(([, step]) => [key(mirrorPoint(step.a, axis)), key(mirrorPoint(step.b, axis))].sort().join('-')));
+  if (gone.size) {
+    for (const net of [...circuit.nets.values()]) {
+      const cut = [];
+      net.paths().forEach((path, branch) => {
+        for (let segment = 1; segment < path.length; segment++) {
+          const segmentSteps = wireSteps({ nets: new Map([['s', { id: 's', paths: () => [[path[segment - 1], path[segment]]] }]]) });
+          if (segmentSteps.size && [...segmentSteps.keys()].every((k) => gone.has(k))) cut.push({ branch, segment });
+        }
+      });
+      if (!cut.length) continue;
+      try {
+        circuit.deleteWireSegments(net.id, cut);
+        done.wires += cut.length;
+      } catch {
+        // A mirrored deletion that cannot be made is left to the hand.
+      }
+    }
   }
   const present = () => wireSteps(circuit);
   for (const run of drawnRuns(before, circuit, skip)) {
@@ -258,7 +329,7 @@ export function mirrorEdit(before, circuit, axis) {
       // A mirrored wire that cannot be drawn is left to the hand.
     }
   }
-  if (done.added.length || done.moved.length || done.removed.length || done.wires) {
+  if (done.added.length || done.moved.length || done.removed.length || done.changed.length || done.wires) {
     circuit.reconnectCoincidentNets();
     circuit.syncJunctionSolders();
   }
