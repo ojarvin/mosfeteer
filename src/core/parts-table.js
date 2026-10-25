@@ -15,7 +15,7 @@ import { GRID, ceilGrid } from './grid.js';
 import { MOS_SIZE_TYPES } from './mos-size.js';
 import { parseLabelRuns } from './model.js';
 import { newFigureId, placeFigure, settlePlaced } from './figures.js';
-import { labelFontSize } from './style.js';
+import { TABLE_RULE_ROOM_EM, labelFontSize } from './style.js';
 import { THIN_SPACE, VALUE_TYPES, valueText } from './part-value.js';
 
 export { VALUE_TYPES, valueText };
@@ -140,7 +140,9 @@ export function partsTableLayout(circuit, table, { width = 'normal' } = {}) {
     return { kind: partKind(component), cells, name: parseLabelRuns(nameMarkup(cells.name)) };
   });
   const items = [];
-  const baseline = (row) => row * ROW_PITCH + ROW_PITCH / 2 + fontSize * 0.35;
+  // The room the rules above take, past whole rows.
+  let top = 0;
+  const baseline = (row) => top + row * ROW_PITCH + ROW_PITCH / 2 + fontSize * 0.35;
   if (!rows.length) {
     const runs = [{ text: 'No sized parts' }];
     items.push({ type: 'text', x: 0, y: baseline(0), runs, anchor: 'start', role: 'head' });
@@ -170,9 +172,11 @@ export function partsTableLayout(circuit, table, { width = 'normal' } = {}) {
     block.columns.forEach(([head], index) => {
       items.push({ type: 'text', x: rights[index], y: baseline(row), runs: [{ text: head }], anchor: 'end', role: 'head' });
     });
-    // On the edge between the header's band and the first row's, as a math
-    // table's rules lie (render.js TABLE_BAND_EM).
-    items.push({ type: 'rule', x1: 0, x2: x, y: (row + 1) * ROW_PITCH });
+    // Between the header's band and the first row's, in the middle of the
+    // room it takes (TABLE_RULE_ROOM_EM), as a math table's rules are.
+    const room = TABLE_RULE_ROOM_EM * fontSize;
+    items.push({ type: 'rule', x1: 0, x2: x, y: top + (row + 1) * ROW_PITCH + room / 2 });
+    top += room;
     row += 1;
     for (const r of block.rows) {
       items.push({ type: 'text', x: 0, y: baseline(row), runs: r.name, anchor: 'start', role: 'name' });
@@ -184,7 +188,7 @@ export function partsTableLayout(circuit, table, { width = 'normal' } = {}) {
     // The next block starts a cell lower.
     if (block !== blocks.at(-1)) row += BLOCK_GAP / ROW_PITCH;
   }
-  return { w: ceilGrid(tableWidth), h: ceilGrid(row * ROW_PITCH), items };
+  return { w: ceilGrid(tableWidth), h: ceilGrid(top + row * ROW_PITCH), items };
 }
 
 /** A parts table's figure identity (figures.js): which parts it lists. */

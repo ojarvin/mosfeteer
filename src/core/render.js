@@ -1,7 +1,7 @@
 import { applyTransform, fmt, transformRect, transformToSvg } from './geometry.js';
 import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute } from './router.js';
-import { escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } from './style.js';
+import { TABLE_RULE_ROOM_EM, escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } from './style.js';
 import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } from './model.js';
 import { TIMING_ARROWHEAD, arrowheadEnds, curvedArrowGeometry, defaultArrowhead, polylineArrowheads } from './line-style.js';
 import { hiddenSupplyBarLabels, supplyBars } from './supply-bars.js';
@@ -254,7 +254,8 @@ const MATH_LABEL_STROKE = '0.02em';
 const MATH_RULE_EM = 0.09;
 /** A table row's band, in em: two grid cells at the normal label size, the
  *  parts table's row pitch. Text is centered in it (its caps' middle at the
- *  band's), and a rule lies on the edge between two bands. */
+ *  band's); a rule lies between two bands, in the middle of its own room
+ *  (style.js TABLE_RULE_ROOM_EM). */
 const TABLE_BAND_EM = 1.75;
 const MATH_FONT_FAMILY = "'Latin Modern Math','Computer Modern','CMU Serif','STIX Two Math','Cambria Math','DejaVu Serif',serif";
 
@@ -644,8 +645,9 @@ function mathTableHtml(rows, columns, justify) {
   const lines = rows.map((line) => (line.trim() === '\\hline' ? null : mathCells(line)));
   const count = Math.max(1, ...lines.map((row) => row?.length || 0));
   const alignOf = (index) => ({ l: 'flex-start', c: 'center', r: 'flex-end' }[(columns || 'rl'.repeat(count))[index]] || 'flex-start');
-  // A table's rows are bands (TABLE_BAND_EM) touching; an aligned
-  // equation's lines are a line high and a little apart.
+  // A table's rows are bands (TABLE_BAND_EM), a rule between two of them in
+  // the middle of a little room of its own (TABLE_RULE_ROOM_EM); an aligned
+  // equation's lines are a line high and a little apart, a rule in the gap.
   const gap = columns ? '0em' : '0.3em';
   // A table's cells share their row's baseline, as TeX's do. A strut in
   // each row (as TeX's, 1 em above the baseline and 0.3 below, with the
@@ -657,26 +659,34 @@ function mathTableHtml(rows, columns, justify) {
     ? `<div class="schematic-math-strut" style="grid-row:${row};grid-column:1;display:flex;align-items:baseline;width:0;padding:${air}em 0;"><math xmlns="http://www.w3.org/1998/Math/MathML"><mspace width="0" height="1em" depth="0.3em"/></math></div>`
     : '');
   const cell = (style, tex) => `<div class="schematic-math-line" style="display:flex;align-items:baseline;padding:${air}em 0;${style}">${tex.trim() ? texToMathML(tex) : ''}</div>`;
+  const rule = (style) => `<div class="schematic-math-rule" style="grid-column:1 / -1;${style}position:relative;border-top:${MATH_RULE_EM}em solid currentColor;"></div>`;
+  // Each line's grid row, and each row's height.
+  const tracks = [];
   const textRows = lines.filter(Boolean).length;
-  let row = 0;
+  let texts = 0;
   const body = lines.map((line) => {
     if (!line) {
-      // A rule takes no room: it lies on the edge between two rows (under
-      // the last one, at the end), in the middle of any gap there.
-      const after = row < textRows;
+      if (columns) {
+        tracks.push(`${TABLE_RULE_ROOM_EM}em`);
+        return rule(`grid-row:${tracks.length};align-self:center;`);
+      }
+      // In an aligned equation a rule takes no room: it lies in the middle
+      // of the gap above the next line (under the last one, at the end).
+      const after = texts < textRows;
       const shift = `calc((${gap} + ${MATH_RULE_EM}em) / 2)`;
-      const place = after
-        ? `grid-row:${row + 1};align-self:start;top:calc(-1 * ${shift});`
-        : `grid-row:${Math.max(1, row)};align-self:end;top:${shift};`;
-      return `<div class="schematic-math-rule" style="grid-column:1 / -1;${place}position:relative;border-top:${MATH_RULE_EM}em solid currentColor;"></div>`;
+      return rule(after
+        ? `grid-row:${tracks.length + 1};align-self:start;top:calc(-1 * ${shift});`
+        : `grid-row:${Math.max(1, tracks.length)};align-self:end;top:${shift};`);
     }
-    row += 1;
+    texts += 1;
+    tracks.push(`minmax(${columns ? `${TABLE_BAND_EM}em` : '1.2em'},auto)`);
+    const row = tracks.length;
     const cells = line.length === 1
       ? cell(`grid-row:${row};grid-column:1 / -1;justify-content:${justify};`, line[0])
       : Array.from({ length: count }, (_, index) => cell(`grid-row:${row};grid-column:${index + 1};justify-content:${alignOf(index)};`, line[index] ?? '')).join('');
     return strut(row) + cells;
   }).join('');
-  return `<div class="schematic-math-table" style="display:grid;grid-template-columns:repeat(${count},max-content);grid-auto-rows:minmax(${columns ? `${TABLE_BAND_EM}em` : '1.2em'},auto);column-gap:${columns ? '1.2em' : '0'};row-gap:${gap};align-items:baseline;justify-content:${justify};">${body}</div>`;
+  return `<div class="schematic-math-table" style="display:grid;grid-template-columns:repeat(${count},max-content);grid-template-rows:${tracks.join(' ') || 'auto'};column-gap:${columns ? '1.2em' : '0'};row-gap:${gap};align-items:baseline;justify-content:${justify};">${body}</div>`;
 }
 
 function mathLabelSvg(label, opacity = '', ink = null) {

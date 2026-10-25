@@ -11,7 +11,7 @@ import { SOURCE_WAVEFORMS, WAVEFORM_TYPES } from './components/current.js';
 import { balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
 import { collapseCollinear } from './wireedit.js';
 import { busGroupName, busGroupsWithin, busWidth, isBusName, netNameParts, netNameSpelling, netNamesConnect } from './bus.js';
-import { LABEL_FONT_SIZES, labelFontSize, strokeWidth } from './style.js';
+import { LABEL_FONT_SIZES, TABLE_RULE_ROOM_EM, labelFontSize, strokeWidth } from './style.js';
 import { cloneLiteralPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 import { curvedArrowGeometry, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue, timingBreakGeometry } from './line-style.js';
 import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } from './beats.js';
@@ -1471,8 +1471,8 @@ export class LabelInstance {
       // edges (render.js mathTableHtml); an aligned equation's lines are
       // apart, its rules thin.
       if (rows && this.columns) {
-        const band = 1.75 * labelFontSize(this.style?.width);
-        return rows.reduce((height, cells) => height + (cells ? Math.max(band, lineHeight(cells.join(' '))) : 0), 0);
+        const em = labelFontSize(this.style?.width);
+        return rows.reduce((height, cells) => height + (cells ? Math.max(1.75 * em, lineHeight(cells.join(' '))) : TABLE_RULE_ROOM_EM * em), 0);
       }
       if (rows) return rows.reduce((height, cells) => height + (cells ? lineHeight(cells.join(' ')) : LABEL_CAP_H * 0.6), 0)
         + (rows.length - 1) * 0.3 * labelFontSize(this.style?.width);

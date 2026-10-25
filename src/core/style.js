@@ -156,3 +156,8 @@ export function styleAttrs(style = {}, base = 'symbol', miterLimit) {
     : null;
   return dash ? `${attrs} stroke-dasharray="${dash}"` : attrs;
 }
+
+/** The room a table's rule takes between two rows, in em of the table's
+ *  text, shared above and below it: the parts table's (parts-table.js) and
+ *  the math tables' (render.js mathTableHtml). */
+export const TABLE_RULE_ROOM_EM = 0.4;
