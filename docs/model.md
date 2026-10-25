@@ -136,8 +136,12 @@ cells from its top-left corner), never resized by hand; anywhere on it
 picks it. It is set as the math tables are (the equations, the kT/C
 noise): all in the math font, headers upright as text, names italic as
 math with their digits upright (M_1), numbers and units upright (`400 nm`,
-a thin space between), and rules as thick as a table's `\hline`. A math
-table's cells share their row's baseline, as TeX's do. A passive's or
+a thin space between), and rules as thick as a table's `\hline`. All
+tables space alike: each row a band 1.75 em tall (two grid cells at the
+normal label size; the parts table's `ROW_PITCH`), its text's caps centered
+in it, a rule on the edge between two bands, taking no room of its own. A
+math table's cells share their row's baseline, as TeX's do; a row taller
+than its band (a fraction) grows. A passive's or
 source's value takes its unit (`valueText`: Ω, F, H, A, V; the number as
 typed, `1.5n` reads 1.5 nF), and a value that is not a number reads as
 typed; each column is as

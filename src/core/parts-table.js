@@ -170,7 +170,9 @@ export function partsTableLayout(circuit, table, { width = 'normal' } = {}) {
     block.columns.forEach(([head], index) => {
       items.push({ type: 'text', x: rights[index], y: baseline(row), runs: [{ text: head }], anchor: 'end', role: 'head' });
     });
-    items.push({ type: 'rule', x1: 0, x2: x, y: (row + 1) * ROW_PITCH - GRID / 4 });
+    // On the edge between the header's band and the first row's, as a math
+    // table's rules lie (render.js TABLE_BAND_EM).
+    items.push({ type: 'rule', x1: 0, x2: x, y: (row + 1) * ROW_PITCH });
     row += 1;
     for (const r of block.rows) {
       items.push({ type: 'text', x: 0, y: baseline(row), runs: r.name, anchor: 'start', role: 'name' });

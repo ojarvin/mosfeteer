@@ -1467,9 +1467,15 @@ export class LabelInstance {
         return LABEL_CAP_H * 1.7;
       };
       const rows = this.mathTableRows();
-      // A table's rows are apart (render.js mathTableHtml); a rule is thin.
+      // A table's rows are bands 1.75 em tall at least, its rules on their
+      // edges (render.js mathTableHtml); an aligned equation's lines are
+      // apart, its rules thin.
+      if (rows && this.columns) {
+        const band = 1.75 * labelFontSize(this.style?.width);
+        return rows.reduce((height, cells) => height + (cells ? Math.max(band, lineHeight(cells.join(' '))) : 0), 0);
+      }
       if (rows) return rows.reduce((height, cells) => height + (cells ? lineHeight(cells.join(' ')) : LABEL_CAP_H * 0.6), 0)
-        + (rows.length - 1) * (this.columns ? 0.55 : 0.3) * labelFontSize(this.style?.width);
+        + (rows.length - 1) * 0.3 * labelFontSize(this.style?.width);
       return source.split(/\r?\n/).reduce((height, line) => height + lineHeight(line), 0);
     }
     return Math.max(1, this.text.split('\n').length) * LABEL_CAP_H;
