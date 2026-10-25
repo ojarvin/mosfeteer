@@ -99,6 +99,7 @@ export const EDITOR_COMMANDS = [
   { name: 'clear-highlights', aliases: ['uncolor', 'remove-highlights'], canvas: true, help: 'remove all net highlights (8)' },
   { name: 'stubs', aliases: ['wire-stubs'], canvas: true, help: 'labeled wire stubs on the selected parts\' unconnected pins (Space)' },
   { name: 'swap', aliases: ['change-type', 'replace-part'], canvas: true, help: 'change the selected parts\' type, keeping their wiring (q)' },
+  { name: 'symmetry-axis', aliases: ['axis', 'mirror-axis', 'symmetric'], canvas: true, help: 'hold a symmetry axis through the selection (horizontal: a horizontal one); what is drawn on one side is drawn on the other (|)' },
   { name: 'arrange-like', aliases: ['arrange-as', 'draw-like', 'redraw-like'], canvas: true, help: 'draw the selected parts as another drawing of them does (Shift+Q)' },
   { name: 'tidy', aliases: ['clean-up', 'cleanup', 'neaten', 'straighten'], canvas: true, help: 're-lay the selection\'s nets and move its crowded labels clear (Shift+T)' },
   { name: 'repeat', aliases: ['again'], canvas: true, help: 'repeat the last rotate, mirror, swap, rail, or stubs (.)' },

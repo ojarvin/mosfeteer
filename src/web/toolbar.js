@@ -219,6 +219,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['dd', 'delete the selected object set'],
     ['q', 'change the type of the selected parts (nmos to pmos, R to C); wiring stays'],
     ['g / v (on a pin)', 'wire a ground / supply to the unconnected pin under the cursor'],
+    ['|', 'hold a symmetry axis through the selection or the cursor (again releases it): what is drawn on one side is drawn on the other'],
     ['Shift+Q', 'arrange the selected parts like another drawing of them: this design, the workspace, or a built-in one'],
     ['Shift+T', 'tidy the selection: re-lay its nets fresh and move its crowded labels clear, as one undo'],
     ['o', 'show or hide the selected part\'s linked design beside the drawing'],

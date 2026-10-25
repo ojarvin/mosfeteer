@@ -12,6 +12,7 @@ import { applyLogDrawerEvent, hintLine, logCommand, logLine } from './status-bar
 import { toggleTheme, setGrid, setCrosshair, setGuides } from './toolbar-ui.js';
 import { netBeamsShown, setNetBeams } from './net-beams.js';
 import { arrangeSuggestionsOn, setArrangeSuggestions } from './arrange-suggest.js';
+import { toggleSymmetryAxis } from './symmetry-axis.js';
 import { setSidePanelVisible, sidePanelVisible } from './side-panel.js';
 import { toggleAnalysisDock } from './analysis-ui.js';
 import { addBeatHere, flipSelectedSwitches, openPresenter, stepBeat, toggleBeatStrip, toggleSelectionInBeat } from './beats-ui.js';
@@ -133,6 +134,7 @@ export const ACTIONS = {
   stubs: () => stubSelection(),
   swap: () => openSwapPicker(swapTargets()),
   'arrange-like': () => void openArrangePicker(),
+  'symmetry-axis': (direction) => toggleSymmetryAxis(/^h/i.test(direction || '') ? 'mirrorY' : 'mirrorX'),
   repeat: () => repeatLastAction(),
   tidy: () => tidyNow(),
   edit: () => editSelectionText(),

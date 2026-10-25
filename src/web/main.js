@@ -82,6 +82,7 @@ import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQ
 import { openArrangePicker } from './arrange-ui.js';
 import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } from './toolbar-ui.js';
 import { installNetBeams, mountNetBeams, syncNetBeams } from './net-beams.js';
+import { axisPlacement, mirrorRecordedEdit, mountSymmetryAxis, syncSymmetryAxis, toggleSymmetryAxis } from './symmetry-axis.js';
 import { acceptArrangeSuggestion, dismissArrangeSuggestion, installArrangeSuggestions, mountArrangeSuggestion, noteDrawingEdit, noteDrawingReplaced, syncArrangeSuggestion } from './arrange-suggest.js';
 import { shortNetsAtPlacedSolder, askNameForNewNetNameConflict } from './net-names.js';
 import { installRenumberUi } from './renumber-ui.js';
@@ -620,6 +621,7 @@ export function recordHistoryEntry(startSnapshot, trim = true, feedback = 'now')
   queueCommitFeedback(startSnapshot, feedback);
   askNameForNewNetNameConflict(startSnapshot);
   noteDrawingEdit();
+  mirrorRecordedEdit(startSnapshot);
 }
 
 // ----- commit feedback ----------------------------------------------------
@@ -2905,6 +2907,7 @@ export function renderCanvas(modelKey) {
     overlayEl = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     overlayEl.setAttribute('class', 'editor-overlay');
     canvasSvgEl.appendChild(overlayEl);
+    mountSymmetryAxis(canvasSvgEl);
     mountArrangeSuggestion(canvasSvgEl);
     mountNetBeams(canvasSvgEl);
     // The snap pulse lives outside the per-frame overlay so its animation
@@ -2957,6 +2960,8 @@ export function renderCanvas(modelKey) {
             }
           })()
       : undefined;
+  // A held symmetry axis is the axis a part being placed is mirrored about.
+  if (!symmetry && mode === 'insert' && pendingPlace?.kind === 'component') symmetry = axisPlacement();
   syncSymmetryOperation();
   const ghostTwin = ghost?.def ? (() => {
     const twin = symmetryTwin();
@@ -3073,6 +3078,7 @@ export function renderCanvas(modelKey) {
   syncSnapPulse();
   syncNetBeams();
   syncArrangeSuggestion();
+  syncSymmetryAxis();
   flushPendingCommitFeedback();
   mountCommitFeedback(canvasRebuilt);
 }
@@ -6783,6 +6789,12 @@ function onNormalKey(key, shiftKey = false) {
 
   if (key === 'T') {
     tidyNow();
+    return;
+  }
+
+  // |: hold a symmetry axis (or release it): edits are mirrored about it.
+  if (key === '|') {
+    toggleSymmetryAxis();
     return;
   }
 
