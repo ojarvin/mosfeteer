@@ -133,8 +133,11 @@ or value. It is a view, never a copy: it is drawn from the parts each time
 values, and renames (`renameComponent` rewrites `parts`), and a deleted
 part's row goes. Its box is the size of its layout (`syncTableBox`, whole
 cells from its top-left corner), never resized by hand; anywhere on it
-picks it. Names and headers are in the labels' bold italic, numbers and
-units in the math font (`400 nm`, a thin space between); a passive's or
+picks it. It is set as the math tables are (the equations, the kT/C
+noise): all in the math font, headers upright as text, names italic as
+math with their digits upright (M_1), numbers and units upright (`400 nm`,
+a thin space between), and rules as thick as a table's `\hline`. A math
+table's cells share their row's baseline, as TeX's do. A passive's or
 source's value takes its unit (`valueText`: Ω, F, H, A, V; the number as
 typed, `1.5n` reads 1.5 nF), and a value that is not a number reads as
 typed; each column is as

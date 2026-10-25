@@ -129,3 +129,21 @@ test('partstable refuses a part a table cannot show, and an empty design gets a 
   runCommand(empty, 'partstable');
   assert.deepEqual(texts(partsTableLayout(empty, tableOf(empty).table)), ['No sized parts']);
 });
+
+test('a parts table is set as the math tables are: the math font throughout, names italic with upright digits, their rule', () => {
+  const circuit = new Circuit();
+  for (const line of ['add nmos M1 --at 0 0', 'size M1 2u/180n', 'add capacitor CS --at 400 0 --value 250f', 'partstable --at 800 0']) runCommand(circuit, line);
+  const svg = svgString(circuit);
+  const table = svg.slice(svg.indexOf('class="parts-table"'), svg.indexOf('</g>', svg.indexOf('class="parts-table"')));
+  assert.ok(!/sans-serif|font-weight="bold"/.test(table), 'no label face in the table');
+  const texts = [...table.matchAll(/<text [^>]*>.*?<\/text>/g)].map(([t]) => t);
+  assert.ok(texts.every((t) => t.includes('Latin Modern Math')), 'every text in the math font');
+  const value = texts.find((t) => t.includes('>Value<'));
+  assert.ok(value && !value.includes('font-style="italic"'), 'headers upright, as \\text is');
+  const name = texts.find((t) => t.includes('>M<'));
+  assert.ok(name.includes('font-style="italic"') && name.includes('<tspan font-style="normal">1</tspan>'), 'M_1 italic, its 1 upright');
+  // The rule as thick as a math table's \hline: 0.09 em.
+  const width = Number(table.match(/<line [^>]*stroke-width="([\d.]+)"/)[1]);
+  const fontSize = Number(texts[0].match(/font-size="([\d.]+)"/)[1]);
+  assert.ok(Math.abs(width - fontSize * 0.09) < 0.01, `rule ${width} for ${fontSize}`);
+});
