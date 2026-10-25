@@ -127,16 +127,25 @@ The editor opens in its own window and quits when you close it.
 
 ## Keys
 
-| | |
-| --- | --- |
-| `i` · `w` · `l` | place a part · draw a wire · name a net |
-| `n` · `Shift+V` | notes · reference windows |
-| `Shift+S` · `Shift+W` | analysis · plots |
-| `Shift+K` · `Shift+B` | timing diagram · beats |
-| `Shift+E` · `x` | calculator · design check |
-| `Shift+Backspace` | the Atlas |
-| `Esc` | let go of the selection, then close windows one by one |
-| `?` | all other keys, the tutorials, and the symbols |
+| | | |
+| --- | --- | --- |
+| **Draw** | `i` | place a part |
+| | `w` | draw a wire |
+| | `l` | name a net |
+| | `k` | hold a symmetry axis: what is drawn on one side is drawn on the other |
+| **Tidy** | `Shift+Q` | arrange the selection like your other drawings of it |
+| | `Shift+T` | tidy the selection's wires and labels |
+| | `x` | design check |
+| **Analyze** | `Shift+S` | analysis |
+| | `Shift+W` | plots |
+| | `Shift+E` | calculator |
+| **Timing** | `Shift+K` | timing diagram |
+| | `Shift+B` | beats |
+| **Document** | `Shift+N` | notes |
+| | `Shift+V` | reference windows |
+| | `Shift+Backspace` | the Atlas: all designs in the workspace |
+| **Anywhere** | `Esc` | let go of the selection, then close windows one by one |
+| | `?` | all other keys, the tutorials, and the symbols |
 
 ## More
 
