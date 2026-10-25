@@ -338,6 +338,26 @@ function farSide(circuit, net, refs) {
   return { points, paths: paths || null };
 }
 
+/** What an arrangement must not add to: wires along another net's, wire
+ *  ends in space (a pin left behind), and wires through a part's body. */
+function drawingFlaws(circuit) {
+  const nets = [...circuit.nets.values()];
+  const bodies = [...circuit.components.values()].filter((c) => c.type !== 'solder').map((c) => c.bboxWorld());
+  let throughBodies = 0;
+  for (const net of nets) {
+    for (const path of net.paths()) {
+      for (let i = 1; i < path.length; i++) {
+        for (const body of bodies) if (segmentCrossesRect(path[i - 1], path[i], body)) throughBodies += 1;
+      }
+    }
+  }
+  return {
+    overlaps: crossNetOverlaps(nets.map((n) => ({ id: n.id, paths: n.paths() }))).length,
+    looseEnds: circuit.openWireEnds().length,
+    throughBodies,
+  };
+}
+
 /** What arranging `parts` can change, saved: a function that puts it back
  *  (their places, their labels' places, every net, the solder dots). */
 function checkpoint(circuit, parts) {
@@ -381,8 +401,8 @@ export function applyArrangement(circuit, refs, candidate) {
   if (!offset) throw new Error('no clear place for the parts drawn this way');
   const restore = checkpoint(circuit, parts);
   const topology = circuit._snapshotNetTopology();
-  const overlaps = () => crossNetOverlaps([...circuit.nets.values()].map((n) => ({ id: n.id, paths: n.paths() }))).length;
-  const overlapsBefore = overlaps();
+  const flaws = () => drawingFlaws(circuit);
+  const flawsBefore = flaws();
   try {
     const before = captureComponentTerminalPositions(circuit, parts);
     for (const ref of parts) {
@@ -401,8 +421,17 @@ export function applyArrangement(circuit, refs, candidate) {
     }
     circuit.invalidateRoutingCache();
     const moves = componentTerminalMoves(circuit, parts, before);
+    // A reroute that fails moves the parts it was given back where they
+    // came from (as a failed drag does); put them where they are drawn.
+    const placed = new Map(parts.map((ref) => [ref, { ...circuit.components.get(ref).transform }]));
+    const keepPlaces = () => {
+      for (const [ref, t] of placed) circuit.components.get(ref).transform = { ...t };
+      circuit.invalidateRoutingCache();
+    };
     const reroutedFresh = (net) => {
+      keepPlaces();
       if (circuit.rerouteNet(net, 'refresh') === false || !circuit._pathsConnectedToTerminals(net)) {
+        keepPlaces();
         throw new Error(`unable to route ${net.name || net.id} to the arranged parts`);
       }
     };
@@ -414,7 +443,9 @@ export function applyArrangement(circuit, refs, candidate) {
       net.route = original.route ? original.route.map((p) => ({ ...p })) : null;
       net.branches = original.branches ? original.branches.map((b) => b.map((p) => ({ ...p }))) : null;
       net.junctions = original.junctions.map((p) => ({ ...p }));
-      if (circuit.rerouteNet(net, moves) === false || (net.terminals.length > 1 && !circuit._pathsConnectedToTerminals(net))) reroutedFresh(net);
+      const followed = circuit.rerouteNet(net, moves);
+      if (followed === false) keepPlaces();
+      if (followed === false || (net.terminals.length > 1 && !circuit._pathsConnectedToTerminals(net))) reroutedFresh(net);
     };
     const installed = (net, paths) => {
       circuit._installLiteralPaths(net, paths);
@@ -453,7 +484,10 @@ export function applyArrangement(circuit, refs, candidate) {
     circuit.reconnectCoincidentNets();
     circuit.syncJunctionSolders();
     circuit.invalidateRoutingCache();
-    if (overlaps() > overlapsBefore) throw new Error('a wire would run along another net\'s');
+    const after = flaws();
+    if (after.overlaps > flawsBefore.overlaps) throw new Error('a wire would run along another net\'s');
+    if (after.looseEnds > flawsBefore.looseEnds) throw new Error('a wire would be left ending in space');
+    if (after.throughBodies > flawsBefore.throughBodies) throw new Error('a wire would run through a part');
   } catch (error) {
     restore();
     throw error;

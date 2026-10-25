@@ -76,4 +76,24 @@ describe('arrange suggestions', { skip: browserSkip() }, () => {
     assert.equal(await mod('m.arrangeSuggestionState()'), null);
     await mod('m.setArrangeSuggestions(false)');
   });
+  test('wiring a mirror with the mouse offers it, though a ground lies within the two parts\' outline', async () => {
+    await h.evaluate(`window.__load(${JSON.stringify(build(['add nmos MA --at 0 0', 'add nmos MB --at 480 -160', 'add ground --at 0 120', 'add ground --at 480 -40',
+      'connect MA.s GROUND1.gnd', 'connect MB.s GROUND2.gnd', 'annotation add margin 1600 1000']))})`);
+    await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.fitView())`);
+    await mod('m.setArrangeSuggestions(true)');
+    const at = (x, y) => h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.worldToClient(${x}, ${y}))`);
+    const clickAt = async (x, y) => {
+      const p = await at(x, y);
+      await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
+      await h.mouse('mousePressed', p.x, p.y);
+      await h.mouse('mouseReleased', p.x, p.y);
+      await h.settle();
+    };
+    await h.key('w'); await clickAt(-120, 0); await clickAt(360, -160); await h.key('Escape');
+    await h.key('w'); await clickAt(0, -80); await clickAt(-120, 0); await h.key('Escape');
+    await h.until(`${h.module('arrange-suggest.js')}.then((m) => !!m.arrangeSuggestionState())`);
+    assert.equal((await mod('m.arrangeSuggestionState()')).source, 'bias');
+    await h.key('Escape');
+    await mod('m.setArrangeSuggestions(false)');
+  });
 });

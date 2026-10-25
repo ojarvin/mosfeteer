@@ -12,12 +12,15 @@
  * name, are one net (Circuit#netGroupKey), so a mirror whose sources go to
  * two VDD symbols is not taken for two parts stacked between other nodes.
  * A drawing with another part drawn among the parts it maps (inside their
- * outline) is no drawing of them alone, and is passed over.
+ * outline; rail symbols aside) is no drawing of them alone, and is passed
+ * over.
  *
  * A two-pin part drawn the same turned half round (a resistor, a capacitor)
  * may map its pins either way, so a resistor wired the other way round still
  * matches. Solder dots are drawing, not parts, and are never mapped.
  */
+
+import { isReferenceMarker } from './model.js';
 
 /** Two-pin symbols that draw the same turned half round, pins swapped. */
 const REVERSIBLE = new Set(['resistor', 'capacitor']);
@@ -138,8 +141,9 @@ export function findTopology(targetCircuit, refs, sourceCircuit, { exclude = [],
   };
 
   // The parts mapped onto are drawn by themselves: no other part's body
-  // lies within their outline.
-  const bodies = [...sourceCircuit.components.values()].filter((c) => c.type !== 'solder').map((c) => [c.refdes, c.bboxWorld()]);
+  // lies within their outline. Rail symbols do not count: a ground under
+  // the lower of two parts lies within their outline, and is theirs.
+  const bodies = [...sourceCircuit.components.values()].filter((c) => c.type !== 'solder' && !isReferenceMarker(c)).map((c) => [c.refdes, c.bboxWorld()]);
   const alone = (map) => {
     const mapped = new Set([...map.values()].map((p) => p.refdes));
     let box = null;

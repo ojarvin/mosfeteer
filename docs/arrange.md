@@ -62,8 +62,8 @@ more candidate, last, "By cells" (`by cells:` on the command line).
   (two stacked parts are too common to be a cell). Found among the selected
   parts (`cellsIn`), a part in one cell at most: with the same pins on
   rails as the cell has (a pair's sources meet at a tail, a mirror's at a
-  rail), and drawn as a unit (no other part inside their outline, so a
-  mirror spread across the drawing is left to itself). A selected rail
+  rail), and drawn as a unit (no other part inside their outline, rail
+  symbols aside, so a mirror spread across the drawing is left to itself). A selected rail
   symbol goes with the cell it is wired to.
 - A cell is drawn like a drawing of its kind: the cell found there, so
   only the connections that make the cell must agree (a pair whose output
@@ -112,5 +112,7 @@ browser preference (`src/web/arrange-suggest.js`).
   there and joins the copied ones by one routed leg; with no wires there
   among its pins, each pin joins by a leg of its own. A net with no leg that
   routes follows the parts as a move would, and is laid out afresh when that
-  leaves a pin off its wires; a net that still does not reach its pins, or a
-  wire run along another net's, refuses the arrangement.
+  leaves a pin off its wires; a net that still does not reach its pins
+  refuses the arrangement, as does anything it would add of: wire along
+  another net's, wire ends in space, wire through a part's body. The picker
+  lists only what can be drawn (each tried on a copy first).

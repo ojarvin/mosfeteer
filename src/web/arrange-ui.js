@@ -253,6 +253,15 @@ export async function openArrangePicker() {
   } finally {
     opening = false;
   }
+  // Only what can be drawn here is offered: each tried on a copy first.
+  const drawable = found.candidates.filter((candidate) => {
+    try { applyArrangement(loadDocument(editor.circuit.toJSON()), refs, candidate); return true; } catch { return false; }
+  });
+  if (!drawable.length && found.candidates.length) {
+    hintLine(`${refs.join(', ')} cannot be drawn here like the other drawings of them: no clear place, or a wire would be left off`);
+    return false;
+  }
+  found = { ...found, candidates: drawable };
   if (!found.candidates.length) {
     hintLine(found.alike
       ? `${refs.join(', ')} are drawn like the other drawings of them already`

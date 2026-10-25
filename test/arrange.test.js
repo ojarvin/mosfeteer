@@ -330,3 +330,51 @@ test('by cells takes the mirror image of a cell\'s drawing for its shape: symmet
   const found = arrangementCandidates(circuit, refs, [{ circuit, name: 'this design' }], { patterns: cellPatterns() });
   assert.deepEqual(found.candidates.filter((c) => c.cells), []);
 });
+
+test('a cell\'s own rail symbols drawn within its outline do not keep it from being a cell', () => {
+  // MB higher than MA: MB's ground lies within the outline of the two.
+  const circuit = new Circuit();
+  run(circuit, 'add nmos MA --at 0 0', 'add nmos MB --at 480 -160', 'add ground --at 0 120', 'add ground --at 480 -40',
+    'connect MA.s GROUND1.gnd', 'connect MB.s GROUND2.gnd', 'connect MA.g MB.g', 'connect MA.d MA.g');
+  assert.deepEqual(cellsIn(circuit, [...circuit.components.keys()], cellPatterns()).map((c) => c.refs), [['GROUND1', 'GROUND2', 'MA', 'MB']]);
+});
+
+test('whatever way a messy OTA is arranged, it keeps its connections, reaches its pins, and leaves no wire end in space', () => {
+  // OTAs drawn anyhow, from a fixed seed: each way of drawing them is
+  // either refused (nothing changes) or draws them whole.
+  let seed = 11;
+  const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const cell = () => (Math.floor(random() * 30) - 15) * 40;
+  let drawn = 0;
+  for (let trial = 0; trial < 16; trial++) {
+    const circuit = new Circuit();
+    try {
+      run(circuit, ...['M1', 'M2', 'M3'].map((ref) => `add nmos ${ref} --at ${cell()} ${cell()}${random() < 0.5 ? ' --mirrorX' : ''}`),
+        ...['M4', 'M5'].map((ref) => `add pmos ${ref} --at ${cell()} ${cell()}${random() < 0.5 ? ' --mirrorX' : ''}`),
+        'connect M4.g M5.g', 'connect M4.d M4.g', 'connect M4.d M2.d', 'connect M5.d M3.d', 'connect M2.s M3.s M1.d',
+        'rail M1.s ground', 'rail M4.s supply', 'rail M5.s supply');
+      if (random() < 0.5) run(circuit, 'stubs M2 M3 M1');
+    } catch { continue; }
+    const refs = [...circuit.components.values()].filter((c) => c.type !== 'solder').map((c) => c.refdes);
+    const before = connectivity(circuit);
+    const looseBefore = circuit.openWireEnds().length;
+    const { candidates } = arrangementCandidates(circuit, refs, builtInDrawings(), { patterns: cellPatterns() });
+    for (const candidate of candidates) {
+      const copy = Circuit.fromJSON(circuit.toJSON());
+      const state = JSON.stringify(copy.toJSON());
+      try {
+        applyArrangement(copy, refs, candidate);
+      } catch {
+        assert.equal(JSON.stringify(copy.toJSON()), state, 'a refused arrangement changes nothing');
+        continue;
+      }
+      drawn += 1;
+      assert.deepEqual(connectivity(copy), before);
+      for (const net of copy.nets.values()) {
+        if (net.terminals.length > 1) assert.ok(copy._pathsConnectedToTerminals(net), `trial ${trial}: ${net.name || net.id} reaches its pins`);
+      }
+      assert.ok(copy.openWireEnds().length <= looseBefore, `trial ${trial}: no new wire end in space`);
+    }
+  }
+  assert.ok(drawn > 0, 'some arrangements were drawn');
+});
