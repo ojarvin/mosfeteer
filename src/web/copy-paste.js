@@ -5,6 +5,7 @@
  * core/selection.js; the clipboard format is core/object-clipboard.js.
  */
 
+import { noteTip } from './onboarding.js';
 import { Circuit, INTERFACE_PIN_TYPES, MAX_IMAGE_DATA, canonicalNetName, normalizeComponentRefdes, transformWorldPoints } from '../core/model.js';
 import { GRID, snap } from '../core/grid.js';
 import { resolveCopySelection } from '../core/selection.js';
@@ -446,6 +447,8 @@ export function commitCopyGhost({ again = true } = {}) {
   recordHistoryEntry(ghost.beforeSnapshot);
   const anchorShift = ghost.anchorShift;
   const mirrored = !!ghost.mirror;
+  // Mirrored pairs drawn one at a time: the symmetry axis draws a whole side.
+  if (mirrored) noteTip('mirrored-pair');
   editor.drag = null;
   editor.copyPending = false;
   if (!again) return true;

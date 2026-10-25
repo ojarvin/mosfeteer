@@ -8,6 +8,7 @@
  * state: never saved, never an edit.
  */
 
+import { noteTip } from './onboarding.js';
 import { loadDocument } from '../core/document.js';
 import { GRID } from '../core/grid.js';
 import { mirrorEdit } from '../core/symmetry.js';
@@ -49,6 +50,7 @@ export function setSymmetryAxis(operation, pin = null) {
     render();
     return false;
   }
+  noteTip('symmetry-axis');
   if (pin) {
     axis = { operation, pin: { ...pin } };
     logLine(`symmetry axis at ${symmetryAxisLabel()} · k releases`);

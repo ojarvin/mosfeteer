@@ -14,6 +14,7 @@
 import { loadDocument, relinkDocumentState } from '../core/document.js';
 import { relinkNotes } from '../core/notes.js';
 import { showNotes } from './notes-window.js';
+import { noteTip } from './onboarding.js';
 import { brokenLinkPlaces, brokenLinks } from '../core/workspace-check.js';
 import { element as el } from './dom.js';
 import { svgString } from '../core/render.js';
@@ -337,6 +338,7 @@ async function drawingFor(documentInfo, edited) {
 /** The built-in drawings `arrange` offers (Shift+Q), each on a card of its
  *  own under its name. */
 function loadDrawings() {
+  noteTip('built-in-drawings-open');
   titleEl.textContent = 'Built-in drawings';
   scheduleToolbarFit();
   titleEl.title = '';

@@ -66,3 +66,13 @@ test('every tip is short and names a trigger and a retiring action the editor re
     }
   }
 });
+
+test('the tips of the newer features show the first time their situation comes up', () => {
+  for (const [event, id] of [['mirrored-pair', 'symmetry-axis'], ['cell-selected', 'arrange-like'], ['arrange', 'arrange-suggestions'], ['arrange-built-in', 'built-in-drawings']]) {
+    assert.equal(new TipBook().note(event, 0)?.id, id, `${id} on the first ${event}`);
+  }
+  // Holding the axis answers its tip before it is shown.
+  const book = new TipBook();
+  book.note('symmetry-axis', 0);
+  assert.equal(book.note('mirrored-pair', 0), null);
+});

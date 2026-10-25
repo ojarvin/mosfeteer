@@ -7,7 +7,8 @@
  * other designs by when they were saved, then the built-in drawings.
  */
 
-import { applyArrangement, arrangeableRefs, arrangementCandidates } from '../core/arrange.js';
+import { noteTip, tipWaiting } from './onboarding.js';
+import { applyArrangement, arrangeableRefs, arrangementCandidates, cellsIn } from '../core/arrange.js';
 import { builtInDrawings, cellPatterns } from '../core/arrange-builtins.js';
 import { loadDocument } from '../core/document.js';
 import { GRID } from '../core/grid.js';
@@ -134,6 +135,7 @@ function choose(index = picker?.index) {
   recordHistoryEntry(before, true);
   setSelection(refs);
   rememberAction('arrange like', () => void openArrangePicker());
+  noteTip('arrange');
   logLine(chosen.cells
     ? `${refs.join(', ')} arranged by cells: ${chosen.cells.map((cell) => `${cell.refs.join(', ')} like ${cell.like.parts.join(', ')} in ${cell.like.source.current ? 'this design' : cell.like.source.name}`).join('; ')}`
     : `${refs.join(', ')} arranged like ${chosen.parts.join(', ')} in ${sourceName(chosen)}`);
@@ -268,6 +270,7 @@ export async function openArrangePicker() {
       : `No other drawing has ${refs.join(', ')} with the same connections`);
     return false;
   }
+  if (found.candidates.some((c) => c.source.builtIn)) noteTip('arrange-built-in');
   const before = snapshot();
   const built = buildPicker(refs, before, found.candidates);
   picker = { refs, before, candidates: found.candidates, index: 0, failed: null, ...built };
@@ -287,4 +290,22 @@ export function arrangePickerState() {
     failed: picker.failed,
     candidates: picker.candidates.map((c) => ({ source: sourceName(c), parts: [...c.parts], count: c.count, builtIn: c.source.builtIn, cells: c.cells?.map((cell) => cell.name) || null })),
   };
+}
+
+/** A selection of two or more parts that make a cell (a mirror, a pair, the
+ *  OTA): the moment to say Shift+Q draws it as the user's drawings do.
+ *  Looked at only while that tip waits, and not while the picker is open. */
+let selectionSeen = '';
+export function noteSelectionForTips() {
+  if (!tipWaiting('arrange-like')) return;
+  const refs = [...editor.multi];
+  const seen = refs.sort().join(',');
+  if (seen === selectionSeen) return;
+  selectionSeen = seen;
+  if (picker || refs.length < 2 || refs.length > 24) return;
+  const circuit = editor.circuit;
+  setTimeout(() => {
+    if (picker || editor.circuit !== circuit) return;
+    if (cellsIn(circuit, refs.filter((ref) => circuit.components.has(ref)), cellPatterns()).length) noteTip('cell-selected');
+  });
 }

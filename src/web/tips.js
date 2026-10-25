@@ -69,6 +69,34 @@ export const TIPS = Object.freeze([
     retiredBy: 'phase-beats',
     text: 'Make beats in the timing diagram adds one beat per clock state.',
   },
+  {
+    id: 'symmetry-axis',
+    trigger: 'mirrored-pair',
+    after: 1,
+    retiredBy: 'symmetry-axis',
+    text: 'Press k to hold a symmetry axis: what you draw on one side is drawn on the other.',
+  },
+  {
+    id: 'arrange-like',
+    trigger: 'cell-selected',
+    after: 1,
+    retiredBy: 'arrange',
+    text: 'Shift+Q draws the selected parts as your other drawings of them do.',
+  },
+  {
+    id: 'arrange-suggestions',
+    trigger: 'arrange',
+    after: 1,
+    retiredBy: 'arrange-suggestions-on',
+    text: 'Settings → Arrange suggestions: as you complete a mirror or pair, Tab draws it as you drew it before.',
+  },
+  {
+    id: 'built-in-drawings',
+    trigger: 'arrange-built-in',
+    after: 1,
+    retiredBy: 'built-in-drawings-open',
+    text: 'Learn → Symbols → Built-in drawings shows the cells Shift+Q knows when your designs have none.',
+  },
 ]);
 
 export const TIP_COOLDOWN_MS = 60 * 60 * 1000;

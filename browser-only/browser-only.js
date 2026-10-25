@@ -46796,6 +46796,7 @@ __exports.mountArrangeSuggestion = mountArrangeSuggestion;
 __exports.syncArrangeSuggestion = syncArrangeSuggestion;
 __exports.installArrangeSuggestions = installArrangeSuggestions;
 __exports.arrangeSuggestionState = arrangeSuggestionState;
+let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); });
 let applyArrangement, arrangeableRefs, cellDrawing, cellsIn; __bind(() => { ({ applyArrangement, arrangeableRefs, cellDrawing, cellsIn } = __require("src/core/arrange.js")); });
 let cellPatterns; __bind(() => { ({ cellPatterns } = __require("src/core/arrange-builtins.js")); });
 let loadDocument; __bind(() => { ({ loadDocument } = __require("src/core/document.js")); });
@@ -46815,6 +46816,7 @@ let hintLine, logLine; __bind(() => { ({ hintLine, logLine } = __require("src/we
  * workspace's other designs (never the built-in drawings), and a cell let go
  * is not offered again while the design is open. A browser preference.
  */
+
 
 
 
@@ -46854,6 +46856,7 @@ function setArrangeSuggestions(next) {
   try { globalThis.localStorage?.setItem(SETTING_KEY, on ? '1' : ''); } catch { /* per-session only */ }
   arrangeSuggestionsButton?.setAttribute('aria-checked', String(on));
   hintLine(on ? 'arrange suggestions on' : 'arrange suggestions off');
+  if (on) noteTip('arrange-suggestions-on');
   if (!on) clearSuggestion();
   rememberCells();
 }
@@ -47019,7 +47022,9 @@ __modules["src/web/arrange-ui.js"] = function (__require, __exports) {
 __exports.workspaceDesigns = workspaceDesigns;
 __exports.openArrangePicker = openArrangePicker;
 __exports.arrangePickerState = arrangePickerState;
-let applyArrangement, arrangeableRefs, arrangementCandidates; __bind(() => { ({ applyArrangement, arrangeableRefs, arrangementCandidates } = __require("src/core/arrange.js")); });
+__exports.noteSelectionForTips = noteSelectionForTips;
+let noteTip, tipWaiting; __bind(() => { ({ noteTip, tipWaiting } = __require("src/web/onboarding.js")); });
+let applyArrangement, arrangeableRefs, arrangementCandidates, cellsIn; __bind(() => { ({ applyArrangement, arrangeableRefs, arrangementCandidates, cellsIn } = __require("src/core/arrange.js")); });
 let builtInDrawings, cellPatterns; __bind(() => { ({ builtInDrawings, cellPatterns } = __require("src/core/arrange-builtins.js")); });
 let loadDocument; __bind(() => { ({ loadDocument } = __require("src/core/document.js")); });
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
@@ -47040,6 +47045,7 @@ let hintLine, logLine; __bind(() => { ({ hintLine, logLine } = __require("src/we
  * one undo step. The open design is searched first, then the workspace's
  * other designs by when they were saved, then the built-in drawings.
  */
+
 
 
 
@@ -47168,6 +47174,7 @@ function choose(index = picker?.index) {
   recordHistoryEntry(before, true);
   setSelection(refs);
   rememberAction('arrange like', () => void openArrangePicker());
+  noteTip('arrange');
   logLine(chosen.cells
     ? `${refs.join(', ')} arranged by cells: ${chosen.cells.map((cell) => `${cell.refs.join(', ')} like ${cell.like.parts.join(', ')} in ${cell.like.source.current ? 'this design' : cell.like.source.name}`).join('; ')}`
     : `${refs.join(', ')} arranged like ${chosen.parts.join(', ')} in ${sourceName(chosen)}`);
@@ -47302,6 +47309,7 @@ async function openArrangePicker() {
       : `No other drawing has ${refs.join(', ')} with the same connections`);
     return false;
   }
+  if (found.candidates.some((c) => c.source.builtIn)) noteTip('arrange-built-in');
   const before = snapshot();
   const built = buildPicker(refs, before, found.candidates);
   picker = { refs, before, candidates: found.candidates, index: 0, failed: null, ...built };
@@ -47321,6 +47329,24 @@ function arrangePickerState() {
     failed: picker.failed,
     candidates: picker.candidates.map((c) => ({ source: sourceName(c), parts: [...c.parts], count: c.count, builtIn: c.source.builtIn, cells: c.cells?.map((cell) => cell.name) || null })),
   };
+}
+
+/** A selection of two or more parts that make a cell (a mirror, a pair, the
+ *  OTA): the moment to say Shift+Q draws it as the user's drawings do.
+ *  Looked at only while that tip waits, and not while the picker is open. */
+let selectionSeen = '';
+function noteSelectionForTips() {
+  if (!tipWaiting('arrange-like')) return;
+  const refs = [...editor.multi];
+  const seen = refs.sort().join(',');
+  if (seen === selectionSeen) return;
+  selectionSeen = seen;
+  if (picker || refs.length < 2 || refs.length > 24) return;
+  const circuit = editor.circuit;
+  setTimeout(() => {
+    if (picker || editor.circuit !== circuit) return;
+    if (cellsIn(circuit, refs.filter((ref) => circuit.components.has(ref)), cellPatterns()).length) noteTip('cell-selected');
+  });
 }
 
 };
@@ -48023,6 +48049,7 @@ __exports.installAtlas = installAtlas;
 let loadDocument, relinkDocumentState; __bind(() => { ({ loadDocument, relinkDocumentState } = __require("src/core/document.js")); });
 let relinkNotes; __bind(() => { ({ relinkNotes } = __require("src/core/notes.js")); });
 let showNotes; __bind(() => { ({ showNotes } = __require("src/web/notes-window.js")); });
+let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); });
 let brokenLinkPlaces, brokenLinks; __bind(() => { ({ brokenLinkPlaces, brokenLinks } = __require("src/core/workspace-check.js")); });
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 let svgString; __bind(() => { ({ svgString } = __require("src/core/render.js")); });
@@ -48067,6 +48094,7 @@ let onAccentChange; __bind(() => { ({ onAccentChange } = __require("src/web/acce
  * leaving fly a design between the editor, at the screen, and its place on
  * the desk behind it (drawFlight).
  */
+
 
 
 
@@ -48391,6 +48419,7 @@ async function drawingFor(documentInfo, edited) {
 /** The built-in drawings `arrange` offers (Shift+Q), each on a card of its
  *  own under its name. */
 function loadDrawings() {
+  noteTip('built-in-drawings-open');
   titleEl.textContent = 'Built-in drawings';
   scheduleToolbarFit();
   titleEl.title = '';
@@ -56489,6 +56518,7 @@ __exports.publishObjectClipboard = publishObjectClipboard;
 __exports.armObjectPaste = armObjectPaste;
 __exports.pasteClipboard = pasteClipboard;
 __exports.installCopyPaste = installCopyPaste;
+let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); });
 let Circuit, INTERFACE_PIN_TYPES, MAX_IMAGE_DATA, canonicalNetName, normalizeComponentRefdes, transformWorldPoints; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, MAX_IMAGE_DATA, canonicalNetName, normalizeComponentRefdes, transformWorldPoints } = __require("src/core/model.js")); });
 let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
 let resolveCopySelection; __bind(() => { ({ resolveCopySelection } = __require("src/core/selection.js")); });
@@ -56507,6 +56537,7 @@ let captureNetGeometry, captureRouteGeometry, translateNetGeometry; __bind(() =>
  * carries objects between editor windows. Which objects a copy takes is
  * core/selection.js; the clipboard format is core/object-clipboard.js.
  */
+
 
 
 
@@ -56949,6 +56980,8 @@ function commitCopyGhost({ again = true } = {}) {
   recordHistoryEntry(ghost.beforeSnapshot);
   const anchorShift = ghost.anchorShift;
   const mirrored = !!ghost.mirror;
+  // Mirrored pairs drawn one at a time: the symmetry axis draws a whole side.
+  if (mirrored) noteTip('mirrored-pair');
   editor.drag = null;
   editor.copyPending = false;
   if (!again) return true;
@@ -65825,7 +65858,7 @@ let atlasOpen, installAtlas, onAtlasKey, openAtlas; __bind(() => { ({ atlasOpen,
 let revealStartup; __bind(() => { ({ revealStartup } = __require("src/web/startup.js")); });
 let toggleSelectedLabelFont, updateStyleControls, installStyleControls; __bind(() => { ({ toggleSelectedLabelFont, updateStyleControls, installStyleControls } = __require("src/web/style-controls.js")); });
 let onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd, openSwapPicker; __bind(() => { ({ onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd, openSwapPicker } = __require("src/web/insert-menu.js")); });
-let openArrangePicker; __bind(() => { ({ openArrangePicker } = __require("src/web/arrange-ui.js")); });
+let noteSelectionForTips, openArrangePicker; __bind(() => { ({ noteSelectionForTips, openArrangePicker } = __require("src/web/arrange-ui.js")); });
 let toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi; __bind(() => { ({ toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } = __require("src/web/toolbar-ui.js")); });
 let installNetBeams, mountNetBeams, syncNetBeams; __bind(() => { ({ installNetBeams, mountNetBeams, syncNetBeams } = __require("src/web/net-beams.js")); });
 let axisPlacement, cycleSymmetryAxis, mirrorRecordedEdit, mountSymmetryAxis, syncSymmetryAxis; __bind(() => { ({ axisPlacement, cycleSymmetryAxis, mirrorRecordedEdit, mountSymmetryAxis, syncSymmetryAxis } = __require("src/web/symmetry-axis.js")); });
@@ -68199,6 +68232,9 @@ function placePending() {
     // take over the selection, so repeated placement never carries a halo.
     setSelection([]);
     if (placed.length > 1) {
+      // Mirrored pairs placed one at a time, without the axis held: the
+      // symmetry axis draws a whole side.
+      if (!axisPlacement()) noteTip('mirrored-pair');
       symmetry.settled = true;
       symmetryMemory = { pin: { ...symmetry.pin }, operation: symmetry.operation };
     }
@@ -68920,6 +68956,7 @@ function renderCanvas(modelKey) {
   syncNetBeams();
   syncArrangeSuggestion();
   syncSymmetryAxis();
+  noteSelectionForTips();
   flushPendingCommitFeedback();
   mountCommitFeedback(canvasRebuilt);
 }
@@ -74817,6 +74854,7 @@ function notesDocumentShown() {
 __modules["src/web/onboarding.js"] = function (__require, __exports) {
 __exports.noteTip = noteTip;
 __exports.tipStates = tipStates;
+__exports.tipWaiting = tipWaiting;
 __exports.tipsOn = tipsOn;
 __exports.tutorialTargetRects = tutorialTargetRects;
 __exports.syncTutorial = syncTutorial;
@@ -74824,7 +74862,7 @@ __exports.offerTutorial = offerTutorial;
 __exports.dropTutorial = dropTutorial;
 __exports.installOnboarding = installOnboarding;
 let getSymbol; __bind(() => { ({ getSymbol } = __require("src/core/components/index.js")); });
-let TIPS, TipBook; __bind(() => { ({ TIPS, TipBook } = __require("src/web/tips.js")); });
+let TIP_MAX_SHOWS, TIPS, TipBook; __bind(() => { ({ TIP_MAX_SHOWS, TIPS, TipBook } = __require("src/web/tips.js")); });
 let openTutorialTargets, tutorialById, tutorialProgress, tutorialRuns; __bind(() => { ({ openTutorialTargets, tutorialById, tutorialProgress, tutorialRuns } = __require("src/web/tutorial.js")); });
 let transformRect; __bind(() => { ({ transformRect } = __require("src/core/geometry.js")); });
 let canvasEl, circuitNameEl, tipCardEl, tipTextEl, tipsButton, tutorialCardEl, tutorialStepEl, tutorialStepsEl, tutorialCountEl, tutorialBarEl, tutorialSkipEl, tutorialStepsToggleEl; __bind(() => { ({ canvasEl, circuitNameEl, tipCardEl, tipTextEl, tipsButton, tutorialCardEl, tutorialStepEl, tutorialStepsEl, tutorialCountEl, tutorialBarEl, tutorialSkipEl, tutorialStepsToggleEl } = __require("src/web/elements.js")); });
@@ -74896,6 +74934,13 @@ function tipStates() {
     retired: tipBook.state.retired.includes(tip.id),
     shown: tipBook.state.shown[tip.id] || 0,
   }));
+}
+
+/** Whether a tip may still be shown: tips on, it not retired, not yet shown
+ *  its most. For a trigger that costs something to notice. */
+function tipWaiting(id) {
+  const state = tipBook.state;
+  return !state.off && !state.retired.includes(id) && (state.shown[id] || 0) < TIP_MAX_SHOWS;
 }
 
 /** Whether tips are on (Settings → Show tips). */
@@ -83733,6 +83778,7 @@ __exports.mirrorRecordedEdit = mirrorRecordedEdit;
 __exports.symmetryAxisHint = symmetryAxisHint;
 __exports.mountSymmetryAxis = mountSymmetryAxis;
 __exports.syncSymmetryAxis = syncSymmetryAxis;
+let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); });
 let loadDocument; __bind(() => { ({ loadDocument } = __require("src/core/document.js")); });
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let mirrorEdit; __bind(() => { ({ mirrorEdit } = __require("src/core/symmetry.js")); });
@@ -83749,6 +83795,7 @@ let hintLine, logLine; __bind(() => { ({ hintLine, logLine } = __require("src/we
  * made on the other side too, in the same undo step. The axis is view
  * state: never saved, never an edit.
  */
+
 
 
 
@@ -83791,6 +83838,7 @@ function setSymmetryAxis(operation, pin = null) {
     render();
     return false;
   }
+  noteTip('symmetry-axis');
   if (pin) {
     axis = { operation, pin: { ...pin } };
     logLine(`symmetry axis at ${symmetryAxisLabel()} · k releases`);
@@ -84294,6 +84342,34 @@ const TIPS = Object.freeze([
     after: 2,
     retiredBy: 'phase-beats',
     text: 'Make beats in the timing diagram adds one beat per clock state.',
+  },
+  {
+    id: 'symmetry-axis',
+    trigger: 'mirrored-pair',
+    after: 1,
+    retiredBy: 'symmetry-axis',
+    text: 'Press k to hold a symmetry axis: what you draw on one side is drawn on the other.',
+  },
+  {
+    id: 'arrange-like',
+    trigger: 'cell-selected',
+    after: 1,
+    retiredBy: 'arrange',
+    text: 'Shift+Q draws the selected parts as your other drawings of them do.',
+  },
+  {
+    id: 'arrange-suggestions',
+    trigger: 'arrange',
+    after: 1,
+    retiredBy: 'arrange-suggestions-on',
+    text: 'Settings → Arrange suggestions: as you complete a mirror or pair, Tab draws it as you drew it before.',
+  },
+  {
+    id: 'built-in-drawings',
+    trigger: 'arrange-built-in',
+    after: 1,
+    retiredBy: 'built-in-drawings-open',
+    text: 'Learn → Symbols → Built-in drawings shows the cells Shift+Q knows when your designs have none.',
   },
 ]);
 

@@ -4,7 +4,7 @@
  */
 
 import { getSymbol } from '../core/components/index.js';
-import { TIPS, TipBook } from './tips.js';
+import { TIP_MAX_SHOWS, TIPS, TipBook } from './tips.js';
 import { openTutorialTargets, tutorialById, tutorialProgress, tutorialRuns } from './tutorial.js';
 import { transformRect } from '../core/geometry.js';
 import { canvasEl, circuitNameEl, tipCardEl, tipTextEl, tipsButton, tutorialCardEl, tutorialStepEl, tutorialStepsEl, tutorialCountEl, tutorialBarEl, tutorialSkipEl, tutorialStepsToggleEl } from './elements.js';
@@ -60,6 +60,13 @@ export function tipStates() {
     retired: tipBook.state.retired.includes(tip.id),
     shown: tipBook.state.shown[tip.id] || 0,
   }));
+}
+
+/** Whether a tip may still be shown: tips on, it not retired, not yet shown
+ *  its most. For a trigger that costs something to notice. */
+export function tipWaiting(id) {
+  const state = tipBook.state;
+  return !state.off && !state.retired.includes(id) && (state.shown[id] || 0) < TIP_MAX_SHOWS;
 }
 
 /** Whether tips are on (Settings → Show tips). */

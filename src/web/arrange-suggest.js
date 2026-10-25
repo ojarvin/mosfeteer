@@ -9,6 +9,7 @@
  * is not offered again while the design is open. A browser preference.
  */
 
+import { noteTip } from './onboarding.js';
 import { applyArrangement, arrangeableRefs, cellDrawing, cellsIn } from '../core/arrange.js';
 import { cellPatterns } from '../core/arrange-builtins.js';
 import { loadDocument } from '../core/document.js';
@@ -47,6 +48,7 @@ export function setArrangeSuggestions(next) {
   try { globalThis.localStorage?.setItem(SETTING_KEY, on ? '1' : ''); } catch { /* per-session only */ }
   arrangeSuggestionsButton?.setAttribute('aria-checked', String(on));
   hintLine(on ? 'arrange suggestions on' : 'arrange suggestions off');
+  if (on) noteTip('arrange-suggestions-on');
   if (!on) clearSuggestion();
   rememberCells();
 }

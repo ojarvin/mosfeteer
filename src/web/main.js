@@ -79,7 +79,7 @@ import { atlasOpen, installAtlas, onAtlasKey, openAtlas } from './atlas.js';
 import { revealStartup } from './startup.js';
 import { toggleSelectedLabelFont, updateStyleControls, installStyleControls } from './style-controls.js';
 import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd, openSwapPicker } from './insert-menu.js';
-import { openArrangePicker } from './arrange-ui.js';
+import { noteSelectionForTips, openArrangePicker } from './arrange-ui.js';
 import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } from './toolbar-ui.js';
 import { installNetBeams, mountNetBeams, syncNetBeams } from './net-beams.js';
 import { axisPlacement, cycleSymmetryAxis, mirrorRecordedEdit, mountSymmetryAxis, syncSymmetryAxis } from './symmetry-axis.js';
@@ -2358,6 +2358,9 @@ export function placePending() {
     // take over the selection, so repeated placement never carries a halo.
     setSelection([]);
     if (placed.length > 1) {
+      // Mirrored pairs placed one at a time, without the axis held: the
+      // symmetry axis draws a whole side.
+      if (!axisPlacement()) noteTip('mirrored-pair');
       symmetry.settled = true;
       symmetryMemory = { pin: { ...symmetry.pin }, operation: symmetry.operation };
     }
@@ -3079,6 +3082,7 @@ export function renderCanvas(modelKey) {
   syncNetBeams();
   syncArrangeSuggestion();
   syncSymmetryAxis();
+  noteSelectionForTips();
   flushPendingCommitFeedback();
   mountCommitFeedback(canvasRebuilt);
 }
