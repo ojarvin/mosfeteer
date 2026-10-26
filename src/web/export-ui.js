@@ -15,6 +15,7 @@ import { DRAWING_EXPORT_OPTIONS, hasDrawableSelection, selectionDrawing, selecti
 import { svgPixelSize } from '../core/render.js';
 import { svgToPngDataUrl, applyExportDarkTheme, embeddedMathFontFace, withEmbeddedMathFont } from './drawing-export.js';
 import { buildReport, embeddedDesignNames } from '../core/report.js';
+import { loadDesign } from './example-designs.js';
 import { loadDocument } from '../core/document.js';
 import { writeDrawingToClipboard } from './clipboard.js';
 import { defaultExportDirectory, validDocumentName } from './persistence.js';
@@ -203,7 +204,7 @@ async function reportDesigns() {
     const doc = workspaceDesigns().find((entry) => entry.name.toLowerCase() === name.toLowerCase());
     if (!doc) continue;
     try {
-      const circuit = loadDocument((await persistence.load(doc.path)).state);
+      const circuit = loadDocument((await loadDesign(doc)).state);
       found.set(name.toLowerCase(), { name: doc.name, circuit });
       queue.push(...embeddedDesignNames(circuit));
     } catch (err) {

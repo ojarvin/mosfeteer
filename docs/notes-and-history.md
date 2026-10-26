@@ -120,12 +120,16 @@ warnings, and writes the HTML.
   caption and each section with a line to replace (`notesOutline`). Only
   what the drawing has is placed: an analysis is in it once annotated.
   One undo step; written notes are never replaced.
-- **Example.** Learn → Tutorial → **Report example** saves two designs to
-  the workspace (`src/web/examples/report-example.js`): a first-order
-  delta-sigma modulator whose integrator links to a switched-capacitor
-  integrator with correlated level shifting, the integrator's notes a section
-  of the modulator's report. A design of either name already there is
-  opened as it is, never replaced; browser-only mode needs a folder first.
+- **Example.** Learn → Tutorial → **Report example** opens a first-order
+  delta-sigma modulator as a new, unsaved design
+  (`src/web/examples/report-example.js`); its integrator links to a
+  switched-capacitor integrator with correlated level shifting, whose notes
+  are a section of the modulator's report. No file is written: while the
+  workspace has no design of its name, the integrator is known -- to the
+  link and its peek, the notes, the report -- from the bundle
+  (`src/web/example-designs.js`, an `example:` path), and opening it opens
+  it unsaved. Saving the modulator saves the integrator beside it; one
+  already there is left as it is.
 - **In the notes window** a figure shows as its number, target, and caption,
   its target in red when there is nothing of that name to draw.
 - **Sizes.** Every figure is drawn at the page guide's width (the A4 one

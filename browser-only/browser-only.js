@@ -47916,6 +47916,7 @@ let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let svgString; __bind(() => { ({ svgString } = __require("src/core/render.js")); });
 let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __require("src/core/selection-drawing.js")); });
 let persistence; __bind(() => { ({ persistence } = __require("src/web/document-session.js")); });
+let loadDesign; __bind(() => { ({ loadDesign } = __require("src/web/example-designs.js")); });
 let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
@@ -47930,6 +47931,7 @@ let hintLine, logLine; __bind(() => { ({ hintLine, logLine } = __require("src/we
  * one undo step. The open design is searched first, then the workspace's
  * other designs by when they were saved, then the built-in drawings.
  */
+
 
 
 
@@ -47962,7 +47964,7 @@ async function workspaceDesigns() {
     let entry = designs.get(doc.path);
     if (!entry || !doc.revision || entry.revision !== doc.revision) {
       try {
-        entry = { revision: doc.revision, circuit: loadDocument((await persistence.load(doc.path)).state) };
+        entry = { revision: doc.revision, circuit: loadDocument((await loadDesign(doc)).state) };
       } catch {
         continue;
       }
@@ -58678,7 +58680,6 @@ __exports.flushDraft = flushDraft;
 __exports.restoreDraft = restoreDraft;
 __exports.displayPath = displayPath;
 __exports.onDocumentListChange = onDocumentListChange;
-__exports.refreshCircuitList = refreshCircuitList;
 __exports.allowFolderAccess = allowFolderAccess;
 __exports.restoreStartup = restoreStartup;
 __exports.savedHistoryBase = savedHistoryBase;
@@ -58709,6 +58710,7 @@ let analysisFormStorageKey; __bind(() => { ({ analysisFormStorageKey } = __requi
 let opensOnAtlas; __bind(() => { ({ opensOnAtlas } = __require("src/web/startup.js")); });
 let circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportForm; __bind(() => { ({ circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportForm } = __require("src/web/elements.js")); });
 let dropTutorial; __bind(() => { ({ dropTutorial } = __require("src/web/onboarding.js")); });
+let isExamplePath, loadDesign, namedExamples; __bind(() => { ({ isExamplePath, loadDesign, namedExamples } = __require("src/web/example-designs.js")); });
 let formatModifiedTime, modifiedRefreshMs, revisionTime; __bind(() => { ({ formatModifiedTime, modifiedRefreshMs, revisionTime } = __require("src/web/modified-time.js")); });
 let hintLine, logLine; __bind(() => { ({ hintLine, logLine } = __require("src/web/status-bar-ui.js")); });
 let carryDeskPlace; __bind(() => { ({ carryDeskPlace } = __require("src/web/atlas-layout.js")); });
@@ -58724,6 +58726,7 @@ let applyJson, cancelPreviewTransaction, clearSymmetry, markModelChanged, render
  * the CLI's active document and reloading files changed on disk; and dropped
  * files. Storage itself is behind persistence.js.
  */
+
 
 
 
@@ -58885,7 +58888,6 @@ function documentGroupNames() {
   return folder ? [`Folder · ${folder.name}`, 'Other opened files'] : ['Opened files', 'Other opened files'];
 }
 
-/** The workspace's documents listed again, as the editor knows them. */
 async function refreshCircuitList() {
   try {
     editor.workspaceState = await persistence.workspace();
@@ -59144,6 +59146,7 @@ async function saveCircuit({ saveAs = false } = {}) {
       ? `Downloaded ${data.name}.json. This browser cannot write to files in place, so the download is the saved version; open it from there next time.`
       : `Saved ${displayPath(data.path)}.`, undefined, data.downloaded ? {} : { status: `Saved ${data.name}.` });
     if (!data.downloaded) folderTipOnce();
+    await saveNamedExamples(data.dir);
     // What follows the file (the history window's save points) reads it again.
     render();
     return true;
@@ -59349,6 +59352,32 @@ function hasUnsavedChanges({ cached = false } = {}) {
 
 let pendingDocumentAction = null;
 
+/** The bundled examples the design just saved names (example-designs.js),
+ *  saved beside it where the workspace has none of their name, so its links
+ *  and report sections keep finding them. One already there is left. */
+async function saveNamedExamples(dir) {
+  const known = [...(editor.workspaceState?.documents || []), ...(editor.workspaceState?.recent || [])];
+  const saved = [];
+  for (const doc of namedExamples(editor.circuit, known)) {
+    try {
+      await persistence.save({ ...(dir ? { dir } : {}), name: doc.name }, (await loadDesign(doc)).state, { overwrite: false });
+      saved.push(doc.name);
+    } catch (err) {
+      if (err.code !== 'exists') logLine(`Could not save ${doc.name} beside it: ${err.message}`, 'error');
+    }
+  }
+  if (!saved.length) return;
+  await refreshCircuitList();
+  logLine(`Saved ${saved.join(' and ')} beside it: the design names ${saved.length === 1 ? 'it' : 'them'}.`);
+}
+
+/** A bundled example opened as a new, unsaved design. */
+async function openExampleDesign(path) {
+  const { state } = await loadDesign({ path });
+  const name = path.slice('example:'.length);
+  return openStateAsNewDesign(state, name, `Opened the example ${name}, unsaved. Save (Ctrl/Cmd+S) to keep it in your workspace.`);
+}
+
 /** Run an action that replaces the open document, asking first when that would discard unsaved changes. */
 function requestDocumentAction(description, run, cancel = null) {
   if (!hasUnsavedChanges()) {
@@ -59375,6 +59404,7 @@ function requestCircuitLoad(path) {
  *  With `gate`, the file is read at once but applied only once it settles
  *  -- not at all when it settles false (resolving false). */
 function openDocumentPath(path, { gate = null } = {}) {
+  if (isExamplePath(path)) return openExampleDesign(path);
   return new Promise((resolve) => {
     requestDocumentAction(`Opening "${documentNameForPath(path)}"`,
       async () => resolve(await loadCircuit(path, false, { open: true, gate })),
@@ -60577,6 +60607,64 @@ __exports.guidesBtn = guidesBtn;
 __exports.paneEl = paneEl;
 };
 
+__modules["src/web/example-designs.js"] = function (__require, __exports) {
+__exports.exampleDocuments = exampleDocuments;
+__exports.loadDesign = loadDesign;
+__exports.namedExamples = namedExamples;
+let noteDesignLinks, noteFigures; __bind(() => { ({ noteDesignLinks, noteFigures } = __require("src/core/notes.js")); });
+let reportExampleDesigns; __bind(() => { ({ reportExampleDesigns } = __require("src/web/examples/report-example.js")); });
+let persistence; __bind(() => { ({ persistence } = __require("src/web/document-session.js")); });
+/**
+ * Designs bundled with the editor (Learn's report example,
+ * examples/report-example.js). Opening the example writes no file: its
+ * first design opens unsaved, and the others are known -- to links, peeks,
+ * notes, and reports -- from the bundle while the workspace has no design
+ * of their name. Saving a design that names one (a part's link, a design
+ * link or section in its notes) saves that one beside it, so the links
+ * keep working from the files.
+ */
+
+
+
+
+
+const PREFIX = 'example:';
+
+/** The bundled designs no known document is named like, as document
+ *  records whose `path` reads from the bundle (`loadDesign`). */
+function exampleDocuments(known = []) {
+  const names = new Set(known.map((doc) => String(doc.name).toLowerCase()));
+  return reportExampleDesigns()
+    .filter((design) => !names.has(design.name.toLowerCase()))
+    .map((design) => ({ name: design.name, path: `${PREFIX}${design.name}`, kind: 'circuit', example: true }));
+}
+
+/** Whether a document path reads from the bundle. */
+const isExamplePath = (path) => String(path ?? '').startsWith(PREFIX);
+
+/** A known design's saved contents, `{ state }`: from its file, or from the
+ *  bundle for an example not in the workspace. */
+async function loadDesign(doc, options) {
+  if (!isExamplePath(doc?.path)) return persistence.load(doc.path, options);
+  const design = reportExampleDesigns().find((entry) => entry.name === doc.path.slice(PREFIX.length));
+  if (!design) throw new Error(`no bundled design "${doc.path.slice(PREFIX.length)}"`);
+  return { state: design.state };
+}
+
+/** The bundled designs `circuit` names -- its parts' links, its notes' design
+ *  links and sections -- that `known` (document records) has none of. */
+function namedExamples(circuit, known = []) {
+  const named = new Set([
+    ...[...circuit.components.values()].map((part) => part.link).filter(Boolean),
+    ...noteDesignLinks(circuit.notes),
+    ...noteFigures(circuit.notes).map((entry) => entry.name),
+  ].map((name) => name.toLowerCase()));
+  return exampleDocuments(known).filter((doc) => named.has(doc.name.toLowerCase()));
+}
+
+__exports.isExamplePath = isExamplePath;
+};
+
 __modules["src/web/examples/report-example.js"] = function (__require, __exports) {
 __exports.reportExampleDesigns = reportExampleDesigns;
 let REPORT_INTEGRATOR; __bind(() => { ({ REPORT_INTEGRATOR } = __require("src/web/examples/report-integrator.js")); });
@@ -60672,6 +60760,7 @@ let DRAWING_EXPORT_OPTIONS, hasDrawableSelection, selectionDrawing, selectionSub
 let svgPixelSize; __bind(() => { ({ svgPixelSize } = __require("src/core/render.js")); });
 let svgToPngDataUrl, applyExportDarkTheme, embeddedMathFontFace, withEmbeddedMathFont; __bind(() => { ({ svgToPngDataUrl, applyExportDarkTheme, embeddedMathFontFace, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let buildReport, embeddedDesignNames; __bind(() => { ({ buildReport, embeddedDesignNames } = __require("src/core/report.js")); });
+let loadDesign; __bind(() => { ({ loadDesign } = __require("src/web/example-designs.js")); });
 let loadDocument; __bind(() => { ({ loadDocument } = __require("src/core/document.js")); });
 let writeDrawingToClipboard; __bind(() => { ({ writeDrawingToClipboard } = __require("src/web/clipboard.js")); });
 let defaultExportDirectory, validDocumentName; __bind(() => { ({ defaultExportDirectory, validDocumentName } = __require("src/web/persistence.js")); });
@@ -60691,6 +60780,7 @@ let render, syncRenderedLabelMetrics; __bind(() => { ({ render, syncRenderedLabe
  * dialog also exports the report, the notes with their figures
  * (core/report.js), as HTML and PDF.
  */
+
 
 
 
@@ -60889,7 +60979,7 @@ async function reportDesigns() {
     const doc = workspaceDesigns().find((entry) => entry.name.toLowerCase() === name.toLowerCase());
     if (!doc) continue;
     try {
-      const circuit = loadDocument((await persistence.load(doc.path)).state);
+      const circuit = loadDocument((await loadDesign(doc)).state);
       found.set(name.toLowerCase(), { name: doc.name, circuit });
       queue.push(...embeddedDesignNames(circuit));
     } catch (err) {
@@ -63160,7 +63250,7 @@ function reportExampleEntry() {
   entry.className = 'help-tutorial';
   entry.append(
     Object.assign(document.createElement('h3'), { textContent: 'Report example' }),
-    Object.assign(document.createElement('p'), { textContent: 'A delta-sigma modulator and the switched-capacitor integrator inside it, with notes written as a report: figures, beats, math, a citation, and the integrator as a section of the modulator\'s report. Saved to the workspace as report-example-modulator and report-example-integrator.' }),
+    Object.assign(document.createElement('p'), { textContent: 'A delta-sigma modulator and the switched-capacitor integrator inside it, with notes written as a report: contents, figures, beats, equations, plots, citations, and the integrator as a section of the modulator\'s report. Opens unsaved; saving keeps both designs.' }),
     open,
   );
   return entry;
@@ -63227,6 +63317,7 @@ let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let designIndex, searchKey; __bind(() => { ({ designIndex, searchKey } = __require("src/core/design-index.js")); });
 let brokenLinks; __bind(() => { ({ brokenLinks } = __require("src/core/workspace-check.js")); });
 let noteDesignLinks; __bind(() => { ({ noteDesignLinks } = __require("src/core/notes.js")); });
+let loadDesign, namedExamples; __bind(() => { ({ loadDesign, namedExamples } = __require("src/web/example-designs.js")); });
 let INDEX_CACHE, cacheGet, cachePut, renderingKey; __bind(() => { ({ INDEX_CACHE, cacheGet, cachePut, renderingKey } = __require("src/web/atlas-cache.js")); });
 let BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, connectorPath, layoutBubbles; __bind(() => { ({ BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, connectorPath, layoutBubbles } = __require("src/core/link-bubble.js")); });
 let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
@@ -63277,6 +63368,7 @@ let openAtlas; __bind(() => { ({ openAtlas } = __require("src/web/atlas.js")); }
 
 
 
+
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const OPEN_KEY = 'mosfeteer.linkBubbles:';
 const SPOTS_KEY = 'mosfeteer.linkBubbleSpots:';
@@ -63301,9 +63393,12 @@ let navigating = false;
 
 // ----- finding a linked design -----------------------------------------------------
 
-/** Every design the editor knows of: the workspace's, then recent ones. */
+/** Every design the editor knows of: the workspace's, then recent ones,
+ *  then the bundled examples the open design names that the workspace has
+ *  none of (example-designs.js). */
 function knownDesigns(state = editor.workspaceState || {}) {
-  return [...(state.documents || []), ...(state.recent || [])].filter((doc) => doc.kind === 'circuit' || !doc.kind);
+  const docs = [...(state.documents || []), ...(state.recent || [])].filter((doc) => doc.kind === 'circuit' || !doc.kind);
+  return [...docs, ...namedExamples(editor.circuit, docs)];
 }
 
 /** The document a link names, or null: one of that name beside the open
@@ -63369,7 +63464,7 @@ async function loadBubble(refdes, name) {
     const cached = pictures.get(doc.path);
     let picture = cached && (!doc.revision || cached.revision === doc.revision) ? cached : null;
     if (!picture) {
-      const data = await persistence.load(doc.path);
+      const data = await loadDesign(doc);
       picture = await pictureOf(loadDocument(data.state));
       if (picture) pictures.set(doc.path, { ...picture, revision: doc.revision || data.revision || null });
     }
@@ -63767,7 +63862,7 @@ async function linksOfDocument(doc) {
   const key = doc.revision && renderingKey(doc.path, doc.revision, INDEX_CACHE);
   let index = key ? await cacheGet(key) : null;
   if (!index) {
-    index = designIndex(loadDocument((await persistence.load(doc.path)).state));
+    index = designIndex(loadDocument((await loadDesign(doc)).state));
     if (key) await cachePut(key, index);
   }
   const links = index.links || [];
@@ -76029,7 +76124,7 @@ let canvasEl, circuitNameEl, tipCardEl, tipTextEl, tipsButton, tutorialCardEl, t
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let fitView, paneSize; __bind(() => { ({ fitView, paneSize } = __require("src/web/canvas-view.js")); });
-let openDocumentPath, persistence, refreshCircuitList, renderSaveState, requestDocumentAction, startNewDocument; __bind(() => { ({ openDocumentPath, persistence, refreshCircuitList, renderSaveState, requestDocumentAction, startNewDocument } = __require("src/web/document-session.js")); });
+let openStateAsNewDesign, renderSaveState, requestDocumentAction, startNewDocument; __bind(() => { ({ openStateAsNewDesign, renderSaveState, requestDocumentAction, startNewDocument } = __require("src/web/document-session.js")); });
 let reportExampleDesigns; __bind(() => { ({ reportExampleDesigns } = __require("src/web/examples/report-example.js")); });
 let showNotes; __bind(() => { ({ showNotes } = __require("src/web/notes-window.js")); });
 let applyJson, render; __bind(() => { ({ applyJson, render } = __require("src/web/main.js")); });
@@ -76233,39 +76328,15 @@ function syncTutorial() {
  *  document, from its own drawing if it has one (after the usual
  *  unsaved-changes check). */
 /**
- * Learn's report example (examples/report-example.js): its designs saved to
- * the workspace, each only when no design of its name is there -- one that
- * is opens as it is, never replaced -- then the first opened in the editor,
- * its notes shown.
+ * Learn's report example (examples/report-example.js): its first design
+ * opened as a new, unsaved design in the editor, its notes shown. No file is
+ * written: the designs it names come from the bundle until it is saved,
+ * which saves them beside it (example-designs.js).
  */
 async function openReportExample() {
-  if (persistence.browserOnly && !editor.workspaceState?.folder) {
-    logLine('Open a folder first: the report example is two designs saved there.', 'error');
-    return;
-  }
-  await refreshCircuitList();
-  const pathOf = (name) => (editor.workspaceState?.documents || []).find((doc) => doc.name.toLowerCase() === name.toLowerCase())?.path || null;
-  const paths = [];
-  try {
-    for (const { name, state } of reportExampleDesigns()) {
-      let path = pathOf(name);
-      if (!path) {
-        try {
-          path = (await persistence.save({ name }, state, { overwrite: false })).path;
-        } catch (err) {
-          if (err.code !== 'exists') throw err;
-          await refreshCircuitList();
-          path = pathOf(name);
-        }
-      }
-      paths.push(path);
-    }
-  } catch (err) {
-    logLine(`Could not save the report example: ${err.message}`, 'error');
-    return;
-  }
-  await refreshCircuitList();
-  if (!paths[0] || !await openDocumentPath(paths[0])) return;
+  const [first] = reportExampleDesigns();
+  const message = 'Opened the report example, unsaved. Save (Ctrl/Cmd+S) keeps it in your workspace, with the integrator its report includes.';
+  if (!await openStateAsNewDesign(first.state, first.name, message)) return;
   // Opened over the Atlas (Learn is there too), it shows in the editor.
   leaveAtlasNow();
   showNotes();
@@ -79228,6 +79299,7 @@ let wheelIntent; __bind(() => { ({ wheelIntent } = __require("src/web/gestures.j
 let buttonIcon; __bind(() => { ({ buttonIcon } = __require("src/web/icons.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let persistence, openDocumentPath; __bind(() => { ({ persistence, openDocumentPath } = __require("src/web/document-session.js")); });
+let loadDesign; __bind(() => { ({ loadDesign } = __require("src/web/example-designs.js")); });
 let appendDesignChoices, workspaceDesigns; __bind(() => { ({ appendDesignChoices, workspaceDesigns } = __require("src/web/hierarchy.js")); });
 let closeComponentContextMenu, openMenuAt; __bind(() => { ({ closeComponentContextMenu, openMenuAt } = __require("src/web/context-menu.js")); });
 let storedImage, takePastedPictures; __bind(() => { ({ storedImage, takePastedPictures } = __require("src/web/copy-paste.js")); });
@@ -79256,6 +79328,7 @@ let pngDataUrlBlob, writeDrawingToClipboard; __bind(() => { ({ pngDataUrlBlob, w
  * with its own windows, or none. `Shift+V` shows or hides them, opening a
  * first one (with its design picker) when there is none.
  */
+
 
 
 
@@ -79356,7 +79429,7 @@ async function loadInto(win, { force = false } = {}) {
       const revision = await persistence.revision?.(doc.path);
       if (!revision || revision === win.revision) return;
     }
-    const data = await persistence.load(doc.path, force || !win.etag ? {} : { ifNoneMatch: win.etag });
+    const data = await loadDesign(doc, force || !win.etag ? {} : { ifNoneMatch: win.etag });
     if (win.doc !== doc || data.notModified) return;
     const picture = await pictureOf(loadDocument(data.state));
     if (win.doc !== doc) return;

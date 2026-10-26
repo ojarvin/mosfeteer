@@ -15,6 +15,7 @@ import { GRID } from '../core/grid.js';
 import { svgString } from '../core/render.js';
 import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
 import { persistence } from './document-session.js';
+import { loadDesign } from './example-designs.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { editor } from './editor-state.js';
 import { canvasEl } from './elements.js';
@@ -38,7 +39,7 @@ export async function workspaceDesigns() {
     let entry = designs.get(doc.path);
     if (!entry || !doc.revision || entry.revision !== doc.revision) {
       try {
-        entry = { revision: doc.revision, circuit: loadDocument((await persistence.load(doc.path)).state) };
+        entry = { revision: doc.revision, circuit: loadDocument((await loadDesign(doc)).state) };
       } catch {
         continue;
       }

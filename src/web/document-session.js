@@ -15,6 +15,7 @@ import { analysisFormStorageKey } from './analysis-state.js';
 import { opensOnAtlas } from './startup.js';
 import { circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportForm } from './elements.js';
 import { dropTutorial } from './onboarding.js';
+import { isExamplePath, loadDesign, namedExamples } from './example-designs.js';
 import { formatModifiedTime, modifiedRefreshMs, revisionTime } from './modified-time.js';
 import { hintLine, logLine } from './status-bar-ui.js';
 import { carryDeskPlace } from './atlas-layout.js';
@@ -165,8 +166,7 @@ function documentGroupNames() {
   return folder ? [`Folder · ${folder.name}`, 'Other opened files'] : ['Opened files', 'Other opened files'];
 }
 
-/** The workspace's documents listed again, as the editor knows them. */
-export async function refreshCircuitList() {
+async function refreshCircuitList() {
   try {
     editor.workspaceState = await persistence.workspace();
   } catch (err) {
@@ -424,6 +424,7 @@ export async function saveCircuit({ saveAs = false } = {}) {
       ? `Downloaded ${data.name}.json. This browser cannot write to files in place, so the download is the saved version; open it from there next time.`
       : `Saved ${displayPath(data.path)}.`, undefined, data.downloaded ? {} : { status: `Saved ${data.name}.` });
     if (!data.downloaded) folderTipOnce();
+    await saveNamedExamples(data.dir);
     // What follows the file (the history window's save points) reads it again.
     render();
     return true;
@@ -629,6 +630,32 @@ export function hasUnsavedChanges({ cached = false } = {}) {
 
 let pendingDocumentAction = null;
 
+/** The bundled examples the design just saved names (example-designs.js),
+ *  saved beside it where the workspace has none of their name, so its links
+ *  and report sections keep finding them. One already there is left. */
+async function saveNamedExamples(dir) {
+  const known = [...(editor.workspaceState?.documents || []), ...(editor.workspaceState?.recent || [])];
+  const saved = [];
+  for (const doc of namedExamples(editor.circuit, known)) {
+    try {
+      await persistence.save({ ...(dir ? { dir } : {}), name: doc.name }, (await loadDesign(doc)).state, { overwrite: false });
+      saved.push(doc.name);
+    } catch (err) {
+      if (err.code !== 'exists') logLine(`Could not save ${doc.name} beside it: ${err.message}`, 'error');
+    }
+  }
+  if (!saved.length) return;
+  await refreshCircuitList();
+  logLine(`Saved ${saved.join(' and ')} beside it: the design names ${saved.length === 1 ? 'it' : 'them'}.`);
+}
+
+/** A bundled example opened as a new, unsaved design. */
+async function openExampleDesign(path) {
+  const { state } = await loadDesign({ path });
+  const name = path.slice('example:'.length);
+  return openStateAsNewDesign(state, name, `Opened the example ${name}, unsaved. Save (Ctrl/Cmd+S) to keep it in your workspace.`);
+}
+
 /** Run an action that replaces the open document, asking first when that would discard unsaved changes. */
 export function requestDocumentAction(description, run, cancel = null) {
   if (!hasUnsavedChanges()) {
@@ -655,6 +682,7 @@ function requestCircuitLoad(path) {
  *  With `gate`, the file is read at once but applied only once it settles
  *  -- not at all when it settles false (resolving false). */
 export function openDocumentPath(path, { gate = null } = {}) {
+  if (isExamplePath(path)) return openExampleDesign(path);
   return new Promise((resolve) => {
     requestDocumentAction(`Opening "${documentNameForPath(path)}"`,
       async () => resolve(await loadCircuit(path, false, { open: true, gate })),

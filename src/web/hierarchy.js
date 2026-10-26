@@ -23,6 +23,7 @@ import { GRID } from '../core/grid.js';
 import { designIndex, searchKey } from '../core/design-index.js';
 import { brokenLinks } from '../core/workspace-check.js';
 import { noteDesignLinks } from '../core/notes.js';
+import { loadDesign, namedExamples } from './example-designs.js';
 import { INDEX_CACHE, cacheGet, cachePut, renderingKey } from './atlas-cache.js';
 import { BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, connectorPath, layoutBubbles } from '../core/link-bubble.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
@@ -60,9 +61,12 @@ let navigating = false;
 
 // ----- finding a linked design -----------------------------------------------------
 
-/** Every design the editor knows of: the workspace's, then recent ones. */
+/** Every design the editor knows of: the workspace's, then recent ones,
+ *  then the bundled examples the open design names that the workspace has
+ *  none of (example-designs.js). */
 function knownDesigns(state = editor.workspaceState || {}) {
-  return [...(state.documents || []), ...(state.recent || [])].filter((doc) => doc.kind === 'circuit' || !doc.kind);
+  const docs = [...(state.documents || []), ...(state.recent || [])].filter((doc) => doc.kind === 'circuit' || !doc.kind);
+  return [...docs, ...namedExamples(editor.circuit, docs)];
 }
 
 /** The document a link names, or null: one of that name beside the open
@@ -128,7 +132,7 @@ async function loadBubble(refdes, name) {
     const cached = pictures.get(doc.path);
     let picture = cached && (!doc.revision || cached.revision === doc.revision) ? cached : null;
     if (!picture) {
-      const data = await persistence.load(doc.path);
+      const data = await loadDesign(doc);
       picture = await pictureOf(loadDocument(data.state));
       if (picture) pictures.set(doc.path, { ...picture, revision: doc.revision || data.revision || null });
     }
@@ -526,7 +530,7 @@ async function linksOfDocument(doc) {
   const key = doc.revision && renderingKey(doc.path, doc.revision, INDEX_CACHE);
   let index = key ? await cacheGet(key) : null;
   if (!index) {
-    index = designIndex(loadDocument((await persistence.load(doc.path)).state));
+    index = designIndex(loadDocument((await loadDesign(doc)).state));
     if (key) await cachePut(key, index);
   }
   const links = index.links || [];

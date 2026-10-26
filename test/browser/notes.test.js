@@ -6,7 +6,7 @@ import { describe, before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { start, browserSkip } from './harness.js';
+import { start, sleep, browserSkip } from './harness.js';
 import { amplifier } from './fixtures.js';
 
 describe('design notes', { skip: browserSkip() }, () => {
@@ -203,32 +203,42 @@ describe('design notes', { skip: browserSkip() }, () => {
     await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.notes === '')`);
   });
 
-  test('Learn\'s report example saves its two designs, opens the modulator in the editor, and never replaces them', async () => {
-    const open = async () => {
-      await h.evaluate(`${h.module('help.js')}.then((m) => m.showHelp('tutorial'))`);
-      await h.until(`!!document.getElementById('btn-report-example')?.getClientRects().length`);
-      await h.click('#btn-report-example');
-      const opened = `${h.module('editor-state.js')}.then((m) => m.editor.currentCircuitName === 'report-example-modulator')`;
-      // Unsaved changes are asked about first, as for any document.
-      await h.until(`document.getElementById('switch-dialog').open || ${opened}`);
-      if (await h.evaluate(`document.getElementById('switch-dialog').open`)) await h.click('#switch-dialog [value="discard"]');
-      await h.until(opened);
-      await h.until(`!!document.querySelector('.notes-view:not([hidden]) .note-section')`);
-    };
+  test('Learn\'s report example opens unsaved, its integrator from the bundle, and saving keeps both designs', async () => {
+    const exists = (name) => readFile(join(h.workspace, `${name}.json`), 'utf8').then(() => true, () => false);
     // Opened from Learn over the Atlas, it shows in the editor.
     await h.click('#app-mark');
     await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !!s && !s.busy; })`, 10000);
-    await open();
+    await h.evaluate(`${h.module('help.js')}.then((m) => m.showHelp('tutorial'))`);
+    await h.until(`!!document.getElementById('btn-report-example')?.getClientRects().length`);
+    await h.click('#btn-report-example');
+    // Unsaved changes are asked about first, as for any document.
+    await h.until(`document.getElementById('switch-dialog').open || document.getElementById('circuit-name').value === 'report-example-modulator'`);
+    if (await h.evaluate(`document.getElementById('switch-dialog').open`)) await h.click('#switch-dialog [value="discard"]');
+    await h.until(`document.getElementById('circuit-name').value === 'report-example-modulator'`);
     await h.until(`${h.module('atlas.js')}.then((m) => !m.atlasSnapshot())`, 5000);
-    const files = () => readFile(join(h.workspace, 'report-example-integrator.json'), 'utf8');
-    const integrator = JSON.parse(await files());
-    assert.match(integrator.notes, /^# SC integrator with correlated level shifting/);
+    assert.equal(await editor('editor.currentDocumentPath'), null, 'unsaved');
+    assert.equal(await exists('report-example-modulator'), false);
+    assert.equal(await exists('report-example-integrator'), false);
+    // The integrator is known from the bundle: its section and link are whole.
+    await h.until(`!!document.querySelector('.notes-view:not([hidden]) .note-section')`);
     assert.equal(await h.evaluate(`document.querySelector('.note-section .note-design').dataset.design`), 'report-example-integrator');
-    // Changed by hand, it is opened as it is the next time.
-    await writeFile(join(h.workspace, 'report-example-integrator.json'), JSON.stringify({ ...integrator, notes: '# Mine' }));
-    await h.open('amp');
-    await open();
-    assert.equal(JSON.parse(await files()).notes, '# Mine');
+    assert.equal(await h.evaluate(`document.querySelector('.notes-view .note-design.broken')`), null);
+    // H1's link peeks at it, unbroken.
+    await h.evaluate(`${h.module('main.js')}.then((m) => { m.setSelection(['H1']); m.render(); })`);
+    if (!await h.evaluate(`${h.module('hierarchy.js')}.then((m) => m.linkBubbleFrames().length)`)) await h.key('o');
+    await h.until(`!!document.querySelector('.link-bubble:not(.broken) image[href^="data:image/svg"]')`);
+    assert.deepEqual(await h.evaluate(`${h.module('hierarchy.js')}.then((m) => m.openDesignBrokenLinks())`), []);
+    await h.evaluate(`${h.module('export-ui.js')}.then((m) => m.exportCircuit({ content: 'report' }))`);
+    await h.until(`document.getElementById('export-report-summary').textContent.includes('a section from another design')`);
+    await h.evaluate(`document.getElementById('export-dialog').close()`);
+    // Saving keeps the modulator, and the integrator beside it.
+    await h.key('s', { ctrlKey: true });
+    await h.until(`${h.module('editor-state.js')}.then((m) => !!m.editor.currentDocumentPath)`);
+    // A file on disk, polled from Node.
+    for (let i = 0; i < 50 && !await exists('report-example-integrator'); i++) await sleep(100);
+    assert.equal(await exists('report-example-modulator'), true);
+    const integrator = JSON.parse(await readFile(join(h.workspace, 'report-example-integrator.json'), 'utf8'));
+    assert.match(integrator.notes, /^# SC integrator with correlated level shifting/);
   });
 
   test('another design shows its own notes, and n closes the window', async () => {

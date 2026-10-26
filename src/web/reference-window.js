@@ -29,6 +29,7 @@ import { wheelIntent } from './gestures.js';
 import { buttonIcon } from './icons.js';
 import { editor } from './editor-state.js';
 import { persistence, openDocumentPath } from './document-session.js';
+import { loadDesign } from './example-designs.js';
 import { appendDesignChoices, workspaceDesigns } from './hierarchy.js';
 import { closeComponentContextMenu, openMenuAt } from './context-menu.js';
 import { storedImage, takePastedPictures } from './copy-paste.js';
@@ -119,7 +120,7 @@ async function loadInto(win, { force = false } = {}) {
       const revision = await persistence.revision?.(doc.path);
       if (!revision || revision === win.revision) return;
     }
-    const data = await persistence.load(doc.path, force || !win.etag ? {} : { ifNoneMatch: win.etag });
+    const data = await loadDesign(doc, force || !win.etag ? {} : { ifNoneMatch: win.etag });
     if (win.doc !== doc || data.notModified) return;
     const picture = await pictureOf(loadDocument(data.state));
     if (win.doc !== doc) return;

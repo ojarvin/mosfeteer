@@ -11,7 +11,7 @@ import { canvasEl, circuitNameEl, tipCardEl, tipTextEl, tipsButton, tutorialCard
 import { editor } from './editor-state.js';
 import { logLine } from './status-bar-ui.js';
 import { fitView, paneSize } from './canvas-view.js';
-import { openDocumentPath, persistence, refreshCircuitList, renderSaveState, requestDocumentAction, startNewDocument } from './document-session.js';
+import { openStateAsNewDesign, renderSaveState, requestDocumentAction, startNewDocument } from './document-session.js';
 import { reportExampleDesigns } from './examples/report-example.js';
 import { showNotes } from './notes-window.js';
 import { applyJson, render } from './main.js';
@@ -197,39 +197,15 @@ export function syncTutorial() {
  *  document, from its own drawing if it has one (after the usual
  *  unsaved-changes check). */
 /**
- * Learn's report example (examples/report-example.js): its designs saved to
- * the workspace, each only when no design of its name is there -- one that
- * is opens as it is, never replaced -- then the first opened in the editor,
- * its notes shown.
+ * Learn's report example (examples/report-example.js): its first design
+ * opened as a new, unsaved design in the editor, its notes shown. No file is
+ * written: the designs it names come from the bundle until it is saved,
+ * which saves them beside it (example-designs.js).
  */
 export async function openReportExample() {
-  if (persistence.browserOnly && !editor.workspaceState?.folder) {
-    logLine('Open a folder first: the report example is two designs saved there.', 'error');
-    return;
-  }
-  await refreshCircuitList();
-  const pathOf = (name) => (editor.workspaceState?.documents || []).find((doc) => doc.name.toLowerCase() === name.toLowerCase())?.path || null;
-  const paths = [];
-  try {
-    for (const { name, state } of reportExampleDesigns()) {
-      let path = pathOf(name);
-      if (!path) {
-        try {
-          path = (await persistence.save({ name }, state, { overwrite: false })).path;
-        } catch (err) {
-          if (err.code !== 'exists') throw err;
-          await refreshCircuitList();
-          path = pathOf(name);
-        }
-      }
-      paths.push(path);
-    }
-  } catch (err) {
-    logLine(`Could not save the report example: ${err.message}`, 'error');
-    return;
-  }
-  await refreshCircuitList();
-  if (!paths[0] || !await openDocumentPath(paths[0])) return;
+  const [first] = reportExampleDesigns();
+  const message = 'Opened the report example, unsaved. Save (Ctrl/Cmd+S) keeps it in your workspace, with the integrator its report includes.';
+  if (!await openStateAsNewDesign(first.state, first.name, message)) return;
   // Opened over the Atlas (Learn is there too), it shows in the editor.
   leaveAtlasNow();
   showNotes();
