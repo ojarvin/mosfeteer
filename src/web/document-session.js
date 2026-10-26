@@ -165,7 +165,8 @@ function documentGroupNames() {
   return folder ? [`Folder · ${folder.name}`, 'Other opened files'] : ['Opened files', 'Other opened files'];
 }
 
-async function refreshCircuitList() {
+/** The workspace's documents listed again, as the editor knows them. */
+export async function refreshCircuitList() {
   try {
     editor.workspaceState = await persistence.workspace();
   } catch (err) {

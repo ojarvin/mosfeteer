@@ -21,9 +21,9 @@ describe('the switched-cap and delta-sigma tutorials', { skip: browserSkip() }, 
     await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.tutorial?.id === ${JSON.stringify(id)})`);
   };
 
-  test('Learn lists every tutorial with a Start button', async () => {
+  test('Learn lists every tutorial with a Start button, then the report example', async () => {
     assert.deepEqual(await h.evaluate(`[...document.querySelectorAll('#help-tutorials .help-tutorial h3')].map((e) => e.textContent)`),
-      ['Draw a five-transistor OTA', 'Clock a switched-capacitor integrator', 'Analyze a delta-sigma modulator']);
+      ['Draw a five-transistor OTA', 'Clock a switched-capacitor integrator', 'Analyze a delta-sigma modulator', 'Report example']);
     assert.equal(await h.evaluate(`document.querySelector('#help-tutorials [data-tutorial="ota"]').id`), 'btn-tutorial');
   });
 

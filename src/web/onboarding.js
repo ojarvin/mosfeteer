@@ -11,7 +11,9 @@ import { canvasEl, circuitNameEl, tipCardEl, tipTextEl, tipsButton, tutorialCard
 import { editor } from './editor-state.js';
 import { logLine } from './status-bar-ui.js';
 import { fitView, paneSize } from './canvas-view.js';
-import { renderSaveState, requestDocumentAction, startNewDocument } from './document-session.js';
+import { openDocumentPath, persistence, refreshCircuitList, renderSaveState, requestDocumentAction, startNewDocument } from './document-session.js';
+import { reportExampleDesigns } from './examples/report-example.js';
+import { showNotes } from './notes-window.js';
 import { applyJson, render } from './main.js';
 import { leaveAtlasNow } from './atlas.js';
 
@@ -194,6 +196,41 @@ export function syncTutorial() {
 /** Begin a tutorial (the OTA unless `id` names another) in a fresh
  *  document, from its own drawing if it has one (after the usual
  *  unsaved-changes check). */
+/**
+ * Learn's report example (examples/report-example.js): its designs saved to
+ * the workspace, each only when no design of its name is there -- one that
+ * is opens as it is, never replaced -- then the first opened, its notes shown.
+ */
+export async function openReportExample() {
+  if (persistence.browserOnly && !editor.workspaceState?.folder) {
+    logLine('Open a folder first: the report example is two designs saved there.', 'error');
+    return;
+  }
+  await refreshCircuitList();
+  const pathOf = (name) => (editor.workspaceState?.documents || []).find((doc) => doc.name.toLowerCase() === name.toLowerCase())?.path || null;
+  const paths = [];
+  try {
+    for (const { name, state } of reportExampleDesigns()) {
+      let path = pathOf(name);
+      if (!path) {
+        try {
+          path = (await persistence.save({ name }, state, { overwrite: false })).path;
+        } catch (err) {
+          if (err.code !== 'exists') throw err;
+          await refreshCircuitList();
+          path = pathOf(name);
+        }
+      }
+      paths.push(path);
+    }
+  } catch (err) {
+    logLine(`Could not save the report example: ${err.message}`, 'error');
+    return;
+  }
+  await refreshCircuitList();
+  if (paths[0] && await openDocumentPath(paths[0])) showNotes();
+}
+
 export function offerTutorial(id = 'ota') {
   const tutorial = tutorialById(id);
   requestDocumentAction('Starting the tutorial', () => {

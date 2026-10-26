@@ -113,6 +113,12 @@ warnings, and writes the HTML.
   caption and each section with a line to replace (`notesOutline`). Only
   what the drawing has is placed: an analysis is in it once annotated.
   One undo step; written notes are never replaced.
+- **Example.** Learn → Tutorial → **Report example** saves two designs to
+  the workspace (`src/web/examples/report-example.js`): a first-order
+  delta-sigma modulator whose integrator links to a switched-capacitor
+  integrator with correlated level shifting, the integrator's notes a section
+  of the modulator's report. A design of either name already there is
+  opened as it is, never replaced; browser-only mode needs a folder first.
 - **In the notes window** a figure shows as its number, target, and caption,
   its target in red when there is nothing of that name to draw.
 - **Sizes.** Every figure is drawn at the page guide's width (the A4 one

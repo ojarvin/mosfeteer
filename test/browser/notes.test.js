@@ -4,7 +4,7 @@
 
 import { describe, before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { start, browserSkip } from './harness.js';
 import { amplifier } from './fixtures.js';
@@ -201,6 +201,30 @@ describe('design notes', { skip: browserSkip() }, () => {
     await h.evaluate(`document.querySelector('.notes-source').blur()`);
     await h.key('z', { ctrlKey: true });
     await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.notes === '')`);
+  });
+
+  test('Learn\'s report example saves its two designs, opens the modulator, and never replaces them', async () => {
+    const open = async () => {
+      await h.evaluate(`${h.module('help.js')}.then((m) => m.showHelp('tutorial'))`);
+      await h.until(`!!document.getElementById('btn-report-example')?.getClientRects().length`);
+      await h.click('#btn-report-example');
+      const opened = `${h.module('editor-state.js')}.then((m) => m.editor.currentCircuitName === 'report-example-modulator')`;
+      // Unsaved changes are asked about first, as for any document.
+      await h.until(`document.getElementById('switch-dialog').open || ${opened}`);
+      if (await h.evaluate(`document.getElementById('switch-dialog').open`)) await h.click('#switch-dialog [value="discard"]');
+      await h.until(opened);
+      await h.until(`!!document.querySelector('.notes-view:not([hidden]) .note-section')`);
+    };
+    await open();
+    const files = () => readFile(join(h.workspace, 'report-example-integrator.json'), 'utf8');
+    const integrator = JSON.parse(await files());
+    assert.match(integrator.notes, /^# SC integrator with correlated level shifting/);
+    assert.equal(await h.evaluate(`document.querySelector('.note-section .note-design').dataset.design`), 'report-example-integrator');
+    // Changed by hand, it is opened as it is the next time.
+    await writeFile(join(h.workspace, 'report-example-integrator.json'), JSON.stringify({ ...integrator, notes: '# Mine' }));
+    await h.open('amp');
+    await open();
+    assert.equal(JSON.parse(await files()).notes, '# Mine');
   });
 
   test('another design shows its own notes, and n closes the window', async () => {

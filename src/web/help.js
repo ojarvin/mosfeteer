@@ -11,7 +11,7 @@ import { symbolCategories } from '../core/components/categories.js';
 import { PLACEMENT_LABELS, editorKeymap } from './toolbar.js';
 import { helpDialog, helpDialogContent, helpSearch } from './elements.js';
 import { symbolPreviewSvg } from './insert-menu.js';
-import { offerTutorial, tipStates, tipsOn } from './onboarding.js';
+import { offerTutorial, openReportExample, tipStates, tipsOn } from './onboarding.js';
 import { TUTORIALS } from './tutorial.js';
 
 let helpCommandText = '';
@@ -171,6 +171,23 @@ export function showHelp(tab = 'keys') {
   showTab(tab);
 }
 
+/** Learn's report example: two designs saved to the workspace and opened. */
+function reportExampleEntry() {
+  const open = Object.assign(document.createElement('button'), { type: 'button', className: 'confirm-action', textContent: 'Open', id: 'btn-report-example' });
+  open.addEventListener('click', () => {
+    helpDialog.close();
+    void openReportExample();
+  });
+  const entry = document.createElement('section');
+  entry.className = 'help-tutorial';
+  entry.append(
+    Object.assign(document.createElement('h3'), { textContent: 'Report example' }),
+    Object.assign(document.createElement('p'), { textContent: 'A delta-sigma modulator and the switched-capacitor integrator inside it, with notes written as a report: figures, beats, math, a citation, and the integrator as a section of the modulator\'s report. Saved to the workspace as report-example-modulator and report-example-integrator.' }),
+    open,
+  );
+  return entry;
+}
+
 export function installHelp() {
   helpSearch?.addEventListener('input', renderHelpSearch);
   helpSearch?.addEventListener('keydown', (ev) => {
@@ -198,7 +215,7 @@ export function installHelp() {
       start,
     );
     return entry;
-  }) || []);
+  }) || [], reportExampleEntry());
   document.getElementById('btn-symbols')?.addEventListener('click', () => helpDialog.close(), true);
   document.getElementById('btn-built-in-drawings')?.addEventListener('click', () => helpDialog.close(), true);
 }
