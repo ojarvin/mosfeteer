@@ -47,11 +47,18 @@ last edges must follow terminal directions when directions are available.
 Candidate paths are ordered by:
 
 1. body crossings and hard-clearance violations,
-2. collinear overlap and crossings with existing wires,
+2. collinear overlap with existing wires,
 3. component and label clearance,
 4. pin-direction conformity,
-5. Manhattan length,
-6. visible bend count.
+5. visible bend count,
+6. Manhattan length, each segment within two cells of a block-diagram or
+   signal-flow part counting three cells more (`roomScore`),
+7. bends near the route's midpoint, then crossings with existing wires.
+
+Around block-diagram and signal-flow parts (`roomyType` in
+`components/categories.js`) a wire may also leave a pin two cells before it
+bends, so among routes with as few bends a short detour buys two cells of
+room from the blocks it passes. Schematic parts keep their one cell.
 
 Crossings are legal and remain visually unambiguous because solder dots are
 created only at electrical junctions, not at a crossing of unrelated nets.

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { autoRoute, balancedCrossCoupling, gateBodyCrossingAllowed, segmentsCross, smartRoute, segThroughInterior, steinerBranches, steinerRoute } from '../src/core/router.js';
 import { onGrid } from '../src/core/grid.js';
 import { junctionPoints } from '../src/core/wiring.js';
+import { Circuit } from '../src/core/model.js';
+import { runCommand } from '../src/core/commands.js';
 
 function allOnGrid(pts) {
   for (const p of pts) assert.ok(onGrid(p.x) && onGrid(p.y), `point (${p.x},${p.y}) on grid`);
@@ -761,4 +763,28 @@ test('cross-net overlaps are found line by line, in the all-pairs order', async 
     'N1:0:2/N3:0:1 200,80-200,120',
     'N5:0:1/N6:0:1 40,440-80,480',
   ]);
+});
+
+test('a wire keeps two cells from block-diagram and signal-flow parts where a short detour allows it', () => {
+  const c = new Circuit();
+  for (const line of [
+    'add input U --at -1200 0', 'add signal_sum S1 --at -800 0', 'add gain K1 --at -400 0 --value a',
+    'add tf_z H1 --at 0 0 --value "tf([0 1], [1 -1])"', 'add quantizer QZ1 --at 400 0', 'add output V --at 800 0',
+    'connect U.p S1.w', 'connect S1.e K1.in', 'connect K1.out H1.in', 'connect H1.out QZ1.in', 'connect QZ1.out V.p',
+    'connect QZ1.out S1.s',
+  ]) runCommand(c, line);
+  // Two cells out of the quantizer before the bend, two below the integrator.
+  const feedback = c.netOfTerminal({ comp: 'S1', term: 's' }).paths().find((path) => path.at(-1).y === 40);
+  assert.deepEqual(feedback, [{ x: 480, y: 0 }, { x: 560, y: 0 }, { x: 560, y: 200 }, { x: -800, y: 200 }, { x: -800, y: 40 }]);
+});
+
+test('schematic parts keep their one cell: the room is for blocks only', () => {
+  const body = { x: 0, y: -80, w: 160, h: 160 };
+  const pins = new Map([['160,0', { x: 1, y: 0 }], ['0,0', { x: -1, y: 0 }]]);
+  const env = { rects: [body], pins, wires: [] };
+  const schematic = smartRoute({ x: 160, y: 0 }, { x: 0, y: 0 }, env);
+  const block = smartRoute({ x: 160, y: 0 }, { x: 0, y: 0 }, { ...env, roomRects: [body], roomPins: new Set(['160,0', '0,0']) });
+  const reach = (route) => Math.max(...route.map((p) => p.x));
+  assert.equal(reach(schematic), 200, 'one cell out of a schematic part');
+  assert.equal(reach(block), 240, 'two cells out of a block');
 });

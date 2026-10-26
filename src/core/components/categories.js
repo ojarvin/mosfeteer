@@ -25,6 +25,12 @@ export const SYMBOL_CATEGORY_RULES = [
   ['Signal flow', /^(signal_(sum|multiply)|tf_(s|z|dac|dac_rz|delay|zdelay)|gain|sampler|quantizer|dither)$/],
 ];
 
+/** Block-diagram and signal-flow parts: the router keeps two cells of room
+ *  around them where it can (router.js roomScore), not one as around
+ *  schematic parts. */
+const ROOMY = new RegExp(SYMBOL_CATEGORY_RULES.filter(([title]) => title === 'Block diagram' || title === 'Signal flow').map(([, rule]) => rule.source).join('|'));
+export const roomyType = (type) => ROOMY.test(type);
+
 /** Where a category's families start a new row on the symbol sheet: each
  *  rule takes its types into one row (wrapping if long), in rule order; the
  *  rest share a final row. */

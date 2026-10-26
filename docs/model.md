@@ -290,7 +290,9 @@ The model is topological; geometry is a route, not connectivity.
   (`Circuit#_keepSplitNameAtSource`). `route` is a compatibility alias; new
   code uses `paths()` and `wireSegments()`.
 - `smartRoute` is grid-based and keeps committed wire at least one cell from
-  component bodies, except for the documented shared MOS gate-bus exception.
+  component bodies, except for the documented shared MOS gate-bus exception;
+  from block-diagram and signal-flow parts it prefers two, where a short
+  detour allows ([`wiring-architecture.md`](wiring-architecture.md)).
   Terminal escape directions are preferred. Cross-net collinear overlap is a
   Design Check error and is never auto-merged.
 - Fresh multi-terminal layouts may use the bounded Steiner router; topology

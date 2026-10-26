@@ -7,6 +7,7 @@ import { applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverla
 import { snap, snapPoint, GRID } from './grid.js';
 import { getSymbol, seriesTerminalNames } from './components/index.js';
 import { chopperSymbol } from './components/chopper.js';
+import { roomyType } from './components/categories.js';
 import { SOURCE_WAVEFORMS, WAVEFORM_TYPES } from './components/current.js';
 import { balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
 import { collapseCollinear } from './wireedit.js';
@@ -4416,6 +4417,9 @@ export class Circuit {
     const rects = [];
     const pins = new Map();
     const pinRects = new Map();
+    // Block-diagram and signal-flow parts, which wires keep two cells from.
+    const roomRects = [];
+    const roomPins = new Set();
     const gateCandidates = [];
     const gateCounts = new Map();
     // Each pin's net, looked up once rather than a scan of every net per gate.
@@ -4427,9 +4431,12 @@ export class Circuit {
       if (c.type === 'solder') continue;
       const body = c.bboxWorld();
       rects.push(body);
+      const roomy = roomyType(c.type);
+      if (roomy) roomRects.push(body);
       for (const t of c.terminalDefs) {
         const w = c.terminalWorld(t.name);
         pins.set(`${w.x},${w.y}`, this._pinDir(c, t, w.x, w.y));
+        if (roomy) roomPins.add(`${w.x},${w.y}`);
         const key = `${w.x},${w.y}`;
         if (!pinRects.has(key)) pinRects.set(key, []);
         pinRects.get(key).push(body);
@@ -4461,7 +4468,7 @@ export class Circuit {
       if (l.isNetLabel() && excluded.has(l.netId)) continue;
       labelRects.push(l.inkRect());
     }
-    const env = { rects, pins, pinRects, gatePassages, wires, labelRects };
+    const env = { rects, pins, pinRects, gatePassages, wires, labelRects, roomRects, roomPins };
     this._routingEnvCache.set(key, env);
     return env;
   }

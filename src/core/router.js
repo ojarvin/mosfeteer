@@ -748,7 +748,9 @@ export function segThroughInterior(a, b, r) {
 // }
 // Preference order (lexicographic): fewest bbox interiors crossed, fewest
 // collinear overlaps, most clearance (>= 1 grid cell from every body, barring
-// the pin legs), best straight-on pin access, fewest bends, shortest route,
+// the pin legs), best straight-on pin access, fewest bends, shortest route
+// (each segment within 2 grid cells of a block-diagram or signal-flow body
+// counting 3 cells more, roomScore),
 // optionally bends closest to the route midpoint, then fewest legal crossings
 // of other wires. If no enumerated candidate is hard-safe the answer is null
 // rather than an unsafe candidate.
@@ -843,6 +845,28 @@ function clearanceScore(pts, env) {
   }
   return n;
 }
+/** Segments passing within two grid cells of a block-diagram or
+ *  signal-flow body (`env.roomRects`; the pin legs aside). A softer
+ *  clearance than `clearanceScore`: each counts as ROOM_COST of extra
+ *  length, so among routes with as few bends the router takes a short
+ *  detour for two cells of room -- wires do not hug the blocks they pass --
+ *  but not a long one. Schematic parts keep their one cell. */
+const ROOM_COST = 3 * 40;
+function roomScore(pts, env) {
+  let n = 0;
+  for (let i = 2; i < pts.length - 1; i++) {
+    const a = pts[i - 1];
+    const b = pts[i];
+    for (const r of env.roomRects || []) {
+      if (segRectDist(a, b, r) < 2 * STEP) {
+        n++;
+        break;
+      }
+    }
+  }
+  return n;
+}
+
 /** Soft preference: segments passing within a grid cell of a label box. Unlike
  *  component bodies (hard clearance, see hardSafe), labels only steer the route
  *  toward a cleaner channel when one exists — they never block a connection. */
@@ -1012,7 +1036,7 @@ function scoreCandidate(pts, env) {
   // clearance steers. Crossing count is the final tie-break among otherwise
   // comparable routes.
   const midpoint = env.preferMidpoint ? midpointScore(pts) : 0;
-  return [bboxCrossings(pts, env), overlap, clearanceScore(pts, env), labelScore(pts, env), conformScore(pts, env), bendCount(pts), routeLength(pts), midpoint, cross];
+  return [bboxCrossings(pts, env), overlap, clearanceScore(pts, env), labelScore(pts, env), conformScore(pts, env), bendCount(pts), routeLength(pts) + ROOM_COST * roomScore(pts, env), midpoint, cross];
 }
 
 /** Enumerate straight / L / Z candidates (Z via channel rows and columns). */
@@ -1041,7 +1065,8 @@ function routeCandidates(from, to) {
 /**
  * Pick the best orthogonal route from -> to given the routing environment.
  * When an endpoint is a component pin, candidates that first extend one grid
- * cell OUTWARD in the pin's direction (a clean outside bend, never drilling
+ * cell (two from a block or signal-flow part) OUTWARD in the pin's direction
+ * (a clean outside bend, never drilling
  * the body) are generated alongside the plain straight/L/Z ones; the conform
  * score prefers them, except when a constrained shared MOS gate passage makes
  * the direct gate bus intentional. When every candidate fails the hard-safety
@@ -1054,12 +1079,17 @@ export function smartRoute(from, to, env = { rects: [], pins: new Map(), wires: 
   const pins = env.pins || new Map();
   const src = pins.get(`${f.x},${f.y}`);
   const dst = pins.get(`${t.x},${t.y}`);
-  const f2 = src ? { x: f.x + src.x * STEP, y: f.y + src.y * STEP } : null;
-  const t2 = dst ? { x: t.x + dst.x * STEP, y: t.y + dst.y * STEP } : null;
   const cands = routeCandidates(f, t);
-  // Escaped candidates: leave each pin one cell along its outward direction
-  // before routing, so the bend happens clear of the component body.
-  const wrap = (mid) => {
+  // Escaped candidates: leave each pin one cell -- or, from a block or a
+  // signal-flow part, two, for room to bend clear of it (roomScore) -- along
+  // its outward direction before routing, so the bend happens clear of the
+  // component body.
+  const escapes = (point, dir) => {
+    if (!dir) return [null];
+    const cells = env.roomPins?.has(`${point.x},${point.y}`) ? [1, 2] : [1];
+    return cells.map((n) => ({ x: point.x + dir.x * n * STEP, y: point.y + dir.y * n * STEP }));
+  };
+  const wrap = (mid, f2, t2) => {
     const out = [{ ...f }];
     if (f2) out.push({ ...f2 });
     for (const p of mid) {
@@ -1071,9 +1101,11 @@ export function smartRoute(from, to, env = { rects: [], pins: new Map(), wires: 
     if (last.x !== t.x || last.y !== t.y) out.push({ ...t });
     return compressElbow(out);
   };
-  if (f2 && t2) for (const c of routeCandidates(f2, t2)) cands.push(wrap(c));
-  if (f2 && !t2) for (const c of routeCandidates(f2, t)) cands.push(wrap(c));
-  if (!f2 && t2) for (const c of routeCandidates(f, t2)) cands.push(wrap(c));
+  if (src || dst) {
+    for (const f2 of escapes(f, src)) for (const t2 of escapes(t, dst)) {
+      for (const c of routeCandidates(f2 || f, t2 || t)) cands.push(wrap(c, f2, t2));
+    }
+  }
   const viable = cands.filter((candidate) => hardSafe(candidate, env));
   if (!viable.length) return null;
   const pool = viable;
