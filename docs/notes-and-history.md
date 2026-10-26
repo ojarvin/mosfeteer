@@ -86,6 +86,13 @@ warnings, and writes the HTML.
   of that target; one to no figure reads `Fig. ?` and is a warning. Typing
   `[[#` offers the targets. A mention links to the first figure that shows
   its part or net; a design link is the design's name.
+- **Citations.** `[^https://...]`, `[^doi:10.1000/xyz]` (through
+  doi.org), or `[^source|title]` reads `[N]`, numbered by first use; one
+  source (as written, case aside) is one number, its title the first one
+  given. A source that is no web address (a book) is listed as its text,
+  with no link. The notes, in the window and the report, end with the
+  numbered References list; a click on `[N]` goes to its entry. Copy puts
+  `[N]` and the list in the Markdown (`noteCitations`).
 - **In the notes window** a figure shows as its number, target, and caption,
   its target in red when there is nothing of that name to draw.
 - **Sizes.** Every figure is drawn at the page guide's width (the A4 one

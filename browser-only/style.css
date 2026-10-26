@@ -1239,9 +1239,13 @@ button:disabled {
   color: var(--danger);
 }
 
-.notes-view .note-figure-ref {
+.notes-view :is(.note-figure-ref, .note-cite) {
   text-decoration: none;
   white-space: nowrap;
+}
+
+.notes-view .note-references li {
+  overflow-wrap: anywhere;
 }
 
 .notes-source {

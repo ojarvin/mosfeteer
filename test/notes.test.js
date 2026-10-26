@@ -211,3 +211,22 @@ test('completion offers designs after [[ and parts and nets after @, best matche
   assert.equal(at('[[bias-gen]]', 10), null);
   assert.equal(at('@M12'), null);
 });
+
+test('citations are numbered by first use, one number a source, and listed at the end', async () => {
+  const { noteCitations } = await import('../src/core/notes.js');
+  const text = 'CLS [^https://doi.org/10.1000/xyz123|Gregoire and Moon] and a book [^Razavi, Analog CMOS].\n\nAgain [^HTTPS://doi.org/10.1000/xyz123], [^doi:10.1/x] and `[^not cited]`.';
+  assert.deepEqual(noteCitations(text).map((c) => [c.number, c.url, c.title || c.key]), [
+    [1, 'https://doi.org/10.1000/xyz123', 'Gregoire and Moon'],
+    [2, null, 'Razavi, Analog CMOS'],
+    [3, 'https://doi.org/10.1/x', 'doi:10.1/x'],
+  ]);
+  const html = renderNotes(text);
+  assert.equal(html.match(/<a href="#ref-1" class="note-cite"[^>]*>\[1\]<\/a>/g).length, 2);
+  assert.match(html, /<code>\[\^not cited\]<\/code>/);
+  assert.match(html, /<section class="note-references"><h4>References<\/h4><ol><li id="ref-1">Gregoire and Moon\. <a href="https:\/\/doi\.org\/10\.1000\/xyz123" target="_blank"/);
+  assert.match(html, /<li id="ref-2">Razavi, Analog CMOS<\/li>/);
+  // A source that is no address, a javascript: one too, is never a link.
+  assert.doesNotMatch(renderNotes('[^javascript:alert(1)]'), /href="javascript/);
+  assert.doesNotMatch(renderNotes('no citations'), /References/);
+  assert.match(notesMarkdown(text), /^CLS \[1\] and a book \[2\]\.\n\nAgain \[1\], \[3\] and `\[\^not cited\]`\.\n\n## References\n\n1\. Gregoire and Moon, https:\/\/doi\.org\/10\.1000\/xyz123\n2\. Razavi, Analog CMOS\n3\. https:\/\/doi\.org\/10\.1/);
+});

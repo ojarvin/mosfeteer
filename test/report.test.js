@@ -176,3 +176,12 @@ test('completion offers what a figure can show after ![[ and [[#', () => {
   assert.deepEqual(reference.items.map((item) => item.insert), ['[[#circuit]]', '[[#drawing]]', '[[#F1]]']);
   assert.equal(noteCompletion('see [[ci', 8, { figures, designs: ['circle'] }).kind, 'design');
 });
+
+test('a report ends with the sources its notes cite, each citation linked to its entry', () => {
+  const circuit = divider();
+  circuit.notes = '# Divider\n\nAs in [^https://example.com/divider|A divider note].\n\n![[circuit]]';
+  const { html } = buildReport(circuit);
+  assert.match(html, /<a href="#ref-1" class="note-cite"[^>]*>\[1\]<\/a>/);
+  assert.match(html, /<section class="note-references"><h2>References<\/h2><ol><li id="ref-1">A divider note\. <a href="https:\/\/example\.com\/divider"/);
+  assert.ok(html.indexOf('<section class="note-references"') > html.indexOf('<figure'), 'after the figures');
+});

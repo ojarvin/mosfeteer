@@ -224,7 +224,8 @@ function onViewContextMenu(ev) {
 }
 
 function onViewClick(ev) {
-  const reference = ev.target?.closest?.('.note-figure-ref');
+  // A figure's number or a citation: to the figure, or to the source in the list.
+  const reference = ev.target?.closest?.('.note-figure-ref, .note-cite');
   if (reference) {
     ev.preventDefault();
     win.view.querySelector(reference.getAttribute('href'))?.scrollIntoView({ block: 'nearest' });

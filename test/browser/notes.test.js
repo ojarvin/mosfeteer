@@ -173,6 +173,21 @@ describe('design notes', { skip: browserSkip() }, () => {
     await h.evaluate(`document.querySelector('.reference-window .floating-window-close')?.click()`);
   });
 
+  test('a citation reads [N] and a click goes to its source in the list, in the window', async () => {
+    await h.open('amp');
+    await h.evaluate(`window.__run('notes set "Level shifting [^https://example.com/cls|CLS paper], again [^https://example.com/cls]."')`);
+    if (await h.evaluate(`document.querySelector('.notes-window').hidden`)) await h.key('N', { shiftKey: true });
+    await h.until(`!!document.querySelector('.notes-view:not([hidden]) .note-references')`);
+    const view = await h.evaluate(`(() => {
+      const v = document.querySelector('.notes-view');
+      return { cites: [...v.querySelectorAll('.note-cite')].map((a) => a.textContent), entry: v.querySelector('#ref-1').textContent };
+    })()`);
+    assert.deepEqual(view, { cites: ['[1]', '[1]'], entry: 'CLS paper. https://example.com/cls' });
+    await h.evaluate(`document.querySelector('.note-cite').click()`);
+    assert.equal(await h.evaluate(`location.hash`), '', 'the page stays where it is');
+    await h.evaluate(`window.__run('notes clear')`);
+  });
+
   test('another design shows its own notes, and n closes the window', async () => {
     await h.open('child');
     await h.until(`!document.querySelector('.notes-view h3') && document.querySelector('.notes-source')?.hidden === false || !!document.querySelector('.notes-empty:not([hidden])')`);

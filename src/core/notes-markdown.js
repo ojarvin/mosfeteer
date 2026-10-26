@@ -5,12 +5,13 @@
  * math as MathML (the labels' own TeX, `texToMathML`), mentions as links
  * to the part or net, and `[[design]]` as links to another design. An
  * embed (`![[circuit|caption]]`) on a line of its own is a numbered figure,
- * and `[[#circuit]]` its number. Every other character is escaped: notes
- * never carry raw HTML into the page.
+ * and `[[#circuit]]` its number. A citation (`[^https://...|title]`) reads
+ * `[N]`, and the notes end with the sources cited. Every other character is
+ * escaped: notes never carry raw HTML into the page.
  */
 
 import { texToMathML } from './render.js';
-import { FIGURE_EMBED, FIGURE_EMBED_LINE, FIGURE_REFERENCE, MENTION, figureKey, normalizeNotes, noteFigures, tokenName } from './notes.js';
+import { CITATION, FIGURE_EMBED, FIGURE_EMBED_LINE, FIGURE_REFERENCE, MENTION, citationOf, figureKey, normalizeNotes, noteCitations, noteFigures, tokenName } from './notes.js';
 
 const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
 
@@ -46,6 +47,12 @@ function inlineHtml(text, context) {
     .replace(/`([^`]+)`/g, (_, code) => hold(`<code>${escapeHtml(code)}</code>`))
     .replace(/\$\$([^$]+)\$\$/g, (_, tex) => hold(mathHtml(tex, true)))
     .replace(/(^|[^\\$])\$([^$\n]+?)\$/g, (_, before, tex) => before + hold(mathHtml(tex, false)));
+  source = source.replace(CITATION, (whole, target) => {
+    const citation = citationOf(context.citations || [], target);
+    if (!citation) return whole;
+    const title = escapeHtml([citation.title, citation.url || citation.key].filter(Boolean).join(' · '));
+    return hold(`<a href="#ref-${citation.number}" class="note-cite" title="${title}">[${citation.number}]</a>`);
+  });
   // An embed inside text shows as written: only one on its own line is a figure.
   source = source.replace(FIGURE_EMBED, (whole) => hold(escapeHtml(whole)));
   source = source.replace(FIGURE_REFERENCE, (_, name) => {
@@ -159,10 +166,11 @@ function figurePlaceholder(figure, context) {
  * figures, an embed on a line of its own.
  */
 export function renderNotes(source, context = {}) {
-  if (!context.figures) {
+  const top = !context.figures;
+  if (top) {
     // Numbered once for the whole notes: a quote's figures count in order.
     const figures = noteFigures(source);
-    context = { ...context, figures, figureAt: { next: 0 } };
+    context = { ...context, figures, figureAt: { next: 0 }, citations: noteCitations(source) };
   }
   const lines = normalizeNotes(source).split('\n');
   const out = [];
@@ -244,5 +252,18 @@ export function renderNotes(source, context = {}) {
     paragraph.push(line);
   }
   flush();
+  if (top && context.citations.length) out.push(referencesHtml(context.citations, Math.min((context.headingLevel ?? 3) + 1, 6)));
   return out.join('\n');
+}
+
+/** The sources cited, numbered, each linked when it is an address. */
+function referencesHtml(citations, level) {
+  const items = citations.map((citation) => {
+    const title = citation.title ? `${escapeHtml(citation.title)}${citation.url ? '. ' : ''}` : '';
+    const source = citation.url
+      ? `<a href="${escapeHtml(citation.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(citation.url)}</a>`
+      : (citation.title ? '' : escapeHtml(citation.key));
+    return `<li id="ref-${citation.number}">${title}${source}</li>`;
+  });
+  return `<section class="note-references"><h${level}>References</h${level}><ol>${items.join('')}</ol></section>`;
 }

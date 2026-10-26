@@ -12,7 +12,9 @@
  * circuit as beat N shows it), or one
  * annotated figure by its id (`F2`, the `figures` command lists them). A
  * mention (`@M1`) links to the first figure that shows it, and `[[#F2]]`
- * reads `Fig. N`. Notes that embed nothing get the whole drawing on top.
+ * reads `Fig. N`. A citation (`[^https://...|title]`) reads `[N]`, linked to
+ * the References list the report ends with. Notes that embed nothing get
+ * the whole drawing on top.
  *
  * The report is HTML; the server prints it to PDF (`printHtmlToPdf`).
  */
@@ -235,6 +237,10 @@ math { font-family: "Latin Modern Math", "STIX Two Math", "Cambria Math", serif;
 .note-display-math { margin: 0 0 8pt; text-align: center; }
 a { color: #1d4e89; text-decoration: none; }
 .mention { font-style: italic; }
+.note-cite { white-space: nowrap; }
+.note-references { break-before: avoid; }
+.note-references ol { padding-left: 2em; font-size: 9.5pt; }
+.note-references li { margin-bottom: 3pt; overflow-wrap: anywhere; }
 .note-figure-ref.broken, .note-math-error { color: #b42318; }
 figure { margin: 14pt 0; break-inside: avoid; page-break-inside: avoid; }
 figure svg { display: block; margin: 0 auto; }

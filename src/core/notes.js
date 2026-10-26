@@ -17,6 +17,10 @@
  * drawing there, numbered in the order the notes embed them, and
  * `[[#circuit]]` refers to that figure by its number.
  *
+ * A citation, `[^https://doi.org/...]` or `[^https://...|Author, Title]`,
+ * reads `[N]`, numbered in the order the notes first cite each source,
+ * and the notes end with the list of them (`noteCitations`).
+ *
  * notes-markdown.js draws them.
  */
 
@@ -113,11 +117,16 @@ export function notesMarkdown(text) {
       return code.some(([a, b]) => offset >= a && offset < b) ? match[0] : replace(...match);
     });
   };
-  const mentions = outsideCode(String(text ?? ''), MENTION, (whole, before, token) => {
+  const citations = noteCitations(text);
+  const cited = outsideCode(String(text ?? ''), CITATION, (whole, target) => `[${citationOf(citations, target).number}]`);
+  const mentions = outsideCode(cited, MENTION, (whole, before, token) => {
     const name = tokenName(token);
     return before + (/[_^]\{/.test(name) ? `$${name}$` : name);
   }, (match) => match[1].length);
-  return outsideCode(mentions, DESIGN_LINK, (whole, name) => name.trim());
+  const out = outsideCode(mentions, DESIGN_LINK, (whole, name) => name.trim());
+  if (!citations.length) return out;
+  const list = citations.map((c) => `${c.number}. ${[c.title, c.url].filter(Boolean).join(', ') || c.key}`);
+  return `${out.replace(/\n+$/, '')}\n\n## References\n\n${list.join('\n')}\n`;
 }
 
 /** Where code is (fenced blocks and inline spans), as [start, end) ranges. */
@@ -256,4 +265,48 @@ export function noteFigures(text) {
     offset += line.length + 1;
   }
   return figures;
+}
+
+// ----- citations -----------------------------------------------------------------
+
+/** `[^source]` or `[^source|title]`: a numbered citation. */
+export const CITATION = /\[\^([^\]\n|]+)(?:\|([^\]\n]*))?\]/g;
+
+const CITATION_URL = /^(https?:\/\/|mailto:)\S+$/i;
+
+/** A cited source's link: a web address as written, `doi:` through doi.org. */
+function citationUrl(source) {
+  const doi = source.match(/^doi:\s*(\S+)$/i);
+  if (doi) return `https://doi.org/${doi[1]}`;
+  return CITATION_URL.test(source) ? source : null;
+}
+
+/**
+ * The sources the notes cite, in the order first cited: `[{ key, url,
+ * title, number }]`. One source (compared as written, case aside) is one
+ * number however often it is cited; its title is the first one given. A
+ * source that is no address (a book) is its own text, with no link.
+ */
+export function noteCitations(text) {
+  const source = normalizeNotes(text);
+  const code = codeRanges(source);
+  const citations = [];
+  for (const match of source.matchAll(CITATION)) {
+    if (code.some(([a, b]) => match.index >= a && match.index < b)) continue;
+    const key = match[1].trim();
+    const title = (match[2] || '').trim();
+    const known = citationOf(citations, key);
+    if (known) {
+      if (!known.title && title) known.title = title;
+      continue;
+    }
+    citations.push({ key, url: citationUrl(key), title, number: citations.length + 1 });
+  }
+  return citations;
+}
+
+/** The citation of `source` among `citations`, or undefined. */
+export function citationOf(citations, source) {
+  const key = String(source ?? '').trim().toLowerCase();
+  return citations.find((citation) => citation.key.toLowerCase() === key);
 }
