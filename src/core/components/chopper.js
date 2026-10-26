@@ -5,8 +5,8 @@ const shapes = new Map();
 
 /**
  * A chopper `w` wide and `h` tall: a box with its inputs on the top edge and
- * outputs on the bottom, each one cell in from a side, and a cross drawn as
- * wire from pin to pin. Built once per size, so every chopper of one size
+ * outputs on the bottom, each one cell in from a side, and its direct paths
+ * and cross drawn as wire from pin to pin. Built once per size, so every chopper of one size
  * shares one definition. It carries no name label until it is named.
  */
 export function chopperSymbol(w = 8 * GRID, h = 2 * GRID) {
@@ -27,6 +27,8 @@ export function chopperSymbol(w = 8 * GRID, h = 2 * GRID) {
       bbox: { x: -w / 2, y: -y, w, h },
       graphics: [
         { kind: 'rect', x: -w / 2, y: -y, w, h, style: 'emph' },
+        { kind: 'path', d: `M ${-x} ${-y} L ${-x} ${y}`, style: 'wire' },
+        { kind: 'path', d: `M ${x} ${-y} L ${x} ${y}`, style: 'wire' },
         { kind: 'path', d: `M ${-x} ${-y} L ${x} ${y}`, style: 'wire' },
         { kind: 'path', d: `M ${-x} ${y} L ${x} ${-y}`, style: 'wire' },
       ],

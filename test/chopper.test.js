@@ -15,7 +15,7 @@ function drawing(lines) {
   return circuit;
 }
 
-test('a chopper is a box two cells tall with a wire cross from pin to pin, and no name label until named', () => {
+test('a chopper is a box two cells tall with direct paths and a cross drawn as wire from pin to pin, and no name label until named', () => {
   const circuit = new Circuit();
   const chopper = circuit.addComponent('chopper', { x: 0, y: 0 });
   assert.equal(chopper.refdes, 'CH1');
@@ -25,9 +25,11 @@ test('a chopper is a box two cells tall with a wire cross from pin to pin, and n
   circuit.wireDirectTo('CH1.ip', 'R1.b');
   const svg = svgString(circuit);
   assert.match(svg, /<rect x="-160" y="-40" width="320" height="80"/);
-  // The cross is drawn in the wires' stroke, from pin to pin.
+  // The direct paths and the cross are drawn in the wires' stroke, from pin to pin.
   const wireWidth = svg.match(/class="wire-ink"[^>]*stroke-width="([\d.]+)"/)[1];
-  assert.match(svg, new RegExp(`<path d="M -120 -40 L 120 40"[^>]*stroke-width="${wireWidth}"`));
+  for (const d of ['M -120 -40 L -120 40', 'M 120 -40 L 120 40', 'M -120 -40 L 120 40']) {
+    assert.match(svg, new RegExp(`<path d="${d}"[^>]*stroke-width="${wireWidth}"`));
+  }
   assert.match(svg, /<path d="M -120 40 L 120 -40"/);
   assert.equal(circuit.labelOf('CH1'), null);
   assert.ok(symbolCategories().find((group) => group.title === 'Switches').types.includes('chopper'));

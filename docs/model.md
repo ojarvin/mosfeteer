@@ -36,7 +36,7 @@ The routing-sensitive symbol contract is:
 | ground / supply / VCM | ground `gnd=(0,0)`; supply `p=(0,0)`; VCM `vcm=(0,0)` | ground hangs down, supply hangs up, VCM is outline-only |
 | ports | `p=(0,0)` | `port` is open-circle; boxed ports use `VI`/`VO`/`VIO` prefixes |
 | block | `T1`…`T12` around the perimeter | default bbox `{-80,-80,160,160}`, resizable in even cell counts |
-| chopper | `ip=(-w/2+40,-h/2)`, `im=(w/2-40,-h/2)` on top, `op`, `om` below at the same x | bbox `{-w/2,-h/2,w,h}`, 320×80 by default, resizable in even cell counts (at least 4 wide, 2 tall; `chopperSymbol(w, h)`, saved as `blockSize`); the cross is drawn as wire from pin to pin; no name label until named; every analysis takes it as a short `ip`–`op`, `im`–`om` |
+| chopper | `ip=(-w/2+40,-h/2)`, `im=(w/2-40,-h/2)` on top, `op`, `om` below at the same x | bbox `{-w/2,-h/2,w,h}`, 320×80 by default, resizable in even cell counts (at least 4 wide, 2 tall; `chopperSymbol(w, h)`, saved as `blockSize`); the direct paths (`ip`–`op`, `im`–`om`) and the cross are drawn as wire from pin to pin; no name label until named; every analysis takes it as a short `ip`–`op`, `im`–`om` |
 | signal_sum / signal_multiply | `n`, `s`, `w` inputs and `e` output on the circle at `(0,-40)`, `(0,40)`, `(-40,0)`, `(40,0)` | bbox `{-40,-40,80,80}`, 40-unit-radius circle with plus or multiply mark; unused terminals do not fail Design Check; optional negative inputs are owned sign labels |
 | filter blocks | `in=(-80,0)`, `out=(80,0)` | `filter_lpf`/`hpf`/`bpf`/`notch`: bbox `{-80,-80,160,160}`, a box with the response sketched inside |
 | oscillator | `out=(80,0)` | bbox `{-80,-80,160,160}`, a four-cell circle holding one period of a sine; drawing only |
