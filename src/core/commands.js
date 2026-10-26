@@ -26,6 +26,8 @@ import { fixAllIssues, tidySelection } from './tidy.js';
 import { applyArrangement, arrangementCandidates } from './arrange.js';
 import { builtInDrawings, cellPatterns } from './arrange-builtins.js';
 import { arrangeFigures, figureBounds, listFigures } from './figures.js';
+import { buildReport } from './report.js';
+import { parsePageGuide } from './page-guide.js';
 import { findInLabels, replaceInLabels } from './label-search.js';
 import { normalizeNotes, notesMarkdown } from './notes.js';
 import { checkpointHistory, historyEntries, historyEntryState, historyText, pinHistoryEntry, removeHistoryEntry, settledHistory, unpinHistoryEntry } from './save-history.js';
@@ -110,6 +112,7 @@ const FLAG_ARITY = {
   arrange: 0,
   list: 0,
   pick: 1,
+  guide: 1,
 };
 
 /** Split a command line into array honoring double-quoted strings. */
@@ -509,6 +512,9 @@ export function commandHelp() {
     '                                   --list lists the ways, --pick N draws the Nth (default the first)',
     '  figures [--arrange]            - list what the tools annotated (tables, equations, plots, models, the timing diagram);',
     '                                   --arrange puts each where a new one goes: tables right of the circuit, the rest below',
+    '  report [--file F.html] [--guide G] [--name TITLE] - the notes as a report: each ![[circuit|caption]] line a numbered figure of the drawing',
+    '                                   (circuit, drawing, beat N, or a figure\'s id), [[#circuit]] its number; lists the figures and',
+    '                                   what to look at; G sizes the figures: ieee-1col, ieee-2col, a4 (default), or WIDTH@PT (12cm@9)',
     '  fix                            - apply the safe Design Check repairs (reroute, snap to grid, move label)',
     '  rail REF.TERM ground|supply|vcm - a ground, supply, or VCM wired one cell out from an unconnected pin',
     '  box ID... [--text TEXT]        - a dashed box annotation one cell around parts, nets, and labels (with the parts\' and nets\' own labels)',
@@ -1103,6 +1109,18 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const figures = listFigures(circuit).map((figure) => ({ id: figure.id, kind: figure.kind, source: figure.source, ...(figure.key ? { key: figure.key } : {}), bounds: figureBounds(circuit, figure) }));
     const text = figures.length ? figures.map((f) => `${f.id} ${f.kind}${f.source ? ` (${f.source})` : ''} at ${f.bounds.x},${f.bounds.y} ${f.bounds.w}x${f.bounds.h}`).join('\n') : '(no figures)';
     return result(text, figures, false);
+  }
+  if (cmd === 'report') {
+    const guide = flags.guide ? parsePageGuide(flags.guide[0]) : null;
+    const report = buildReport(circuit, { name: flags.name ? flags.name[0] : 'Design', guide });
+    const lines = report.figures.map((figure) => `${figure.number ? `Fig. ${figure.number}` : 'Drawing'} ${figure.name}${figure.kind ? ` (${figure.kind}, ${figure.textPt.toFixed(1)} pt text)` : ' (nothing to draw)'}${figure.caption ? `: ${figure.caption}` : ''}`);
+    const text = [...lines, ...report.warnings.map((warning) => `warning: ${warning}`)].join('\n');
+    const file = flags.file ? flags.file[0] : null;
+    if (file && io?.writeTextFile) {
+      io.writeTextFile(file, report.html);
+      return result(`${text}\nwrote ${file} (${report.html.length} bytes)`, { figures: report.figures, warnings: report.warnings });
+    }
+    return result(text, report);
   }
   if (cmd === 'fix') {
     const fixed = fixAllIssues(circuit, evaluate);

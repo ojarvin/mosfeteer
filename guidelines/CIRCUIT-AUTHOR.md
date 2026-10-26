@@ -262,6 +262,10 @@ figures [--arrange]            list what the tools annotated -- parts tables, eq
                                plots, small-signal models, the timing diagram -- each one figure;
                                --arrange puts every one where a new one goes: tables right of the
                                circuit, the timing diagram, models and plots below it
+report [--file F.html] [--guide G] [--name TITLE]
+                               the notes as a report: each line `![[circuit|caption]]` a numbered figure
+                               (circuit, drawing, beat N, or a figure's id), `[[#circuit]]` its number;
+                               lists the figures and warnings; G: ieee-1col, ieee-2col, a4, or WIDTH@PT
 timing [ROW=WAVE ...] [--add NAME,...] [--rm NAME,...] [--slot N] [--beats] [--gaps auto|none|A:B,...] [--fall|--rise ROW=N,...]
                                set the design's timing and draw it (or redraw it in place) under the
                                drawing, one wave per switch phase; WAVE: one character per slot, 1 high, 0 low; waves

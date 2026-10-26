@@ -12,6 +12,11 @@
  *   renaming that design relinks it like a part's link
  *   (`relinkDocumentState`).
  *
+ * Two more make the notes a report (report.js): `![[circuit]]` or
+ * `![[circuit|caption]]` on a line of its own embeds a figure of the
+ * drawing there, numbered in the order the notes embed them, and
+ * `[[#circuit]]` refers to that figure by its number.
+ *
  * notes-markdown.js draws them.
  */
 
@@ -142,14 +147,16 @@ function matchRank(name, typed) {
 
 /**
  * What to offer while `text` is typed with the caret at `caret`: after
- * `[[`, the designs; after `@`, the parts and nets (those a mention of that
- * name would find: a net is left out when a part of its name wins).
- * `names`: `{ designs: [name], parts: [{ name, type }], nets: [name] }`.
- * Returns `{ kind: 'design'|'mention', start, end, items: [{ name, kind,
+ * `[[`, the designs; after `![[` and `[[#`, what a figure can show; after
+ * `@`, the parts and nets (those a mention of that name would find: a net
+ * is left out when a part of its name wins).
+ * `names`: `{ designs: [name], parts: [{ name, type }], nets: [name],
+ * figures: [{ name, detail }] }`.
+ * Returns `{ kind: 'design'|'figure'|'mention', start, end, items: [{ name, kind,
  * detail, insert }] }`, the text from `start` to `end` replaced by an
  * item's `insert`; null when there is nothing to complete (inside code too).
  */
-export function noteCompletion(text, caret, { designs = [], parts = [], nets = [] } = {}) {
+export function noteCompletion(text, caret, { designs = [], parts = [], nets = [], figures = [] } = {}) {
   const source = String(text ?? '');
   const before = source.slice(0, caret);
   // A sentinel after the text: code left open runs past the caret.
@@ -160,6 +167,13 @@ export function noteCompletion(text, caret, { designs = [], parts = [], nets = [
     .sort((a, b) => a.rank - b.rank || a.item.name.localeCompare(b.item.name, undefined, { numeric: true }))
     .slice(0, COMPLETIONS)
     .map(({ item }) => item);
+  const figure = before.match(/(!\[\[|\[\[#)([^[\]\n|#]*)$/);
+  if (figure) {
+    const close = source.slice(caret).match(/^[^[\]\n|]*\]\]/);
+    const end = close ? caret + close[0].length : caret;
+    const items = ranked(figures.map(({ name, detail }) => ({ name, kind: 'figure', detail, insert: `${figure[1]}${name}]]` })), figure[2]);
+    return offered({ kind: 'figure', start: caret - figure[0].length, end, items });
+  }
   const link = before.match(/\[\[([^[\]\n|]*)$/);
   if (link) {
     // A link already closed after the caret is replaced with its close.
@@ -191,7 +205,8 @@ export function noteCompletion(text, caret, { designs = [], parts = [], nets = [
 
 // ----- design links --------------------------------------------------------------
 
-export const DESIGN_LINK = /\[\[([^[\]\n|]+)\]\]/g;
+// Neither an embed (`![[...]]`) nor a figure reference (`[[#...]]`).
+export const DESIGN_LINK = /(?<!!)\[\[(?!#)([^[\]\n|]+)\]\]/g;
 
 /** The designs `text` links to, by name, each once. */
 export function noteDesignLinks(text) {
@@ -208,4 +223,37 @@ export function relinkNotes(text, from, to) {
     return `[[${to}]]`;
   });
   return { text: result, count };
+}
+
+// ----- figures -------------------------------------------------------------------
+
+/** `![[target]]` or `![[target|caption]]`: a figure of the drawing. */
+export const FIGURE_EMBED = /!\[\[([^[\]\n|]+)(?:\|([^[\]\n]*))?\]\]/g;
+/** A line that is one embed, and nothing else. */
+export const FIGURE_EMBED_LINE = /^\s*!\[\[([^[\]\n|]+)(?:\|([^[\]\n]*))?\]\]\s*$/;
+/** `[[#target]]`: the number of the figure that embeds `target`. */
+export const FIGURE_REFERENCE = /\[\[#([^[\]\n|]+)\]\]/g;
+
+/** A figure target as compared: `Beat  2` is `beat 2`. */
+export const figureKey = (name) => String(name ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+/**
+ * The figures the notes embed, in order: `[{ name, caption, number }]`,
+ * each on a line of its own outside code. A target embedded twice is two
+ * figures; a reference finds the first.
+ */
+export function noteFigures(text) {
+  const source = normalizeNotes(text);
+  const code = codeRanges(source);
+  const figures = [];
+  let offset = 0;
+  for (const line of source.split('\n')) {
+    // A quote's lines are embeds too: its text is rendered as notes.
+    const match = line.replace(/^(\s*>)+/, '').match(FIGURE_EMBED_LINE);
+    if (match && !code.some(([a, b]) => offset >= a && offset < b)) {
+      figures.push({ name: match[1].trim(), caption: (match[2] || '').trim(), number: figures.length + 1 });
+    }
+    offset += line.length + 1;
+  }
+  return figures;
 }

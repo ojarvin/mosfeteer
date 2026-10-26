@@ -235,7 +235,11 @@ hover glows) in that color without changing their own styles.
   steer the router by their text; placement still uses the grid boxes.
 - An active page guide (`src/core/page-guide.js`, an app preference) pads a
   drawing export to its exact width, centered, so the figure at full column
-  width gets the guide's text size. The editor draws the same frame.
+  width gets the guide's text size. The editor draws the same frame. The
+  presets are IEEE single and double column and an A4 page, at 8 pt; the
+  custom guide (Settings → Custom page guide…) takes a width in in, cm, mm,
+  or pt and a text size, kept beside the choice. A report sizes every
+  figure with it ([`notes-and-history.md`](notes-and-history.md)).
 - Labels support `_{...}` and `^{...}`. Math uses the vendored Latin Modern
   Math face in `src/web/fonts/`; so do plots, on the drawing and in the
   windows: lone letters in its math italic, words, units, and numbers

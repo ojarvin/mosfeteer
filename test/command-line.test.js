@@ -44,6 +44,7 @@ test('toggles take on/off and friends; other arguments fall through to documents
   assert.deepEqual(resolveEditorCommand('light'), { name: 'dark', state: false });
   assert.deepEqual(resolveEditorCommand('page-guide ieee-2col'), { name: 'page-guide', state: 'ieee-2col' });
   assert.deepEqual(resolveEditorCommand('page-guide a4'), { name: 'page-guide', state: 'a4' });
+  assert.deepEqual(resolveEditorCommand('page-guide custom'), { name: 'page-guide', state: 'custom' });
   assert.equal(resolveEditorCommand('page-guide letter'), null);
   assert.equal(resolveEditorCommand('find VOUT'), null);
   assert.equal(resolveEditorCommand('save out.json'), null);

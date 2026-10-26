@@ -319,6 +319,40 @@ serverTest('PDF export is vector output when a Chromium-family browser is instal
   assert.doesNotMatch(beatsPdf, /\/Subtype\s*\/Image/);
 });
 
+const REPORT_HTML = '<!doctype html><html><head><meta charset="utf-8"><style>@page{size:A4}</style></head><body><h1>Amp</h1><p>One</p><p style="break-before:page">Two</p></body></html>';
+
+serverTest('a report exports as its HTML, and as a PDF only with a browser to print it', async (t) => {
+  const app = await startServer({ env: { MOSFETEER_BROWSER: '/nonexistent/chromium' } });
+  t.after(() => app.stop());
+  const dir = join(app.root, 'exports');
+  const html = await app.request('/api/export', { method: 'POST', body: { dir, name: 'amp', formats: ['html'], report: REPORT_HTML } });
+  assert.equal(html.status, 200);
+  assert.equal(await readFile(join(dir, 'amp.html'), 'utf8'), REPORT_HTML);
+  const again = await app.request('/api/export', { method: 'POST', body: { dir, name: 'amp', formats: ['html'], report: REPORT_HTML } });
+  assert.equal(again.status, 409);
+  const pdf = await app.request('/api/export', { method: 'POST', body: { dir, name: 'nopdf', formats: ['pdf', 'html'], report: REPORT_HTML } });
+  assert.equal(pdf.status, 500);
+  assert.match((await pdf.json()).error, /report's PDF/);
+  await assert.rejects(readFile(join(dir, 'nopdf.html')), 'a failed PDF writes nothing');
+  for (const invalid of [{ formats: ['svg'], report: REPORT_HTML }, { formats: ['html'], report: '<p>no document</p>' }]) {
+    assert.equal((await app.request('/api/export', { method: 'POST', body: { dir, name: 'bad', ...invalid } })).status, 400);
+  }
+});
+
+serverTest('a report prints to a PDF of its own pages', async (t) => {
+  if (!findChromium()) {
+    t.skip('no Chromium-family browser installed');
+    return;
+  }
+  const app = await startServer();
+  t.after(() => app.stop());
+  const response = await app.request('/api/export', { method: 'POST', body: { dir: join(app.root, 'exports'), name: 'report', formats: ['pdf'], report: REPORT_HTML } });
+  assert.equal(response.status, 200, await response.clone().text());
+  const pdf = (await readFile(join(app.root, 'exports', 'report.pdf'))).toString('latin1');
+  assert.match(pdf, /\/Count 2\b/);
+  assert.match(pdf, /\/MediaBox \[0 0 59[45]\.\d+ 84[12]\.\d+\]/, 'A4');
+});
+
 serverTest('the server listens on loopback only, whatever HOST says', async (t) => {
   // 192.0.2.1 is a documentation address no machine owns: listening there
   // would fail, and listening on a real interface would expose the file API.

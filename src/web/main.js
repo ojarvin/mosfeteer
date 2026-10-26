@@ -328,9 +328,12 @@ let crosshairVisible = storedViewToggle('crosshair', false);
 // off for a drawing being laid out by hand, without touching the symmetry
 // axis, which is armed deliberately rather than offered.
 let guidesVisible = storedViewToggle('guides', true);
-// The page guide preset ({ preset, textPt }) or null; see core/page-guide.js.
+// The page guide (a preset or the custom one) or null; see core/page-guide.js.
 let pageGuide = (() => {
-  try { return normalizePageGuide(localStorage.getItem('mosfeteer.pageGuide')); } catch { return null; }
+  try {
+    const preset = localStorage.getItem('mosfeteer.pageGuide');
+    return normalizePageGuide(preset === 'custom' ? { ...JSON.parse(localStorage.getItem('mosfeteer.pageGuideCustom') || 'null'), preset } : preset);
+  } catch { return null; }
 })();
 let insertQuery = ''; // insert-mode fuzzy-search string
 let wire = null; // { source: {refdes, term} | null, points: [{x,y}] } — a wire being drawn in segments

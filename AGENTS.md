@@ -26,7 +26,7 @@ read the one for the area you change before changing it.
 | Switched-capacitor analysis | [`docs/switched-cap-analysis.md`](docs/switched-cap-analysis.md) |
 | Wiring internals | [`docs/wiring-architecture.md`](docs/wiring-architecture.md) |
 | Beats, linked designs, Atlas | [`docs/beats.md`](docs/beats.md), [`docs/hierarchy.md`](docs/hierarchy.md), [`docs/atlas.md`](docs/atlas.md) |
-| Notes, save history | [`docs/notes-and-history.md`](docs/notes-and-history.md) |
+| Notes, reports, save history | [`docs/notes-and-history.md`](docs/notes-and-history.md) |
 | Annotated figures, their placement | [`docs/figures.md`](docs/figures.md) |
 | Arrange like (topology recognizer) | [`docs/arrange.md`](docs/arrange.md) |
 

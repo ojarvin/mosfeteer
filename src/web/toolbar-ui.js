@@ -5,7 +5,7 @@
  * and page guide toggles. Fitting's rules are in toolbar-fit.js.
  */
 
-import { normalizePageGuide, pageGuideCaption } from '../core/page-guide.js';
+import { PAGE_GUIDE_UNITS, customPageGuide, normalizePageGuide, pageGuideCaption, pageGuideTitle } from '../core/page-guide.js';
 import { minimalRevealScroll } from './toolbar.js';
 import { chooseToolbarStage, toolbarFits, toolbarStageTokens } from './toolbar-fit.js';
 import { canvasEl, circuitNameEl, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, reduceMotionButton, scrollSchemeButton, themeButtons, gridBtn, crosshairBtn, guidesBtn } from './elements.js';
@@ -564,21 +564,80 @@ export function setGuides(on, announce = true) {
 }
 
 // Page guide: an app preference, like the other view toggles. It shows the
-// width an export will be padded to (see core/page-guide.js).
+// width an export will be padded to (see core/page-guide.js). The custom
+// guide's width and text size are kept beside it, to choose it again.
 const PAGE_GUIDE_KEY = 'mosfeteer.pageGuide';
+const CUSTOM_PAGE_GUIDE_KEY = 'mosfeteer.pageGuideCustom';
+
+// The custom guide set in this session, for when storage is unavailable.
+let sessionCustomPageGuide = null;
+
+function storedCustomPageGuide() {
+  try { return normalizePageGuide({ ...JSON.parse(localStorage.getItem(CUSTOM_PAGE_GUIDE_KEY) || 'null'), preset: 'custom' }) || sessionCustomPageGuide; } catch { return sessionCustomPageGuide; }
+}
 
 function syncPageGuideControls() {
+  const custom = storedCustomPageGuide();
+  for (const item of document.querySelectorAll('[data-page-guide="custom"], #export-page-guide option[value="custom"]')) {
+    item.hidden = !custom;
+    if (custom) item.textContent = pageGuideTitle(custom);
+  }
   for (const item of document.querySelectorAll('[data-page-guide]')) {
     item.setAttribute('aria-checked', String((editor.pageGuide?.preset || '') === item.dataset.pageGuide));
   }
 }
 
 function setPageGuide(preset) {
-  editor.pageGuide = normalizePageGuide(preset);
+  if (preset === 'custom' && !storedCustomPageGuide()) {
+    openCustomPageGuide();
+    return;
+  }
+  editor.pageGuide = preset === 'custom' ? storedCustomPageGuide() : normalizePageGuide(preset);
   try { localStorage.setItem(PAGE_GUIDE_KEY, editor.pageGuide?.preset || ''); } catch { /* per-session only */ }
   syncPageGuideControls();
   render();
   hintLine(editor.pageGuide ? `page guide: ${pageGuideCaption(editor.pageGuide)}` : 'page guide off');
+}
+
+/** The custom guide's dialog, filled with the custom guide, else the guide
+ *  in use (in cm), else A4's width at 8 pt. */
+export function openCustomPageGuide() {
+  const dialog = document.getElementById('page-guide-dialog');
+  if (!dialog) return;
+  const current = storedCustomPageGuide();
+  const base = editor.pageGuide || normalizePageGuide('a4');
+  const width = current ? current.width : Math.round((base.widthPt / PAGE_GUIDE_UNITS.cm) * 100) / 100;
+  document.getElementById('page-guide-width').value = String(width);
+  document.getElementById('page-guide-unit').value = current?.unit || 'cm';
+  document.getElementById('page-guide-text').value = String(current?.textPt ?? base.textPt);
+  document.getElementById('page-guide-error').textContent = '';
+  dialog.showModal();
+}
+
+function installCustomPageGuide() {
+  const dialog = document.getElementById('page-guide-dialog');
+  document.getElementById('btn-custom-page-guide')?.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    openCustomPageGuide();
+  });
+  document.getElementById('page-guide-form')?.addEventListener('submit', (ev) => {
+    if (ev.submitter?.value !== 'save') return;
+    ev.preventDefault();
+    const value = {
+      width: document.getElementById('page-guide-width').value,
+      unit: document.getElementById('page-guide-unit').value,
+      textPt: document.getElementById('page-guide-text').value,
+    };
+    let guide;
+    try { guide = customPageGuide(value, { strict: true }); } catch (err) {
+      document.getElementById('page-guide-error').textContent = `${err.message[0].toUpperCase()}${err.message.slice(1)}.`;
+      return;
+    }
+    sessionCustomPageGuide = guide;
+    try { localStorage.setItem(CUSTOM_PAGE_GUIDE_KEY, JSON.stringify({ width: guide.width, unit: guide.unit, textPt: guide.textPt })); } catch { /* per-session only */ }
+    dialog.close();
+    setPageGuide('custom');
+  });
 }
 
 export function syncModeToolbarOverflow() {
@@ -732,6 +791,7 @@ export function installToolbarUi() {
     });
   }
 
+  installCustomPageGuide();
   syncPageGuideControls();
 
   if (crosshairBtn) {

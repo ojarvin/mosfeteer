@@ -248,6 +248,72 @@ describe('documents and sessions', { skip: browserSkip() }, () => {
     }
   });
 
+  test('a custom page guide is set in its dialog, kept, and sizes the report the notes export', async () => {
+    await h.open('amp');
+    await h.evaluate(`window.__load(${JSON.stringify(amplifier())})`);
+    await h.click('#btn-settings');
+    await h.until(`!document.getElementById('settings-menu').hidden`);
+    assert.equal(await h.evaluate(`document.querySelector('[data-page-guide="custom"]').hidden`), true, 'none until set');
+    await h.click('#btn-custom-page-guide');
+    await h.until(`document.getElementById('page-guide-dialog').open`);
+    const submit = (width, unit, text) => h.evaluate(`(() => {
+      document.getElementById('page-guide-width').value = '${width}';
+      document.getElementById('page-guide-unit').value = '${unit}';
+      document.getElementById('page-guide-text').value = '${text}';
+      document.getElementById('page-guide-submit').click();
+    })()`);
+    await submit('0.2', 'cm', '9');
+    assert.match(await h.evaluate(`document.getElementById('page-guide-error').textContent`), /width must be from/);
+    assert.equal(await h.evaluate(`document.getElementById('page-guide-dialog').open`), true, 'kept open to correct');
+    await submit('12', 'cm', '9');
+    await h.until(`!document.getElementById('page-guide-dialog').open`);
+    try {
+      const guide = await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.pageGuide)`);
+      assert.deepEqual([guide.preset, guide.width, guide.unit, guide.textPt], ['custom', 12, 'cm', 9]);
+      assert.deepEqual(await h.evaluate(`(() => { const item = document.querySelector('[data-page-guide="custom"]'); return [item.hidden, item.textContent, item.getAttribute('aria-checked')]; })()`), [false, 'Custom (12 cm, 9 pt)', 'true']);
+      assert.equal(await h.evaluate(`localStorage.getItem('mosfeteer.pageGuide')`), 'custom');
+      // The notes place the circuit; their Report… opens the export on the report.
+      await h.evaluate(`window.__run('notes set "![[circuit|The amplifier.]]\\n\\nSee @M1 in [[#circuit]]."')`);
+      await h.key('N', { shiftKey: true });
+      await h.until(`!!document.querySelector('.notes-view:not([hidden]) .note-figure')`);
+      assert.equal(await h.evaluate(`document.querySelector('.note-figure-ref').textContent`), 'Fig. 1');
+      await h.evaluate(`${h.module('document-session.js')}.then(({ persistence }) => {
+        window.__exports = [];
+        window.__exported = 0;
+        if (!persistence.__realExport) persistence.__realExport = persistence.exportFiles;
+        persistence.exportFiles = async (request) => {
+          window.__exports.push(request);
+          try { return await persistence.__realExport(request); } finally { window.__exported += 1; }
+        };
+      })`);
+      await h.click('.notes-report');
+      await h.until(`document.getElementById('export-dialog').open && document.getElementById('export-dialog').dataset.content === 'report'`);
+      const dialog = await h.evaluate(`(() => {
+        const shown = (selector) => getComputedStyle(document.querySelector(selector)).display !== 'none';
+        return { svg: shown('.export-svg'), png: shown('.export-png'), html: shown('.export-html'), beats: shown('.export-selection-row'), guide: document.getElementById('export-page-guide').value, summary: document.getElementById('export-report-summary').textContent };
+      })()`);
+      assert.deepEqual(dialog, { svg: false, png: false, html: true, beats: false, guide: 'custom', summary: 'The notes with 1 figure, sized for Custom (12 cm, 9 pt).' });
+      await h.evaluate(`(() => { for (const box of document.querySelectorAll('#export-form [name=format]')) box.checked = box.value === 'html'; document.getElementById('export-name').value = 'amp-report'; })()`);
+      await h.click('#export-submit');
+      await h.until(`window.__exported >= 1`, 90000);
+      const [request] = await h.evaluate(`window.__exports`);
+      assert.deepEqual(request.formats, ['html']);
+      assert.match(request.report, /^<!doctype html>/);
+      const width = Number(request.report.match(/<figure id="fig-1"><svg[^>]* width="([\d.]+)pt"/)[1]);
+      assert.ok(Math.abs(width - (12 * 72) / 2.54) < 0.01, `${width}`);
+      assert.match(request.report, /<a class="mention" href="#fig-1">/);
+      assert.match(request.report, /@font-face\{font-family:"Latin Modern Math"/);
+      // Back to the drawing on the next export.
+      await h.key('e', { ctrlKey: true });
+      await h.until(`document.getElementById('export-dialog').open`);
+      assert.equal(await h.evaluate(`document.getElementById('export-dialog').dataset.content`), 'drawing');
+      await h.evaluate(`document.getElementById('export-dialog').close()`);
+    } finally {
+      await h.evaluate(`document.querySelector('[data-page-guide=""]').click()`);
+      await h.key('N', { shiftKey: true });
+    }
+  });
+
   test('"Only the selection" starts unchecked each time the export opens', async () => {
     await h.open('amp');
     await h.evaluate(`${h.module('main.js')}.then((m) => { m.selectAll(); m.render(); })`);

@@ -60,7 +60,7 @@ export function applyExportDarkTheme(svg) {
 // clone. Only drawings that set text in it pay the ~0.5 MB.
 let mathFontFaceCss = null;
 
-async function embeddedMathFontFace() {
+export async function embeddedMathFontFace() {
   if (mathFontFaceCss !== null) return mathFontFaceCss;
   try {
     const fontUrl = globalThis.__MOSFETEER_FONT_URL || 'fonts/latinmodern-math.woff2';

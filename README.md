@@ -160,8 +160,12 @@ workspace folder, `~/Documents/Schematics` unless you pick another. A design
 with no unsaved changes reloads when its file changes on disk, after a
 `git pull` for example. **Export** (`Ctrl/Cmd+E`) writes SVG, PDF, or PNG
 cropped to the drawing; with a page guide (IEEE single or double column,
-chosen in the Export dialog or Settings)
-the text comes out at the paper's figure size.
+A4, or a width and text size of your own, chosen in the Export dialog or
+Settings) the text comes out at the paper's figure size. Its **Report**
+writes the notes as a PDF or HTML document: each `![[circuit|caption]]`
+line in the notes places a numbered figure of the drawing (the circuit, a
+beat, a plot or table the tools drew), `[[#circuit]]` refers to it, and
+every figure is set at the page guide's width.
 
 </details>
 

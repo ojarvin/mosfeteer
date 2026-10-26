@@ -297,7 +297,8 @@ describe('editor chrome', { skip: browserSkip() }, () => {
     await h.until(`!document.getElementById('settings-menu').hidden`);
     const settings = await h.evaluate(`[...document.querySelectorAll('#settings-menu button')].map((b) => b.id || (b.dataset.accent !== undefined ? 'accent:' + b.dataset.accent : 'guide:' + (b.dataset.pageGuide ?? '')))`);
     const guides = settings.filter((id) => id.startsWith('guide:'));
-    assert.deepEqual(guides, ['guide:', 'guide:ieee-1col', 'guide:ieee-2col', 'guide:a4']);
+    assert.deepEqual(guides, ['guide:', 'guide:ieee-1col', 'guide:ieee-2col', 'guide:a4', 'guide:custom']);
+    assert.ok(settings.includes('btn-custom-page-guide'));
     // The accent colors: the default first, then the palette.
     const accents = settings.filter((id) => id.startsWith('accent:'));
     assert.equal(accents[0], 'accent:');

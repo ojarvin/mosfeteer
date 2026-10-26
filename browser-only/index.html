@@ -136,13 +136,15 @@
           <div id="settings-accent" class="settings-accent" role="group" aria-labelledby="settings-accent-heading"></div>
           <span class="toolbar-menu-separator" role="separator"></span>
           <p class="toolbar-menu-heading" id="settings-page-heading">Page guide</p>
-          <p class="toolbar-menu-note">The width at which a full-width figure has 8 pt text. Export pads to it.</p>
+          <p class="toolbar-menu-note">The width at which a full-width figure has the guide's text size. Export pads to it.</p>
           <div role="group" aria-labelledby="settings-page-heading">
             <button type="button" role="menuitemradio" aria-checked="true" data-page-guide="">No page guide</button>
             <button type="button" role="menuitemradio" aria-checked="false" data-page-guide="ieee-1col">IEEE single column (3.5 in)</button>
             <button type="button" role="menuitemradio" aria-checked="false" data-page-guide="ieee-2col">IEEE double column (7.16 in)</button>
             <button type="button" role="menuitemradio" aria-checked="false" data-page-guide="a4">A4 page (16 cm)</button>
+            <button type="button" role="menuitemradio" aria-checked="false" data-page-guide="custom" hidden>Custom</button>
           </div>
+          <button id="btn-custom-page-guide" type="button" role="menuitem">Custom page guide…</button>
           <span class="toolbar-menu-separator" role="separator"></span>
           <p class="toolbar-menu-heading">Input</p>
           <button id="btn-scroll-scheme" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="trackpad" title="Scroll pans, pinch zooms">Trackpad scrolling</button>
@@ -179,6 +181,32 @@
       </div>
     </form>
   </dialog>
+  <dialog id="page-guide-dialog" class="confirm-dialog page-guide-dialog" aria-labelledby="page-guide-dialog-title">
+    <form id="page-guide-form" method="dialog">
+      <h2 id="page-guide-dialog-title">Custom page guide</h2>
+      <fieldset>
+        <legend>Figure</legend>
+        <label class="page-guide-field">Width
+          <input id="page-guide-width" name="width" type="number" min="0.01" step="any" required />
+          <select id="page-guide-unit" name="unit">
+            <option value="cm">cm</option>
+            <option value="mm">mm</option>
+            <option value="in">in</option>
+            <option value="pt">pt</option>
+          </select>
+        </label>
+        <label class="page-guide-field">Text size
+          <input id="page-guide-text" name="textPt" type="number" min="4" max="36" step="any" required />
+          <span>pt</span>
+        </label>
+      </fieldset>
+      <p id="page-guide-error" class="page-guide-error" role="alert"></p>
+      <div class="dialog-actions">
+        <button value="cancel" formnovalidate>Cancel</button>
+        <button id="page-guide-submit" value="save" class="confirm-action">Use guide</button>
+      </div>
+    </form>
+  </dialog>
   <dialog id="export-dialog" class="confirm-dialog export-dialog" aria-labelledby="export-dialog-title">
     <form id="export-form">
       <h2 id="export-dialog-title">Export document</h2>
@@ -196,9 +224,10 @@
       </fieldset>
       <fieldset class="export-formats">
         <legend>Formats</legend>
-        <label><input type="checkbox" name="format" value="svg" checked /> SVG</label>
+        <label class="export-svg"><input type="checkbox" name="format" value="svg" checked /> SVG</label>
         <label><input type="checkbox" name="format" value="pdf" checked /> PDF</label>
         <label class="export-png"><input type="checkbox" name="format" value="png" checked /> PNG</label>
+        <label class="export-html"><input type="checkbox" name="format" value="html" /> HTML</label>
         <label class="export-dpi" title="PNG resolution">at
           <select name="pngDpi">
             <option value="150">150 dpi</option>
@@ -209,20 +238,26 @@
       </fieldset>
       <fieldset>
         <legend>Appearance</legend>
-        <label><input type="checkbox" name="grid" /> Include grid</label>
-        <label><input type="checkbox" name="dark" /> Dark theme</label>
-        <label class="export-page-guide-row" title="The width at which a full-width figure has 8 pt text: the export is padded to it">Page guide
+        <label class="export-drawing-only"><input type="checkbox" name="grid" /> Include grid</label>
+        <label class="export-drawing-only"><input type="checkbox" name="dark" /> Dark theme</label>
+        <label class="export-page-guide-row" title="The width at which a full-width figure has the guide's text size: the export is padded to it">Page guide
           <select id="export-page-guide" name="pageGuide">
             <option value="">None</option>
             <option value="ieee-1col">IEEE single column (3.5 in)</option>
             <option value="ieee-2col">IEEE double column (7.16 in)</option>
             <option value="a4">A4 page (16 cm)</option>
+            <option value="custom" hidden>Custom</option>
           </select>
         </label>
       </fieldset>
       <fieldset>
         <legend>Content</legend>
         <p id="export-atlas-content" class="export-atlas-content" hidden></p>
+        <div class="segmented export-content-choice" role="group" aria-label="What to export">
+          <button type="button" data-export-content="drawing" aria-pressed="true">Drawing</button>
+          <button type="button" data-export-content="report" aria-pressed="false">Report</button>
+        </div>
+        <p id="export-report-summary" class="export-report-summary"></p>
         <label class="export-selection-row"><input type="checkbox" name="selection" /> Only the selection <span id="export-selection-count" class="export-selection-count"></span></label>
         <label id="export-beat-row" class="export-beat-row" hidden>Beats
           <select id="export-beat" name="beat" title="Beats to export"></select>

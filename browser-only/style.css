@@ -1212,6 +1212,38 @@ button:disabled {
   text-decoration: line-through;
 }
 
+/* A figure of the report, as the notes show it: its number and what it draws. */
+.notes-view .note-figure {
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+}
+
+.notes-view .note-figure-number {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.notes-view .note-figure-name {
+  font-family: var(--font-mono);
+}
+
+.notes-view .note-figure-caption::before {
+  content: " · ";
+}
+
+.notes-view .note-figure.broken .note-figure-name,
+.notes-view .note-figure-ref.broken {
+  color: var(--danger);
+}
+
+.notes-view .note-figure-ref {
+  text-decoration: none;
+  white-space: nowrap;
+}
+
 .notes-source {
   flex: 1 1 auto;
   min-height: 12em;
@@ -1388,7 +1420,8 @@ button:disabled {
   background: color-mix(in srgb, var(--danger) 86%, #000);
 }
 
-.export-dialog fieldset {
+.export-dialog fieldset,
+.page-guide-dialog fieldset {
   display: grid;
   gap: 8px;
   margin: 0 0 18px;
@@ -1398,7 +1431,8 @@ button:disabled {
   padding: 10px 12px;
 }
 
-.export-dialog legend {
+.export-dialog legend,
+.page-guide-dialog legend {
   float: left;
   width: 100%;
   margin: 0 0 2px;
@@ -1410,7 +1444,8 @@ button:disabled {
   text-transform: uppercase;
 }
 
-.export-dialog label {
+.export-dialog label,
+.page-guide-dialog label {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1445,6 +1480,25 @@ button:disabled {
   margin: 0;
 }
 
+/* A report is the notes with their figures: HTML and PDF, sized by the
+   page guide, never a selection, a beat, a grid, or dark. */
+.export-dialog .export-report-summary {
+  margin: 0;
+  font-size: var(--text-md);
+}
+
+.export-dialog .export-report-warning {
+  display: block;
+  margin-top: 4px;
+  color: var(--danger);
+}
+
+.export-dialog:not([data-content="report"]) :is(.export-html, .export-report-summary),
+.export-dialog[data-content="report"] :is(.export-png, .export-dpi, .export-svg, .export-drawing-only, .export-selection-row, .export-beat-row),
+.export-dialog[data-target="atlas"] .export-content-choice {
+  display: none;
+}
+
 .export-folder-row,
 .export-name-row {
   display: flex;
@@ -1477,6 +1531,27 @@ button:disabled {
   font-family: var(--font-mono);
   font-size: var(--text-md);
   white-space: nowrap;
+}
+
+.page-guide-dialog {
+  width: min(24rem, calc(100vw - 32px));
+}
+
+.page-guide-field input {
+  width: 6rem;
+  margin-left: auto;
+}
+
+.page-guide-field select,
+.page-guide-field span {
+  width: 3.5rem;
+}
+
+.confirm-dialog .page-guide-error {
+  min-height: 1.2em;
+  margin: -8px 0 10px;
+  color: var(--danger);
+  font-size: var(--text-md);
 }
 
 .toolbar-menu-separator {

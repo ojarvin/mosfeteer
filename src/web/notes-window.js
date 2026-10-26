@@ -12,7 +12,8 @@
  * the pointer is over it and selects it on a click; a `[[design]]` link
  * opens that design, and its right-click menu also shows it in a
  * reference window. Copy puts them on the clipboard as plain Markdown
- * (`notesMarkdown`).
+ * (`notesMarkdown`). A figure (`![[circuit]]`) shows as its number and what
+ * it draws; Report… exports the notes with their figures (core/report.js).
  */
 
 import { normalizeNotes, notesMarkdown, resolveMention } from '../core/notes.js';
@@ -29,6 +30,8 @@ import { element as el } from './dom.js';
 import { attachNoteCompletion } from './notes-completion.js';
 import { appendContextItem, openMenuAt } from './context-menu.js';
 import { showDesignInReference } from './reference-window.js';
+import { reportTargets, resolveReportTarget } from '../core/report.js';
+import { exportCircuit } from './export-ui.js';
 
 /** A pause this long ends one edit (one undo step). */
 const EDIT_PAUSE_MS = 1000;
@@ -54,6 +57,7 @@ function completionNames() {
     designs: workspaceDesigns().map((doc) => doc.name).filter((name) => name.toLowerCase() !== current),
     parts: components.map((c) => ({ name: c.refdes, type: c.type })),
     nets: [...editor.circuit.nets.values()].map((net) => net.name).filter(Boolean),
+    figures: reportTargets(editor.circuit).map(({ name, detail }) => ({ name, detail })),
   };
 }
 
@@ -71,6 +75,7 @@ function renderView() {
   const html = renderNotes(key.text, {
     mention: mentionTarget,
     design: (name) => !!designNamed(name) || name.toLowerCase() === String(editor.currentCircuitName || '').toLowerCase(),
+    figure: (name) => resolveReportTarget(editor.circuit, name),
   });
   win.view.innerHTML = html;
   win.empty.hidden = !!key.text;
@@ -219,6 +224,12 @@ function onViewContextMenu(ev) {
 }
 
 function onViewClick(ev) {
+  const reference = ev.target?.closest?.('.note-figure-ref');
+  if (reference) {
+    ev.preventDefault();
+    win.view.querySelector(reference.getAttribute('href'))?.scrollIntoView({ block: 'nearest' });
+    return;
+  }
   const mention = mentionAt(ev.target);
   const design = ev.target?.closest?.('.note-design');
   if (!mention && !design) return;
@@ -249,16 +260,18 @@ function build() {
   const close = el('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the notes', title: 'Close (Shift+N)', text: '×' });
   const edit = el('button', { type: 'button', class: 'notes-edit window-action', title: 'Edit (double-click)', text: 'Edit' });
   const copy = el('button', { type: 'button', class: 'notes-copy window-action', title: 'Copy as Markdown', text: 'Copy' });
+  const report = el('button', { type: 'button', class: 'notes-report window-action', title: 'Export the notes and their figures', text: 'Report…' });
   const view = el('div', { class: 'notes-view', tabindex: '0', 'aria-label': 'Notes' });
-  const empty = el('p', { class: 'field-hint notes-empty', text: 'Double-click to write. Markdown with $math$; @M1 mentions a part or net, [[amp]] links a design.' });
+  const empty = el('p', { class: 'field-hint notes-empty', text: 'Double-click to write. Markdown with $math$; @M1 mentions a part or net, [[amp]] links a design, ![[circuit]] places a figure.' });
   const source = el('textarea', { class: 'notes-source', 'aria-label': 'Notes (Markdown)', spellcheck: 'true', hidden: true, placeholder: 'Markdown: # headings, $math$, @M1 for a part or net, [[design]] for a link' });
   const node = el('section', { class: 'floating-window notes-window', 'aria-labelledby': 'notes-title', hidden: true }, [
     el('header', { class: 'floating-window-header' }, [el('h2', { id: 'notes-title', class: 'floating-window-title', text: 'Notes' }), close]),
     el('div', { class: 'notes-body' }, [empty, view, source]),
-    el('footer', { class: 'window-footer' }, [copy, edit]),
+    el('footer', { class: 'window-footer' }, [report, copy, edit]),
   ]);
   edit.addEventListener('click', () => (editing ? stopEditing() : startEditing()));
   copy.addEventListener('click', copyMarkdown);
+  report.addEventListener('click', () => exportCircuit({ content: 'report' }));
   source.addEventListener('input', onInput);
   // Before the field's own keys: an open list takes Tab and Esc.
   attachNoteCompletion(source, completionNames);

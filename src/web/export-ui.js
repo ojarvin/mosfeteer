@@ -1,17 +1,20 @@
 /**
  * Exporting the drawing: the export dialog (formats, folder, beat, selection,
  * page guide), writing the files, and copying the drawing as an image. The
- * drawing itself comes from core/document.js and drawing-export.js.
+ * drawing itself comes from core/document.js and drawing-export.js. The
+ * dialog also exports the report, the notes with their figures
+ * (core/report.js), as HTML and PDF.
  */
 
 import { resolveBeat } from '../core/beats.js';
 import { timingBeatBands } from '../core/timing-diagram.js';
-import { circuitPageGuideFrame, pageGuideCaption } from '../core/page-guide.js';
+import { circuitPageGuideFrame, normalizePageGuide, pageGuideCaption, pageGuideTitle } from '../core/page-guide.js';
 import { DEFAULT_EXPORT_TEXT_PT, normalizePngDpi, pngRasterScale } from '../core/png-export.js';
 import { renderDocument } from '../core/document.js';
 import { DRAWING_EXPORT_OPTIONS, hasDrawableSelection, selectionDrawing, selectionSubset } from '../core/selection-drawing.js';
 import { svgPixelSize } from '../core/render.js';
-import { svgToPngDataUrl, applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
+import { svgToPngDataUrl, applyExportDarkTheme, embeddedMathFontFace, withEmbeddedMathFont } from './drawing-export.js';
+import { buildReport } from '../core/report.js';
 import { writeDrawingToClipboard } from './clipboard.js';
 import { defaultExportDirectory, validDocumentName } from './persistence.js';
 import { confirmChoice, showFileDialog } from './file-dialog.js';
@@ -41,6 +44,9 @@ let imageCopyInFlight = false;
 const PDF_FALLBACK_PNG_SCALE = 3;
 // ...but no side longer than this, which a whole Atlas sheet would pass.
 const PDF_FALLBACK_MAX_PX = 4096;
+
+// What the document's export writes: the drawing, or the report.
+let exportContent = 'drawing';
 
 // What the open dialog exports: null for the document, or the Atlas sheet
 // ({ name, key, summary, build({ grid }) -> { svg, scale, count } }).
@@ -115,10 +121,7 @@ async function runExport({ dir, name, formats, grid = false, dark = false, pngDp
       : null;
     // A MathML label can acquire its final browser-sized box after the last
     // canvas paint. Sync it before taking bounds for the exported viewBox.
-    for (let attempt = 0; attempt < 3 && syncRenderedLabelMetrics(); attempt += 1) {
-      editor.committedCanvasKey = '';
-      render();
-    }
+    settleLabelMetrics();
     // Only the selection: the same export, of the selected subset alone.
     const drawing = selection ? selectionSubset(editor.circuit, selection) : editor.circuit;
     if (editor.pageGuide) {
@@ -173,6 +176,47 @@ async function runExport({ dir, name, formats, grid = false, dark = false, pngDp
     }
     logLine(`Exported ${paths.map((path) => path.split(/[\\/]/).pop()).join(', ')} to ${displayPath(folder)}.`);
     for (const note of notes) logLine(note);
+  } catch (err) {
+    logLine(`Could not export: ${err.message}`, 'error');
+  }
+}
+
+/** Sync measured labels, so figures are framed as the canvas draws them. */
+function settleLabelMetrics() {
+  for (let attempt = 0; attempt < 3 && syncRenderedLabelMetrics(); attempt += 1) {
+    editor.committedCanvasKey = '';
+    render();
+  }
+}
+
+/** The report of the design on screen (core/report.js), with the math face
+ *  when `fontCss` is given. */
+function currentReport(fontCss = '') {
+  return buildReport(editor.circuit, { name: editor.currentCircuitName || 'Design', guide: editor.pageGuide, fontCss });
+}
+
+/** The report: one HTML document, and the PDF the server prints from it. */
+async function runReportExport({ dir, name, formats }) {
+  const supportedFormats = persistence.supportedExportFormats || new Set(formats);
+  const unsupported = formats.filter((format) => !supportedFormats.has(format));
+  if (unsupported.length) {
+    logLine(`Could not export: ${unsupported.join(', ')} export is unavailable in this mode.`, 'error');
+    return;
+  }
+  try {
+    logLine(`Exporting ${formats.map((format) => `${name}.${format}`).join(', ')}…`);
+    const prepared = persistence.prepareExport ? await persistence.prepareExport({ name, formats: [], dir }) : null;
+    settleLabelMetrics();
+    const report = currentReport(await embeddedMathFontFace());
+    const result = await writeExportFiles({ dir, name, formats, report: report.html }, { prepared });
+    if (!result) {
+      logLine('Export canceled.');
+      return;
+    }
+    const count = report.figures.filter((figure) => figure.kind).length;
+    logLine(`Exported the report (${count} figure${count === 1 ? '' : 's'}) to ${result.paths.map((path) => path.split(/[\\/]/).pop()).join(', ')} in ${displayPath(result.dir)}.`);
+    for (const warning of report.warnings) logLine(warning, 'error');
+    for (const note of result.notes || []) logLine(note);
   } catch (err) {
     logLine(`Could not export: ${err.message}`, 'error');
   }
@@ -272,6 +316,44 @@ function chosenExportBeat() {
 
 const EXPORT_SETTINGS_KEY = 'mosfeteer:export';
 
+/** The formats ticked that the dialog's content can be written as. */
+function chosenFormats() {
+  const allowed = exportTarget ? ['svg', 'pdf'] : exportContent === 'report' ? ['pdf', 'html'] : ['svg', 'pdf', 'png'];
+  return [...exportForm.querySelectorAll('input[name="format"]:checked')].map((input) => input.value).filter((format) => allowed.includes(format));
+}
+
+/** Show the drawing's choices or the report's. */
+function setExportContent(content) {
+  exportContent = content === 'report' ? 'report' : 'drawing';
+  if (exportDialog) exportDialog.dataset.content = exportTarget ? 'drawing' : exportContent;
+  for (const button of document.querySelectorAll('[data-export-content]')) button.setAttribute('aria-pressed', String(button.dataset.exportContent === exportContent));
+  if (exportContent === 'report' && !exportTarget) {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null'); } catch { /* storage unavailable */ }
+    const supported = (format) => persistence.supportedExportFormats?.has(format) ?? true;
+    const wanted = Array.isArray(saved?.reportFormats) ? saved.reportFormats : [supported('pdf') ? 'pdf' : 'html'];
+    for (const format of ['pdf', 'html']) {
+      const input = exportForm.querySelector(`input[name="format"][value="${format}"]`);
+      if (input) input.checked = supported(format) && wanted.includes(format);
+    }
+    renderReportSummary();
+  }
+  renderExportLocation();
+}
+
+/** What the report holds: its figures and the guide that sizes them, and
+ *  anything to look at first. */
+function renderReportSummary() {
+  const summary = document.getElementById('export-report-summary');
+  if (!summary) return;
+  settleLabelMetrics();
+  const report = currentReport();
+  const count = report.figures.filter((figure) => figure.kind).length;
+  const guide = pageGuideTitle(editor.pageGuide || normalizePageGuide('a4'));
+  const what = editor.circuit.notes ? `The notes with ${count} figure${count === 1 ? '' : 's'}` : 'The drawing alone: the design has no notes yet';
+  summary.replaceChildren(`${what}, sized for ${guide}.`, ...report.warnings.map((warning) => Object.assign(document.createElement('span'), { className: 'export-report-warning', textContent: warning })));
+}
+
 let exportFolder = '';
 
 function renderExportLocation() {
@@ -280,7 +362,7 @@ function renderExportLocation() {
     folderEl.textContent = displayPath(exportFolder) || 'Choose a folder';
     folderEl.title = exportFolder;
   }
-  const formats = [...exportForm.querySelectorAll('input[name="format"]:checked')].map((input) => `.${input.value}`);
+  const formats = chosenFormats().map((format) => `.${format}`);
   const extensions = document.getElementById('export-extensions');
   if (extensions) extensions.textContent = formats.join(' ');
   const dpi = exportForm.querySelector('select[name="pngDpi"]');
@@ -296,7 +378,7 @@ function renderExportLocation() {
  * folder in Node mode, or the browser download location in browser-only mode.
  * Formats, appearance, and a folder chosen for this document are remembered.
  */
-export function exportCircuit() {
+export function exportCircuit({ content = 'drawing' } = {}) {
   exportTarget = null;
   setExportDialogTarget();
   let saved = null;
@@ -326,6 +408,7 @@ export function exportCircuit() {
     const supported = persistence.supportedExportFormats?.has(input.value) ?? true;
     input.checked = supported && (Array.isArray(saved?.formats) ? saved.formats.includes(input.value) : input.defaultChecked);
   }
+  setExportContent(content);
   syncExportBeatChoice();
   // The page guide is the Settings one: shown here, where it pads the export.
   const pageGuideSelect = document.getElementById('export-page-guide');
@@ -343,6 +426,7 @@ export function exportCircuit() {
 function setExportDialogTarget() {
   if (!exportDialog) return;
   exportDialog.dataset.target = exportTarget ? 'atlas' : 'document';
+  exportDialog.dataset.content = exportTarget ? 'drawing' : exportContent;
   const title = document.getElementById('export-dialog-title');
   if (title) title.textContent = exportTarget ? 'Export atlas' : 'Export document';
   const content = document.getElementById('export-atlas-content');
@@ -411,13 +495,25 @@ export function installExportUi() {
   // Choosing a page guide here chooses it in Settings: one preference.
   document.getElementById('export-page-guide')?.addEventListener('change', (event) => {
     document.querySelector(`#settings-menu [data-page-guide="${event.target.value}"]`)?.click();
+    if (exportContent === 'report') renderReportSummary();
   });
+  for (const button of document.querySelectorAll('[data-export-content]')) {
+    button.addEventListener('click', () => setExportContent(button.dataset.exportContent));
+  }
   exportForm?.addEventListener('submit', (event) => {
     event.preventDefault();
-    const formats = [...exportForm.querySelectorAll('input[name="format"]:checked')].map((input) => input.value);
+    const formats = chosenFormats();
     const name = validDocumentName(document.getElementById('export-name')?.value);
     if (!formats.length || !name || !exportFolder) return;
     exportDialog.close();
+    if (!exportTarget && exportContent === 'report') {
+      try {
+        const saved = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null') || {};
+        localStorage.setItem(EXPORT_SETTINGS_KEY, JSON.stringify({ ...saved, reportFormats: formats }));
+      } catch { /* storage unavailable */ }
+      runReportExport({ dir: exportFolder, name, formats });
+      return;
+    }
     if (exportTarget) {
       const target = exportTarget;
       const settings = { grid: exportGridInput?.checked === true, dark: exportDarkInput?.checked === true };

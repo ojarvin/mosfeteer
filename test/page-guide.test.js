@@ -5,7 +5,7 @@ import { runCommand } from '../src/core/commands.js';
 import { editorOverlay, svgString } from '../src/core/render.js';
 import { DRAWING_EXPORT_OPTIONS, selectionDrawing } from '../src/core/selection-drawing.js';
 import {
-  circuitPageGuideFrame, normalizePageGuide, pageGuideCaption, pageGuideFrame, pageGuideTextSize, pageGuideWidth,
+  circuitPageGuideFrame, customPageGuide, normalizePageGuide, pageGuideCaption, pageGuideFrame, pageGuideTextSize, pageGuideTitle, pageGuideWidth,
 } from '../src/core/page-guide.js';
 
 const single = normalizePageGuide('ieee-1col');
@@ -88,4 +88,29 @@ test('a copied selection image is padded to the guide, centered on the selection
   assert.ok(Math.abs(w - pageGuideWidth(single)) < 0.01);
   assert.ok(Math.abs(x + w / 2 - 2000) < 0.01, 'centered on R2, not on the drawing');
   assert.doesNotMatch(svg, /data-ref="R1"/);
+});
+
+test('a custom guide takes its width in in, cm, mm, or pt and its own text size', () => {
+  const custom = normalizePageGuide({ preset: 'custom', width: 12, unit: 'cm', textPt: 9 });
+  assert.equal(custom.preset, 'custom');
+  assert.ok(Math.abs(custom.widthPt - (12 * 72) / 2.54) < 1e-9);
+  // Label text lands at 9 pt across 12 cm.
+  assert.ok(Math.abs((LABEL_FONT_SIZE * custom.widthPt) / pageGuideWidth(custom) - 9) < 1e-9);
+  assert.equal(pageGuideTitle(custom), 'Custom (12 cm, 9 pt)');
+  assert.match(pageGuideCaption(custom), /Custom \(12 cm\) · 9 pt text with \\includegraphics\[width=12cm\]/);
+  // A normalized guide normalizes to itself, as a stored one is read back.
+  assert.deepEqual(normalizePageGuide(custom), custom);
+  assert.deepEqual(normalizePageGuide({ preset: 'custom', width: '3.5', unit: 'in', textPt: '8' }).widthPt, 252);
+  // A drawing wider than it is fitted to its width, its text smaller.
+  const wide = pageGuideFrame(custom, 0, 2 * pageGuideWidth(custom));
+  assert.equal(wide.fits, false);
+  assert.ok(Math.abs(wide.textPt - 4.5) < 1e-9);
+});
+
+test('a custom guide outside its bounds is refused, saying why', () => {
+  assert.equal(normalizePageGuide({ preset: 'custom', width: 12, unit: 'furlong', textPt: 9 }), null);
+  assert.equal(customPageGuide({ width: -1, unit: 'cm', textPt: 9 }), null);
+  assert.throws(() => customPageGuide({ width: 0.1, unit: 'cm', textPt: 9 }, { strict: true }), /width must be from 1\.27 to 101\.6 cm/);
+  assert.throws(() => customPageGuide({ width: 12, unit: 'cm', textPt: 2 }, { strict: true }), /text size must be from 4 to 36 pt/);
+  assert.throws(() => customPageGuide({ width: 'wide', unit: 'cm', textPt: 9 }, { strict: true }), /positive number/);
 });

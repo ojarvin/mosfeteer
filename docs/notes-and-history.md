@@ -2,7 +2,8 @@
 
 Two things a design carries in its own file besides the drawing: notes
 about it, and the states it was saved in. Both travel with the file to
-another designer; neither is ever drawn or exported with the figure.
+another designer; neither is ever drawn or exported with the figure. The
+notes are the text of the design's report, below.
 
 ## Notes
 
@@ -62,6 +63,41 @@ References (`src/core/notes.js`):
 
 The Atlas search reads the notes (`designIndex` keeps them as one search
 key, `searchDesign` matches a word found there).
+
+## Report
+
+The notes are also the text of the design's report (`src/core/report.js`,
+`buildReport`): a printable HTML document, and the PDF the server prints
+from it with headless Chromium (`printHtmlToPdf`). The export dialog's
+**Report** (or the notes window's **Report…**) writes it as PDF and HTML;
+browser-only mode writes the HTML, which prints from the browser. Scripted:
+`report [--file F.html] [--guide G] [--name TITLE]` lists its figures and
+warnings, and writes the HTML.
+
+- **Figures.** A line that is only `![[target]]` or `![[target|caption]]`
+  (a quote's lines too, never code) places a figure, numbered `Fig. N` in
+  the order the notes place them (`noteFigures`). A target is `circuit`
+  (the drawing without the figures the tools annotated, as `coreBounds`
+  counts it), `drawing` (all of it), `beat N` (the circuit as that beat
+  shows it), or an annotated figure's id (`F2`, `timing`; the `figures`
+  command lists them). An embed inside a line stays text. Typing `![[`
+  offers the targets.
+- **References.** `[[#target]]` reads `Fig. N`, a link to the first figure
+  of that target; one to no figure reads `Fig. ?` and is a warning. Typing
+  `[[#` offers the targets. A mention links to the first figure that shows
+  its part or net; a design link is the design's name.
+- **In the notes window** a figure shows as its number, target, and caption,
+  its target in red when there is nothing of that name to draw.
+- **Sizes.** Every figure is drawn at the page guide's width (the A4 one
+  without a guide), centered: one narrower than the guide is padded to it,
+  so its text is the guide's size; one wider is fitted to it, its text
+  smaller, and the report warns. The page is A4 with 25 mm margins, its side
+  margins narrowing (to 12 mm) for a guide wider than 16 cm; a figure wider
+  or taller than the page is scaled to fit, with the same warning.
+- **Layout.** The notes' `#` heading titles the report; without one the
+  design's name does. Notes that place no figure get the whole drawing on
+  top, unnumbered. Headings stay with what follows, figures are never split
+  across pages, and pages are numbered.
 
 ## Save history
 

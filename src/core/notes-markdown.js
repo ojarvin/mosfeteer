@@ -3,12 +3,14 @@
  * Markdown subset -- headings, paragraphs, lists and task lists, quotes,
  * fenced code, tables, rules, emphasis, links -- with `$...$` and `$$...$$`
  * math as MathML (the labels' own TeX, `texToMathML`), mentions as links
- * to the part or net, and `[[design]]` as links to another design. Every
- * other character is escaped: notes never carry raw HTML into the page.
+ * to the part or net, and `[[design]]` as links to another design. An
+ * embed (`![[circuit|caption]]`) on a line of its own is a numbered figure,
+ * and `[[#circuit]]` its number. Every other character is escaped: notes
+ * never carry raw HTML into the page.
  */
 
 import { texToMathML } from './render.js';
-import { MENTION, normalizeNotes, tokenName } from './notes.js';
+import { FIGURE_EMBED, FIGURE_EMBED_LINE, FIGURE_REFERENCE, MENTION, figureKey, normalizeNotes, noteFigures, tokenName } from './notes.js';
 
 const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
 
@@ -44,9 +46,18 @@ function inlineHtml(text, context) {
     .replace(/`([^`]+)`/g, (_, code) => hold(`<code>${escapeHtml(code)}</code>`))
     .replace(/\$\$([^$]+)\$\$/g, (_, tex) => hold(mathHtml(tex, true)))
     .replace(/(^|[^\\$])\$([^$\n]+?)\$/g, (_, before, tex) => before + hold(mathHtml(tex, false)));
+  // An embed inside text shows as written: only one on its own line is a figure.
+  source = source.replace(FIGURE_EMBED, (whole) => hold(escapeHtml(whole)));
+  source = source.replace(FIGURE_REFERENCE, (_, name) => {
+    const figure = context.figures?.find((entry) => figureKey(entry.name) === figureKey(name));
+    return hold(figure
+      ? `<a href="#fig-${figure.number}" class="note-figure-ref" data-figure="${escapeHtml(figure.name)}">Fig. ${figure.number}</a>`
+      : `<span class="note-figure-ref broken" title="No figure of the notes shows ${escapeHtml(name.trim())}">Fig. ?</span>`);
+  });
   source = source.replace(/\[\[([^[\]\n|]+)\]\]/g, (_, name) => {
     const design = name.trim();
     const exists = context.design?.(design) ?? true;
+    if (context.designHtml) return hold(context.designHtml(design, exists));
     return hold(`<a href="#" class="note-design${exists ? '' : ' broken'}" data-design="${escapeHtml(design)}"${exists ? '' : ' title="No design of this name in the workspace"'}>${escapeHtml(design)}</a>`);
   });
   source = source.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (whole, label, url) => (SAFE_URL.test(url)
@@ -55,6 +66,7 @@ function inlineHtml(text, context) {
   source = source.replace(MENTION, (_, before, token) => {
     const name = tokenName(token);
     const target = context.mention?.(name) ?? null;
+    if (context.mentionHtml) return before + hold(context.mentionHtml(name, target, markupHtml(name)));
     const kind = target?.kind || 'missing';
     const title = target ? '' : ' title="Nothing of this name in the design"';
     return before + hold(`<a href="#" class="note-mention note-mention-${kind}" data-mention="${escapeHtml(name)}"${title}>@${markupHtml(name)}</a>`);
@@ -125,14 +137,33 @@ function listBlock(lines, start, context) {
   return { html: `<${tag}>${items.map((item) => listItemHtml(item.text, item.children, context)).join('')}</${tag}>`, end: i };
 }
 
+/** A figure as the notes window shows it: its number, what it shows, its caption. */
+function figurePlaceholder(figure, context) {
+  const broken = !figure.target;
+  const caption = figure.caption ? `<span class="note-figure-caption">${inlineHtml(figure.caption, context)}</span>` : '';
+  return `<div id="fig-${figure.number}" class="note-figure${broken ? ' broken' : ''}" data-figure="${escapeHtml(figure.name)}"${broken ? ' title="Nothing of this name to draw"' : ''}>`
+    + `<span class="note-figure-number">Fig. ${figure.number}</span> <span class="note-figure-name">${escapeHtml(figure.name)}</span>${caption}</div>`;
+}
+
 /**
- * The notes as HTML. `context` is `{ mention(name), design(name) }`
- * (both optional): what a mention resolves to, and whether a linked design
- * exists. Blocks: `#`-`###` headings, paragraphs, `-`/`*`/`1.` lists (nested
+ * The notes as HTML. `context` (every field optional):
+ * - `mention(name)`: what a mention resolves to; `design(name)`: whether a
+ *   linked design exists; `figure(name)`: what an embed draws (null: nothing).
+ * - `mentionHtml(name, target, nameHtml)`, `designHtml(name, exists)`,
+ *   `figureHtml({ name, caption, captionHtml, number, target })`: draw those
+ *   another way (the report's).
+ * - `headingLevel`: the element of a `#` heading (3: the window's own title is h2).
+ * Blocks: `#`-`###` headings, paragraphs, `-`/`*`/`1.` lists (nested
  * by indenting two spaces), `>`
- * quotes, fenced code, `$$` display math, `|` tables, `---` rules.
+ * quotes, fenced code, `$$` display math, `|` tables, `---` rules, and
+ * figures, an embed on a line of its own.
  */
 export function renderNotes(source, context = {}) {
+  if (!context.figures) {
+    // Numbered once for the whole notes: a quote's figures count in order.
+    const figures = noteFigures(source);
+    context = { ...context, figures, figureAt: { next: 0 } };
+  }
   const lines = normalizeNotes(source).split('\n');
   const out = [];
   let paragraph = [];
@@ -166,7 +197,7 @@ export function renderNotes(source, context = {}) {
     const heading = line.match(/^(#{1,6})\s+(.*)$/);
     if (heading) {
       flush();
-      const level = Math.min(heading[1].length + 2, 6); // the window's own title is h2
+      const level = Math.min(heading[1].length + (context.headingLevel ?? 3) - 1, 6);
       out.push(`<h${level}>${inlineHtml(heading[2], context)}</h${level}>`);
       continue;
     }
@@ -190,6 +221,17 @@ export function renderNotes(source, context = {}) {
       for (; i < lines.length && /^\s*>/.test(lines[i]); i++) body.push(lines[i].replace(/^\s*>\s?/, ''));
       i -= 1;
       out.push(`<blockquote>${renderNotes(body.join('\n'), context)}</blockquote>`);
+      continue;
+    }
+    if (FIGURE_EMBED_LINE.test(line)) {
+      flush();
+      const figure = context.figures[context.figureAt.next++];
+      if (figure) {
+        const entry = { ...figure, target: context.figure ? context.figure(figure.name) : true };
+        out.push(context.figureHtml
+          ? context.figureHtml({ ...entry, captionHtml: inlineHtml(figure.caption, context) })
+          : figurePlaceholder(entry, context));
+      }
       continue;
     }
     if (LIST_ITEM.test(line)) {

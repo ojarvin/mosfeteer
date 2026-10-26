@@ -697,7 +697,7 @@ export function createBrowserPersistenceAdapter({
   return {
     browserOnly: true,
     liveSync: false,
-    supportedExportFormats: new Set(['svg', 'png']),
+    supportedExportFormats: new Set(['svg', 'png', 'html']),
     get canChooseExportFolder() { return canChooseExportFolder(); },
     /** While the submit still carries user activation: ask for access to a
      *  chosen export folder, or reserve a native PNG save target before
@@ -779,15 +779,18 @@ export function createBrowserPersistenceAdapter({
     reveal: async () => { throw new Error('the browser cannot show files in the file manager'); },
     active: async () => ({ active: '', path: '' }),
     heartbeat: async () => {},
-    exportFiles: async ({ dir = BROWSER_DOWNLOADS, name, formats = [], svg = '', png = '', overwrite = false }, { prepared = null } = {}) => {
-      const supported = formats.filter((format) => ['svg', 'png'].includes(format));
-      const unsupported = formats.filter((format) => !['svg', 'png'].includes(format));
+    exportFiles: async ({ dir = BROWSER_DOWNLOADS, name, formats = [], svg = '', png = '', report = null, overwrite = false }, { prepared = null } = {}) => {
+      // A report (core/report.js) is its HTML; a drawing its SVG and PNG.
+      const writable = report === null ? ['svg', 'png'] : ['html'];
+      const supported = formats.filter((format) => writable.includes(format));
+      const unsupported = formats.filter((format) => !writable.includes(format));
       if (unsupported.length) throw Object.assign(new Error(`browser-only export does not support: ${unsupported.join(', ')}`), { code: 'unsupported-format' });
       await ready;
       const exportFolder = exportFolders.get(dir);
+      const contentsOf = (format) => (format === 'svg' ? svg : format === 'html' ? report : dataUrlBlob(png));
       if (exportFolder) {
         if (!await permitted(exportFolder, 'readwrite', true)) throw needsAccess('', dir, 'readwrite');
-        const files = supported.map((format) => ({ fileName: `${name}.${format}`, contents: format === 'svg' ? svg : dataUrlBlob(png) }));
+        const files = supported.map((format) => ({ fileName: `${name}.${format}`, contents: contentsOf(format) }));
         if (!overwrite) {
           const existing = [];
           for (const { fileName } of files) {
@@ -804,6 +807,11 @@ export function createBrowserPersistenceAdapter({
       if (supported.includes('svg')) {
         const fileName = `${name}.svg`;
         makeDownload(download, svg, fileName, 'image/svg+xml');
+        paths.push(`${dir}/${fileName}`);
+      }
+      if (supported.includes('html')) {
+        const fileName = `${name}.html`;
+        makeDownload(download, report, fileName, 'text/html');
         paths.push(`${dir}/${fileName}`);
       }
       if (supported.includes('png')) {

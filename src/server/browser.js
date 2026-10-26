@@ -50,17 +50,26 @@ export function findChromium({ platform = process.platform, env = process.env } 
  * attaches to a running browser).
  */
 export async function printSvgToPdf(svgOrPages, { browser = findChromium(), timeoutMs = 60_000 } = {}) {
-  if (!browser) throw Object.assign(new Error('no Chromium-family browser found'), { code: 'no-browser' });
   const pages = Array.isArray(svgOrPages) ? svgOrPages : [svgOrPages];
   if (!pages.length) throw new Error('a PDF needs at least one page');
   const { width, height } = svgPixelSize(pages[0]);
+  // The SVG is rendered by a real browser, so the page denies scripts and
+  // every external load; only the inline drawing and its inline styles run.
+  return printHtmlToPdf(`<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:"><style>@page{size:${width}px ${height}px;margin:0}html,body{margin:0;padding:0;background:#fff}svg{display:block;width:${width}px;height:${height}px}.page{break-after:page;overflow:hidden;width:${width}px;height:${height}px}.page:last-child{break-after:auto}</style></head><body>${pages.map((svg) => `<div class="page">${svg}</div>`).join('')}</body></html>`, { browser, timeoutMs });
+}
+
+/**
+ * Print an HTML document to PDF with headless Chromium, its pages as its
+ * own `@page` rules set them (a report, core/report.js). The document
+ * brings its own Content-Security-Policy.
+ */
+export async function printHtmlToPdf(html, { browser = findChromium(), timeoutMs = 60_000 } = {}) {
+  if (!browser) throw Object.assign(new Error('no Chromium-family browser found'), { code: 'no-browser' });
   const work = await mkdtemp(join(tmpdir(), 'mosfeteer-pdf-'));
   try {
     const page = join(work, 'page.html');
     const out = join(work, 'out.pdf');
-    // The SVG is rendered by a real browser, so the page denies scripts and
-    // every external load; only the inline drawing and its inline styles run.
-    await writeFile(page, `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:"><style>@page{size:${width}px ${height}px;margin:0}html,body{margin:0;padding:0;background:#fff}svg{display:block;width:${width}px;height:${height}px}.page{break-after:page;overflow:hidden;width:${width}px;height:${height}px}.page:last-child{break-after:auto}</style></head><body>${pages.map((svg) => `<div class="page">${svg}</div>`).join('')}</body></html>`);
+    await writeFile(page, html);
     await new Promise((resolve, reject) => {
       const child = spawn(browser, [
         '--headless', '--disable-gpu', '--no-first-run', '--no-default-browser-check',

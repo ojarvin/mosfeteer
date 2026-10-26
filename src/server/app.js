@@ -22,7 +22,7 @@ import {
   absolutePath, browseFolder, browseNearestFolder, deleteDocumentFile, describeDocument, documentNameFromPath, documentPathFor,
   fileRevision, isJsonFile, listDocuments, readDocumentFile, readPreviousState, serializeDocument, validDocumentName, writeFileAtomic,
 } from './documents.js';
-import { findChromium, printSvgToPdf } from './browser.js';
+import { findChromium, printHtmlToPdf, printSvgToPdf } from './browser.js';
 import { svgPixelSize, svgString } from '../core/render.js';
 import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
 import { symbolSheet } from '../core/symbol-sheet.js';
@@ -406,6 +406,7 @@ export async function startApp({
     const dir = absolutePath(body.dir);
     const name = validDocumentName(body.name);
     if (!name) throw httpError('invalid export file name');
+    if (typeof body.report === 'string') return exportReport(body, dir, name);
     const formats = [...new Set((Array.isArray(body.formats) ? body.formats : []).filter((format) => ['svg', 'png', 'pdf'].includes(format)))];
     if (!formats.length) throw httpError('choose at least one export format');
     const svg = typeof body.svg === 'string' ? body.svg : '';
@@ -426,15 +427,7 @@ export async function startApp({
     if (formats.includes('png') && !png) throw httpError('export is missing its PNG rendering');
 
     const paths = Object.fromEntries(formats.map((format) => [format, join(dir, `${name}.${format}`)]));
-    if (body.overwrite !== true) {
-      const existing = [];
-      for (const path of Object.values(paths)) {
-        try { await stat(path); existing.push(path); } catch { /* free */ }
-      }
-      if (existing.length) {
-        throw Object.assign(httpError(`${existing.length === 1 ? 'a file' : 'files'} with this name already exist${existing.length === 1 ? 's' : ''}`, 409, 'exists'), { existing });
-      }
-    }
+    if (body.overwrite !== true) await refuseExisting(Object.values(paths));
 
     // Render everything before writing, so a failed PDF leaves no partial export.
     const contents = {};
@@ -457,6 +450,39 @@ export async function startApp({
     await mkdir(dir, { recursive: true });
     for (const [format, path] of Object.entries(paths)) await writeFileAtomic(path, contents[format]);
     return { dir, paths: Object.values(paths), notes };
+  }
+
+  async function refuseExisting(paths) {
+    const existing = [];
+    for (const path of paths) {
+      try { await stat(path); existing.push(path); } catch { /* free */ }
+    }
+    if (existing.length) {
+      throw Object.assign(httpError(`${existing.length === 1 ? 'a file' : 'files'} with this name already exist${existing.length === 1 ? 's' : ''}`, 409, 'exists'), { existing });
+    }
+  }
+
+  /** A report (core/report.js): its HTML as it is, and a PDF printed from
+   *  it by headless Chromium. A report has no image to fall back on. */
+  async function exportReport(body, dir, name) {
+    const formats = [...new Set((Array.isArray(body.formats) ? body.formats : []).filter((format) => ['html', 'pdf'].includes(format)))];
+    if (!formats.length) throw httpError('choose PDF or HTML for a report');
+    if (!/^\s*<!doctype html>/i.test(body.report)) throw httpError('the report is not an HTML document');
+    const paths = Object.fromEntries(formats.map((format) => [format, join(dir, `${name}.${format}`)]));
+    if (body.overwrite !== true) await refuseExisting(Object.values(paths));
+    const contents = { html: body.report };
+    if (paths.pdf) {
+      try {
+        contents.pdf = await printHtmlToPdf(body.report, { browser: pdfBrowser });
+      } catch (error) {
+        throw httpError(error.code === 'no-browser'
+          ? 'a report\'s PDF needs Chrome, Chromium, Edge, or Brave; export it as HTML and print that from a browser'
+          : `could not create the report's PDF: ${error.message}`, 500);
+      }
+    }
+    await mkdir(dir, { recursive: true });
+    for (const [format, path] of Object.entries(paths)) await writeFileAtomic(path, contents[format]);
+    return { dir, paths: Object.values(paths), notes: [] };
   }
 
   /** The workspace's other designs, newest first, for `arrange` to search
