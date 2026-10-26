@@ -76174,7 +76174,8 @@ function syncTutorial() {
 /**
  * Learn's report example (examples/report-example.js): its designs saved to
  * the workspace, each only when no design of its name is there -- one that
- * is opens as it is, never replaced -- then the first opened, its notes shown.
+ * is opens as it is, never replaced -- then the first opened in the editor,
+ * its notes shown.
  */
 async function openReportExample() {
   if (persistence.browserOnly && !editor.workspaceState?.folder) {
@@ -76203,7 +76204,10 @@ async function openReportExample() {
     return;
   }
   await refreshCircuitList();
-  if (paths[0] && await openDocumentPath(paths[0])) showNotes();
+  if (!paths[0] || !await openDocumentPath(paths[0])) return;
+  // Opened over the Atlas (Learn is there too), it shows in the editor.
+  leaveAtlasNow();
+  showNotes();
 }
 
 function offerTutorial(id = 'ota') {

@@ -203,7 +203,7 @@ describe('design notes', { skip: browserSkip() }, () => {
     await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.notes === '')`);
   });
 
-  test('Learn\'s report example saves its two designs, opens the modulator, and never replaces them', async () => {
+  test('Learn\'s report example saves its two designs, opens the modulator in the editor, and never replaces them', async () => {
     const open = async () => {
       await h.evaluate(`${h.module('help.js')}.then((m) => m.showHelp('tutorial'))`);
       await h.until(`!!document.getElementById('btn-report-example')?.getClientRects().length`);
@@ -215,7 +215,11 @@ describe('design notes', { skip: browserSkip() }, () => {
       await h.until(opened);
       await h.until(`!!document.querySelector('.notes-view:not([hidden]) .note-section')`);
     };
+    // Opened from Learn over the Atlas, it shows in the editor.
+    await h.click('#app-mark');
+    await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !!s && !s.busy; })`, 10000);
     await open();
+    await h.until(`${h.module('atlas.js')}.then((m) => !m.atlasSnapshot())`, 5000);
     const files = () => readFile(join(h.workspace, 'report-example-integrator.json'), 'utf8');
     const integrator = JSON.parse(await files());
     assert.match(integrator.notes, /^# SC integrator with correlated level shifting/);
