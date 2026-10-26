@@ -36015,6 +36015,7 @@ __exports.texToLabelMarkup = texToLabelMarkup;
 __exports.plainTexText = plainTexText;
 __exports.svgPixelSize = svgPixelSize;
 __exports.texToMathML = texToMathML;
+__exports.plotFontSize = plotFontSize;
 __exports.componentShapeSvg = componentShapeSvg;
 __exports.labelShapeSvg = labelShapeSvg;
 __exports.viewportFrame = viewportFrame;
@@ -36824,6 +36825,13 @@ const PLOT_STROKES = {
   marker: { width: 3, dash: '18 9' },
 };
 
+/** A plot's text size (world units) in a box `height` tall: it scales with
+ *  the box, within label sizes. */
+function plotFontSize(plot, height) {
+  const response = ['response', 'swing', 'step', 'wave', 'locus'].includes(plot.kind);
+  return Math.max(18, Math.min(38, height / (response ? 10 : plot.phase ? 11 : 8)));
+}
+
 /**
  * A plot annotation: the Bode sketch it carries (bode-figure.js), laid out
  * to fill its box in the drawing's ink -- axes, the straight-line sketch
@@ -36836,7 +36844,7 @@ function plotAnnotationSvg(label, opacity = '') {
   const w = Math.abs(b.x - a.x); const h = Math.abs(b.y - a.y);
   const plot = label.plot;
   const response = ['response', 'swing', 'step', 'wave', 'locus'].includes(plot.kind);
-  const fontSize = Math.max(18, Math.min(38, h / (response ? 10 : plot.phase ? 11 : 8)));
+  const fontSize = plotFontSize(plot, h);
   // A response plot (signal-flow analysis) draws each trace in its color;
   // its traces' names are math labels beside it, children of the box.
   // An overloaded run (null) runs off the top.
@@ -38197,7 +38205,8 @@ let listFigures; __bind(() => { ({ listFigures } = __require("src/core/figures.j
 let beatTitle, resolveBeat; __bind(() => { ({ beatTitle, resolveBeat } = __require("src/core/beats.js")); });
 let timingBeatBands; __bind(() => { ({ timingBeatBands } = __require("src/core/timing-diagram.js")); });
 let DRAWING_EXPORT_OPTIONS, selectionDrawing; __bind(() => { ({ DRAWING_EXPORT_OPTIONS, selectionDrawing } = __require("src/core/selection-drawing.js")); });
-let renderDocument; __bind(() => { ({ renderDocument } = __require("src/core/document.js")); });
+let loadDocument, renderDocument; __bind(() => { ({ loadDocument, renderDocument } = __require("src/core/document.js")); });
+let plotFontSize; __bind(() => { ({ plotFontSize } = __require("src/core/render.js")); });
 let normalizePageGuide; __bind(() => { ({ normalizePageGuide } = __require("src/core/page-guide.js")); });
 let numberSections, referencesHtml, renderNotes; __bind(() => { ({ numberSections, referencesHtml, renderNotes } = __require("src/core/notes-markdown.js")); });
 let FIGURE_EMBED_LINE, figureKey, noteCitations, noteFigures, normalizeNotes, resolveMention; __bind(() => { ({ FIGURE_EMBED_LINE, figureKey, noteCitations, noteFigures, normalizeNotes, resolveMention } = __require("src/core/notes.js")); });
@@ -38207,6 +38216,8 @@ let FIGURE_EMBED_LINE, figureKey, noteCitations, noteFigures, normalizeNotes, re
  * Every figure is drawn at the page guide's width, centered: one narrower
  * than the guide is padded to it, so every figure's text is the guide's
  * size; one wider is fitted to it, its text smaller, and the report says so.
+ * A plot is drawn again to fill three quarters of the guide's width, its
+ * own text at the guide's size.
  * Without a guide the report uses the A4 one. The page is A4, its text as
  * wide as the guide where that fits on the sheet.
  *
@@ -38222,6 +38233,7 @@ let FIGURE_EMBED_LINE, figureKey, noteCitations, noteFigures, normalizeNotes, re
  *
  * The report is HTML; the server prints it to PDF (`printHtmlToPdf`).
  */
+
 
 
 
@@ -38292,11 +38304,60 @@ function targetShows(circuit, target, found) {
 function targetSvg(circuit, target, guide) {
   if (target.kind === 'beat') {
     const view = resolveBeat(circuit, target.beat);
-    return selectionDrawing(circuit, targetSelection(circuit, { kind: 'circuit' }), { pageGuide: guide, beat: { view, timing: timingBeatBands(circuit, view.index) } });
+    return { svg: selectionDrawing(circuit, targetSelection(circuit, { kind: 'circuit' }), { pageGuide: guide, beat: { view, timing: timingBeatBands(circuit, view.index) } }) };
+  }
+  if (target.kind === 'figure' && target.figure.kind === 'plot') {
+    const plot = reportPlot(circuit, target.figure, guide);
+    if (plot) return plot;
   }
   const selection = targetSelection(circuit, target);
-  if (selection) return selectionDrawing(circuit, selection, { pageGuide: guide });
-  return renderDocument(circuit, { ...DRAWING_EXPORT_OPTIONS, pageGuide: guide });
+  if (selection) return { svg: selectionDrawing(circuit, selection, { pageGuide: guide }) };
+  return { svg: renderDocument(circuit, { ...DRAWING_EXPORT_OPTIONS, pageGuide: guide }) };
+}
+
+/** The share of the guide's width a plot fills in a report. */
+const PLOT_SHARE = 0.75;
+
+const viewBoxWidth = (svg) => Number(svg.match(/viewBox="([^"]+)"/)[1].split(/\s+/)[2]);
+
+/**
+ * A plot figure as a report draws it, `{ svg, widthPt, textUnits }`: drawn
+ * again in a box of its own proportions sized so that the figure fills
+ * PLOT_SHARE of the guide's width with its text -- ticks, axis names, the
+ * legend beside it -- at the guide's size; on the canvas a plot's text is
+ * smaller than the labels'. The drawing itself is left as it is (a copy is
+ * drawn). Null when the figure has no plot box.
+ */
+function reportPlot(circuit, figure, guide) {
+  const copy = loadDocument(circuit.toJSON());
+  const own = listFigures(copy).find((entry) => entry.id === figure.id);
+  const box = own?.labels.find((label) => label.plot && label.anchor && label.end);
+  if (!box) return null;
+  const legend = own.labels.filter((label) => label.parent === box.id);
+  const draw = () => selectionDrawing(copy, targetSelection(copy, { kind: 'figure', figure: own }));
+  let svg = draw();
+  // The text grows with the box up to a size, so settle in a few steps.
+  for (let step = 0; step < 4; step += 1) {
+    const w = Math.abs(box.end.x - box.anchor.x);
+    const h = Math.abs(box.end.y - box.anchor.y);
+    const ptPerUnit = guide.textPt / plotFontSize(box.plot, h);
+    const grow = (PLOT_SHARE * guide.widthPt) / ptPerUnit - viewBoxWidth(svg);
+    if (Math.abs(grow) < 1 || w + grow <= 0) break;
+    const k = (w + grow) / w;
+    const left = Math.min(box.anchor.x, box.end.x);
+    const top = Math.min(box.anchor.y, box.end.y);
+    const right = Math.max(box.anchor.x, box.end.x);
+    const resize = (point) => ({ x: left + (point.x - left) * k, y: top + (point.y - top) * k });
+    box.anchor = resize(box.anchor);
+    box.end = resize(box.end);
+    // The legend stays beside the box, in its place from the top.
+    const moved = Math.max(box.anchor.x, box.end.x) - right;
+    for (const label of legend) label.anchor = { x: label.anchor.x + moved, y: label.anchor.y };
+    svg = draw();
+  }
+  const h = Math.abs(box.end.y - box.anchor.y);
+  const textUnits = plotFontSize(box.plot, h);
+  return { svg, widthPt: (guide.textPt / textUnits) * viewBoxWidth(svg), textUnits };
 }
 
 /** The page for a guide: its text width, and the side margin that leaves. */
@@ -38311,16 +38372,16 @@ function reportPage(guide) {
 
 /**
  * One figure, sized: an SVG `width` world units across set at the guide's
- * width, smaller when the page cannot hold it (too wide, or too tall).
- * `textPt` is what its label text measures on the page.
+ * width (or `widthPt`), smaller when the page cannot hold it (too wide, or
+ * too tall). `textPt` is what its text, `textUnits` tall (a label's by
+ * default), measures on the page.
  */
-function reportFigureSize(guide, page, width, height) {
-  let widthPt = guide.widthPt;
+function reportFigureSize(guide, page, width, height, { widthPt = guide.widthPt, textUnits = LABEL_FONT_SIZE } = {}) {
   let heightPt = (widthPt * height) / width;
   const scale = Math.min(1, page.textWidthPt / widthPt, (page.textHeightPt * FIGURE_HEIGHT_SHARE) / heightPt);
   widthPt *= scale;
   heightPt *= scale;
-  return { widthPt, heightPt, textPt: (LABEL_FONT_SIZE * widthPt) / width };
+  return { widthPt, heightPt, textPt: (textUnits * widthPt) / width };
 }
 
 /** The SVG set at a size on the page: its own width and height replaced. */
@@ -38420,9 +38481,9 @@ function buildReport(circuit, { name = 'Design', guide = null, fontCss = '', des
         warnings.push(`${label(figure)}${where}: nothing named "${figure.name}" to draw.`);
         continue;
       }
-      const svg = targetSvg(owner, figure.target, pageGuide);
+      const { svg, ...sizing } = targetSvg(owner, figure.target, pageGuide);
       const [, , width, height] = svg.match(/viewBox="([^"]+)"/)[1].split(/\s+/).map(Number);
-      const size = reportFigureSize(pageGuide, page, width, height);
+      const size = reportFigureSize(pageGuide, page, width, height, sizing);
       if (size.textPt < pageGuide.textPt - 0.05) warnings.push(`${label(figure)} (${figure.name}${depth ? ` of ${ownerName}` : ''}): its text is ${size.textPt.toFixed(1)} pt, below the guide's ${pageGuide.textPt} pt.`);
       drawn.set(figure, { svg: sizedSvg(svg, size), ...size });
       figure.textPt = size.textPt;

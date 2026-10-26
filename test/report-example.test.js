@@ -36,3 +36,18 @@ test('the report example\'s report: the integrator a section, every figure drawn
     ['1 The loop', '2 Analysis', '3 SC integrator with correlated level shifting', '3.1 Clocking', '3.2 Transfer function', '3.3 Noise and sizing', '4 References']);
   assert.equal(report.html.match(/<li id="ref-\d+">/g).length, 2, 'both citations in the one list');
 });
+
+test('a report draws each plot again to fill three quarters of the guide, its text at the guide\'s size, the design untouched', () => {
+  const [modulator, integrator] = designs();
+  const before = JSON.stringify(modulator.circuit.toJSON());
+  const report = buildReport(modulator.circuit, { name: modulator.name, design: (name) => (name === integrator.name ? integrator : null) });
+  assert.equal(JSON.stringify(modulator.circuit.toJSON()), before);
+  const widths = [...report.html.matchAll(/<figure id="fig-(\d+)"><svg[^>]* width="([\d.]+)pt"/g)].map((m) => [Number(m[1]), Number(m[2])]);
+  const plotFigures = report.figures.filter((figure) => ['F2', 'F3'].includes(figure.name) && !figure.design).map((figure) => figure.number);
+  assert.deepEqual(plotFigures, [3, 4]);
+  for (const number of plotFigures) {
+    const width = widths.find(([n]) => n === number)[1];
+    assert.ok(Math.abs(width - 0.75 * 453.54) < 1, `Fig. ${number} is ${width} pt wide`);
+    assert.ok(Math.abs(report.figures.find((figure) => figure.number === number).textPt - 8) < 0.05);
+  }
+});

@@ -785,6 +785,13 @@ const PLOT_STROKES = {
   marker: { width: 3, dash: '18 9' },
 };
 
+/** A plot's text size (world units) in a box `height` tall: it scales with
+ *  the box, within label sizes. */
+export function plotFontSize(plot, height) {
+  const response = ['response', 'swing', 'step', 'wave', 'locus'].includes(plot.kind);
+  return Math.max(18, Math.min(38, height / (response ? 10 : plot.phase ? 11 : 8)));
+}
+
 /**
  * A plot annotation: the Bode sketch it carries (bode-figure.js), laid out
  * to fill its box in the drawing's ink -- axes, the straight-line sketch
@@ -797,7 +804,7 @@ function plotAnnotationSvg(label, opacity = '') {
   const w = Math.abs(b.x - a.x); const h = Math.abs(b.y - a.y);
   const plot = label.plot;
   const response = ['response', 'swing', 'step', 'wave', 'locus'].includes(plot.kind);
-  const fontSize = Math.max(18, Math.min(38, h / (response ? 10 : plot.phase ? 11 : 8)));
+  const fontSize = plotFontSize(plot, h);
   // A response plot (signal-flow analysis) draws each trace in its color;
   // its traces' names are math labels beside it, children of the box.
   // An overloaded run (null) runs off the top.
