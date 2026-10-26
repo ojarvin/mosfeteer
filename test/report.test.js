@@ -185,7 +185,7 @@ test('a report ends with the sources its notes cite, each citation linked to its
   circuit.notes = '# Divider\n\nAs in [^https://example.com/divider|A divider note].\n\n![[circuit]]';
   const { html } = buildReport(circuit);
   assert.match(html, /<a href="#ref-1" class="note-cite"[^>]*>\[1\]<\/a>/);
-  assert.match(html, /<section class="note-references"><h2 class="unnumbered">References<\/h2><ol><li id="ref-1">A divider note\. <a href="https:\/\/example\.com\/divider"/);
+  assert.match(html, /<section class="note-references"><h2>References<\/h2><ol><li id="ref-1">A divider note\. <a href="https:\/\/example\.com\/divider"/);
   assert.ok(html.indexOf('<section class="note-references"') > html.indexOf('<figure'), 'after the figures');
 });
 
@@ -244,7 +244,7 @@ test('a design embedded by name is a section: its notes a level down, figures nu
   assert.match(html, /<a href="#ref-1" class="note-cite" title="B · https:\/\/b\.example">\[1\]<\/a> <a href="#ref-2" class="note-cite"/);
   assert.match(html, /Cites <a href="#ref-2" class="note-cite"/);
   assert.equal(html.match(/<section class="note-references">/g).length, 1);
-  assert.match(html, /<section class="note-references"><h2 class="unnumbered">References<\/h2><ol><li id="ref-1">B\./);
+  assert.match(html, /<section class="note-references"><h2>References<\/h2><ol><li id="ref-1">B\./);
   // Without the design, the embed is a missing figure.
   const alone = buildReport(system, { name: 'system' });
   assert.match(alone.warnings.join('\n'), /Fig\. 2: nothing named "amp" to draw\./);
@@ -270,13 +270,13 @@ test('an outline of a block diagram embeds each linked design once, as a section
   assert.match(notesOutline(circuit), /\n\n## Blocks\n\nThe blocks, each from its own design\.\n\n!\[\[ota\]\]\n\n!\[\[filter\]\]\n$/);
 });
 
-test('[TOC] lists the numbered sections where it stands; the title and the references are not numbered', () => {
+test('[TOC] lists the numbered sections where it stands, the references one of them, the title not', () => {
   const html = renderNotes('# Title\n\n[TOC]\n\n## Intro\n\n### Detail\n\n## Next [^https://a.example]\n\n[TOC]\n\n```\n[TOC]\n```');
   assert.match(html, /^<h3>Title<\/h3>\n<nav class="note-toc"><h4 class="note-toc-title">Contents<\/h4><ol>/);
   assert.match(html, /<li class="toc-level-0"><a href="#sec-1"><span class="section-number">1<\/span> Intro<\/a><\/li><li class="toc-level-1"><a href="#sec-1-1"><span class="section-number">1\.1<\/span> Detail<\/a><\/li><li class="toc-level-0"><a href="#sec-2"><span class="section-number">2<\/span> Next/);
-  assert.match(html, /<li class="toc-level-0"><a href="#sec-references">References<\/a><\/li><\/ol><\/nav>/);
+  assert.match(html, /<li class="toc-level-0"><a href="#sec-3"><span class="section-number">3<\/span> References<\/a><\/li><\/ol><\/nav>/);
   assert.match(html, /<h4 id="sec-1"><span class="section-number">1<\/span> Intro<\/h4>/);
-  assert.match(html, /<h4 class="unnumbered" id="sec-references">References<\/h4>/);
+  assert.match(html, /<h4 id="sec-3"><span class="section-number">3<\/span> References<\/h4>/);
   assert.equal(html.match(/<nav class="note-toc">/g).length, 1, 'one contents');
   assert.match(html, /<pre><code>\[TOC\]<\/code><\/pre>/);
   // Without [TOC], nothing is numbered.

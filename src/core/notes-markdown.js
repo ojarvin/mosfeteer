@@ -290,7 +290,7 @@ export function referencesHtml(citations, level) {
       : (citation.title ? '' : escapeHtml(citation.key));
     return `<li id="ref-${citation.number}">${title}${source}</li>`;
   });
-  return `<section class="note-references"><h${level} class="unnumbered">References</h${level}><ol>${items.join('')}</ol></section>`;
+  return `<section class="note-references"><h${level}>References</h${level}><ol>${items.join('')}</ol></section>`;
 }
 
 /** Where a `[TOC]` line puts the contents (`numberSections`). */
@@ -300,38 +300,29 @@ const TOC_PLACE = '<nav class="note-toc"></nav>';
  * Notes with a table of contents: their headings numbered (1, 1.1, ...) and
  * the contents listed where the first `[TOC]` is, each entry a link; the
  * others are dropped. The title -- a heading of `titleLevel` the HTML starts
- * with -- is not numbered, nor is a heading marked `unnumbered` (the
- * References), which is listed without a number. Without a `[TOC]`, the HTML
- * as it is.
+ * with -- is not numbered; the References are a section like any other.
+ * Without a `[TOC]`, the HTML as it is.
  */
 export function numberSections(html, { titleLevel = 1 } = {}) {
   if (!html.includes(TOC_PLACE)) return html;
-  const heading = /<h([1-6])( class="unnumbered")?>([\s\S]*?)<\/h\1>/g;
+  const heading = /<h([1-6])>([\s\S]*?)<\/h\1>/g;
   const found = [...html.matchAll(heading)];
   const title = found[0] && found[0].index === html.search(/\S/) && Number(found[0][1]) === titleLevel ? found[0] : null;
-  const numbered = found.filter((match) => match !== title && !match[2]);
-  const top = Math.min(...numbered.map((match) => Number(match[1])), ...found.filter((match) => match[2]).map((match) => Number(match[1])), 6);
+  const top = Math.min(...found.filter((match) => match !== title).map((match) => Number(match[1])), 6);
   const counters = [];
   const entries = [];
-  let index = 0;
-  const out = html.replace(heading, (whole, level, unnumbered, text, offset) => {
+  const out = html.replace(heading, (whole, level, text, offset) => {
     if (title && offset === title.index) return whole;
-    const depth = Number(level) - top;
-    let id;
-    let number = '';
-    if (unnumbered) id = `sec-${figureKey(text.replace(/<[^>]*>/g, '')).replace(/[^a-z0-9]+/g, '-')}`;
-    else {
-      counters.length = depth + 1;
-      for (let i = 0; i < depth; i += 1) counters[i] ??= 1;
-      counters[depth] = (counters[depth] || 0) + 1;
-      number = counters.join('.');
-      id = `sec-${number.replace(/\./g, '-')}`;
-    }
-    index += 1;
-    entries.push({ depth: Math.max(0, depth), number, id, text });
-    return `<h${level}${unnumbered || ''} id="${id}">${number ? `<span class="section-number">${number}</span> ` : ''}${text}</h${level}>`;
+    const depth = Math.max(0, Number(level) - top);
+    counters.length = depth + 1;
+    for (let i = 0; i < depth; i += 1) counters[i] ??= 1;
+    counters[depth] = (counters[depth] || 0) + 1;
+    const number = counters.join('.');
+    const id = `sec-${number.replace(/\./g, '-')}`;
+    entries.push({ depth, number, id, text });
+    return `<h${level} id="${id}"><span class="section-number">${number}</span> ${text}</h${level}>`;
   });
-  const list = entries.map((entry) => `<li class="toc-level-${entry.depth}"><a href="#${entry.id}">${entry.number ? `<span class="section-number">${entry.number}</span> ` : ''}${entry.text}</a></li>`).join('');
+  const list = entries.map((entry) => `<li class="toc-level-${entry.depth}"><a href="#${entry.id}"><span class="section-number">${entry.number}</span> ${entry.text}</a></li>`).join('');
   const contents = `<nav class="note-toc"><h${top} class="note-toc-title">Contents</h${top}><ol>${list}</ol></nav>`;
   let placed = false;
   return out.replaceAll(TOC_PLACE, () => (placed ? '' : ((placed = true), contents)));

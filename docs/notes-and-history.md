@@ -106,8 +106,8 @@ warnings, and writes the HTML.
   `[N]` and the list in the Markdown (`noteCitations`).
 - **Contents.** A `[TOC]` line (any case, never in code) puts the contents
   there and numbers the headings (1, 1.1, ...): every heading but the title
-  (a `#` heading the notes start with) and References, which is listed
-  unnumbered. Each entry links to its heading. One contents: the first
+  (a `#` heading the notes start with), References included. Each entry
+  links to its heading. One contents: the first
   `[TOC]` (`numberSections`); notes without one are not numbered. In a
   report the numbering runs through the included designs' sections, whose
   own `[TOC]` lines are dropped.
