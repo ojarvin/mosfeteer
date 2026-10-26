@@ -13,7 +13,8 @@
  * annotated figure by its id (`F2`, the `figures` command lists them). A
  * mention (`@M1`) links to the first figure that shows it, and `[[#F2]]`
  * reads `Fig. N`. A citation (`[^https://...|title]`) reads `[N]`, linked to
- * the References list the report ends with. Notes that embed nothing get
+ * the References list the report ends with. A `[TOC]` line in the notes
+ * lists the report's sections there, numbered, the included designs' too. Notes that embed nothing get
  * the whole drawing on top.
  *
  * The report is HTML; the server prints it to PDF (`printHtmlToPdf`).
@@ -26,7 +27,7 @@ import { timingBeatBands } from './timing-diagram.js';
 import { DRAWING_EXPORT_OPTIONS, selectionDrawing } from './selection-drawing.js';
 import { renderDocument } from './document.js';
 import { normalizePageGuide } from './page-guide.js';
-import { referencesHtml, renderNotes } from './notes-markdown.js';
+import { numberSections, referencesHtml, renderNotes } from './notes-markdown.js';
 import { FIGURE_EMBED_LINE, figureKey, noteCitations, noteFigures, normalizeNotes, resolveMention } from './notes.js';
 
 const MM = 72 / 25.4;
@@ -232,6 +233,8 @@ export function buildReport(circuit, { name = 'Design', guide = null, fontCss = 
     let index = 0;
     const body = renderNotes(source, {
       headingLevel: depth + 1,
+      // One contents for the report, where its own notes place it.
+      toc: depth ? 'drop' : 'place',
       isDesign,
       figures,
       citations,
@@ -272,6 +275,7 @@ export function buildReport(circuit, { name = 'Design', guide = null, fontCss = 
   const body = section(circuit, name, 0);
   const references = citations.length ? referencesHtml(citations, 2) : '';
   const title = /^#\s/.test(notes) ? '' : `<h1>${escapeHtml(name)}</h1>\n`;
+  const content = numberSections(`${body}${references ? `\n${references}` : ''}`, { titleLevel: 1 });
   const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -281,7 +285,7 @@ export function buildReport(circuit, { name = 'Design', guide = null, fontCss = 
 <style>${fontCss}${reportCss(page)}</style>
 </head>
 <body>
-${title}${body}${references ? `\n${references}` : ''}
+${title}${content}
 </body>
 </html>
 `;
@@ -323,6 +327,14 @@ math { font-family: "Latin Modern Math", "STIX Two Math", "Cambria Math", serif;
 a { color: #1d4e89; text-decoration: none; }
 .mention { font-style: italic; }
 .note-cite { white-space: nowrap; }
+.note-toc { margin: 0 0 14pt; break-inside: avoid; }
+.note-toc ol { list-style: none; padding: 0; margin: 0; }
+.note-toc li { margin: 2pt 0; }
+.note-toc .toc-level-1 { padding-left: 1.6em; }
+.note-toc .toc-level-2 { padding-left: 3.2em; }
+.note-toc .toc-level-3, .note-toc .toc-level-4 { padding-left: 4.8em; }
+.note-toc a { color: inherit; }
+.section-number { margin-right: 0.35em; }
 .note-references { break-before: avoid; }
 .note-references ol { padding-left: 2em; font-size: 9.5pt; }
 .note-references li { margin-bottom: 3pt; overflow-wrap: anywhere; }
@@ -366,7 +378,7 @@ const OUTLINE_SECTIONS = [
 ];
 
 /**
- * Notes to start a report from: a heading, the circuit, then a section for
+ * Notes to start a report from: a heading, its contents, the circuit, then a section for
  * the beats and timing (Operation), the annotated equations, models, plots
  * and noise (Analysis), the parts tables (Sizing), and the designs its
  * parts link to, each embedded once as a section (Blocks) -- only what the
@@ -375,7 +387,7 @@ const OUTLINE_SECTIONS = [
  */
 export function notesOutline(circuit, { name = 'Design' } = {}) {
   const figures = listFigures(circuit);
-  const blocks = [`# ${name}`, 'What the circuit is and does.', '![[circuit|The circuit.]]'];
+  const blocks = [`# ${name}`, '[TOC]', 'What the circuit is and does.', '![[circuit|The circuit.]]'];
   for (const section of OUTLINE_SECTIONS) {
     const embeds = [];
     for (const kind of section.kinds) {

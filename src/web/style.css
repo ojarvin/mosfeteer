@@ -1244,6 +1244,18 @@ button:disabled {
   white-space: nowrap;
 }
 
+.notes-view .note-toc ol {
+  list-style: none;
+  padding-left: 0;
+}
+
+.notes-view .note-toc li { margin: 2px 0; }
+.notes-view .note-toc .toc-level-1 { padding-left: 1.4em; }
+.notes-view .note-toc .toc-level-2 { padding-left: 2.8em; }
+.notes-view .note-toc :is(.toc-level-3, .toc-level-4) { padding-left: 4.2em; }
+.notes-view .note-toc a { color: inherit; text-decoration: none; }
+.notes-view .section-number { margin-right: 0.35em; color: var(--text-dim); }
+
 .notes-view .note-references li {
   overflow-wrap: anywhere;
 }

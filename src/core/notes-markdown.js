@@ -167,14 +167,17 @@ function sectionPlaceholder(entry, context) {
  *   `figureHtml({ name, caption, captionHtml, number, target })`: draw those
  *   another way (the report's).
  * - `headingLevel`: the element of a `#` heading (3: the window's own title is h2).
+ * - `toc`: what a `[TOC]` line is -- the contents, its headings numbered
+ *   (the default); `'place'`, only its place, for the caller to number
+ *   (`numberSections`); `'drop'`, nothing.
  * - `isDesign(name)`: whether an embed names another design (its section);
  *   `figures`, `citations`: what the embeds and citations are, numbered
  *   (the report's, across its sections); `references: false` leaves the
  *   list of sources to the caller.
  * Blocks: `#`-`###` headings, paragraphs, `-`/`*`/`1.` lists (nested
  * by indenting two spaces), `>`
- * quotes, fenced code, `$$` display math, `|` tables, `---` rules, and
- * figures, an embed on a line of its own.
+ * quotes, fenced code, `$$` display math, `|` tables, `---` rules,
+ * figures (an embed on a line of its own), and `[TOC]`, the contents.
  */
 export function renderNotes(source, context = {}) {
   const top = !context.figureAt;
@@ -215,6 +218,11 @@ export function renderNotes(source, context = {}) {
         if (/\$\$\s*$/.test(lines[i])) { body.push(lines[i].replace(/\$\$\s*$/, '')); closed = true; } else body.push(lines[i]);
       }
       out.push(`<div class="note-display-math">${mathHtml(body.join(' '), true)}</div>`);
+      continue;
+    }
+    if (/^\s*\[TOC\]\s*$/i.test(line)) {
+      flush();
+      if (context.toc !== 'drop') out.push(TOC_PLACE);
       continue;
     }
     const heading = line.match(/^(#{1,6})\s+(.*)$/);
@@ -269,7 +277,8 @@ export function renderNotes(source, context = {}) {
   }
   flush();
   if (top && context.references !== false && context.citations.length) out.push(referencesHtml(context.citations, Math.min((context.headingLevel ?? 3) + 1, 6)));
-  return out.join('\n');
+  const html = out.join('\n');
+  return top && context.toc === undefined ? numberSections(html, { titleLevel: context.headingLevel ?? 3 }) : html;
 }
 
 /** The sources cited, numbered, each linked when it is an address. */
@@ -281,5 +290,49 @@ export function referencesHtml(citations, level) {
       : (citation.title ? '' : escapeHtml(citation.key));
     return `<li id="ref-${citation.number}">${title}${source}</li>`;
   });
-  return `<section class="note-references"><h${level}>References</h${level}><ol>${items.join('')}</ol></section>`;
+  return `<section class="note-references"><h${level} class="unnumbered">References</h${level}><ol>${items.join('')}</ol></section>`;
+}
+
+/** Where a `[TOC]` line puts the contents (`numberSections`). */
+const TOC_PLACE = '<nav class="note-toc"></nav>';
+
+/**
+ * Notes with a table of contents: their headings numbered (1, 1.1, ...) and
+ * the contents listed where the first `[TOC]` is, each entry a link; the
+ * others are dropped. The title -- a heading of `titleLevel` the HTML starts
+ * with -- is not numbered, nor is a heading marked `unnumbered` (the
+ * References), which is listed without a number. Without a `[TOC]`, the HTML
+ * as it is.
+ */
+export function numberSections(html, { titleLevel = 1 } = {}) {
+  if (!html.includes(TOC_PLACE)) return html;
+  const heading = /<h([1-6])( class="unnumbered")?>([\s\S]*?)<\/h\1>/g;
+  const found = [...html.matchAll(heading)];
+  const title = found[0] && found[0].index === html.search(/\S/) && Number(found[0][1]) === titleLevel ? found[0] : null;
+  const numbered = found.filter((match) => match !== title && !match[2]);
+  const top = Math.min(...numbered.map((match) => Number(match[1])), ...found.filter((match) => match[2]).map((match) => Number(match[1])), 6);
+  const counters = [];
+  const entries = [];
+  let index = 0;
+  const out = html.replace(heading, (whole, level, unnumbered, text, offset) => {
+    if (title && offset === title.index) return whole;
+    const depth = Number(level) - top;
+    let id;
+    let number = '';
+    if (unnumbered) id = `sec-${figureKey(text.replace(/<[^>]*>/g, '')).replace(/[^a-z0-9]+/g, '-')}`;
+    else {
+      counters.length = depth + 1;
+      for (let i = 0; i < depth; i += 1) counters[i] ??= 1;
+      counters[depth] = (counters[depth] || 0) + 1;
+      number = counters.join('.');
+      id = `sec-${number.replace(/\./g, '-')}`;
+    }
+    index += 1;
+    entries.push({ depth: Math.max(0, depth), number, id, text });
+    return `<h${level}${unnumbered || ''} id="${id}">${number ? `<span class="section-number">${number}</span> ` : ''}${text}</h${level}>`;
+  });
+  const list = entries.map((entry) => `<li class="toc-level-${entry.depth}"><a href="#${entry.id}">${entry.number ? `<span class="section-number">${entry.number}</span> ` : ''}${entry.text}</a></li>`).join('');
+  const contents = `<nav class="note-toc"><h${top} class="note-toc-title">Contents</h${top}><ol>${list}</ol></nav>`;
+  let placed = false;
+  return out.replaceAll(TOC_PLACE, () => (placed ? '' : ((placed = true), contents)));
 }

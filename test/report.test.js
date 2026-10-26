@@ -185,7 +185,7 @@ test('a report ends with the sources its notes cite, each citation linked to its
   circuit.notes = '# Divider\n\nAs in [^https://example.com/divider|A divider note].\n\n![[circuit]]';
   const { html } = buildReport(circuit);
   assert.match(html, /<a href="#ref-1" class="note-cite"[^>]*>\[1\]<\/a>/);
-  assert.match(html, /<section class="note-references"><h2>References<\/h2><ol><li id="ref-1">A divider note\. <a href="https:\/\/example\.com\/divider"/);
+  assert.match(html, /<section class="note-references"><h2 class="unnumbered">References<\/h2><ol><li id="ref-1">A divider note\. <a href="https:\/\/example\.com\/divider"/);
   assert.ok(html.indexOf('<section class="note-references"') > html.indexOf('<figure'), 'after the figures');
 });
 
@@ -196,7 +196,7 @@ test('an outline places the circuit, the beats and timing, and every annotated f
   circuit.addLabel({ text: 'Parts', x: 1200, y: 0, table: { parts: ['R1', 'R2'] }, figure: { id: newFigureId(circuit), kind: 'table', source: 'sizing' } });
   const outline = notesOutline(circuit, { name: 'divider' });
   assert.equal(outline, [
-    '# divider', 'What the circuit is and does.', '![[circuit|The circuit.]]',
+    '# divider', '[TOC]', 'What the circuit is and does.', '![[circuit|The circuit.]]',
     '## Operation', 'How it works, step by step.', '![[beat 1|Beat 1: $\\varphi_1$.]]', '![[beat 2|Beat 2.]]',
     '## Analysis', 'What the analysis shows.', '![[F1|Equations (small-signal analysis).]]',
     '## Sizing', 'How the parts are sized.', '![[F2|Parts.]]',
@@ -207,7 +207,7 @@ test('an outline places the circuit, the beats and timing, and every annotated f
   // A bare circuit: its heading, text, and figure only.
   const bare = new Circuit();
   run(bare, 'add resistor R1 --at 0 0');
-  assert.equal(notesOutline(bare), '# Design\n\nWhat the circuit is and does.\n\n![[circuit|The circuit.]]\n');
+  assert.equal(notesOutline(bare), '# Design\n\n[TOC]\n\nWhat the circuit is and does.\n\n![[circuit|The circuit.]]\n');
 });
 
 test('notes outline starts empty notes and never replaces written ones', () => {
@@ -244,7 +244,7 @@ test('a design embedded by name is a section: its notes a level down, figures nu
   assert.match(html, /<a href="#ref-1" class="note-cite" title="B · https:\/\/b\.example">\[1\]<\/a> <a href="#ref-2" class="note-cite"/);
   assert.match(html, /Cites <a href="#ref-2" class="note-cite"/);
   assert.equal(html.match(/<section class="note-references">/g).length, 1);
-  assert.match(html, /<section class="note-references"><h2>References<\/h2><ol><li id="ref-1">B\./);
+  assert.match(html, /<section class="note-references"><h2 class="unnumbered">References<\/h2><ol><li id="ref-1">B\./);
   // Without the design, the embed is a missing figure.
   const alone = buildReport(system, { name: 'system' });
   assert.match(alone.warnings.join('\n'), /Fig\. 2: nothing named "amp" to draw\./);
@@ -268,4 +268,30 @@ test('an outline of a block diagram embeds each linked design once, as a section
   circuit.components.get('U2').link = 'filter';
   circuit.components.get('U3').link = 'ota';
   assert.match(notesOutline(circuit), /\n\n## Blocks\n\nThe blocks, each from its own design\.\n\n!\[\[ota\]\]\n\n!\[\[filter\]\]\n$/);
+});
+
+test('[TOC] lists the numbered sections where it stands; the title and the references are not numbered', () => {
+  const html = renderNotes('# Title\n\n[TOC]\n\n## Intro\n\n### Detail\n\n## Next [^https://a.example]\n\n[TOC]\n\n```\n[TOC]\n```');
+  assert.match(html, /^<h3>Title<\/h3>\n<nav class="note-toc"><h4 class="note-toc-title">Contents<\/h4><ol>/);
+  assert.match(html, /<li class="toc-level-0"><a href="#sec-1"><span class="section-number">1<\/span> Intro<\/a><\/li><li class="toc-level-1"><a href="#sec-1-1"><span class="section-number">1\.1<\/span> Detail<\/a><\/li><li class="toc-level-0"><a href="#sec-2"><span class="section-number">2<\/span> Next/);
+  assert.match(html, /<li class="toc-level-0"><a href="#sec-references">References<\/a><\/li><\/ol><\/nav>/);
+  assert.match(html, /<h4 id="sec-1"><span class="section-number">1<\/span> Intro<\/h4>/);
+  assert.match(html, /<h4 class="unnumbered" id="sec-references">References<\/h4>/);
+  assert.equal(html.match(/<nav class="note-toc">/g).length, 1, 'one contents');
+  assert.match(html, /<pre><code>\[TOC\]<\/code><\/pre>/);
+  // Without [TOC], nothing is numbered.
+  assert.doesNotMatch(renderNotes('# Title\n\n## Intro'), /section-number/);
+});
+
+test('a report\'s [TOC] numbers its sections across the designs it includes, theirs dropped', () => {
+  const system = divider();
+  const amp = divider();
+  system.notes = '# System\n\n[TOC]\n\n## Overview\n\n![[circuit]]\n\n![[amp]]';
+  amp.notes = '# Amplifier\n\n[TOC]\n\n## Gain\n\n![[circuit]]';
+  const { html } = buildReport(system, { name: 'system', design: (n) => (n === 'amp' ? { name: 'amp', circuit: amp } : null) });
+  assert.equal(html.match(/<nav class="note-toc">/g).length, 1);
+  const toc = html.slice(html.indexOf('<nav class="note-toc">'), html.indexOf('</nav>'));
+  assert.deepEqual([...toc.matchAll(/<span class="section-number">([\d.]+)<\/span> ([^<]+)<\/a>/g)].map((m) => `${m[1]} ${m[2]}`), ['1 Overview', '2 Amplifier', '2.1 Gain']);
+  assert.match(html, /<h1>System<\/h1>/, 'the title is not numbered');
+  assert.match(html, /<h2 id="sec-2"><span class="section-number">2<\/span> Amplifier<\/h2>/);
 });

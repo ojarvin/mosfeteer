@@ -29,6 +29,9 @@ test('the report example\'s report: the integrator a section, every figure drawn
   assert.deepEqual(report.warnings, []);
   assert.equal(report.figures.length, 9);
   assert.ok(report.figures.every((figure) => Math.abs(figure.textPt - 8) < 0.05));
-  assert.match(report.html, /<section id="design-report-example-integrator" class="design-section">\n<h2>SC integrator with correlated level shifting<\/h2>/);
+  assert.match(report.html, /<section id="design-report-example-integrator" class="design-section">\n<h2 id="sec-2"><span class="section-number">2<\/span> SC integrator with correlated level shifting<\/h2>/);
+  const toc = report.html.slice(report.html.indexOf('<nav class="note-toc">'), report.html.indexOf('</nav>'));
+  assert.deepEqual([...toc.matchAll(/<a href="#[^"]+">(?:<span class="section-number">([\d.]+)<\/span> )?([^<]+)<\/a>/g)].map((m) => [m[1] || '', m[2]].join(' ').trim()),
+    ['1 The loop', '2 SC integrator with correlated level shifting', '2.1 Clocking', '2.2 Transfer function', '2.3 Noise and sizing', 'References']);
   assert.equal(report.html.match(/<li id="ref-\d+">/g).length, 2, 'both citations in the one list');
 });

@@ -33975,6 +33975,7 @@ function beamShape(from, to, { narrow, wide, steps = 32 }) {
 __modules["src/core/notes-markdown.js"] = function (__require, __exports) {
 __exports.renderNotes = renderNotes;
 __exports.referencesHtml = referencesHtml;
+__exports.numberSections = numberSections;
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
 let CITATION, FIGURE_EMBED, FIGURE_EMBED_LINE, FIGURE_REFERENCE, MENTION, citationOf, figureKey, normalizeNotes, noteCitations, noteFigures, tokenName; __bind(() => { ({ CITATION, FIGURE_EMBED, FIGURE_EMBED_LINE, FIGURE_REFERENCE, MENTION, citationOf, figureKey, normalizeNotes, noteCitations, noteFigures, tokenName } = __require("src/core/notes.js")); });
 /**
@@ -34146,14 +34147,17 @@ function sectionPlaceholder(entry, context) {
  *   `figureHtml({ name, caption, captionHtml, number, target })`: draw those
  *   another way (the report's).
  * - `headingLevel`: the element of a `#` heading (3: the window's own title is h2).
+ * - `toc`: what a `[TOC]` line is -- the contents, its headings numbered
+ *   (the default); `'place'`, only its place, for the caller to number
+ *   (`numberSections`); `'drop'`, nothing.
  * - `isDesign(name)`: whether an embed names another design (its section);
  *   `figures`, `citations`: what the embeds and citations are, numbered
  *   (the report's, across its sections); `references: false` leaves the
  *   list of sources to the caller.
  * Blocks: `#`-`###` headings, paragraphs, `-`/`*`/`1.` lists (nested
  * by indenting two spaces), `>`
- * quotes, fenced code, `$$` display math, `|` tables, `---` rules, and
- * figures, an embed on a line of its own.
+ * quotes, fenced code, `$$` display math, `|` tables, `---` rules,
+ * figures (an embed on a line of its own), and `[TOC]`, the contents.
  */
 function renderNotes(source, context = {}) {
   const top = !context.figureAt;
@@ -34194,6 +34198,11 @@ function renderNotes(source, context = {}) {
         if (/\$\$\s*$/.test(lines[i])) { body.push(lines[i].replace(/\$\$\s*$/, '')); closed = true; } else body.push(lines[i]);
       }
       out.push(`<div class="note-display-math">${mathHtml(body.join(' '), true)}</div>`);
+      continue;
+    }
+    if (/^\s*\[TOC\]\s*$/i.test(line)) {
+      flush();
+      if (context.toc !== 'drop') out.push(TOC_PLACE);
       continue;
     }
     const heading = line.match(/^(#{1,6})\s+(.*)$/);
@@ -34248,7 +34257,8 @@ function renderNotes(source, context = {}) {
   }
   flush();
   if (top && context.references !== false && context.citations.length) out.push(referencesHtml(context.citations, Math.min((context.headingLevel ?? 3) + 1, 6)));
-  return out.join('\n');
+  const html = out.join('\n');
+  return top && context.toc === undefined ? numberSections(html, { titleLevel: context.headingLevel ?? 3 }) : html;
 }
 
 /** The sources cited, numbered, each linked when it is an address. */
@@ -34260,7 +34270,51 @@ function referencesHtml(citations, level) {
       : (citation.title ? '' : escapeHtml(citation.key));
     return `<li id="ref-${citation.number}">${title}${source}</li>`;
   });
-  return `<section class="note-references"><h${level}>References</h${level}><ol>${items.join('')}</ol></section>`;
+  return `<section class="note-references"><h${level} class="unnumbered">References</h${level}><ol>${items.join('')}</ol></section>`;
+}
+
+/** Where a `[TOC]` line puts the contents (`numberSections`). */
+const TOC_PLACE = '<nav class="note-toc"></nav>';
+
+/**
+ * Notes with a table of contents: their headings numbered (1, 1.1, ...) and
+ * the contents listed where the first `[TOC]` is, each entry a link; the
+ * others are dropped. The title -- a heading of `titleLevel` the HTML starts
+ * with -- is not numbered, nor is a heading marked `unnumbered` (the
+ * References), which is listed without a number. Without a `[TOC]`, the HTML
+ * as it is.
+ */
+function numberSections(html, { titleLevel = 1 } = {}) {
+  if (!html.includes(TOC_PLACE)) return html;
+  const heading = /<h([1-6])( class="unnumbered")?>([\s\S]*?)<\/h\1>/g;
+  const found = [...html.matchAll(heading)];
+  const title = found[0] && found[0].index === html.search(/\S/) && Number(found[0][1]) === titleLevel ? found[0] : null;
+  const numbered = found.filter((match) => match !== title && !match[2]);
+  const top = Math.min(...numbered.map((match) => Number(match[1])), ...found.filter((match) => match[2]).map((match) => Number(match[1])), 6);
+  const counters = [];
+  const entries = [];
+  let index = 0;
+  const out = html.replace(heading, (whole, level, unnumbered, text, offset) => {
+    if (title && offset === title.index) return whole;
+    const depth = Number(level) - top;
+    let id;
+    let number = '';
+    if (unnumbered) id = `sec-${figureKey(text.replace(/<[^>]*>/g, '')).replace(/[^a-z0-9]+/g, '-')}`;
+    else {
+      counters.length = depth + 1;
+      for (let i = 0; i < depth; i += 1) counters[i] ??= 1;
+      counters[depth] = (counters[depth] || 0) + 1;
+      number = counters.join('.');
+      id = `sec-${number.replace(/\./g, '-')}`;
+    }
+    index += 1;
+    entries.push({ depth: Math.max(0, depth), number, id, text });
+    return `<h${level}${unnumbered || ''} id="${id}">${number ? `<span class="section-number">${number}</span> ` : ''}${text}</h${level}>`;
+  });
+  const list = entries.map((entry) => `<li class="toc-level-${entry.depth}"><a href="#${entry.id}">${entry.number ? `<span class="section-number">${entry.number}</span> ` : ''}${entry.text}</a></li>`).join('');
+  const contents = `<nav class="note-toc"><h${top} class="note-toc-title">Contents</h${top}><ol>${list}</ol></nav>`;
+  let placed = false;
+  return out.replaceAll(TOC_PLACE, () => (placed ? '' : ((placed = true), contents)));
 }
 
 };
@@ -38139,7 +38193,7 @@ let timingBeatBands; __bind(() => { ({ timingBeatBands } = __require("src/core/t
 let DRAWING_EXPORT_OPTIONS, selectionDrawing; __bind(() => { ({ DRAWING_EXPORT_OPTIONS, selectionDrawing } = __require("src/core/selection-drawing.js")); });
 let renderDocument; __bind(() => { ({ renderDocument } = __require("src/core/document.js")); });
 let normalizePageGuide; __bind(() => { ({ normalizePageGuide } = __require("src/core/page-guide.js")); });
-let referencesHtml, renderNotes; __bind(() => { ({ referencesHtml, renderNotes } = __require("src/core/notes-markdown.js")); });
+let numberSections, referencesHtml, renderNotes; __bind(() => { ({ numberSections, referencesHtml, renderNotes } = __require("src/core/notes-markdown.js")); });
 let FIGURE_EMBED_LINE, figureKey, noteCitations, noteFigures, normalizeNotes, resolveMention; __bind(() => { ({ FIGURE_EMBED_LINE, figureKey, noteCitations, noteFigures, normalizeNotes, resolveMention } = __require("src/core/notes.js")); });
 /**
  * A design's report: its notes set as a printable document, with figures of
@@ -38156,7 +38210,8 @@ let FIGURE_EMBED_LINE, figureKey, noteCitations, noteFigures, normalizeNotes, re
  * annotated figure by its id (`F2`, the `figures` command lists them). A
  * mention (`@M1`) links to the first figure that shows it, and `[[#F2]]`
  * reads `Fig. N`. A citation (`[^https://...|title]`) reads `[N]`, linked to
- * the References list the report ends with. Notes that embed nothing get
+ * the References list the report ends with. A `[TOC]` line in the notes
+ * lists the report's sections there, numbered, the included designs' too. Notes that embed nothing get
  * the whole drawing on top.
  *
  * The report is HTML; the server prints it to PDF (`printHtmlToPdf`).
@@ -38375,6 +38430,8 @@ function buildReport(circuit, { name = 'Design', guide = null, fontCss = '', des
     let index = 0;
     const body = renderNotes(source, {
       headingLevel: depth + 1,
+      // One contents for the report, where its own notes place it.
+      toc: depth ? 'drop' : 'place',
       isDesign,
       figures,
       citations,
@@ -38415,6 +38472,7 @@ function buildReport(circuit, { name = 'Design', guide = null, fontCss = '', des
   const body = section(circuit, name, 0);
   const references = citations.length ? referencesHtml(citations, 2) : '';
   const title = /^#\s/.test(notes) ? '' : `<h1>${escapeHtml(name)}</h1>\n`;
+  const content = numberSections(`${body}${references ? `\n${references}` : ''}`, { titleLevel: 1 });
   const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -38424,7 +38482,7 @@ function buildReport(circuit, { name = 'Design', guide = null, fontCss = '', des
 <style>${fontCss}${reportCss(page)}</style>
 </head>
 <body>
-${title}${body}${references ? `\n${references}` : ''}
+${title}${content}
 </body>
 </html>
 `;
@@ -38466,6 +38524,14 @@ math { font-family: "Latin Modern Math", "STIX Two Math", "Cambria Math", serif;
 a { color: #1d4e89; text-decoration: none; }
 .mention { font-style: italic; }
 .note-cite { white-space: nowrap; }
+.note-toc { margin: 0 0 14pt; break-inside: avoid; }
+.note-toc ol { list-style: none; padding: 0; margin: 0; }
+.note-toc li { margin: 2pt 0; }
+.note-toc .toc-level-1 { padding-left: 1.6em; }
+.note-toc .toc-level-2 { padding-left: 3.2em; }
+.note-toc .toc-level-3, .note-toc .toc-level-4 { padding-left: 4.8em; }
+.note-toc a { color: inherit; }
+.section-number { margin-right: 0.35em; }
 .note-references { break-before: avoid; }
 .note-references ol { padding-left: 2em; font-size: 9.5pt; }
 .note-references li { margin-bottom: 3pt; overflow-wrap: anywhere; }
@@ -38509,7 +38575,7 @@ const OUTLINE_SECTIONS = [
 ];
 
 /**
- * Notes to start a report from: a heading, the circuit, then a section for
+ * Notes to start a report from: a heading, its contents, the circuit, then a section for
  * the beats and timing (Operation), the annotated equations, models, plots
  * and noise (Analysis), the parts tables (Sizing), and the designs its
  * parts link to, each embedded once as a section (Blocks) -- only what the
@@ -38518,7 +38584,7 @@ const OUTLINE_SECTIONS = [
  */
 function notesOutline(circuit, { name = 'Design' } = {}) {
   const figures = listFigures(circuit);
-  const blocks = [`# ${name}`, 'What the circuit is and does.', '![[circuit|The circuit.]]'];
+  const blocks = [`# ${name}`, '[TOC]', 'What the circuit is and does.', '![[circuit|The circuit.]]'];
   for (const section of OUTLINE_SECTIONS) {
     const embeds = [];
     for (const kind of section.kinds) {
@@ -60421,9 +60487,9 @@ let REPORT_INTEGRATOR; __bind(() => { ({ REPORT_INTEGRATOR } = __require("src/we
 // first-order delta-sigma modulator, whose integrator links to a
 // switched-capacitor integrator with correlated level shifting; the
 // modulator's notes place its drawing and embed the integrator's notes as a
-// section, and the integrator's place its circuit, timing, beats, plot,
-// and tables, with mentions, math, and a citation. Pure: the editor saves
-// them (onboarding.js `openReportExample`).
+// section, under a numbered table of contents, and the integrator's place
+// its circuit, timing, beats, plot, and tables, with mentions, math, and a
+// citation. Pure: the editor saves them (onboarding.js `openReportExample`).
 
 
 
@@ -60432,6 +60498,10 @@ let REPORT_INTEGRATOR; __bind(() => { ({ REPORT_INTEGRATOR } = __require("src/we
 const REPORT_EXAMPLE_NAMES = Object.freeze({ modulator: 'report-example-modulator', integrator: 'report-example-integrator' });
 
 const MODULATOR_NOTES = `# First-order delta-sigma modulator
+
+[TOC]
+
+## The loop
 
 The modulator in [[#circuit]] integrates the difference between its input @U and its fed-back output @V, and quantizes the result with @QZ1. With the gain @K1 at $a = 1$, the loop shapes the quantization error $E$ away from low frequencies [^Richard Schreier and Gabor C. Temes, Understanding Delta-Sigma Data Converters, Wiley-IEEE Press, 2005]:
 
@@ -75673,8 +75743,8 @@ function onViewContextMenu(ev) {
 }
 
 function onViewClick(ev) {
-  // A figure's number or a citation: to the figure, or to the source in the list.
-  const reference = ev.target?.closest?.('.note-figure-ref, .note-cite');
+  // A figure's number, a citation, or a contents entry: to what it names.
+  const reference = ev.target?.closest?.('.note-figure-ref, .note-cite, .note-toc a');
   if (reference) {
     ev.preventDefault();
     win.view.querySelector(reference.getAttribute('href'))?.scrollIntoView({ block: 'nearest' });

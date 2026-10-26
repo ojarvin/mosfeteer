@@ -2,9 +2,9 @@
 // first-order delta-sigma modulator, whose integrator links to a
 // switched-capacitor integrator with correlated level shifting; the
 // modulator's notes place its drawing and embed the integrator's notes as a
-// section, and the integrator's place its circuit, timing, beats, plot,
-// and tables, with mentions, math, and a citation. Pure: the editor saves
-// them (onboarding.js `openReportExample`).
+// section, under a numbered table of contents, and the integrator's place
+// its circuit, timing, beats, plot, and tables, with mentions, math, and a
+// citation. Pure: the editor saves them (onboarding.js `openReportExample`).
 
 import { Circuit } from '../../core/model.js';
 import { runCommand } from '../../core/commands.js';
@@ -13,6 +13,10 @@ import { REPORT_INTEGRATOR } from './report-integrator.js';
 export const REPORT_EXAMPLE_NAMES = Object.freeze({ modulator: 'report-example-modulator', integrator: 'report-example-integrator' });
 
 const MODULATOR_NOTES = `# First-order delta-sigma modulator
+
+[TOC]
+
+## The loop
 
 The modulator in [[#circuit]] integrates the difference between its input @U and its fed-back output @V, and quantizes the result with @QZ1. With the gain @K1 at $a = 1$, the loop shapes the quantization error $E$ away from low frequencies [^Richard Schreier and Gabor C. Temes, Understanding Delta-Sigma Data Converters, Wiley-IEEE Press, 2005]:
 

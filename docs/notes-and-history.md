@@ -104,9 +104,16 @@ warnings, and writes the HTML.
   with no link. The notes, in the window and the report, end with the
   numbered References list; a click on `[N]` goes to its entry. Copy puts
   `[N]` and the list in the Markdown (`noteCitations`).
+- **Contents.** A `[TOC]` line (any case, never in code) puts the contents
+  there and numbers the headings (1, 1.1, ...): every heading but the title
+  (a `#` heading the notes start with) and References, which is listed
+  unnumbered. Each entry links to its heading. One contents: the first
+  `[TOC]` (`numberSections`); notes without one are not numbered. In a
+  report the numbering runs through the included designs' sections, whose
+  own `[TOC]` lines are dropped.
 - **Outline.** Empty notes can start as a report: the notes window's
   **Outline** (shown while the notes are empty) or `notes outline` writes a
-  heading, the circuit, an Operation section (the timing diagram, a figure a
+  heading, a `[TOC]`, the circuit, an Operation section (the timing diagram, a figure a
   beat), an Analysis section (the annotated equations, models, plots, and
   noise tables), a Sizing section (the parts tables), and a Blocks section
   embedding each design its parts link to, once, each figure with a

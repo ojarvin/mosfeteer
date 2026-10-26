@@ -223,7 +223,7 @@ test('citations are numbered by first use, one number a source, and listed at th
   const html = renderNotes(text);
   assert.equal(html.match(/<a href="#ref-1" class="note-cite"[^>]*>\[1\]<\/a>/g).length, 2);
   assert.match(html, /<code>\[\^not cited\]<\/code>/);
-  assert.match(html, /<section class="note-references"><h4>References<\/h4><ol><li id="ref-1">Gregoire and Moon\. <a href="https:\/\/doi\.org\/10\.1000\/xyz123" target="_blank"/);
+  assert.match(html, /<section class="note-references"><h4 class="unnumbered">References<\/h4><ol><li id="ref-1">Gregoire and Moon\. <a href="https:\/\/doi\.org\/10\.1000\/xyz123" target="_blank"/);
   assert.match(html, /<li id="ref-2">Razavi, Analog CMOS<\/li>/);
   // A source that is no address, a javascript: one too, is never a link.
   assert.doesNotMatch(renderNotes('[^javascript:alert(1)]'), /href="javascript/);
