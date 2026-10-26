@@ -497,3 +497,14 @@ serverTest('arrange over HTTP searches the workspace\'s other designs', async (t
   assert.equal(parts.get('MB').transform.x - parts.get('MA').transform.x, 0);
   assert.equal(parts.get('MB').transform.y - parts.get('MA').transform.y, 400);
 });
+
+serverTest('report over HTTP includes the workspace designs its notes embed as sections', async (t) => {
+  const app = await startServer();
+  t.after(() => app.stop());
+  await command(app, 'ota', ['add resistor R1 --at 0 0', 'notes set "# OTA"', 'notes append ""', 'notes append The amplifier.'].join('\n'));
+  await command(app, 'system', ['add resistor R9 --at 0 0', 'notes set "# System"', 'notes append ![[circuit]]', 'notes append ""', 'notes append ![[ota]]'].join('\n'));
+  const done = await command(app, 'system', 'report --name system');
+  assert.equal(done.results[0].ok, true, done.results[0].error);
+  assert.equal(done.results[0].text, 'Fig. 1 circuit (circuit, 8.0 pt text)\nFig. 2 ota: circuit (circuit, 8.0 pt text)');
+  assert.match(done.results[0].json.html, /<section id="design-ota" class="design-section">\n<h2>OTA<\/h2>/);
+});

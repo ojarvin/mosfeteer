@@ -26,8 +26,8 @@ import { timingBeatBands } from './timing-diagram.js';
 import { DRAWING_EXPORT_OPTIONS, selectionDrawing } from './selection-drawing.js';
 import { renderDocument } from './document.js';
 import { normalizePageGuide } from './page-guide.js';
-import { renderNotes } from './notes-markdown.js';
-import { figureKey, noteFigures, normalizeNotes, resolveMention } from './notes.js';
+import { referencesHtml, renderNotes } from './notes-markdown.js';
+import { FIGURE_EMBED_LINE, figureKey, noteCitations, noteFigures, normalizeNotes, resolveMention } from './notes.js';
 
 const MM = 72 / 25.4;
 /** The sheet: A4, 25 mm margins; the side margins give way, down to 12 mm,
@@ -125,67 +125,152 @@ function sizedSvg(svg, { widthPt, heightPt }) {
 }
 
 /**
+ * The names a design's notes embed that are no figure of its own: the
+ * designs whose notes would be its sections, for a caller to load
+ * (`buildReport`'s `design`).
+ */
+export function embeddedDesignNames(circuit) {
+  const targets = reportTargets(circuit);
+  return noteFigures(circuit.notes).filter((entry) => !resolveReportTarget(circuit, entry.name, targets)).map((entry) => entry.name);
+}
+
+/** The anchor of a design's section. */
+const sectionId = (name) => `design-${figureKey(name).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'section'}`;
+
+/**
  * The report of `circuit`: `{ html, figures, warnings }`. `name` titles it
  * (unless the notes start with a `#` heading of their own); `guide` sizes
  * its figures (A4 without one); `fontCss` is put in its style sheet (the math
- * face, which only the caller can read). `figures` lists each figure,
- * `{ number, name, caption, kind, textPt }` (`kind` null: nothing to draw);
- * `warnings` says what to look at: a missing figure, small text, a
- * reference to no figure.
+ * face, which only the caller can read); `design(name)` gives another
+ * design of the workspace, `{ name, circuit }` or null, for the sections
+ * its notes embed (`![[amp]]`).
+ *
+ * A section is the embedded design's notes, a heading level down, with its
+ * own figures, mentions and references; its figures continue the report's
+ * numbering, and its citations join the one list at the end. Each design
+ * is one section, where the report first embeds it: embedding it again,
+ * or linking it (`[[amp]]`), links to that section. A design without
+ * notes is its circuit. `figures` lists each figure, `{ number, name,
+ * caption, kind, textPt, design }` (`kind` null: nothing to draw;
+ * `design` the section's design, null at the top); `warnings` says what
+ * to look at: a missing figure, small text, a reference to no figure.
  */
-export function buildReport(circuit, { name = 'Design', guide = null, fontCss = '' } = {}) {
+export function buildReport(circuit, { name = 'Design', guide = null, fontCss = '', design = () => null } = {}) {
   const pageGuide = normalizePageGuide(guide) || normalizePageGuide('a4');
   const page = reportPage(pageGuide);
-  const notes = normalizeNotes(circuit.notes);
-  const targets = reportTargets(circuit);
-  const embedded = noteFigures(notes);
-  const source = embedded.length ? notes : `![[drawing]]\n\n${notes}`;
-  const figures = noteFigures(source).map((figure) => {
-    const target = resolveReportTarget(circuit, figure.name, targets);
-    return { ...figure, target, number: embedded.length ? figure.number : null };
-  });
   const warnings = [];
-  const label = (figure) => (figure.number ? `Fig. ${figure.number}` : 'The drawing');
+  const listed = [];
+  let figureCount = 0;
 
-  const drawn = new Map();
-  for (const figure of figures) {
-    if (!figure.target) {
-      warnings.push(`${label(figure)}: nothing named "${figure.name}" to draw.`);
-      continue;
+  // The sections, each design once in reading order, and the notes read in
+  // that order, for the citations' numbers.
+  const sections = new Map([[figureKey(name), { name, circuit, id: sectionId(name) }]]);
+  const lookup = (embed) => {
+    const found = design(embed);
+    return found?.circuit ? { name: found.name || embed, circuit: found.circuit } : null;
+  };
+  const isDesignIn = (owner) => {
+    const targets = reportTargets(owner);
+    return (embed) => !resolveReportTarget(owner, embed, targets) && (sections.has(figureKey(embed)) || !!lookup(embed));
+  };
+  const readingOrder = (owner) => {
+    const notes = normalizeNotes(owner.notes);
+    const isDesign = isDesignIn(owner);
+    return notes.split('\n').map((line) => {
+      const embed = line.replace(/^(\s*>)+/, '').match(FIGURE_EMBED_LINE);
+      if (!embed || !isDesign(embed[1].trim()) || sections.has(figureKey(embed[1]))) return line;
+      const found = lookup(embed[1].trim());
+      sections.set(figureKey(embed[1]), { ...found, id: sectionId(found.name) });
+      return readingOrder(found.circuit);
+    }).join('\n');
+  };
+  const citations = noteCitations(readingOrder(circuit));
+  const rendered = new Set([figureKey(name)]);
+
+  /** One design's notes as HTML, `depth` sections down. */
+  const section = (owner, ownerName, depth) => {
+    const notes = normalizeNotes(owner.notes);
+    const targets = reportTargets(owner);
+    const isDesign = isDesignIn(owner);
+    const embeds = noteFigures(notes, { isDesign });
+    // The top with nothing placed shows its drawing, unnumbered; a section
+    // with nothing placed, its circuit.
+    const fallback = !embeds.length ? (depth ? '![[circuit]]' : '![[drawing]]') : null;
+    // Under the notes' own title, when they start with one.
+    const title = notes.match(/^#\s[^\n]*(\n|$)/)?.[0] || '';
+    const source = fallback ? `${title}${title ? '\n' : ''}${fallback}\n\n${notes.slice(title.length)}` : notes;
+    const where = depth ? ` (${ownerName})` : '';
+    const figures = noteFigures(source, { isDesign, first: figureCount + 1 }).map((entry) => {
+      if (entry.design) return entry;
+      const numbered = !(fallback && !depth);
+      if (numbered) figureCount = entry.number;
+      const target = resolveReportTarget(owner, entry.name, targets);
+      return { ...entry, number: numbered ? entry.number : null, id: numbered ? `fig-${entry.number}` : 'fig-drawing', target };
+    });
+    const label = (figure) => (figure.number ? `Fig. ${figure.number}` : 'The drawing');
+    const drawn = new Map();
+    for (const figure of figures.filter((entry) => !entry.design)) {
+      listed.push(figure);
+      figure.owner = depth ? ownerName : null;
+      if (!figure.target) {
+        warnings.push(`${label(figure)}${where}: nothing named "${figure.name}" to draw.`);
+        continue;
+      }
+      const svg = targetSvg(owner, figure.target, pageGuide);
+      const [, , width, height] = svg.match(/viewBox="([^"]+)"/)[1].split(/\s+/).map(Number);
+      const size = reportFigureSize(pageGuide, page, width, height);
+      if (size.textPt < pageGuide.textPt - 0.05) warnings.push(`${label(figure)} (${figure.name}${depth ? ` of ${ownerName}` : ''}): its text is ${size.textPt.toFixed(1)} pt, below the guide's ${pageGuide.textPt} pt.`);
+      drawn.set(figure, { svg: sizedSvg(svg, size), ...size });
+      figure.textPt = size.textPt;
     }
-    const svg = targetSvg(circuit, figure.target, pageGuide);
-    const [, , width, height] = svg.match(/viewBox="([^"]+)"/)[1].split(/\s+/).map(Number);
-    const size = reportFigureSize(pageGuide, page, width, height);
-    if (size.textPt < pageGuide.textPt - 0.05) warnings.push(`${label(figure)} (${figure.name}): its text is ${size.textPt.toFixed(1)} pt, below the guide's ${pageGuide.textPt} pt.`);
-    drawn.set(figure, { svg: sizedSvg(svg, size), ...size });
-  }
-  for (const match of notes.matchAll(/\[\[#([^[\]\n|]+)\]\]/g)) {
-    if (!figures.some((figure) => figureKey(figure.name) === figureKey(match[1]))) warnings.push(`[[#${match[1].trim()}]]: no figure of the notes shows it.`);
-  }
+    for (const match of notes.matchAll(/\[\[#([^[\]\n|]+)\]\]/g)) {
+      if (!figures.some((figure) => !figure.design && figureKey(figure.name) === figureKey(match[1]))) warnings.push(`[[#${match[1].trim()}]]${where}: no figure of the notes shows it.`);
+    }
 
-  // The first figure that shows a mentioned part or net, for its link.
-  const mentionFigure = (found) => figures.find((figure) => figure.target && targetShows(circuit, figure.target, found));
-  let index = 0;
-  const body = renderNotes(source, {
-    headingLevel: 1,
-    mention: (mention) => resolveMention(circuit, mention),
-    mentionHtml: (mention, found, nameHtml) => {
-      const figure = found ? mentionFigure(found) : null;
-      return figure ? `<a class="mention" href="#fig-${figures.indexOf(figure) + 1}">${nameHtml}</a>` : `<span class="mention">${nameHtml}</span>`;
-    },
-    designHtml: (design) => `<span class="design">${escapeHtml(design)}</span>`,
-    figure: (target) => resolveReportTarget(circuit, target, targets),
-    figureHtml: ({ captionHtml }) => {
-      const figure = figures[index++];
-      const id = `fig-${index}`;
-      const caption = figure.number
-        ? `<figcaption><span class="figure-number">Fig. ${figure.number}.</span>${captionHtml ? ` ${captionHtml}` : ''}</figcaption>`
-        : (captionHtml ? `<figcaption>${captionHtml}</figcaption>` : '');
-      const art = drawn.get(figure);
-      if (!art) return `<figure id="${id}" class="missing"><p>Nothing named “${escapeHtml(figure.name)}” to draw.</p>${caption}</figure>`;
-      return `<figure id="${id}">${art.svg}${caption}</figure>`;
-    },
-  });
+    // The first figure that shows a mentioned part or net, for its link.
+    const mentionFigure = (found) => figures.find((figure) => figure.target && targetShows(owner, figure.target, found));
+    let index = 0;
+    const body = renderNotes(source, {
+      headingLevel: depth + 1,
+      isDesign,
+      figures,
+      citations,
+      references: false,
+      mention: (mention) => resolveMention(owner, mention),
+      mentionHtml: (mention, found, nameHtml) => {
+        const figure = found ? mentionFigure(found) : null;
+        return figure ? `<a class="mention" href="#${figure.id}">${nameHtml}</a>` : `<span class="mention">${nameHtml}</span>`;
+      },
+      designHtml: (linked) => {
+        const known = sections.get(figureKey(linked));
+        return known ? `<a class="design" href="#${known.id}">${escapeHtml(linked)}</a>` : `<span class="design">${escapeHtml(linked)}</span>`;
+      },
+      figure: (target) => resolveReportTarget(owner, target, targets),
+      figureHtml: ({ captionHtml }) => {
+        const figure = figures[index++];
+        if (figure.design) {
+          const key = figureKey(figure.name);
+          const known = sections.get(key);
+          if (rendered.has(key)) return `<p class="see-section">See <a class="design" href="#${known.id}">${escapeHtml(known.name)}</a>.</p>`;
+          rendered.add(key);
+          const own = normalizeNotes(known.circuit.notes);
+          const heading = /^#\s/.test(own) ? '' : `<h${Math.min(depth + 2, 6)}>${escapeHtml(known.name)}</h${Math.min(depth + 2, 6)}>\n`;
+          return `<section id="${known.id}" class="design-section">\n${heading}${section(known.circuit, known.name, depth + 1)}\n</section>`;
+        }
+        const caption = figure.number
+          ? `<figcaption><span class="figure-number">Fig. ${figure.number}.</span>${captionHtml ? ` ${captionHtml}` : ''}</figcaption>`
+          : (captionHtml ? `<figcaption>${captionHtml}</figcaption>` : '');
+        const art = drawn.get(figure);
+        if (!art) return `<figure id="${figure.id}" class="missing"><p>Nothing named “${escapeHtml(figure.name)}” to draw.</p>${caption}</figure>`;
+        return `<figure id="${figure.id}">${art.svg}${caption}</figure>`;
+      },
+    });
+    return body;
+  };
+
+  const notes = normalizeNotes(circuit.notes);
+  const body = section(circuit, name, 0);
+  const references = citations.length ? referencesHtml(citations, 2) : '';
   const title = /^#\s/.test(notes) ? '' : `<h1>${escapeHtml(name)}</h1>\n`;
   const html = `<!doctype html>
 <html lang="en">
@@ -196,15 +281,15 @@ export function buildReport(circuit, { name = 'Design', guide = null, fontCss = 
 <style>${fontCss}${reportCss(page)}</style>
 </head>
 <body>
-${title}${body}
+${title}${body}${references ? `\n${references}` : ''}
 </body>
 </html>
 `;
   return {
     html,
-    figures: figures.map((figure) => ({
-      number: figure.number, name: figure.name, caption: figure.caption,
-      kind: figure.target?.kind || null, ...(drawn.has(figure) ? { textPt: drawn.get(figure).textPt } : {}),
+    figures: listed.map((figure) => ({
+      number: figure.number, name: figure.name, caption: figure.caption, kind: figure.target?.kind || null,
+      ...(figure.textPt !== undefined ? { textPt: figure.textPt } : {}), design: figure.owner,
     })),
     warnings,
   };
@@ -283,7 +368,8 @@ const OUTLINE_SECTIONS = [
 /**
  * Notes to start a report from: a heading, the circuit, then a section for
  * the beats and timing (Operation), the annotated equations, models, plots
- * and noise (Analysis), and the parts tables (Sizing) -- only what the
+ * and noise (Analysis), the parts tables (Sizing), and the designs its
+ * parts link to, each embedded once as a section (Blocks) -- only what the
  * drawing has, each with a caption and a line to replace with text.
  * Nothing is computed: an analysis appears once it is annotated.
  */
@@ -302,5 +388,9 @@ export function notesOutline(circuit, { name = 'Design' } = {}) {
     const lead = { Operation: 'How it works, step by step.', Analysis: 'What the analysis shows.', Sizing: 'How the parts are sized.' }[section.title];
     blocks.push(`## ${section.title}`, lead, ...embeds);
   }
+  // The designs its parts link to, each once: their notes as sections.
+  const linked = [...new Set([...circuit.components.values()].filter((part) => part.link && !part.figure)
+    .sort((a, b) => a.refdes.localeCompare(b.refdes, undefined, { numeric: true })).map((part) => part.link))];
+  if (linked.length) blocks.push('## Blocks', 'The blocks, each from its own design.', ...linked.map((name) => `![[${name}]]`));
   return `${blocks.join('\n\n')}\n`;
 }

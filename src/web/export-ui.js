@@ -14,7 +14,8 @@ import { renderDocument } from '../core/document.js';
 import { DRAWING_EXPORT_OPTIONS, hasDrawableSelection, selectionDrawing, selectionSubset } from '../core/selection-drawing.js';
 import { svgPixelSize } from '../core/render.js';
 import { svgToPngDataUrl, applyExportDarkTheme, embeddedMathFontFace, withEmbeddedMathFont } from './drawing-export.js';
-import { buildReport } from '../core/report.js';
+import { buildReport, embeddedDesignNames } from '../core/report.js';
+import { loadDocument } from '../core/document.js';
 import { writeDrawingToClipboard } from './clipboard.js';
 import { defaultExportDirectory, validDocumentName } from './persistence.js';
 import { confirmChoice, showFileDialog } from './file-dialog.js';
@@ -24,7 +25,7 @@ import { activeBeatIndex, beatLabel } from './beats-ui.js';
 import { persistence, displayPath } from './document-session.js';
 import { editor } from './editor-state.js';
 import { copySelectionSource } from './copy-paste.js';
-import { linkBubbleExtras } from './hierarchy.js';
+import { linkBubbleExtras, workspaceDesigns } from './hierarchy.js';
 import { render, syncRenderedLabelMetrics } from './main.js';
 
 const exportGridInput = exportForm?.querySelector('input[name="grid"]');
@@ -189,10 +190,37 @@ function settleLabelMetrics() {
   }
 }
 
+/** The designs the report's notes embed as sections, and those theirs
+ *  embed, read from the workspace: name (lower case) -> { name, circuit }.
+ *  The design on screen is its own drawing, unsaved edits and all. */
+async function reportDesigns() {
+  const own = String(editor.currentCircuitName || '').toLowerCase();
+  const found = new Map(own ? [[own, { name: editor.currentCircuitName, circuit: editor.circuit }]] : []);
+  const queue = embeddedDesignNames(editor.circuit);
+  while (queue.length) {
+    const name = queue.shift().trim();
+    if (found.has(name.toLowerCase())) continue;
+    const doc = workspaceDesigns().find((entry) => entry.name.toLowerCase() === name.toLowerCase());
+    if (!doc) continue;
+    try {
+      const circuit = loadDocument((await persistence.load(doc.path)).state);
+      found.set(name.toLowerCase(), { name: doc.name, circuit });
+      queue.push(...embeddedDesignNames(circuit));
+    } catch (err) {
+      logLine(`Could not read ${doc.name} for the report: ${err.message}`, 'error');
+    }
+  }
+  return found;
+}
+
 /** The report of the design on screen (core/report.js), with the math face
  *  when `fontCss` is given. */
-function currentReport(fontCss = '') {
-  return buildReport(editor.circuit, { name: editor.currentCircuitName || 'Design', guide: editor.pageGuide, fontCss });
+async function currentReport(fontCss = '') {
+  const designs = await reportDesigns();
+  return buildReport(editor.circuit, {
+    name: editor.currentCircuitName || 'Design', guide: editor.pageGuide, fontCss,
+    design: (name) => designs.get(name.trim().toLowerCase()) || null,
+  });
 }
 
 /** The report: one HTML document, and the PDF the server prints from it. */
@@ -207,7 +235,7 @@ async function runReportExport({ dir, name, formats }) {
     logLine(`Exporting ${formats.map((format) => `${name}.${format}`).join(', ')}…`);
     const prepared = persistence.prepareExport ? await persistence.prepareExport({ name, formats: [], dir }) : null;
     settleLabelMetrics();
-    const report = currentReport(await embeddedMathFontFace());
+    const report = await currentReport(await embeddedMathFontFace());
     const result = await writeExportFiles({ dir, name, formats, report: report.html }, { prepared });
     if (!result) {
       logLine('Export canceled.');
@@ -343,14 +371,16 @@ function setExportContent(content) {
 
 /** What the report holds: its figures and the guide that sizes them, and
  *  anything to look at first. */
-function renderReportSummary() {
+async function renderReportSummary() {
   const summary = document.getElementById('export-report-summary');
   if (!summary) return;
   settleLabelMetrics();
-  const report = currentReport();
+  const report = await currentReport();
   const count = report.figures.filter((figure) => figure.kind).length;
   const guide = pageGuideTitle(editor.pageGuide || normalizePageGuide('a4'));
-  const what = editor.circuit.notes ? `The notes with ${count} figure${count === 1 ? '' : 's'}` : 'The drawing alone: the design has no notes yet';
+  const sections = new Set(report.figures.map((figure) => figure.design).filter(Boolean)).size;
+  const what = !editor.circuit.notes ? 'The drawing alone: the design has no notes yet'
+    : `The notes with ${count} figure${count === 1 ? '' : 's'}${sections ? ` and ${sections === 1 ? 'a section from another design' : `${sections} sections from other designs`}` : ''}`;
   summary.replaceChildren(`${what}, sized for ${guide}.`, ...report.warnings.map((warning) => Object.assign(document.createElement('span'), { className: 'export-report-warning', textContent: warning })));
 }
 

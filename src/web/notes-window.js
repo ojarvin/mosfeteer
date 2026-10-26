@@ -57,7 +57,11 @@ function completionNames() {
     designs: workspaceDesigns().map((doc) => doc.name).filter((name) => name.toLowerCase() !== current),
     parts: components.map((c) => ({ name: c.refdes, type: c.type })),
     nets: [...editor.circuit.nets.values()].map((net) => net.name).filter(Boolean),
-    figures: reportTargets(editor.circuit).map(({ name, detail }) => ({ name, detail })),
+    // After `![[`: a figure of this drawing, or another design's notes as a section.
+    figures: [
+      ...reportTargets(editor.circuit).map(({ name, detail }) => ({ name, detail })),
+      ...workspaceDesigns().map((doc) => doc.name).filter((name) => name.toLowerCase() !== current).map((name) => ({ name, detail: 'design, as a section', section: true })),
+    ],
   };
 }
 
@@ -77,6 +81,7 @@ function renderView() {
     mention: mentionTarget,
     design: (name) => !!designNamed(name) || name.toLowerCase() === String(editor.currentCircuitName || '').toLowerCase(),
     figure: (name) => resolveReportTarget(editor.circuit, name),
+    isDesign: (name) => !resolveReportTarget(editor.circuit, name) && !!designNamed(name),
   });
   win.view.innerHTML = html;
   win.empty.hidden = !!key.text;

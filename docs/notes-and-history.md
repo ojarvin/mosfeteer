@@ -82,6 +82,17 @@ warnings, and writes the HTML.
   shows it), or an annotated figure's id (`F2`, `timing`; the `figures`
   command lists them). An embed inside a line stays text. Typing `![[`
   offers the targets.
+- **Sections.** `![[amp]]` on a line of its own, naming another design of
+  the workspace (and no figure of this one), puts that design's notes there
+  as a section: its `#` heading a level down (its name when it has none),
+  its own figures, mentions and references, its figures numbered on from
+  the report's, and its citations in the report's one list. Sections nest.
+  A design is one section, where the report first embeds it: embedding it
+  again, or the report's own design, reads "See amp", and a design link
+  `[[amp]]` links to its section. A design whose notes place nothing is its
+  circuit. Renaming a design follows into the embeds (`relinkNotes`). The
+  editor reads the designs from the workspace; the server gives the `report`
+  command every design of the workspace (`embeddedDesignNames`).
 - **References.** `[[#target]]` reads `Fig. N`, a link to the first figure
   of that target; one to no figure reads `Fig. ?` and is a warning. Typing
   `[[#` offers the targets. A mention links to the first figure that shows
@@ -97,7 +108,8 @@ warnings, and writes the HTML.
   **Outline** (shown while the notes are empty) or `notes outline` writes a
   heading, the circuit, an Operation section (the timing diagram, a figure a
   beat), an Analysis section (the annotated equations, models, plots, and
-  noise tables), and a Sizing section (the parts tables), each figure with a
+  noise tables), a Sizing section (the parts tables), and a Blocks section
+  embedding each design its parts link to, once, each figure with a
   caption and each section with a line to replace (`notesOutline`). Only
   what the drawing has is placed: an analysis is in it once annotated.
   One undo step; written notes are never replaced.

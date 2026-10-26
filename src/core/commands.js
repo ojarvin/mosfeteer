@@ -516,8 +516,8 @@ export function commandHelp() {
     '  figures [--arrange]            - list what the tools annotated (tables, equations, plots, models, the timing diagram);',
     '                                   --arrange puts each where a new one goes: tables right of the circuit, the rest below',
     '  report [--file F.html] [--guide G] [--name TITLE] - the notes as a report: each ![[circuit|caption]] line a numbered figure of the drawing',
-    '                                   (circuit, drawing, beat N, or a figure\'s id), [[#circuit]] its number; lists the figures and',
-    '                                   what to look at; G sizes the figures: ieee-1col, ieee-2col, a4 (default), or WIDTH@PT (12cm@9)',
+    '                                   (circuit, drawing, beat N, or a figure\'s id), [[#circuit]] its number, ![[design]] that design\'s',
+    '                                   notes as a section; lists the figures and what to look at; G sizes the figures: ieee-1col, ieee-2col, a4 (default), or WIDTH@PT (12cm@9)',
     '  fix                            - apply the safe Design Check repairs (reroute, snap to grid, move label)',
     '  rail REF.TERM ground|supply|vcm - a ground, supply, or VCM wired one cell out from an unconnected pin',
     '  box ID... [--text TEXT]        - a dashed box annotation one cell around parts, nets, and labels (with the parts\' and nets\' own labels)',
@@ -1120,8 +1120,10 @@ function dispatch(circuit, cmd, pos, flags, io) {
   }
   if (cmd === 'report') {
     const guide = flags.guide ? parsePageGuide(flags.guide[0]) : null;
-    const report = buildReport(circuit, { name: flags.name ? flags.name[0] : 'Design', guide });
-    const lines = report.figures.map((figure) => `${figure.number ? `Fig. ${figure.number}` : 'Drawing'} ${figure.name}${figure.kind ? ` (${figure.kind}, ${figure.textPt.toFixed(1)} pt text)` : ' (nothing to draw)'}${figure.caption ? `: ${figure.caption}` : ''}`);
+    // The workspace's designs, for the sections the notes embed (the server gives them).
+    const others = new Map((io?.designs || []).map((entry) => [entry.name.toLowerCase(), entry]));
+    const report = buildReport(circuit, { name: flags.name ? flags.name[0] : 'Design', guide, design: (name) => others.get(name.trim().toLowerCase()) || null });
+    const lines = report.figures.map((figure) => `${figure.number ? `Fig. ${figure.number}` : 'Drawing'} ${figure.design ? `${figure.design}: ` : ''}${figure.name}${figure.kind ? ` (${figure.kind}, ${figure.textPt.toFixed(1)} pt text)` : ' (nothing to draw)'}${figure.caption ? `: ${figure.caption}` : ''}`);
     const text = [...lines, ...report.warnings.map((warning) => `warning: ${warning}`)].join('\n');
     const file = flags.file ? flags.file[0] : null;
     if (file && io?.writeTextFile) {

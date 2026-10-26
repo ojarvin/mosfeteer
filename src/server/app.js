@@ -486,8 +486,8 @@ export async function startApp({
   }
 
   /** The workspace's other designs, newest first, for `arrange` to search
-   *  (only read when a command needs them). A file that does not load as a
-   *  design is passed over. */
+   *  and a report to include (only read when a command needs them). A file
+   *  that does not load as a design is passed over. */
   async function otherDesigns(path) {
     const designs = [];
     for (const document of await listDocuments(workspace())) {
@@ -519,7 +519,8 @@ export async function startApp({
       }
       const results = [];
       let mutated = false;
-      const io = lines.some((line) => /^\s*arrange\b/i.test(line)) ? { designs: await otherDesigns(path) } : undefined;
+      // Read only for a command that needs them: arrange searches them, a report includes them.
+      const io = lines.some((line) => /^\s*(arrange|report)\b/i.test(line)) ? { designs: await otherDesigns(path) } : undefined;
       for (const line of lines) {
         try {
           const result = runCommand(circuit, line, io);

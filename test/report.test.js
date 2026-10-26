@@ -118,7 +118,7 @@ test('the page holds the guide: A4 text by default, wider for a wider guide, and
 test('notes that embed nothing get the drawing on top, under the design name; a missing figure is marked', () => {
   const circuit = divider();
   const plain = buildReport(circuit, { name: 'divider' });
-  assert.match(plain.html, /<h1>divider<\/h1>\n<figure id="fig-1"><svg/);
+  assert.match(plain.html, /<h1>divider<\/h1>\n<figure id="fig-drawing"><svg/);
   assert.deepEqual(plain.figures.map((f) => [f.number, f.name]), [[null, 'drawing']]);
   assert.doesNotMatch(plain.html, /<figcaption>/);
   circuit.notes = '## Notes\n\n![[F7|Gone]]';
@@ -175,6 +175,9 @@ test('completion offers what a figure can show after ![[ and [[#', () => {
   const reference = noteCompletion('see [[#', 7, { figures });
   assert.deepEqual(reference.items.map((item) => item.insert), ['[[#circuit]]', '[[#drawing]]', '[[#F1]]']);
   assert.equal(noteCompletion('see [[ci', 8, { figures, designs: ['circle'] }).kind, 'design');
+  const withDesigns = [...figures, { name: 'amp', detail: 'design, as a section', section: true }];
+  assert.deepEqual(noteCompletion('![[am', 5, { figures: withDesigns }).items.map((item) => item.insert), ['![[amp]]']);
+  assert.equal(noteCompletion('[[#am', 5, { figures: withDesigns }), null, 'a reference is to a figure');
 });
 
 test('a report ends with the sources its notes cite, each citation linked to its entry', () => {
@@ -213,4 +216,56 @@ test('notes outline starts empty notes and never replaces written ones', () => {
   assert.equal(out.mutated, true);
   assert.match(circuit.notes, /^# divider\n/);
   assert.throws(() => run(circuit, 'notes outline'), /has notes already/);
+});
+
+test('a design embedded by name is a section: its notes a level down, figures numbered on, once however often embedded', () => {
+  const system = divider();
+  const amp = divider();
+  const sub = new Circuit();
+  run(sub, 'add capacitor C1 --at 0 0');
+  system.notes = '# System\n\nUses [[amp]].\n\n![[circuit|The system.]]\n\n![[amp|The amplifier.]]\n\n![[amp]]\n\nCites [^https://a.example|A].';
+  amp.notes = '# Amplifier\n\n@R1 is in [[#circuit]] [^https://b.example|B] [^https://a.example].\n\n![[circuit|Its circuit.]]\n\n![[sub]]\n\n![[system]]';
+  sub.notes = '';
+  const designs = { amp: { name: 'amp', circuit: amp }, sub: { name: 'sub', circuit: sub }, system: { name: 'system', circuit: system } };
+  const report = buildReport(system, { name: 'system', design: (n) => designs[n.toLowerCase()] || null });
+  assert.deepEqual(report.figures.map((f) => [f.number, f.name, f.design]), [[1, 'circuit', null], [2, 'circuit', 'amp'], [3, 'circuit', 'sub']]);
+  assert.deepEqual(report.warnings, []);
+  const { html } = report;
+  assert.match(html, /Uses <a class="design" href="#design-amp">amp<\/a>\./);
+  assert.match(html, /<section id="design-amp" class="design-section">\n<h2>Amplifier<\/h2>/);
+  assert.match(html, /<section id="design-sub" class="design-section">\n<h3>sub<\/h3>\n<figure id="fig-3">/);
+  // In the section, its own figures and parts.
+  assert.match(html, /<a class="mention" href="#fig-2">R1<\/a> is in <a href="#fig-2" class="note-figure-ref" data-figure="circuit">Fig\. 2<\/a>/);
+  // Embedded again, or embedding the report's own design: a link to its section.
+  assert.equal(html.match(/<section id="design-amp"/g).length, 1);
+  assert.match(html, /<p class="see-section">See <a class="design" href="#design-amp">amp<\/a>\.<\/p>/);
+  assert.match(html, /<p class="see-section">See <a class="design" href="#design-system">system<\/a>\.<\/p>/);
+  // Citations numbered in reading order, one list at the end.
+  assert.match(html, /<a href="#ref-1" class="note-cite" title="B · https:\/\/b\.example">\[1\]<\/a> <a href="#ref-2" class="note-cite"/);
+  assert.match(html, /Cites <a href="#ref-2" class="note-cite"/);
+  assert.equal(html.match(/<section class="note-references">/g).length, 1);
+  assert.match(html, /<section class="note-references"><h2>References<\/h2><ol><li id="ref-1">B\./);
+  // Without the design, the embed is a missing figure.
+  const alone = buildReport(system, { name: 'system' });
+  assert.match(alone.warnings.join('\n'), /Fig\. 2: nothing named "amp" to draw\./);
+});
+
+test('renaming a design follows into the notes that embed it as a section', async () => {
+  const { relinkNotes } = await import('../src/core/notes.js');
+  assert.deepEqual(relinkNotes('![[amp|The amplifier.]]\n\n![[amp]] [[amp]] ![[circuit]]', 'amp', 'ota'), { text: '![[ota|The amplifier.]]\n\n![[ota]] [[ota]] ![[circuit]]', count: 3 });
+});
+
+test('the drawing put on top of notes without figures goes under their title', () => {
+  const circuit = divider();
+  circuit.notes = '# Divider\n\nSome text.';
+  assert.match(buildReport(circuit).html, /<h1>Divider<\/h1>\n<figure id="fig-drawing">[\s\S]*<\/figure>\n<p>Some text\.<\/p>/);
+});
+
+test('an outline of a block diagram embeds each linked design once, as a section', () => {
+  const circuit = new Circuit();
+  run(circuit, 'add block U2 --at 0 0', 'add block U1 --at 800 0', 'add block U3 --at 1600 0');
+  circuit.components.get('U1').link = 'ota';
+  circuit.components.get('U2').link = 'filter';
+  circuit.components.get('U3').link = 'ota';
+  assert.match(notesOutline(circuit), /\n\n## Blocks\n\nThe blocks, each from its own design\.\n\n!\[\[ota\]\]\n\n!\[\[filter\]\]\n$/);
 });

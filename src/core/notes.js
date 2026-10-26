@@ -15,7 +15,8 @@
  * Two more make the notes a report (report.js): `![[circuit]]` or
  * `![[circuit|caption]]` on a line of its own embeds a figure of the
  * drawing there, numbered in the order the notes embed them, and
- * `[[#circuit]]` refers to that figure by its number.
+ * `[[#circuit]]` refers to that figure by its number. `![[amp]]`, naming
+ * another design, embeds that design's notes as a section.
  *
  * A citation, `[^https://doi.org/...]` or `[^https://...|Author, Title]`,
  * reads `[N]`, numbered in the order the notes first cite each source,
@@ -160,7 +161,8 @@ function matchRank(name, typed) {
  * `@`, the parts and nets (those a mention of that name would find: a net
  * is left out when a part of its name wins).
  * `names`: `{ designs: [name], parts: [{ name, type }], nets: [name],
- * figures: [{ name, detail }] }`.
+ * figures: [{ name, detail, section }] }` (`section`: a design, offered
+ * after `![[` only).
  * Returns `{ kind: 'design'|'figure'|'mention', start, end, items: [{ name, kind,
  * detail, insert }] }`, the text from `start` to `end` replaced by an
  * item's `insert`; null when there is nothing to complete (inside code too).
@@ -180,7 +182,9 @@ export function noteCompletion(text, caret, { designs = [], parts = [], nets = [
   if (figure) {
     const close = source.slice(caret).match(/^[^[\]\n|]*\]\]/);
     const end = close ? caret + close[0].length : caret;
-    const items = ranked(figures.map(({ name, detail }) => ({ name, kind: 'figure', detail, insert: `${figure[1]}${name}]]` })), figure[2]);
+    // A reference is to a figure; a design is embedded only, as a section.
+    const choices = figure[1] === '![[' ? figures : figures.filter((entry) => !entry.section);
+    const items = ranked(choices.map(({ name, detail }) => ({ name, kind: 'figure', detail, insert: `${figure[1]}${name}]]` })), figure[2]);
     return offered({ kind: 'figure', start: caret - figure[0].length, end, items });
   }
   const link = before.match(/\[\[([^[\]\n|]*)$/);
@@ -226,10 +230,17 @@ export function noteDesignLinks(text) {
 export function relinkNotes(text, from, to) {
   let count = 0;
   const source = String(text ?? '');
-  const result = source.replace(DESIGN_LINK, (whole, name) => {
-    if (name.trim().toLowerCase() !== String(from).trim().toLowerCase()) return whole;
+  const renamed = (name) => name.trim().toLowerCase() === String(from).trim().toLowerCase();
+  const linked = source.replace(DESIGN_LINK, (whole, name) => {
+    if (!renamed(name)) return whole;
     count += 1;
     return `[[${to}]]`;
+  });
+  // A design's notes embedded as a section follow it too.
+  const result = linked.replace(FIGURE_EMBED, (whole, name, caption) => {
+    if (!renamed(name)) return whole;
+    count += 1;
+    return `![[${to}${caption === undefined ? '' : `|${caption}`}]]`;
   });
   return { text: result, count };
 }
@@ -247,24 +258,29 @@ export const FIGURE_REFERENCE = /\[\[#([^[\]\n|]+)\]\]/g;
 export const figureKey = (name) => String(name ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
 
 /**
- * The figures the notes embed, in order: `[{ name, caption, number }]`,
- * each on a line of its own outside code. A target embedded twice is two
- * figures; a reference finds the first.
+ * What the notes embed, in order: `[{ name, caption, number, design }]`,
+ * each on a line of its own outside code. An embed that `isDesign` says
+ * names another design is that design's section (`design: true`, no
+ * number); the rest are figures, numbered from `first`. A target embedded
+ * twice is two figures; a reference finds the first.
  */
-export function noteFigures(text) {
+export function noteFigures(text, { isDesign = () => false, first = 1 } = {}) {
   const source = normalizeNotes(text);
   const code = codeRanges(source);
-  const figures = [];
+  const embeds = [];
+  let number = first;
   let offset = 0;
   for (const line of source.split('\n')) {
     // A quote's lines are embeds too: its text is rendered as notes.
     const match = line.replace(/^(\s*>)+/, '').match(FIGURE_EMBED_LINE);
     if (match && !code.some(([a, b]) => offset >= a && offset < b)) {
-      figures.push({ name: match[1].trim(), caption: (match[2] || '').trim(), number: figures.length + 1 });
+      const name = match[1].trim();
+      const caption = (match[2] || '').trim();
+      embeds.push(isDesign(name) ? { name, caption, number: null, design: true } : { name, caption, number: number++, design: false });
     }
     offset += line.length + 1;
   }
-  return figures;
+  return embeds;
 }
 
 // ----- citations -----------------------------------------------------------------

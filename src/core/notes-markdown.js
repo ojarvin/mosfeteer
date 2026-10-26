@@ -56,9 +56,9 @@ function inlineHtml(text, context) {
   // An embed inside text shows as written: only one on its own line is a figure.
   source = source.replace(FIGURE_EMBED, (whole) => hold(escapeHtml(whole)));
   source = source.replace(FIGURE_REFERENCE, (_, name) => {
-    const figure = context.figures?.find((entry) => figureKey(entry.name) === figureKey(name));
+    const figure = context.figures?.find((entry) => !entry.design && entry.number && figureKey(entry.name) === figureKey(name));
     return hold(figure
-      ? `<a href="#fig-${figure.number}" class="note-figure-ref" data-figure="${escapeHtml(figure.name)}">Fig. ${figure.number}</a>`
+      ? `<a href="#${figure.id || `fig-${figure.number}`}" class="note-figure-ref" data-figure="${escapeHtml(figure.name)}">Fig. ${figure.number}</a>`
       : `<span class="note-figure-ref broken" title="No figure of the notes shows ${escapeHtml(name.trim())}">Fig. ?</span>`);
   });
   source = source.replace(/\[\[([^[\]\n|]+)\]\]/g, (_, name) => {
@@ -152,6 +152,13 @@ function figurePlaceholder(figure, context) {
     + `<span class="note-figure-number">Fig. ${figure.number}</span> <span class="note-figure-name">${escapeHtml(figure.name)}</span>${caption}</div>`;
 }
 
+/** Another design's notes, embedded as a section, as the notes window shows it. */
+function sectionPlaceholder(entry, context) {
+  const caption = entry.caption ? `<span class="note-figure-caption">${inlineHtml(entry.caption, context)}</span>` : '';
+  return `<div class="note-figure note-section" data-design="${escapeHtml(entry.name)}"><span class="note-figure-number">Section</span> `
+    + `<a href="#" class="note-design" data-design="${escapeHtml(entry.name)}">${escapeHtml(entry.name)}</a>${caption}</div>`;
+}
+
 /**
  * The notes as HTML. `context` (every field optional):
  * - `mention(name)`: what a mention resolves to; `design(name)`: whether a
@@ -160,17 +167,25 @@ function figurePlaceholder(figure, context) {
  *   `figureHtml({ name, caption, captionHtml, number, target })`: draw those
  *   another way (the report's).
  * - `headingLevel`: the element of a `#` heading (3: the window's own title is h2).
+ * - `isDesign(name)`: whether an embed names another design (its section);
+ *   `figures`, `citations`: what the embeds and citations are, numbered
+ *   (the report's, across its sections); `references: false` leaves the
+ *   list of sources to the caller.
  * Blocks: `#`-`###` headings, paragraphs, `-`/`*`/`1.` lists (nested
  * by indenting two spaces), `>`
  * quotes, fenced code, `$$` display math, `|` tables, `---` rules, and
  * figures, an embed on a line of its own.
  */
 export function renderNotes(source, context = {}) {
-  const top = !context.figures;
+  const top = !context.figureAt;
   if (top) {
     // Numbered once for the whole notes: a quote's figures count in order.
-    const figures = noteFigures(source);
-    context = { ...context, figures, figureAt: { next: 0 }, citations: noteCitations(source) };
+    context = {
+      ...context,
+      figures: context.figures ?? noteFigures(source, { isDesign: context.isDesign }),
+      citations: context.citations ?? noteCitations(source),
+      figureAt: { next: 0 },
+    };
   }
   const lines = normalizeNotes(source).split('\n');
   const out = [];
@@ -234,7 +249,8 @@ export function renderNotes(source, context = {}) {
     if (FIGURE_EMBED_LINE.test(line)) {
       flush();
       const figure = context.figures[context.figureAt.next++];
-      if (figure) {
+      if (figure?.design && !context.figureHtml) out.push(sectionPlaceholder(figure, context));
+      else if (figure) {
         const entry = { ...figure, target: context.figure ? context.figure(figure.name) : true };
         out.push(context.figureHtml
           ? context.figureHtml({ ...entry, captionHtml: inlineHtml(figure.caption, context) })
@@ -252,12 +268,12 @@ export function renderNotes(source, context = {}) {
     paragraph.push(line);
   }
   flush();
-  if (top && context.citations.length) out.push(referencesHtml(context.citations, Math.min((context.headingLevel ?? 3) + 1, 6)));
+  if (top && context.references !== false && context.citations.length) out.push(referencesHtml(context.citations, Math.min((context.headingLevel ?? 3) + 1, 6)));
   return out.join('\n');
 }
 
 /** The sources cited, numbered, each linked when it is an address. */
-function referencesHtml(citations, level) {
+export function referencesHtml(citations, level) {
   const items = citations.map((citation) => {
     const title = citation.title ? `${escapeHtml(citation.title)}${citation.url ? '. ' : ''}` : '';
     const source = citation.url

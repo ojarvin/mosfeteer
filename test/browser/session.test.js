@@ -314,6 +314,31 @@ describe('documents and sessions', { skip: browserSkip() }, () => {
     }
   });
 
+  test('a report includes another design of the workspace its notes embed, as a section', async () => {
+    await h.open('amp');
+    await h.evaluate(`window.__run('notes set "![[circuit]]\\n\\n![[other|The other one.]]"')`);
+    await h.evaluate(`${h.module('document-session.js')}.then(({ persistence }) => {
+      window.__exports = [];
+      window.__exported = 0;
+      if (!persistence.__realExport) persistence.__realExport = persistence.exportFiles;
+      persistence.exportFiles = async (request) => {
+        window.__exports.push(request);
+        try { return await persistence.__realExport(request); } finally { window.__exported += 1; }
+      };
+    })`);
+    try {
+      await h.evaluate(`${h.module('export-ui.js')}.then((m) => m.exportCircuit({ content: 'report' }))`);
+      await h.until(`document.getElementById('export-report-summary').textContent.includes('a section from another design')`);
+      await h.evaluate(`(() => { for (const box of document.querySelectorAll('#export-form [name=format]')) box.checked = box.value === 'html'; document.getElementById('export-name').value = 'amp-sections'; })()`);
+      await h.click('#export-submit');
+      await h.until(`window.__exported >= 1`, 90000);
+      const [request] = await h.evaluate(`window.__exports`);
+      assert.match(request.report, /<section id="design-other" class="design-section">\n<h2>other<\/h2>\n<figure id="fig-2">/);
+    } finally {
+      await h.evaluate(`window.__run('notes clear')`);
+    }
+  });
+
   test('"Only the selection" starts unchecked each time the export opens', async () => {
     await h.open('amp');
     await h.evaluate(`${h.module('main.js')}.then((m) => { m.selectAll(); m.render(); })`);
