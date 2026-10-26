@@ -93,6 +93,14 @@ warnings, and writes the HTML.
   with no link. The notes, in the window and the report, end with the
   numbered References list; a click on `[N]` goes to its entry. Copy puts
   `[N]` and the list in the Markdown (`noteCitations`).
+- **Outline.** Empty notes can start as a report: the notes window's
+  **Outline** (shown while the notes are empty) or `notes outline` writes a
+  heading, the circuit, an Operation section (the timing diagram, a figure a
+  beat), an Analysis section (the annotated equations, models, plots, and
+  noise tables), and a Sizing section (the parts tables), each figure with a
+  caption and each section with a line to replace (`notesOutline`). Only
+  what the drawing has is placed: an analysis is in it once annotated.
+  One undo step; written notes are never replaced.
 - **In the notes window** a figure shows as its number, target, and caption,
   its target in red when there is nothing of that name to draw.
 - **Sizes.** Every figure is drawn at the page guide's width (the A4 one

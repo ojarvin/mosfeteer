@@ -5,7 +5,7 @@ import { runCommand } from '../src/core/commands.js';
 import { newFigureId } from '../src/core/figures.js';
 import { addBeat } from '../src/core/beats.js';
 import { normalizePageGuide, parsePageGuide, pageGuideWidth } from '../src/core/page-guide.js';
-import { buildReport, reportFigureSize, reportPage, reportTargets, resolveReportTarget } from '../src/core/report.js';
+import { buildReport, notesOutline, reportFigureSize, reportPage, reportTargets, resolveReportTarget } from '../src/core/report.js';
 import { DESIGN_LINK, noteCompletion, noteDesignLinks, noteFigures } from '../src/core/notes.js';
 import { renderNotes } from '../src/core/notes-markdown.js';
 
@@ -184,4 +184,33 @@ test('a report ends with the sources its notes cite, each citation linked to its
   assert.match(html, /<a href="#ref-1" class="note-cite"[^>]*>\[1\]<\/a>/);
   assert.match(html, /<section class="note-references"><h2>References<\/h2><ol><li id="ref-1">A divider note\. <a href="https:\/\/example\.com\/divider"/);
   assert.ok(html.indexOf('<section class="note-references"') > html.indexOf('<figure'), 'after the figures');
+});
+
+test('an outline places the circuit, the beats and timing, and every annotated figure, in sections', () => {
+  const circuit = divider();
+  addBeat(circuit, { name: '$\\varphi_1$' });
+  addBeat(circuit);
+  circuit.addLabel({ text: 'Parts', x: 1200, y: 0, table: { parts: ['R1', 'R2'] }, figure: { id: newFigureId(circuit), kind: 'table', source: 'sizing' } });
+  const outline = notesOutline(circuit, { name: 'divider' });
+  assert.equal(outline, [
+    '# divider', 'What the circuit is and does.', '![[circuit|The circuit.]]',
+    '## Operation', 'How it works, step by step.', '![[beat 1|Beat 1: $\\varphi_1$.]]', '![[beat 2|Beat 2.]]',
+    '## Analysis', 'What the analysis shows.', '![[F1|Equations (small-signal analysis).]]',
+    '## Sizing', 'How the parts are sized.', '![[F2|Parts.]]',
+  ].join('\n\n') + '\n');
+  // Every figure it places draws.
+  circuit.notes = outline;
+  assert.deepEqual(buildReport(circuit).warnings, []);
+  // A bare circuit: its heading, text, and figure only.
+  const bare = new Circuit();
+  run(bare, 'add resistor R1 --at 0 0');
+  assert.equal(notesOutline(bare), '# Design\n\nWhat the circuit is and does.\n\n![[circuit|The circuit.]]\n');
+});
+
+test('notes outline starts empty notes and never replaces written ones', () => {
+  const circuit = divider();
+  const [out] = run(circuit, 'notes outline --name divider');
+  assert.equal(out.mutated, true);
+  assert.match(circuit.notes, /^# divider\n/);
+  assert.throws(() => run(circuit, 'notes outline'), /has notes already/);
 });

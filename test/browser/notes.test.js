@@ -188,6 +188,21 @@ describe('design notes', { skip: browserSkip() }, () => {
     await h.evaluate(`window.__run('notes clear')`);
   });
 
+  test('Outline starts empty notes from the drawing, one undo step, and leaves when there are notes', async () => {
+    await h.open('amp');
+    await h.evaluate(`window.__run('notes clear')`);
+    if (await h.evaluate(`document.querySelector('.notes-window').hidden`)) await h.key('N', { shiftKey: true });
+    await h.until(`!!document.querySelector('.notes-window:not([hidden])')`);
+    await h.until(`document.querySelector('.notes-outline').hidden === false`);
+    await h.click('.notes-outline');
+    await h.until(`document.querySelector('.notes-source').value.startsWith('# amp')`);
+    assert.match(await editor('editor.circuit.notes'), /^# amp\n\nWhat the circuit is and does\.\n\n!\[\[circuit\|The circuit\.\]\]/);
+    assert.equal(await h.evaluate(`document.querySelector('.notes-outline').hidden`), true);
+    await h.evaluate(`document.querySelector('.notes-source').blur()`);
+    await h.key('z', { ctrlKey: true });
+    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.notes === '')`);
+  });
+
   test('another design shows its own notes, and n closes the window', async () => {
     await h.open('child');
     await h.until(`!document.querySelector('.notes-view h3') && document.querySelector('.notes-source')?.hidden === false || !!document.querySelector('.notes-empty:not([hidden])')`);

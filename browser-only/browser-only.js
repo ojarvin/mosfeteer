@@ -20705,7 +20705,7 @@ let fixAllIssues, tidySelection; __bind(() => { ({ fixAllIssues, tidySelection }
 let applyArrangement, arrangementCandidates; __bind(() => { ({ applyArrangement, arrangementCandidates } = __require("src/core/arrange.js")); });
 let builtInDrawings, cellPatterns; __bind(() => { ({ builtInDrawings, cellPatterns } = __require("src/core/arrange-builtins.js")); });
 let arrangeFigures, figureBounds, listFigures; __bind(() => { ({ arrangeFigures, figureBounds, listFigures } = __require("src/core/figures.js")); });
-let buildReport; __bind(() => { ({ buildReport } = __require("src/core/report.js")); });
+let buildReport, notesOutline; __bind(() => { ({ buildReport, notesOutline } = __require("src/core/report.js")); });
 let parsePageGuide; __bind(() => { ({ parsePageGuide } = __require("src/core/page-guide.js")); });
 let findInLabels, replaceInLabels; __bind(() => { ({ findInLabels, replaceInLabels } = __require("src/core/label-search.js")); });
 let normalizeNotes, notesMarkdown; __bind(() => { ({ normalizeNotes, notesMarkdown } = __require("src/core/notes.js")); });
@@ -21215,6 +21215,8 @@ function commandHelp() {
     '                                   a part or net, [[design]] links another design, ![[circuit]] places a figure of the report,',
     '                                   [^https://...|title] cites a source); append adds TEXT as a new line',
     '  notes markdown                 - the notes as plain Markdown: mentions and design links as their names',
+    '  notes outline [--name TITLE]   - empty notes started as a report: the circuit, the beats and timing, and every',
+    '                                   annotated figure, each placed with a caption and a line to replace with text',
     '  history [list]                 - the save history: the last ten saves and the pinned checkpoints, newest first',
     '  history checkpoint [NAME] [--comment TEXT] - pin the drawing as it is as a checkpoint',
     '  history pin|unpin|remove|restore ENTRY [NAME] [--comment TEXT] - change an entry (its id, or a checkpoint\'s name);',
@@ -21771,7 +21773,12 @@ function dispatch(circuit, cmd, pos, flags, io) {
       const markdown = notesMarkdown(circuit.notes);
       return result(markdown || '(no notes)', { markdown });
     }
-    throw new Error('usage: notes | notes set TEXT | notes append TEXT | notes clear | notes markdown');
+    if (pos.length === 1 && pos[0] === 'outline') {
+      if (circuit.notes) throw new Error('the design has notes already: an outline starts empty notes (notes clear first)');
+      circuit.notes = normalizeNotes(notesOutline(circuit, { name: flags.name ? flags.name[0] : 'Design' }));
+      return result(circuit.notes, { notes: circuit.notes }, true);
+    }
+    throw new Error('usage: notes | notes set TEXT | notes append TEXT | notes clear | notes markdown | notes outline [--name TITLE]');
   }
   if (cmd === 'history') return historyCommand(circuit, pos, flags, result);
   if (cmd === 'tag' || cmd === 'tags') {
@@ -38088,6 +38095,7 @@ __exports.resolveReportTarget = resolveReportTarget;
 __exports.reportPage = reportPage;
 __exports.reportFigureSize = reportFigureSize;
 __exports.buildReport = buildReport;
+__exports.notesOutline = notesOutline;
 let LABEL_FONT_SIZE; __bind(() => { ({ LABEL_FONT_SIZE } = __require("src/core/model.js")); });
 let listFigures; __bind(() => { ({ listFigures } = __require("src/core/figures.js")); });
 let beatTitle, resolveBeat; __bind(() => { ({ beatTitle, resolveBeat } = __require("src/core/beats.js")); });
@@ -38347,6 +38355,61 @@ figcaption { margin: 6pt auto 0; max-width: ${pt(page.textWidthPt)}; font-size: 
 .figure-number { font-weight: bold; }
 figure.missing p { margin: 0 auto; padding: 18pt; border: 1pt dashed #b42318; color: #b42318; text-align: center; }
 `;
+}
+
+// ----- outline -------------------------------------------------------------------
+
+/** A plot's caption, by what it plots. */
+const PLOT_CAPTIONS = {
+  response: 'Frequency response.', locus: 'Root locus.', step: 'Step response.',
+  swing: 'Signal swing.', wave: 'Waveforms.', noise: 'Noise spectrum.',
+};
+const SOURCE_NAMES = { 'small-signal': 'small-signal', 'signal-flow': 'signal-flow', 'switched-cap': 'switched-capacitor' };
+
+/** What an annotated figure shows, as its caption in an outline. */
+function figureCaption(figure) {
+  const of = SOURCE_NAMES[figure.source] ? ` (${SOURCE_NAMES[figure.source]} analysis)` : '';
+  if (figure.kind === 'plot') {
+    const plot = figure.labels.find((label) => label.plot)?.plot;
+    if (plot?.kind === 'response' && plot.quantity === 'phase') return 'Phase response.';
+    return PLOT_CAPTIONS[plot?.kind] || 'Plot.';
+  }
+  return {
+    equations: `Equations${of}.`, noise: 'kT/C noise.', model: 'Small-signal model.',
+    timing: 'Clock phases.', table: 'Parts.',
+  }[figure.kind] || 'Figure.';
+}
+
+// Where each kind of annotated figure goes in an outline.
+const OUTLINE_SECTIONS = [
+  { title: 'Operation', kinds: ['timing'] },
+  { title: 'Analysis', kinds: ['equations', 'model', 'plot', 'noise'] },
+  { title: 'Sizing', kinds: ['table'] },
+];
+
+/**
+ * Notes to start a report from: a heading, the circuit, then a section for
+ * the beats and timing (Operation), the annotated equations, models, plots
+ * and noise (Analysis), and the parts tables (Sizing) -- only what the
+ * drawing has, each with a caption and a line to replace with text.
+ * Nothing is computed: an analysis appears once it is annotated.
+ */
+function notesOutline(circuit, { name = 'Design' } = {}) {
+  const figures = listFigures(circuit);
+  const blocks = [`# ${name}`, 'What the circuit is and does.', '![[circuit|The circuit.]]'];
+  for (const section of OUTLINE_SECTIONS) {
+    const embeds = [];
+    for (const kind of section.kinds) {
+      for (const figure of figures.filter((f) => f.kind === kind)) embeds.push(`![[${figure.id}|${figureCaption(figure)}]]`);
+    }
+    if (section.title === 'Operation') {
+      (circuit.beats || []).forEach((beat, index) => embeds.push(`![[beat ${index + 1}|Beat ${index + 1}${beat.name ? `: ${beat.name}` : ''}.]]`));
+    }
+    if (!embeds.length) continue;
+    const lead = { Operation: 'How it works, step by step.', Analysis: 'What the analysis shows.', Sizing: 'How the parts are sized.' }[section.title];
+    blocks.push(`## ${section.title}`, lead, ...embeds);
+  }
+  return `${blocks.join('\n\n')}\n`;
 }
 
 };
@@ -75131,7 +75194,7 @@ let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 let attachNoteCompletion; __bind(() => { ({ attachNoteCompletion } = __require("src/web/notes-completion.js")); });
 let appendContextItem, openMenuAt; __bind(() => { ({ appendContextItem, openMenuAt } = __require("src/web/context-menu.js")); });
 let showDesignInReference; __bind(() => { ({ showDesignInReference } = __require("src/web/reference-window.js")); });
-let reportTargets, resolveReportTarget; __bind(() => { ({ reportTargets, resolveReportTarget } = __require("src/core/report.js")); });
+let notesOutline, reportTargets, resolveReportTarget; __bind(() => { ({ notesOutline, reportTargets, resolveReportTarget } = __require("src/core/report.js")); });
 let exportCircuit; __bind(() => { ({ exportCircuit } = __require("src/web/export-ui.js")); });
 /**
  * The notes window: a design's notes (`Circuit#notes`, core/notes.js) shown
@@ -75205,6 +75268,7 @@ function renderView() {
   if (!win) return;
   const key = { text: notes(), circuit: editor.circuit, revision: editor.modelRevision, designs: workspaceDesigns().length };
   win.copy.disabled = !key.text;
+  win.outline.hidden = !!key.text;
   if (shownKey && Object.keys(key).every((field) => shownKey[field] === key[field])) return;
   shownKey = key;
   const html = renderNotes(key.text, {
@@ -75244,6 +75308,7 @@ function onInput() {
     markSettingsChanged();
   }
   win.copy.disabled = !next;
+  win.outline.hidden = !!next;
   clearTimeout(pauseTimer);
   pauseTimer = setTimeout(finishEditStep, EDIT_PAUSE_MS);
 }
@@ -75397,17 +75462,19 @@ function build() {
   const edit = el('button', { type: 'button', class: 'notes-edit window-action', title: 'Edit (double-click)', text: 'Edit' });
   const copy = el('button', { type: 'button', class: 'notes-copy window-action', title: 'Copy as Markdown', text: 'Copy' });
   const report = el('button', { type: 'button', class: 'notes-report window-action', title: 'Export the notes and their figures', text: 'Report…' });
+  const outline = el('button', { type: 'button', class: 'notes-outline window-action', title: 'Start the notes with every figure of the drawing', text: 'Outline' });
   const view = el('div', { class: 'notes-view', tabindex: '0', 'aria-label': 'Notes' });
   const empty = el('p', { class: 'field-hint notes-empty', text: 'Double-click to write. Markdown with $math$; @M1 mentions a part or net, [[amp]] links a design, ![[circuit]] places a figure.' });
   const source = el('textarea', { class: 'notes-source', 'aria-label': 'Notes (Markdown)', spellcheck: 'true', hidden: true, placeholder: 'Markdown: # headings, $math$, @M1 for a part or net, [[design]] for a link' });
   const node = el('section', { class: 'floating-window notes-window', 'aria-labelledby': 'notes-title', hidden: true }, [
     el('header', { class: 'floating-window-header' }, [el('h2', { id: 'notes-title', class: 'floating-window-title', text: 'Notes' }), close]),
     el('div', { class: 'notes-body' }, [empty, view, source]),
-    el('footer', { class: 'window-footer' }, [report, copy, edit]),
+    el('footer', { class: 'window-footer' }, [outline, report, copy, edit]),
   ]);
   edit.addEventListener('click', () => (editing ? stopEditing() : startEditing()));
   copy.addEventListener('click', copyMarkdown);
   report.addEventListener('click', () => exportCircuit({ content: 'report' }));
+  outline.addEventListener('click', writeOutline);
   source.addEventListener('input', onInput);
   // Before the field's own keys: an open list takes Tab and Esc.
   attachNoteCompletion(source, completionNames);
@@ -75426,7 +75493,23 @@ function build() {
   });
   canvasEl.closest('.canvas-pane').append(node);
   const chrome = floatingWindow(node, { key: 'notes', onClose: hide, resizable: true, toggleKey: 'N' });
-  win = { el: node, view, source, edit, copy, empty, chrome };
+  win = { el: node, view, source, edit, copy, outline, empty, chrome };
+}
+
+/** Empty notes started as a report (core/report.js `notesOutline`): one
+ *  undo step, the source open to write in. */
+function writeOutline() {
+  if (notes()) return;
+  beginSettingsEdit();
+  editor.circuit.notes = normalizeNotes(notesOutline(editor.circuit, { name: editor.currentCircuitName || 'Design' }));
+  markSettingsChanged();
+  endSettingsEdit();
+  if (!editing) startEditing();
+  win.source.value = notes();
+  win.source.setSelectionRange(0, 0);
+  win.source.scrollTop = 0;
+  win.copy.disabled = false;
+  win.outline.hidden = true;
 }
 
 /** The notes on the clipboard as plain Markdown. */

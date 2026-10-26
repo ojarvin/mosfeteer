@@ -249,3 +249,58 @@ figcaption { margin: 6pt auto 0; max-width: ${pt(page.textWidthPt)}; font-size: 
 figure.missing p { margin: 0 auto; padding: 18pt; border: 1pt dashed #b42318; color: #b42318; text-align: center; }
 `;
 }
+
+// ----- outline -------------------------------------------------------------------
+
+/** A plot's caption, by what it plots. */
+const PLOT_CAPTIONS = {
+  response: 'Frequency response.', locus: 'Root locus.', step: 'Step response.',
+  swing: 'Signal swing.', wave: 'Waveforms.', noise: 'Noise spectrum.',
+};
+const SOURCE_NAMES = { 'small-signal': 'small-signal', 'signal-flow': 'signal-flow', 'switched-cap': 'switched-capacitor' };
+
+/** What an annotated figure shows, as its caption in an outline. */
+function figureCaption(figure) {
+  const of = SOURCE_NAMES[figure.source] ? ` (${SOURCE_NAMES[figure.source]} analysis)` : '';
+  if (figure.kind === 'plot') {
+    const plot = figure.labels.find((label) => label.plot)?.plot;
+    if (plot?.kind === 'response' && plot.quantity === 'phase') return 'Phase response.';
+    return PLOT_CAPTIONS[plot?.kind] || 'Plot.';
+  }
+  return {
+    equations: `Equations${of}.`, noise: 'kT/C noise.', model: 'Small-signal model.',
+    timing: 'Clock phases.', table: 'Parts.',
+  }[figure.kind] || 'Figure.';
+}
+
+// Where each kind of annotated figure goes in an outline.
+const OUTLINE_SECTIONS = [
+  { title: 'Operation', kinds: ['timing'] },
+  { title: 'Analysis', kinds: ['equations', 'model', 'plot', 'noise'] },
+  { title: 'Sizing', kinds: ['table'] },
+];
+
+/**
+ * Notes to start a report from: a heading, the circuit, then a section for
+ * the beats and timing (Operation), the annotated equations, models, plots
+ * and noise (Analysis), and the parts tables (Sizing) -- only what the
+ * drawing has, each with a caption and a line to replace with text.
+ * Nothing is computed: an analysis appears once it is annotated.
+ */
+export function notesOutline(circuit, { name = 'Design' } = {}) {
+  const figures = listFigures(circuit);
+  const blocks = [`# ${name}`, 'What the circuit is and does.', '![[circuit|The circuit.]]'];
+  for (const section of OUTLINE_SECTIONS) {
+    const embeds = [];
+    for (const kind of section.kinds) {
+      for (const figure of figures.filter((f) => f.kind === kind)) embeds.push(`![[${figure.id}|${figureCaption(figure)}]]`);
+    }
+    if (section.title === 'Operation') {
+      (circuit.beats || []).forEach((beat, index) => embeds.push(`![[beat ${index + 1}|Beat ${index + 1}${beat.name ? `: ${beat.name}` : ''}.]]`));
+    }
+    if (!embeds.length) continue;
+    const lead = { Operation: 'How it works, step by step.', Analysis: 'What the analysis shows.', Sizing: 'How the parts are sized.' }[section.title];
+    blocks.push(`## ${section.title}`, lead, ...embeds);
+  }
+  return `${blocks.join('\n\n')}\n`;
+}

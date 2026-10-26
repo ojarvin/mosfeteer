@@ -30,7 +30,7 @@ import { element as el } from './dom.js';
 import { attachNoteCompletion } from './notes-completion.js';
 import { appendContextItem, openMenuAt } from './context-menu.js';
 import { showDesignInReference } from './reference-window.js';
-import { reportTargets, resolveReportTarget } from '../core/report.js';
+import { notesOutline, reportTargets, resolveReportTarget } from '../core/report.js';
 import { exportCircuit } from './export-ui.js';
 
 /** A pause this long ends one edit (one undo step). */
@@ -70,6 +70,7 @@ function renderView() {
   if (!win) return;
   const key = { text: notes(), circuit: editor.circuit, revision: editor.modelRevision, designs: workspaceDesigns().length };
   win.copy.disabled = !key.text;
+  win.outline.hidden = !!key.text;
   if (shownKey && Object.keys(key).every((field) => shownKey[field] === key[field])) return;
   shownKey = key;
   const html = renderNotes(key.text, {
@@ -109,6 +110,7 @@ function onInput() {
     markSettingsChanged();
   }
   win.copy.disabled = !next;
+  win.outline.hidden = !!next;
   clearTimeout(pauseTimer);
   pauseTimer = setTimeout(finishEditStep, EDIT_PAUSE_MS);
 }
@@ -262,17 +264,19 @@ function build() {
   const edit = el('button', { type: 'button', class: 'notes-edit window-action', title: 'Edit (double-click)', text: 'Edit' });
   const copy = el('button', { type: 'button', class: 'notes-copy window-action', title: 'Copy as Markdown', text: 'Copy' });
   const report = el('button', { type: 'button', class: 'notes-report window-action', title: 'Export the notes and their figures', text: 'Report…' });
+  const outline = el('button', { type: 'button', class: 'notes-outline window-action', title: 'Start the notes with every figure of the drawing', text: 'Outline' });
   const view = el('div', { class: 'notes-view', tabindex: '0', 'aria-label': 'Notes' });
   const empty = el('p', { class: 'field-hint notes-empty', text: 'Double-click to write. Markdown with $math$; @M1 mentions a part or net, [[amp]] links a design, ![[circuit]] places a figure.' });
   const source = el('textarea', { class: 'notes-source', 'aria-label': 'Notes (Markdown)', spellcheck: 'true', hidden: true, placeholder: 'Markdown: # headings, $math$, @M1 for a part or net, [[design]] for a link' });
   const node = el('section', { class: 'floating-window notes-window', 'aria-labelledby': 'notes-title', hidden: true }, [
     el('header', { class: 'floating-window-header' }, [el('h2', { id: 'notes-title', class: 'floating-window-title', text: 'Notes' }), close]),
     el('div', { class: 'notes-body' }, [empty, view, source]),
-    el('footer', { class: 'window-footer' }, [report, copy, edit]),
+    el('footer', { class: 'window-footer' }, [outline, report, copy, edit]),
   ]);
   edit.addEventListener('click', () => (editing ? stopEditing() : startEditing()));
   copy.addEventListener('click', copyMarkdown);
   report.addEventListener('click', () => exportCircuit({ content: 'report' }));
+  outline.addEventListener('click', writeOutline);
   source.addEventListener('input', onInput);
   // Before the field's own keys: an open list takes Tab and Esc.
   attachNoteCompletion(source, completionNames);
@@ -291,7 +295,23 @@ function build() {
   });
   canvasEl.closest('.canvas-pane').append(node);
   const chrome = floatingWindow(node, { key: 'notes', onClose: hide, resizable: true, toggleKey: 'N' });
-  win = { el: node, view, source, edit, copy, empty, chrome };
+  win = { el: node, view, source, edit, copy, outline, empty, chrome };
+}
+
+/** Empty notes started as a report (core/report.js `notesOutline`): one
+ *  undo step, the source open to write in. */
+function writeOutline() {
+  if (notes()) return;
+  beginSettingsEdit();
+  editor.circuit.notes = normalizeNotes(notesOutline(editor.circuit, { name: editor.currentCircuitName || 'Design' }));
+  markSettingsChanged();
+  endSettingsEdit();
+  if (!editing) startEditing();
+  win.source.value = notes();
+  win.source.setSelectionRange(0, 0);
+  win.source.scrollTop = 0;
+  win.copy.disabled = false;
+  win.outline.hidden = true;
 }
 
 /** The notes on the clipboard as plain Markdown. */
