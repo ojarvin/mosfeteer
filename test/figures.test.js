@@ -66,6 +66,19 @@ test('a figure identity is kept with the design, on labels and parts alike', () 
   assert.deepEqual(Circuit.fromJSON(circuit.toJSON()).components.get('RM').figure, { id: 'F9', kind: 'model', source: 'small-signal' });
 });
 
+test('a signal-flow coefficients table is a figure of its own, kept with the design and placed right of the circuit under the equations', () => {
+  assert.deepEqual(normalizeFigure({ id: 'F1', kind: 'coefficients', source: 'signal-flow' }), { id: 'F1', kind: 'coefficients', source: 'signal-flow' });
+  const circuit = amplifier();
+  const equations = table(circuit, { source: 'signal-flow' });
+  const coefficients = table(circuit, { kind: 'coefficients', source: 'signal-flow' });
+  assert.deepEqual(Circuit.fromJSON(circuit.toJSON()).labels.get(coefficients.id).figure.kind, 'coefficients');
+  const core = coreBounds(circuit);
+  const [above, below] = [equations.bbox(), coefficients.bbox()];
+  assert.ok(below.x >= core.x + core.w && below.y >= above.y + above.h, JSON.stringify({ core, above, below }));
+  assertClear(circuit);
+  assert.equal(chooseFigure(circuit, { kind: 'coefficients', source: 'signal-flow' })?.id, coefficients.figure.id);
+});
+
 test('figures are listed with their members; plots, parts tables and timing labels from before are figures too', () => {
   const circuit = amplifier();
   const plot = circuit.addAnnotation('box', { x: 0, y: 800, end: { x: 400, y: 1200 }, plot: RESPONSE });

@@ -1,7 +1,7 @@
 # Figures
 
 What the tools put on the drawing is a **figure**: an analysis's plot, its
-equations as a table, the kT/C noise table, the small-signal model, the
+equations as a table, the signal-flow coefficients table, the kT/C noise table, the small-signal model, the
 timing diagram, a parts table. Code: `src/core/figures.js` (identity,
 listing, placement), `src/web/figure-annotate.js` (the tables); tests:
 `test/figures.test.js`.
@@ -16,6 +16,7 @@ the same `figure: { id, kind, source, key }`, saved with the design
 | --- | --- | --- |
 | `plot` | `small-signal`, `signal-flow`, `switched-cap` | a box with `plot` and its legend labels (`parent`); `key` its plot kind, quantity and role |
 | `equations` | `small-signal`, `signal-flow`, `switched-cap` | one math table label, one per tool |
+| `coefficients` | `signal-flow` | one math table label: headings, a rule, a row per coefficient (name, value) |
 | `noise` | `switched-cap` | one math table label: the kT/C calculator's numbers |
 | `model` | `small-signal` | drawing-only parts, their wires and labels |
 | `timing` | `timing` | the timing diagram's labels (`timing`) |
@@ -28,7 +29,7 @@ known by their data).
 
 ## Annotating again
 
-Snapshot figures -- plots, equation and noise tables, the model -- are
+Snapshot figures -- plots, equation, coefficients and noise tables, the model -- are
 updated when the tool's Annotate (or Place) is pressed again: the figure of
 that identity that is selected, else the only one, else a new one
 (`chooseFigure`). An update keeps the figure's place, size and style and
@@ -70,7 +71,7 @@ lists them.
 
 The analysis window's **Annotate…** (`src/web/annotate-menu.js`) lists
 what the mode on screen can put on the drawing -- its equations, the
-small-signal model, its graph, the kT/C noise table -- each marked ✓ when
+small-signal model, its graph, the coefficients table, the kT/C noise table -- each marked ✓ when
 it is there already, choosing it updates it; **Everything** puts every one
 there. Each mode registers its items (`registerAnnotations`). The Plots
 window's and the noise calculator's own Annotate buttons do the same for

@@ -181,7 +181,7 @@ puts it under the drawing at its left edge, as a plot annotation
 (`plot.kind: 'response'`, `responseFigure` in `bode-figure.js`) with the
 traces' names as math labels in their colors against its right edge, children of its
 box, lined up once the browser has measured them (main.js
-`alignLabelColumn`), and the coefficients' numbers under them one a line; **Annotate… → Equations** puts the equations on the drawing as the mode's table, a row per input, right of the circuit and rewritten in place when annotated again ([`figures.md`](figures.md)).
+`alignLabelColumn`); **Annotate… → Coefficients** puts the coefficients' numbers on the drawing as a table of their own, styled as the parts and noise tables (Coefficient and Value headings over a rule, a row per coefficient, a linked one's value the number it follows, the dither's gains too), right of the circuit under the equations; **Annotate… → Equations** puts the equations on the drawing as the mode's table, a row per input, right of the circuit and rewritten in place when annotated again ([`figures.md`](figures.md)).
 
 ## Sampled loops
 
@@ -363,13 +363,14 @@ them all alike, each from its own corner; a plot below (or right of)
 another selected one moves on by its growth, so a column of plots keeps its
 spacing.
 
-**Annotate… → Update every plot** redraws every plot on the
+**Annotate… → Update all plots** redraws every plot on the
 drawing at the coefficients' numbers now, in one undo step: a graph or step
 plot from the traces of the same names (one naming a trace no longer on the
 graph is left as it is), a loop plot at the signal it was broken at, a root
 locus over its coefficient and range (`plot.source`), a swing plot from a
-fresh sweep of the nets it shows; each keeps its coefficients' numbers
-under the legend if it had them.
+fresh sweep of the nets it shows. The coefficients table, if there, is
+rewritten at the same numbers; a plot from before the table, with the
+numbers under its legend, has them moved to a new table.
 
 Annotating a graph or a swing again updates the plot of that kind already
 on the drawing -- the selected one, else the only one -- keeping its place,

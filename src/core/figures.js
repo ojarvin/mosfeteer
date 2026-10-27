@@ -21,13 +21,13 @@
 
 import { GRID, ceilGrid, floorGrid } from './grid.js';
 
-export const FIGURE_KINDS = Object.freeze(['plot', 'equations', 'noise', 'model', 'timing', 'table']);
+export const FIGURE_KINDS = Object.freeze(['plot', 'equations', 'coefficients', 'noise', 'model', 'timing', 'table']);
 
 /** Where each kind would rather go: right of the circuit, or under it. */
-const ZONES = { table: 'right', equations: 'right', noise: 'right', timing: 'below', plot: 'below', model: 'below' };
+const ZONES = { table: 'right', equations: 'right', coefficients: 'right', noise: 'right', timing: 'below', plot: 'below', model: 'below' };
 
 /** In a zone, figures go in this order (arrangeFigures). */
-const ORDER = ['table', 'equations', 'noise', 'timing', 'model', 'plot'];
+const ORDER = ['table', 'equations', 'coefficients', 'noise', 'timing', 'model', 'plot'];
 
 /** The gap from the circuit to its first figure, and between figures. */
 const CLEARANCE = 3 * GRID;

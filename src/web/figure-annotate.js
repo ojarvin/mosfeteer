@@ -4,8 +4,8 @@
  * by its figure identity (core/figures.js). Annotating again rewrites the
  * table there -- the selected one of that identity, else the only one --
  * keeping its top-left corner; with none, a new one goes where its kind
- * goes, packed with the rest (placeFigure). The analyses' equation tables and the kT/C noise
- * table are these.
+ * goes, packed with the rest (placeFigure). The analyses' equation tables,
+ * the signal-flow coefficients table, and the kT/C noise table are these.
  */
 
 import { arrangeFigures, chooseFigure, newFigureId, packed, placeFigure, settlePlaced } from '../core/figures.js';
@@ -34,47 +34,63 @@ export function equationCells(equation) {
 }
 
 /**
- * Put the table `text` (TeX lines, `columns` their alignment) on the drawing
- * as the figure `{ kind, source, key }`, or rewrite the one there. One undo
- * step. Returns { label, updated }.
+ * Write the table `text` (TeX lines, `columns` their alignment) as the
+ * figure `{ kind, source, key }`, or rewrite the one there; inside a
+ * commit. `create: false` only rewrites one there. Returns { label,
+ * updated, settle }: `settle()`, after the commit, places it once the
+ * browser has measured it.
  */
-export function annotateMathFigure({ kind, source, key = null, text, columns = null }) {
+export function writeMathFigure({ kind, source, key = null, text, columns = null, create = true }) {
   const circuit = editor.circuit;
   const identity = { kind, source, ...(key ? { key } : {}) };
-  const target = chooseFigure(circuit, identity, selectedFigureMembers())?.labels.find((label) => label.math && !label.parent) || null;
-  let label = null;
-  let corner = null;
+  const figure = chooseFigure(circuit, identity, selectedFigureMembers());
+  const target = figure?.labels.find((label) => label.math && !label.parent) || null;
+  if (!target && !create) return { label: null, updated: false, settle: () => {} };
   // Placed by packing (new, or never moved by hand): packed again once its
   // size is known.
-  const repack = !target || packed(circuit, chooseFigure(circuit, identity, selectedFigureMembers()));
-  commit(() => {
-    if (target) {
-      const box = target.bbox();
-      corner = { x: box.x, y: box.y };
-      // The same table again changes nothing (not even its measured size).
-      if (target.text !== text) target.setText(text);
-      target.columns = columns;
-      label = target;
-    } else {
-      label = circuit.addLabel({ text, math: true, align: 'left', columns, x: 0, y: 0, figure: { id: newFigureId(circuit), ...identity } });
-      corner = placeFigure(circuit, kind, { size: label.bbox(), except: label.figure.id });
-    }
-    const box = label.bbox();
-    label.moveTo(snap(corner.x + box.w / 2), snap(corner.y + box.h / 2));
-    if (repack) settlePlaced(circuit, label.figure.id);
-  });
-  if (!label) return { label: null, updated: false };
+  const repack = !target || packed(circuit, figure);
+  let label;
+  let corner;
+  if (target) {
+    const box = target.bbox();
+    corner = { x: box.x, y: box.y };
+    // The same table again changes nothing (not even its measured size).
+    if (target.text !== text) target.setText(text);
+    target.columns = columns;
+    label = target;
+  } else {
+    label = circuit.addLabel({ text, math: true, align: 'left', columns, x: 0, y: 0, figure: { id: newFigureId(circuit), ...identity } });
+    corner = placeFigure(circuit, kind, { size: label.bbox(), except: label.figure.id });
+  }
+  const box = label.bbox();
+  label.moveTo(snap(corner.x + box.w / 2), snap(corner.y + box.h / 2));
+  if (repack) settlePlaced(circuit, label.figure.id);
   // Its size is an estimate until the browser measures it. Moved by hand,
   // it keeps its corner; else it and the figures packing placed are packed
   // again at its measured size.
   const id = label.figure.id;
-  const place = repack ? ([measured]) => placeFigure(editor.circuit, kind, { size: measured.bbox(), except: id }) : null;
-  const settled = repack ? () => settlePlaced(editor.circuit, id) : null;
-  alignLabelColumn([label.id], { left: corner.x, top: corner.y, place, settled });
+  const settle = () => {
+    const place = repack ? ([measured]) => placeFigure(editor.circuit, kind, { size: measured.bbox(), except: id }) : null;
+    const settled = repack ? () => settlePlaced(editor.circuit, id) : null;
+    alignLabelColumn([label.id], { left: corner.x, top: corner.y, place, settled });
+  };
+  return { label, updated: !!target, settle };
+}
+
+/**
+ * Put the table `text` (TeX lines, `columns` their alignment) on the drawing
+ * as the figure `{ kind, source, key }`, or rewrite the one there. One undo
+ * step. Returns { label, updated }.
+ */
+export function annotateMathFigure(spec) {
+  let written = null;
+  commit(() => { written = writeMathFigure(spec); });
+  if (!written?.label) return { label: null, updated: false };
+  written.settle();
   setSelection([]);
-  setLabelSelection([label.id]);
+  setLabelSelection([written.label.id]);
   render();
-  return { label, updated: !!target };
+  return { label: written.label, updated: written.updated };
 }
 
 /** More → Arrange figures: every figure where a new one goes

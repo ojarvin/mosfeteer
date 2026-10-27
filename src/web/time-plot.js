@@ -28,7 +28,7 @@ import { editor } from './editor-state.js';
 import { markSettingsChanged, onDocumentShown } from './main.js';
 import { createPlotView } from './plot-view.js';
 
-let api = null; // { flow(), resolved(), placePlot(), symbols(), visible() } from signal-flow-ui.js
+let api = null; // { flow(), resolved(), placePlot(), visible() } from signal-flow-ui.js
 let parts = null; // the section's elements
 let timer = 0;
 let last = null; // the last run shown: { sim, result, samples, amplitude, series }
@@ -204,7 +204,7 @@ function annotate() {
   const range = parts.plot.xRange() || [0, last.samples - 1];
   const plot = wavePlot(last.series, range);
   if (!plot) return;
-  api.placePlot(plot, plot.traces.map((t) => ({ label: t.label, color: t.color })), api.symbols());
+  api.placePlot(plot, plot.traces.map((t) => ({ label: t.label, color: t.color })));
 }
 
 /** An annotated waveform at the numbers now (Update plots): its nets by
@@ -219,7 +219,7 @@ export function timePlotUpdate(plot) {
   const run = simulateTime(keys);
   if (run.error) return null;
   const next = wavePlot(run.series, [plot.range.low, plot.range.high]);
-  return next ? { plot: next, shown: next.traces.map((t) => ({ label: t.label, color: t.color })), used: api.symbols() } : null;
+  return next ? { plot: next, shown: next.traces.map((t) => ({ label: t.label, color: t.color })) } : null;
 }
 
 /** The coefficients, the diagram, or its settings moved: run again. */
@@ -228,7 +228,7 @@ export function timeChanged() {
 }
 
 /** `deps`: signal-flow-ui.js's `{ flow(), resolved(), placePlot(plot,
- *  shown, used), symbols(), visible() }`. */
+ *  shown), visible() }`. */
 export function installTimePlot(deps) {
   api = deps;
   onDocumentShown(() => {

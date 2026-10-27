@@ -417,7 +417,7 @@ function figureCaption(figure) {
     return PLOT_CAPTIONS[plot?.kind] || 'Plot.';
   }
   return {
-    equations: `Equations${of}.`, noise: 'kT/C noise.', model: 'Small-signal model.',
+    equations: `Equations${of}.`, coefficients: 'Coefficients.', noise: 'kT/C noise.', model: 'Small-signal model.',
     timing: 'Clock phases.', table: 'Parts.',
   }[figure.kind] || 'Figure.';
 }
@@ -425,7 +425,7 @@ function figureCaption(figure) {
 // Where each kind of annotated figure goes in an outline.
 const OUTLINE_SECTIONS = [
   { title: 'Operation', kinds: ['timing'] },
-  { title: 'Analysis', kinds: ['equations', 'model', 'plot', 'noise'] },
+  { title: 'Analysis', kinds: ['equations', 'model', 'plot', 'coefficients', 'noise'] },
   { title: 'Sizing', kinds: ['table'] },
 ];
 

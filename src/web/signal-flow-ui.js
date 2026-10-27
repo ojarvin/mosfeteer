@@ -13,13 +13,13 @@
  * per trace, kept across derives so responses can be compared; then the root
  * locus, the swing, the loop gain (offered only for a diagram with feedback),
  * and the nets in time (time-plot.js). Annotate graph puts a graph on the
- * drawing with its legend, and Annotate equations the equations.
+ * drawing with its legend, Annotate equations the equations, and Annotate
+ * coefficients the coefficients' numbers as a table.
  */
 
 import { MUTED_TRACE_COLOR, TRACE_COLORS, ditherSymbols, outputChoices, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } from '../core/analysis/signal-flow.js';
 import { symbolText } from '../core/analysis/present.js';
 import { linkMakesCycle, parseCoefficientLink, parseCoefficientVectors, resolveCoefficients } from '../core/analysis/coefficient-links.js';
-import { expressionTex } from '../core/transfer-function.js';
 import { PER_DECADE, indexE24, stepE24 } from './e-series.js';
 import { locusSpec, responseSpec, stepSpec, swingSpec } from '../core/plot-spec.js';
 import { createPlotView, linkPlots } from './plot-view.js';
@@ -34,7 +34,7 @@ import { normalizePlot, parseLabelRuns } from '../core/model.js';
 import { texToMathML } from '../core/render.js';
 import { GRID, snap } from '../core/grid.js';
 import { chooseFigure, newFigureId, placeFigure, plotKey, settlePlaced } from '../core/figures.js';
-import { annotateMathFigure } from './figure-annotate.js';
+import { annotateMathFigure, writeMathFigure } from './figure-annotate.js';
 import { registerAnnotations, setAnnotationMode } from './annotate-menu.js';
 import { editor } from './editor-state.js';
 import { analysisDialog } from './elements.js';
@@ -418,7 +418,7 @@ function renderLocus() {
   host.append(view.el);
   view.set(locusSpec(locus.plot));
   host.append(el('div', { class: 'signal-flow-graph-actions' }, [
-    el('button', { type: 'button', text: 'Annotate', title: 'Put the locus on the drawing', onclick: () => placePlot(locus.plot, [{ label: locus.plot.label, color: locus.plot.color }], currentSymbols()) }),
+    el('button', { type: 'button', text: 'Annotate', title: 'Put the locus on the drawing', onclick: () => placePlot(locus.plot, [{ label: locus.plot.label, color: locus.plot.color }]) }),
   ]));
 }
 
@@ -483,7 +483,7 @@ function renderLoop() {
     view.set(graphSpec({ ...data.phase, role: 'loop', markers }, detailed('phase', { role: 'loop', markers })));
   }
   body.append(el('div', { class: 'signal-flow-graph-actions' }, [
-    el('button', { type: 'button', text: 'Annotate', title: 'Put the loop gain\'s magnitude, its crossover and margin marked, on the drawing', disabled: !data.magnitude, onclick: () => placePlot(data.annotated, data.shown, currentSymbols()) }),
+    el('button', { type: 'button', text: 'Annotate', title: 'Put the loop gain\'s magnitude, its crossover and margin marked, on the drawing', disabled: !data.magnitude, onclick: () => placePlot(data.annotated, data.shown) }),
   ]));
 }
 
@@ -692,7 +692,7 @@ function renderSwing() {
     };
   }), (key, on) => { if (on) swingShown.add(key); else swingShown.delete(key); renderSwing(); }));
   host.append(el('div', { class: 'signal-flow-graph-actions' }, [
-    el('button', { type: 'button', text: 'Annotate', title: 'Put the plot on the drawing', disabled: !shown.length, onclick: () => placePlot(swingPlotOf(shown), shown, currentSymbols()) }),
+    el('button', { type: 'button', text: 'Annotate', title: 'Put the plot on the drawing', disabled: !shown.length, onclick: () => placePlot(swingPlotOf(shown), shown) }),
   ]));
 }
 
@@ -1144,11 +1144,9 @@ function annotateGraph() {
   const shown = shownTraces();
   const plot = graphPlot(shown);
   if (!plot) return;
-  // The numbers the symbols were drawn with, under the legend.
-  const used = [...new Set(shown.flatMap((trace) => resultSymbols(trace.value, trace.variable)))];
   // A simulated spectrum on it: its SNDR in band under the traces.
   const note = graphView() === 'magnitude' && plot.units === 'dBFS' ? sndrNote() : null;
-  placePlot(plot, note ? [...shown, note] : shown, used);
+  placePlot(plot, note ? [...shown, note] : shown);
 }
 
 const PLOT_LEGEND_ROLE = 'plot-legend';
@@ -1157,25 +1155,26 @@ const PLOT_LEGEND_ROLE = 'plot-legend';
  *  as Annotate graph puts this graph there: `shown` names its traces
  *  ({ label, color }). The small-signal Bode graph's annotation. */
 export function placeResponsePlot(plot, shown, { source = 'signal-flow' } = {}) {
-  placePlot(plot, shown, [], { source });
+  placePlot(plot, shown, { source });
 }
 
 /**
  * A plot on the drawing. Annotating again replaces the data of the plot of
  * that kind already there -- the selected one (or the one whose legend is
  * selected), else the only one -- keeping its place, size, and style: its
- * plot and its legend (the traces named in their colors, the coefficients'
- * numbers under them) are swapped, the legend staying where it was. With
- * none to update, a new plot goes under the drawing at its left edge.
+ * plot and its legend (the traces named in their colors) are swapped, the
+ * legend staying where it was. With none to update, a new plot goes under
+ * the drawing at its left edge. The coefficients' numbers are a table of
+ * their own (annotateCoefficients).
  */
-function placePlot(plot, shown, used, { source = 'signal-flow' } = {}) {
+function placePlot(plot, shown, { source = 'signal-flow' } = {}) {
   const circuit = editor.circuit;
   // The same tool's plot of the same kind (a response graph also of the
   // same quantity): figures.js chooseFigure.
   const identity = { kind: 'plot', source, key: plotKey(plot) };
   const target = chooseFigure(circuit, identity, selectedLabels().map((label) => label.id))?.labels.find((label) => label.plot) || null;
   let written = null;
-  commit(() => { written = writePlot(target, plot, shown, used, { identity }); });
+  commit(() => { written = writePlot(target, plot, shown, { identity }); });
   if (!written?.box) return;
   // Their sizes are estimates until the browser measures them: stack them
   // then, edge to edge (each box is rounded to the grid already).
@@ -1191,34 +1190,11 @@ const legendOf = (box) => [...editor.circuit.labels.values()].filter((label) => 
 
 /**
  * Write a plot into `target` (its data and legend swapped, its place, size,
- * and style kept) or a new box under the drawing; inside a commit. The
- * coefficients' numbers go under the legend unless another plot shows the
- * same already (`values: true/false` decides instead). Returns `{ box, ids,
- * left, top }` for the legend's column.
+ * and style kept) or a new box under the drawing; inside a commit. Returns
+ * `{ box, ids, left, top }` for the legend's column.
  */
-function writePlot(target, plot, shown, used, { values: withValues, identity = null } = {}) {
+function writePlot(target, plot, shown, { identity = null } = {}) {
   const circuit = editor.circuit;
-  const numbers = resolved();
-  const linkTex = (name) => {
-    try { return `${expressionTex(parseCoefficientLink(links()[name]).ast)} = `; } catch { return ''; }
-  };
-  // One order for every plot: the coefficients sorted by name (a_1, a_2, b_1, ...).
-  // The dither's gains too: no transfer function shows them, yet they set
-  // what every simulation draws.
-  const names = [...new Set([...used, ...ditherSymbols(circuit)])].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  // A coefficient written as a fraction (rounded to m/n) shows as one.
-  // A linked one too, once the coefficients are rounded: it follows
-  // fractions, so its number is one (c_1 = b_1 = 7/32), never 0.2188.
-  const rounded = Object.keys(fractions()).length > 0;
-  const numberOf = (name) => {
-    if (fractions()[name] && !Object.hasOwn(links(), name)) return fractions()[name];
-    const number = numbers[name] ?? 1;
-    return (rounded && Object.hasOwn(links(), name) && fractionText(number)) || Number(number.toPrecision(4));
-  };
-  let values = names.map((name) => `${symbolText(name)} = ${Object.hasOwn(links(), name) ? linkTex(name) : ''}${numberOf(name)}`).join('\n');
-  // The same numbers beside another plot already: not twice.
-  if (withValues === false) values = '';
-  else if (withValues === undefined && [...circuit.labels.values()].some((label) => label.parent && label.parent !== target?.id && circuit.labels.get(label.parent)?.plot && label.text === values)) values = '';
   let box = target;
   let left;
   let top;
@@ -1256,8 +1232,44 @@ function writePlot(target, plot, shown, used, { values: withValues, identity = n
     ids.push(label.id);
   };
   for (const trace of shown) add(`$${trace.label}$`, { color: trace.color });
-  if (values) add(values);
   return { box, ids, left, top };
+}
+
+/** Every coefficient a plot or simulation is drawn at, sorted by name
+ *  (a_1, a_2, b_1, ...): the diagram's, its results', and the dither's
+ *  gains (no transfer function shows them, yet they set what every
+ *  simulation draws). */
+const tableSymbols = () => [...new Set([...currentSymbols(), ...ditherSymbols(editor.circuit)])]
+  .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+
+/** The coefficients table's TeX, as the parts and noise tables are: a
+ *  heading row and a rule, then a row per coefficient, its name then its
+ *  number (a linked one's too: the number it follows). */
+function coefficientRows() {
+  const numbers = resolved();
+  // A coefficient written as a fraction (rounded to m/n) shows as one.
+  // A linked one too, once the coefficients are rounded: it follows
+  // fractions, so its number is one (c_1 = b_1 = 7/32), never 0.2188.
+  const rounded = Object.keys(fractions()).length > 0;
+  const numberOf = (name) => {
+    if (fractions()[name] && !Object.hasOwn(links(), name)) return fractions()[name];
+    const number = numbers[name] ?? 1;
+    return (rounded && Object.hasOwn(links(), name) && fractionText(number)) || Number(number.toPrecision(4));
+  };
+  const rows = tableSymbols().map((name) => `${symbolText(name)} & ${numberOf(name)}`);
+  return rows.length ? ['\\text{Coefficient} & \\text{Value}', '\\hline', ...rows] : [];
+}
+
+const COEFFICIENTS = { kind: 'coefficients', source: 'signal-flow', columns: 'lr' };
+
+/** The coefficients' numbers on the drawing as their own table
+ *  (figure-annotate.js), right of the circuit. Annotating again rewrites
+ *  the table there. */
+function annotateCoefficients() {
+  const rows = coefficientRows();
+  if (!rows.length) return;
+  const { updated } = annotateMathFigure({ ...COEFFICIENTS, text: rows.join('\n') });
+  logLine(updated ? 'updated the coefficients table' : 'annotated the coefficients table');
 }
 
 /**
@@ -1285,25 +1297,29 @@ async function updatePlots() {
     else skipped.push(box);
   }
   const written = [];
+  let table = null;
   commit(() => {
-    for (const update of updates) {
-      // A plot keeps its coefficients' numbers if it had them, and only then.
-      // (The numbers are lines of "name = value"; a trace's name never is.)
-      const hadValues = legendOf(update.box).some((label) => /\s=\s/.test(String(label.text)));
-      written.push(writePlot(update.box, update.plot, update.shown, update.used, { values: hadValues }));
-    }
+    // A plot from before the coefficients table had their numbers under
+    // its legend (lines of "name = value"; a trace's name never is one):
+    // they move to the table.
+    const hadValues = updates.some((update) => legendOf(update.box).some((label) => /\s=\s/.test(String(label.text))));
+    for (const update of updates) written.push(writePlot(update.box, update.plot, update.shown));
+    // The coefficients table, at the same numbers.
+    const rows = coefficientRows();
+    if (rows.length) table = writeMathFigure({ ...COEFFICIENTS, text: rows.join('\n'), create: hadValues });
   });
   for (const item of written) alignLabelColumn(item.ids, { left: item.left, top: item.top, gap: 0 });
+  table?.settle();
   render();
   const kinds = (list) => list.map((box) => (box.plot.role === 'loop' ? 'loop' : box.plot.kind === 'response' ? (box.plot.quantity === 'phase' ? 'phase' : 'magnitude') : box.plot.kind));
   logLine(`updated ${updates.length} plot${updates.length === 1 ? '' : 's'}${updates.length ? ` (${kinds(updates.map((u) => u.box)).join(', ')})` : ''}${skipped.length ? `; left ${skipped.length} as ${skipped.length === 1 ? 'it was' : 'they were'} (${kinds(skipped).join(', ')}: its traces are no longer on the graph, or derive or sweep first)` : ''}`, skipped.length && !updates.length ? 'error' : undefined);
 }
 
-/** A plot's new data at the numbers now: `{ plot, shown, used }`, or null. */
+/** A plot's new data at the numbers now: `{ plot, shown }`, or null. */
 function plotUpdate(plot) {
   if (plot.kind === 'response' && plot.role === 'loop') {
     const data = loopData(plot.source || flow().loopAt || loopSignals()[0]?.key);
-    return data?.magnitude ? { plot: data.annotated, shown: data.shown, used: currentSymbols() } : null;
+    return data?.magnitude ? { plot: data.annotated, shown: data.shown } : null;
   }
   if (plot.kind === 'response' || plot.kind === 'step') {
     // Each trace by its name, keeping its color.
@@ -1316,7 +1332,7 @@ function plotUpdate(plot) {
     const view = plot.kind === 'step' ? 'step' : plot.quantity === 'phase' ? 'phase' : 'magnitude';
     const next = graphPlot(matched, view);
     const note = next?.units === 'dBFS' ? sndrNote() : null;
-    return next ? { plot: next, shown: note ? [...matched, note] : matched, used: [...new Set(matched.flatMap((trace) => resultSymbols(trace.value, trace.variable)))] } : null;
+    return next ? { plot: next, shown: note ? [...matched, note] : matched } : null;
   }
   if (plot.kind === 'locus') {
     const entry = latest?.ok ? latest.entries.find((e) => e.label === plot.label) : null;
@@ -1325,7 +1341,7 @@ function plotUpdate(plot) {
     const result = computeLocus(entry, name, plot.from, plot.to);
     if (!result) return null;
     const next = { ...locusPlot(result, { parameter: symbolText(name), label: entry.label, color: plot.color }), source: name };
-    return { plot: next, shown: [{ label: next.label, color: next.color }], used: currentSymbols() };
+    return { plot: next, shown: [{ label: next.label, color: next.color }] };
   }
   if (plot.kind === 'wave') return timePlotUpdate(plot);
   if (plot.kind === 'swing') {
@@ -1336,7 +1352,7 @@ function plotUpdate(plot) {
       return found ? { ...found, color: trace.color } : null;
     });
     if (!matched.length || matched.some((t) => !t)) return null;
-    return { plot: swingPlotOf(matched), shown: matched, used: currentSymbols() };
+    return { plot: swingPlotOf(matched), shown: matched };
   }
   return null;
 }
@@ -1542,6 +1558,7 @@ export function installSignalFlowUi() {
   registerAnnotations('signal-flow', () => [
     { label: 'Equations', identity: { kind: 'equations', source: 'signal-flow' }, available: !!latest?.ok, run: annotate },
     { label: 'Graph', identity: { kind: 'plot', source: 'signal-flow' }, available: !!graphPlot(shownTraces()), run: annotateGraph },
+    { label: 'Coefficients', identity: { kind: 'coefficients', source: 'signal-flow' }, available: tableSymbols().length > 0, run: annotateCoefficients },
     // Not a figure of its own: every plot on the drawing at the numbers now.
     { label: 'Update all plots', identity: null, available: [...editor.circuit.labels.values()].some((label) => label.plot), run: () => updatePlots() },
   ]);
@@ -1576,7 +1593,7 @@ export function installSignalFlowUi() {
     timeSection(),
   ]);
   installPlotsWindow({ mode: 'signal-flow', view: plots, shown: refreshPlots });
-  installTimePlot({ flow, resolved, placePlot: (plot, shown, used) => placePlot(plot, shown, used), symbols: () => currentSymbols(), visible: () => plotsShown() && graphView() === 'time' });
+  installTimePlot({ flow, resolved, placePlot: (plot, shown) => placePlot(plot, shown), visible: () => plotsShown() && graphView() === 'time' });
   // Another document starts clean: its own mode, none of the last one's results.
   onDocumentShown(() => {
     chosenThisSession = false;
