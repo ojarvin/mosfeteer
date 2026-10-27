@@ -24440,7 +24440,8 @@ function segmentBox(a, b, pad = 10) {
 
 /**
  * The index of one circuit: `{ tags, notes?, noteLinks?, items }` (`notes`
- * as one search key, `noteLinks` the designs they link to), each item
+ * as one search key, `noteLinks` the designs they link to; `links`, `beats`,
+ * `timing`, `checkpoints` when it has them), each item
  * `{ kind: 'part'|'net'|'text', id, text, type?, boxes }` in drawing units.
  */
 function designIndex(circuit) {
@@ -24475,10 +24476,12 @@ function designIndex(circuit) {
   // timing diagram (the design's, or drawn: its annotations carry `timing`).
   const beats = circuit.beats.length;
   const timing = circuit.timing ? circuit.timing.rows.length > 0 : [...circuit.labels.values()].some((label) => label.timing);
+  // Its pinned save points (save-history.js), counted.
+  const checkpoints = (circuit.history?.entries || []).filter((entry) => entry.pinned).length;
   // The notes are searched as one text, drawn nowhere (notes.js).
   const notes = circuit.notes ? searchKey(circuit.notes) : '';
   const noteLinks = noteDesignLinks(circuit.notes);
-  return { tags: normalizeTags(circuit.tags), ...(links.length ? { links } : {}), ...(beats ? { beats } : {}), ...(timing ? { timing: true } : {}), ...(notes ? { notes } : {}), ...(noteLinks.length ? { noteLinks } : {}), items };
+  return { tags: normalizeTags(circuit.tags), ...(links.length ? { links } : {}), ...(beats ? { beats } : {}), ...(timing ? { timing: true } : {}), ...(checkpoints ? { checkpoints } : {}), ...(notes ? { notes } : {}), ...(noteLinks.length ? { noteLinks } : {}), items };
 }
 
 /**
@@ -48310,7 +48313,7 @@ function transact(db, mode, run) {
 /** The cache key of one rendering of a document revision. */
 /** The cached design index's version (core/design-index.js): bump it when
  *  the index gains or changes what it holds. */
-const INDEX_CACHE = 'index-v5';
+const INDEX_CACHE = 'index-v6';
 
 function renderingKey(path, revision, part) {
   return `${path}\n${revision}\n${part}`;
@@ -50313,7 +50316,8 @@ async function saveFromDesk() {
 //
 // Every design on the desk in one table, to keep a workspace's names and
 // tags in order: its name, when it was last saved, its tags, and whether it
-// holds beats, a timing diagram, links, or notes. Sorted by name or by date, either
+// holds beats, a timing diagram, links, or notes, and how many checkpoints
+// it has and designs use it. Sorted by name or by date, either
 // way round (the choice kept in this browser). A click picks the design and
 // shows it on the desk; a double-click on its name renames it as the editor
 // does (renameDesign: other designs' links follow).
@@ -50361,6 +50365,14 @@ function syncList() {
     ]);
   };
   const flag = (on, what) => el('td', { class: 'atlas-list-flag', 'aria-label': on ? what : `no ${what}` }, on ? [el('span', { class: 'atlas-list-check', text: '✓' })] : []);
+  const count = (n, title = '') => el('td', { class: 'atlas-list-flag atlas-list-count', ...(title ? { title } : {}), text: n ? String(n) : '' });
+  // The designs whose parts link to each one, by name (as Used in).
+  const usedIn = new Map();
+  for (const entry of state.entries.values()) {
+    for (const name of new Set(entry.index?.links || [])) {
+      if (name !== entry.name) usedIn.set(name, [...(usedIn.get(name) || []), entry.name]);
+    }
+  }
   const rows = listedEntries().map((entry) => {
     const modified = entry.modified ? formatModifiedTime(entry.modified) : '';
     const name = el('span', { class: 'atlas-list-name', title: 'Rename (F2)', text: entry.name });
@@ -50376,6 +50388,8 @@ function syncList() {
       flag(!!entry.index?.timing, 'timing diagram'),
       flag(!!entry.index?.links?.length, 'links'),
       flag(!!entry.index?.notes, 'notes'),
+      count(entry.index?.checkpoints),
+      count(usedIn.get(entry.name)?.length, (usedIn.get(entry.name) || []).sort().join(', ')),
     ]);
     // A click shows the design on the desk, picked; a double-click (off its
     // name and tags) opens it.
@@ -50405,6 +50419,8 @@ function syncList() {
       el('th', { scope: 'col', class: 'atlas-list-flag', text: 'Timing' }),
       el('th', { scope: 'col', class: 'atlas-list-flag', text: 'Links' }),
       el('th', { scope: 'col', class: 'atlas-list-flag', text: 'Notes' }),
+      el('th', { scope: 'col', class: 'atlas-list-flag', text: 'Checkpoints' }),
+      el('th', { scope: 'col', class: 'atlas-list-flag', text: 'Used in' }),
     ])]),
     el('tbody', {}, rows),
   ]);

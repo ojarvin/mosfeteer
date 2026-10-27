@@ -66,3 +66,13 @@ test('a tag field reads words split by spaces or commas', () => {
   assert.equal(tagsText(['ota', 'bias']), 'ota bias');
   assert.deepEqual(parseTags(tagsText(['a', 'b'])), ['a', 'b']);
 });
+
+test('the index counts the design\'s checkpoints, not its other save points', () => {
+  const circuit = new Circuit();
+  runCommand(circuit, 'add resistor R1 --at 0 0');
+  assert.equal(designIndex(circuit).checkpoints, undefined);
+  runCommand(circuit, 'history checkpoint first');
+  assert.equal(designIndex(loadDocument(circuit.toJSON())).checkpoints, 1, 'as saved');
+  circuit.history = { ...circuit.history, entries: [{ id: 'a' }, { id: 'b', pinned: true }, { id: 'c', pinned: true }] };
+  assert.equal(designIndex(circuit).checkpoints, 2);
+});

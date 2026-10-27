@@ -5984,8 +5984,15 @@ html.dark .net-beam-mid { stop-opacity: 0.26; }
   text-transform: uppercase;
 }
 
+/* The checks and counts: narrow columns, as wide as their headings. */
 .atlas-list-table .atlas-list-flag {
+  padding-inline: 6px;
   text-align: center;
+}
+
+.atlas-list-count {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
 }
 
 .atlas-list-table tbody tr {
@@ -6008,16 +6015,26 @@ html.dark .net-beam-mid { stop-opacity: 0.26; }
 .atlas-list-table tbody tr td:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
 .atlas-list-table tbody tr td:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
 
+/* Its highlight a few pixels clear of the text; the text stays in line
+   with the column's. */
 .toolbar .atlas-list-panel .atlas-list-sort {
   height: auto;
-  padding: 0;
+  min-height: 0;
+  margin: -3px -6px;
+  padding: 3px 6px;
   border: 0;
+  border-radius: var(--radius-sm);
   background: none;
   color: inherit;
   font: inherit;
   letter-spacing: inherit;
   text-transform: inherit;
   cursor: pointer;
+}
+
+.toolbar .atlas-list-panel .atlas-list-sort:hover {
+  background: var(--bg-hover);
+  color: var(--text);
 }
 
 .atlas-list-sort:hover,

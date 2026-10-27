@@ -37,7 +37,8 @@ function segmentBox(a, b, pad = 10) {
 
 /**
  * The index of one circuit: `{ tags, notes?, noteLinks?, items }` (`notes`
- * as one search key, `noteLinks` the designs they link to), each item
+ * as one search key, `noteLinks` the designs they link to; `links`, `beats`,
+ * `timing`, `checkpoints` when it has them), each item
  * `{ kind: 'part'|'net'|'text', id, text, type?, boxes }` in drawing units.
  */
 export function designIndex(circuit) {
@@ -72,10 +73,12 @@ export function designIndex(circuit) {
   // timing diagram (the design's, or drawn: its annotations carry `timing`).
   const beats = circuit.beats.length;
   const timing = circuit.timing ? circuit.timing.rows.length > 0 : [...circuit.labels.values()].some((label) => label.timing);
+  // Its pinned save points (save-history.js), counted.
+  const checkpoints = (circuit.history?.entries || []).filter((entry) => entry.pinned).length;
   // The notes are searched as one text, drawn nowhere (notes.js).
   const notes = circuit.notes ? searchKey(circuit.notes) : '';
   const noteLinks = noteDesignLinks(circuit.notes);
-  return { tags: normalizeTags(circuit.tags), ...(links.length ? { links } : {}), ...(beats ? { beats } : {}), ...(timing ? { timing: true } : {}), ...(notes ? { notes } : {}), ...(noteLinks.length ? { noteLinks } : {}), items };
+  return { tags: normalizeTags(circuit.tags), ...(links.length ? { links } : {}), ...(beats ? { beats } : {}), ...(timing ? { timing: true } : {}), ...(checkpoints ? { checkpoints } : {}), ...(notes ? { notes } : {}), ...(noteLinks.length ? { noteLinks } : {}), items };
 }
 
 /**

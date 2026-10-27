@@ -729,10 +729,15 @@ describe('the Atlas listing', { skip: browserSkip() }, () => {
     circuit.addLabel({ text: 'p1', x: 400, y: 0, timing: { phase: 'p1', bits: '0110' } });
     return circuit.toJSON();
   };
+  const noted = () => {
+    const circuit = new Circuit();
+    for (const line of ['add capacitor CA --at 0 0', 'tag add filters', 'notes set "A filter."', 'history checkpoint first']) runCommand(circuit, line);
+    return circuit.toJSON();
+  };
   let h;
   before(async () => {
     // Narrow enough that the List button sits near the right edge.
-    h = await start({ docs: { top: linkedTop(), child: wideAmplifier(), alpha: { ...tagged('CA'), notes: 'A filter.' }, gamma: withBeats(), timed: timed() }, width: 1000, height: 900 });
+    h = await start({ docs: { top: linkedTop(), child: wideAmplifier(), alpha: noted(), gamma: withBeats(), timed: timed() }, width: 1000, height: 900 });
   });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
   const rows = () => h.evaluate(`[...document.querySelectorAll('#atlas-list-panel tbody tr')].map((tr) => [...tr.cells].map((td) => td.querySelector('.atlas-list-name')?.textContent ?? td.textContent))`);
@@ -754,12 +759,14 @@ describe('the Atlas listing', { skip: browserSkip() }, () => {
     assert.equal(swallowed, false, 'the listing scrolls');
     assert.deepEqual(await h.evaluate(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot().view)`), view, 'the desk stays');
     const byName = Object.fromEntries((await rows()).map((row) => [row[0], row]));
-    // name, saved, tags, beats, timing, links, notes
+    // name, saved, tags, beats, timing, links, notes, checkpoints, used in
     assert.equal(byName.alpha[2], '#filters');
-    assert.deepEqual(byName.alpha.slice(3), ['', '', '', '✓']);
-    assert.deepEqual(byName.gamma.slice(3), ['✓', '', '', '']);
-    assert.deepEqual(byName.timed.slice(3), ['', '✓', '', '']);
-    assert.deepEqual(byName.top.slice(3), ['', '', '✓', '']);
+    assert.deepEqual(byName.alpha.slice(3), ['', '', '', '✓', '1', '']);
+    assert.deepEqual(byName.gamma.slice(3), ['✓', '', '', '', '', '']);
+    assert.deepEqual(byName.timed.slice(3), ['', '✓', '', '', '', '']);
+    assert.deepEqual(byName.top.slice(3), ['', '', '✓', '', '', '']);
+    assert.deepEqual(byName.child.slice(3), ['', '', '', '', '', '1']);
+    assert.equal(await h.evaluate(`[...document.querySelectorAll('#atlas-list-panel tbody tr')].find((tr) => tr.querySelector('.atlas-list-name').textContent === 'child').cells[8].title`), 'top');
     assert.ok(byName.top[1], 'when it was saved');
     // Name again: Z to A.
     const sortBy = (key) => h.evaluate(`[...document.querySelectorAll('#atlas-list-panel .atlas-list-sort')].find((b) => b.title === 'Sort by ${key}').click()`);
