@@ -732,7 +732,7 @@ describe('the Atlas listing', { skip: browserSkip() }, () => {
   let h;
   before(async () => {
     // Narrow enough that the List button sits near the right edge.
-    h = await start({ docs: { top: linkedTop(), child: wideAmplifier(), alpha: tagged('CA'), gamma: withBeats(), timed: timed() }, width: 1000, height: 900 });
+    h = await start({ docs: { top: linkedTop(), child: wideAmplifier(), alpha: { ...tagged('CA'), notes: 'A filter.' }, gamma: withBeats(), timed: timed() }, width: 1000, height: 900 });
   });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
   const rows = () => h.evaluate(`[...document.querySelectorAll('#atlas-list-panel tbody tr')].map((tr) => [...tr.cells].map((td) => td.querySelector('.atlas-list-name')?.textContent ?? td.textContent))`);
@@ -754,11 +754,12 @@ describe('the Atlas listing', { skip: browserSkip() }, () => {
     assert.equal(swallowed, false, 'the listing scrolls');
     assert.deepEqual(await h.evaluate(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot().view)`), view, 'the desk stays');
     const byName = Object.fromEntries((await rows()).map((row) => [row[0], row]));
-    // name, saved, tags, beats, timing, links
+    // name, saved, tags, beats, timing, links, notes
     assert.equal(byName.alpha[2], '#filters');
-    assert.deepEqual(byName.gamma.slice(3), ['✓', '', '']);
-    assert.deepEqual(byName.timed.slice(3), ['', '✓', '']);
-    assert.deepEqual(byName.top.slice(3), ['', '', '✓']);
+    assert.deepEqual(byName.alpha.slice(3), ['', '', '', '✓']);
+    assert.deepEqual(byName.gamma.slice(3), ['✓', '', '', '']);
+    assert.deepEqual(byName.timed.slice(3), ['', '✓', '', '']);
+    assert.deepEqual(byName.top.slice(3), ['', '', '✓', '']);
     assert.ok(byName.top[1], 'when it was saved');
     // Name again: Z to A.
     const sortBy = (key) => h.evaluate(`[...document.querySelectorAll('#atlas-list-panel .atlas-list-sort')].find((b) => b.title === 'Sort by ${key}').click()`);

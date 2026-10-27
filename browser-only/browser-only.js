@@ -50313,7 +50313,7 @@ async function saveFromDesk() {
 //
 // Every design on the desk in one table, to keep a workspace's names and
 // tags in order: its name, when it was last saved, its tags, and whether it
-// holds beats, a timing diagram, or links. Sorted by name or by date, either
+// holds beats, a timing diagram, links, or notes. Sorted by name or by date, either
 // way round (the choice kept in this browser). A click picks the design and
 // shows it on the desk; a double-click on its name renames it as the editor
 // does (renameDesign: other designs' links follow).
@@ -50375,6 +50375,7 @@ function syncList() {
       flag(!!entry.index?.beats, 'beats'),
       flag(!!entry.index?.timing, 'timing diagram'),
       flag(!!entry.index?.links?.length, 'links'),
+      flag(!!entry.index?.notes, 'notes'),
     ]);
     // A click shows the design on the desk, picked; a double-click (off its
     // name and tags) opens it.
@@ -50403,6 +50404,7 @@ function syncList() {
       el('th', { scope: 'col', class: 'atlas-list-flag', text: 'Beats' }),
       el('th', { scope: 'col', class: 'atlas-list-flag', text: 'Timing' }),
       el('th', { scope: 'col', class: 'atlas-list-flag', text: 'Links' }),
+      el('th', { scope: 'col', class: 'atlas-list-flag', text: 'Notes' }),
     ])]),
     el('tbody', {}, rows),
   ]);

@@ -146,7 +146,7 @@ tags and deleting, for all of them.
 **List** shows every design on the desk in one table, to keep a
 workspace's names and tags in order: its name (the open one marked), when
 it was last saved, its tags, and a check for each of beats, a timing
-diagram, and links it holds (`designIndex`). **Name** sorts A to Z and
+diagram, links, and notes it holds (`designIndex`). **Name** sorts A to Z and
 **Saved** newest first; clicking the same heading again reverses it (kept
 in this browser). A click on a row picks that design and shows it on the
 desk, a double-click elsewhere on the row opens it. A double-click on its
