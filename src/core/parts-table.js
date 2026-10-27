@@ -73,14 +73,13 @@ function sortValue(circuit, component, key) {
       const number = valueNumber(text);
       return Number.isNaN(number) ? text : number;
     }
-    case 'link': return component.link || null;
     default: return null;
   }
 }
 
 /**
  * Parts sorted by a column of the sizing window (`name`, `w`, `l`, `m`,
- * `label`, `value`, `link`): lengths and values by their numbers (400n
+ * `label`, `value`): lengths and values by their numbers (400n
  * before 2u), values in one unit together (Ω, then F, ...), names as M2
  * before M10. Empty cells go last either way; ties keep the given order.
  */

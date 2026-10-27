@@ -8514,7 +8514,7 @@ body.chrome-away [data-editor-edge="right"] {
 }
 
 .sizing-table thead th:first-child,
-.sizing-table thead th:is(.sizing-label, .sizing-link) { text-align: left; }
+.sizing-table thead th.sizing-label { text-align: left; }
 
 /* A heading sorts by its column; its highlight a few pixels clear of the
    text, which stays in line with the column's. */
@@ -8577,7 +8577,7 @@ th[aria-sort="descending"] .sizing-sort { color: var(--text); }
   cursor: cell;
 }
 
-.sizing-cell:is(.sizing-label, .sizing-link) { text-align: left; }
+.sizing-cell.sizing-label { text-align: left; }
 
 /* Each column as wide as it was made (sizing-window.js applyWidths); the
    empty last one takes the room left. */
@@ -8617,7 +8617,7 @@ th[aria-sort="descending"] .sizing-sort { color: var(--text); }
 .sizing-window.sizing-resizing * { cursor: col-resize !important; }
 
 .sizing-cell { overflow: hidden; text-overflow: ellipsis; }
-.sizing-cell:is(.sizing-label, .sizing-link):not(.sizing-none) { cursor: pointer; }
+.sizing-cell.sizing-label:not(.sizing-none) { cursor: pointer; }
 /* The choice gives way to its menu's mark, cut short rather than wrapped. */
 .sizing-choice {
   display: inline-block;
@@ -8628,10 +8628,7 @@ th[aria-sort="descending"] .sizing-sort { color: var(--text); }
   vertical-align: bottom;
 }
 .sizing-chevron { float: right; color: var(--text-dim); font-size: var(--text-xs); }
-.sizing-cell:is(.sizing-label, .sizing-link):hover .sizing-choice { color: var(--text); }
-/* An empty link shows its menu's mark only under the pointer. */
-.sizing-link .sizing-choice:empty + .sizing-chevron { visibility: hidden; }
-.sizing-link:hover .sizing-chevron { visibility: visible; }
+.sizing-cell.sizing-label:hover .sizing-choice { color: var(--text); }
 .sizing-cell.sizing-none { background: color-mix(in srgb, var(--bg-elevated) 70%, transparent); cursor: default; }
 .sizing-cell.sizing-draft { color: var(--warn); font-style: italic; }
 .sizing-cell.in-range { background: var(--accent-tint); }

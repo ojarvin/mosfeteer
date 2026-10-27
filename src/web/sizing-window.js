@@ -18,9 +18,7 @@
  * drawn from the design on every change, so undo, a script, or the canvas
  * show at once. "Annotate" puts a parts table on the drawing.
  *
- * A double-click on a name renames the part as the canvas does. The Link
- * column names the design a part links to: a click picks one, as the
- * canvas menu does; typed or pasted, the name is taken as it is.
+ * A double-click on a name renames the part as the canvas does.
  *
  * A heading sorts the rows by its column, again the other way, a third
  * time back to the table's order; By type groups them under their type.
@@ -39,7 +37,6 @@ import { editor } from './editor-state.js';
 import { floatingWindow } from './floating-window.js';
 import { logLine } from './status-bar-ui.js';
 import { commit, markSettingsChanged, redo, render, setLabelSelection, setSelection, undo } from './main.js';
-import { openLinkPicker } from './hierarchy.js';
 import { appendContextItem, openMenuAt } from './context-menu.js';
 import { element as el } from './dom.js';
 
@@ -108,17 +105,7 @@ const COLUMNS = [
     check: () => true,
     set: (c, text) => setPartValue(editor.circuit, c.refdes, text),
   },
-  {
-    key: 'link', head: 'Link', title: 'The design it links to', takes: () => true,
-    text: (c) => c.link || '',
-    check: () => true,
-    set: (c, text) => editor.circuit.setLink(c.refdes, text),
-    clear: (c) => c.link && editor.circuit.setLink(c.refdes, null),
-  },
 ];
-
-/** The columns a click opens a menu in, rather than an editor. */
-const MENU_COLUMNS = new Set(['label', 'link']);
 
 function setLabelMode(c, mode) {
   if (!labeled(c)) throw new Error(sized(c) ? 'needs W and L first' : 'needs a value first');
@@ -298,9 +285,9 @@ function buildRows() {
         class: `sizing-cell sizing-${column.key}${takes ? '' : ' sizing-none'}${draft ? ' sizing-draft' : ''}`,
         'data-key': column.key,
         ...(draft ? { title: 'Needs both W and L' } : {}),
-        text: takes && !MENU_COLUMNS.has(column.key) ? column.text(c) : '',
+        text: takes && column.key !== 'label' ? column.text(c) : '',
       });
-      if ((column.key === 'label' && labeled(c)) || column.key === 'link') {
+      if (column.key === 'label' && labeled(c)) {
         td.append(el('span', { class: 'sizing-choice', text: column.text(c) }), el('span', { class: 'sizing-chevron', 'aria-hidden': 'true', text: '▾' }));
       }
       return td;
@@ -331,21 +318,6 @@ function openLabelMenu(cell) {
   }
   menu.append(group);
   menu.querySelector('button:not(:disabled)')?.focus();
-}
-
-/** The design a part links to, picked from the canvas's list under its
- *  cell; picked in a cell of the range, for every part of it. */
-function openLinkMenu(cell) {
-  const part = rows[rowIndex(cell.refdes)];
-  const td = win.body.querySelector(`tr[data-refdes="${CSS.escape(cell.refdes)}"] td[data-key="link"]`);
-  if (!part || !td) return;
-  const box = td.getBoundingClientRect();
-  openLinkPicker(inRange(cell) ? rangeParts() : [part], box.left, box.bottom + 2);
-}
-
-function openCellMenu(cell) {
-  if (cell.key === 'link') openLinkMenu(cell);
-  else openLabelMenu(cell);
 }
 
 /** Mark the range, the focus, and the parts selected on the canvas. */
@@ -636,7 +608,7 @@ function gridKey(ev) {
     return true;
   }
   if (ev.key === 'Enter' || ev.key === 'F2') {
-    if (MENU_COLUMNS.has(focus?.key)) openCellMenu(focus);
+    if (focus?.key === 'label') openLabelMenu(focus);
     else startEditing();
     return true;
   }
@@ -748,8 +720,8 @@ function onMouseDown(ev) {
   if (!cell) return;
   ev.preventDefault();
   if (editing) finishEditing({ keep: true });
-  // A label's or link's cell in the range keeps the range: its menu is for all.
-  if (MENU_COLUMNS.has(cell.key) && !ev.shiftKey && inRange(cell)) {
+  // A size label's cell in the range keeps the range: its menu is for all.
+  if (cell.key === 'label' && !ev.shiftKey && inRange(cell)) {
     win.grid.focus();
     return;
   }
@@ -773,7 +745,7 @@ function onMouseOver(ev) {
 // places are: a way of looking, not part of the design.
 
 const WIDTHS_KEY = 'mosfeteer.sizing.columns';
-const DEFAULT_WIDTHS = { name: 72, w: 56, l: 56, m: 36, label: 144, value: 64, link: 96 };
+const DEFAULT_WIDTHS = { name: 72, w: 56, l: 56, m: 36, label: 144, value: 64 };
 const MIN_WIDTH = 28;
 const MAX_WIDTH = 480;
 
@@ -951,19 +923,19 @@ function build() {
   grid.addEventListener('dblclick', (ev) => {
     const name = ev.target.closest('th.sizing-name');
     if (name) startRename(name.parentElement.dataset.refdes);
-    else if (cellOf(ev.target) && !MENU_COLUMNS.has(cellOf(ev.target).key)) startEditing();
+    else if (cellOf(ev.target) && cellOf(ev.target).key !== 'label') startEditing();
   });
-  // A click on a label's or link's cell opens its menu (a drag ends elsewhere).
+  // A click on a size label's cell opens its menu (a drag ends elsewhere).
   grid.addEventListener('click', (ev) => {
     const cell = cellOf(ev.target);
-    if (MENU_COLUMNS.has(cell?.key) && !ev.shiftKey) openCellMenu(cell);
+    if (cell?.key === 'label' && !ev.shiftKey) openLabelMenu(cell);
   });
   grid.addEventListener('contextmenu', (ev) => {
     const cell = cellOf(ev.target);
-    if (!MENU_COLUMNS.has(cell?.key)) return;
+    if (cell?.key !== 'label') return;
     ev.preventDefault();
     if (!inRange(cell)) pick(cell);
-    openCellMenu(cell);
+    openLabelMenu(cell);
   });
   window.addEventListener('mouseup', () => { dragging = false; });
   canvasEl.closest('.canvas-pane').append(node);

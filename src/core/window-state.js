@@ -17,7 +17,7 @@ export const CALCULATOR_HISTORY = 50;
 export const MAX_WINDOW_PICTURE = 4_000_000;
 
 /** The sizing window's columns its rows sort by. */
-export const SIZING_SORT_KEYS = ['name', 'w', 'l', 'm', 'label', 'value', 'link'];
+export const SIZING_SORT_KEYS = ['name', 'w', 'l', 'm', 'label', 'value'];
 
 const text = (value, max = 200) => (typeof value === 'string' ? value.slice(0, max) : '');
 const object = (value) => (value && typeof value === 'object' && !Array.isArray(value) ? value : null);

@@ -154,10 +154,7 @@ from the design on every change. Annotate adds a
 parts table to the drawing ([`model.md`](model.md)).
 
 A double-click on a name renames the part as the canvas does (one undo
-step; a name in use keeps the field open with the reason). The Link column
-is the design a part links to: a click opens the canvas's design picker
-for the cell's row, or every row of the range when the range holds it;
-typed or pasted, the name is taken as it is, and Delete unlinks. A heading
+step; a name in use keeps the field open with the reason). A heading
 sorts the rows by its column -- lengths and values by their numbers,
 values one unit at a time, empty cells last -- a second click the other
 way, a third back to the table's order; **By type** groups the rows under

@@ -176,8 +176,6 @@ test('the sizing window sorts by a column\'s numbers, empty cells last either wa
   // F before Ω; within each, by number, a text after the numbers.
   assert.deepEqual(sorted('value').slice(0, 4), ['C2', 'C1', 'R1', 'R2']);
   assert.deepEqual(sorted('value', true).slice(0, 4), ['C1', 'C2', 'R2', 'R1']);
-  circuit.components.get('R1').link = 'bias';
-  assert.deepEqual(sorted('link')[0], 'R1');
   assert.equal(partLabelMode(circuit.components.get('M1')), 'below');
   assert.equal(partLabelMode(circuit.components.get('M3')), null);
 });

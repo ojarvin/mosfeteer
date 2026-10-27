@@ -2,7 +2,8 @@
  *  half a size kept until the other half comes, pasting one value or a
  *  spreadsheet column, one undo step per edit, a parts table put on the
  *  drawing that follows the sizes, rows sorted and grouped, names renamed,
- *  links picked; and a part's menu copying its size or value onto others. */
+ *  columns resized; and a part's menu copying its size or value onto
+ *  others. */
 
 import { describe, before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,7 +22,7 @@ function parts() {
 
 describe('sizing window', { skip: browserSkip() }, () => {
   let h;
-  before(async () => { h = await start({ docs: { sizes: parts(), ota: new Circuit().toJSON() } }); });
+  before(async () => { h = await start({ docs: { sizes: parts() } }); });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
   const editor = (expression) => h.evaluate(`${h.module('editor-state.js')}.then((m) => { const editor = m.editor; return ${expression}; })`);
@@ -273,22 +274,6 @@ describe('sizing window', { skip: browserSkip() }, () => {
     await h.evaluate(`document.querySelector('.sizing-rename').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))`);
     await h.until(`!document.querySelector('.sizing-rename')`);
     assert.equal(await editor(`editor.circuit.components.has('M1')`), true);
-  });
-
-  test('a Link cell picks a design from the workspace; typed or pasted, the name is taken; Delete unlinks', async () => {
-    await pickCell('M1', 'link');
-    await h.until(`!document.getElementById('component-context-menu').hidden`);
-    await h.evaluate(`[...document.querySelectorAll('#component-context-menu button')].find((b) => b.textContent.trim() === 'ota').click()`);
-    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.get('M1').link === 'ota')`);
-    await h.until(`document.querySelector(${JSON.stringify(cell('M1', 'link'))}).textContent.startsWith('ota')`);
-    await closeMenu();
-    await pickCell('M2', 'link');
-    await closeMenu();
-    await h.evaluate(`document.querySelector('.sizing-grid').focus()`);
-    await paste('bias');
-    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.get('M2').link === 'bias')`);
-    await gridKey('Delete');
-    await h.until(`${h.module('editor-state.js')}.then((m) => !m.editor.circuit.components.get('M2').link)`);
   });
 
   test('a part\'s menu copies its size onto every selected transistor, and a value onto parts in the same unit', async () => {
