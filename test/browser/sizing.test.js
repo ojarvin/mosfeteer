@@ -345,6 +345,21 @@ describe('sizing window', { skip: browserSkip() }, () => {
       await h.mouse('mouseReleased', edge.x, edge.y, { clickCount });
     }
     await h.until(`(() => { const th = document.querySelector('.sizing-table tr[data-refdes="M_long_name_here"] th.sizing-name'); return th.scrollWidth <= th.clientWidth; })()`);
+    // Far too wide, it comes back in to what its cells need.
+    const fitted = (await widths())[0];
+    const m = await handle('m');
+    await h.mouse('mousePressed', m.x, m.y);
+    await h.mouse('mouseMoved', m.x + 150, m.y);
+    await h.mouse('mouseReleased', m.x + 150, m.y);
+    await h.until(`Math.round(document.querySelector('.sizing-table thead th[data-key="m"]').getBoundingClientRect().width) > 150`);
+    await h.settle();
+    const wide = await handle('m');
+    for (const clickCount of [1, 2]) {
+      await h.mouse('mousePressed', wide.x, wide.y, { clickCount });
+      await h.mouse('mouseReleased', wide.x, wide.y, { clickCount });
+    }
+    await h.until(`Math.round(document.querySelector('.sizing-table thead th[data-key="m"]').getBoundingClientRect().width) < 60`);
+    assert.equal((await widths())[0], fitted, 'the name column as it was');
     await h.evaluate(`localStorage.removeItem('mosfeteer.sizing.columns')`);
   });
 });

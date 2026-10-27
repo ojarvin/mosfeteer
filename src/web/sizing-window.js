@@ -803,7 +803,17 @@ function applyWidths() {
   win.table.style.width = `${Object.values(widths).reduce((sum, px) => sum + px, 0)}px`;
 }
 
-/** The width a column's widest heading or cell needs. */
+/** How wide a cell's contents are, whatever the cell's own width: a
+ *  cell's scrollWidth is never less than the cell, so it cannot tell a
+ *  column that is too wide. */
+function contentWidth(node) {
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  return range.getBoundingClientRect().width;
+}
+
+/** The width a column's widest heading or cell needs, wider or narrower
+ *  than it is now. */
 function fittedWidth(key) {
   const index = key === 'name' ? 0 : columnIndex(key) + 1;
   let need = 0;
@@ -815,8 +825,8 @@ function fittedWidth(key) {
     const sort = cell.querySelector('.sizing-sort');
     const choice = cell.querySelector('.sizing-choice');
     // A heading's button and a menu cell's choice are cut short inside it:
-    // their own width is what they need.
-    const content = sort ? sort.scrollWidth + 8 : choice ? choice.scrollWidth + 14 : cell.scrollWidth - pad;
+    // their whole contents are what they need, and the choice its mark.
+    const content = sort ? contentWidth(sort) + 18 : choice ? contentWidth(choice) + 14 : contentWidth(cell);
     need = Math.max(need, content + pad);
   }
   return clampWidth(Math.ceil(need) + 2);
