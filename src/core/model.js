@@ -20,7 +20,7 @@ import { TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainD
 import { normalizePartsTable, partsTableLayout } from './parts-table.js';
 import { normalizeFigure } from './figures.js';
 import { PART_VALUE_ROLE, VALUE_LABEL_MODES, VALUE_TYPES, valueLabelTex } from './part-value.js';
-import { MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript } from './mos-size.js';
+import { MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize } from './mos-size.js';
 
 /** Canonical physical net-name form. Names are case-sensitive; only outer
  * whitespace is non-semantic, and the spaces around a list's commas
@@ -3197,7 +3197,7 @@ export class Circuit {
   }
 
   /** Keep a transistor's size label an idempotent projection of its size:
-   * one label, its TeX derived from the size and the part's name. */
+   * one label, its TeX derived from the size. */
   _syncSizeLabel(component) {
     if (!component) return null;
     let label = null;
@@ -3207,7 +3207,7 @@ export class Circuit {
       else label = candidate;
     }
     if (!component.size || component.size.hidden) return null;
-    const text = mosSizeTex(component.size, sizeSubscript(this.labelOf(component.refdes)?._text, component.refdes));
+    const text = mosSizeTex(component.size);
     if (!label) {
       label = this.addLabel({
         text,

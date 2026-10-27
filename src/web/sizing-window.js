@@ -822,6 +822,13 @@ function fittedWidth(key) {
   return clampWidth(Math.ceil(need) + 2);
 }
 
+/** Two presses on one edge this close in time and place fit its column:
+ *  read from the presses themselves, since a first press that starts a drag
+ *  (and captures the pointer) keeps some browsers from a dblclick. */
+const DOUBLE_PRESS_MS = 450;
+const DOUBLE_PRESS_PX = 6;
+let lastPress = null; // { key, time, x }
+
 /** A heading's right edge: drag to resize, double-click to fit. */
 function resizeHandle(key) {
   const handle = el('span', { class: 'sizing-resize', 'aria-hidden': 'true' });
@@ -829,6 +836,20 @@ function resizeHandle(key) {
     if (ev.button !== 0) return;
     ev.preventDefault();
     ev.stopPropagation();
+    const time = performance.now();
+    if (lastPress?.key === key && time - lastPress.time < DOUBLE_PRESS_MS && Math.abs(ev.clientX - lastPress.x) < DOUBLE_PRESS_PX) {
+      lastPress = null;
+      widths[key] = fittedWidth(key);
+      applyWidths();
+      saveWidths();
+      // The edge has moved: the click this press ends in lands on a heading,
+      // which must not sort.
+      const swallow = (e) => { e.stopPropagation(); e.preventDefault(); };
+      window.addEventListener('click', swallow, { capture: true, once: true });
+      setTimeout(() => window.removeEventListener('click', swallow, { capture: true }), DOUBLE_PRESS_MS);
+      return;
+    }
+    lastPress = { key, time, x: ev.clientX };
     handle.setPointerCapture(ev.pointerId);
     const start = { x: ev.clientX, width: widths[key] };
     win.el.classList.add('sizing-resizing');
@@ -848,12 +869,7 @@ function resizeHandle(key) {
     handle.addEventListener('pointercancel', up);
   });
   handle.addEventListener('click', (ev) => ev.stopPropagation());
-  handle.addEventListener('dblclick', (ev) => {
-    ev.stopPropagation();
-    widths[key] = fittedWidth(key);
-    applyWidths();
-    saveWidths();
-  });
+  handle.addEventListener('dblclick', (ev) => ev.stopPropagation());
   return handle;
 }
 

@@ -111,8 +111,9 @@ alias for an unnamed ground marker.
 
 A MOS part may carry a size (`ComponentInstance#size`, `src/core/mos-size.js`:
 W, L, multiplier, authored as `2u/400n x4`); its owned `mos-size` role label
-is a projection of it, TeX with the part's name as W and L's subscript, and
-deleting the label clears the size. With `replacesName` the size label stands
+is a projection of it, TeX of the size alone (the multiplier before W in
+the numerator: `4 · 2 μm` over `400 nm`), and deleting the label clears
+the size. With `replacesName` the size label stands
 in for the name label, which stays the identity but is neither drawn nor
 picked (`sizeReplacedNameLabels`, alongside joined supply bars' hidden labels).
 With `hidden` the size draws no label at all (the name label shows), for a

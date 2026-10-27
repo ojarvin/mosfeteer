@@ -339,7 +339,11 @@ describe('sizing window', { skip: browserSkip() }, () => {
     await h.until(`!!document.querySelector('.sizing-table tr[data-refdes="M_long_name_here"]')`);
     const clipped = () => h.evaluate(`(() => { const th = document.querySelector('.sizing-table tr[data-refdes="M_long_name_here"] th.sizing-name'); return th.scrollWidth > th.clientWidth; })()`);
     assert.equal(await clipped(), true);
-    await h.evaluate(`document.querySelector('.sizing-table thead th[data-key="name"] .sizing-resize').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+    const edge = await handle('name');
+    for (const clickCount of [1, 2]) {
+      await h.mouse('mousePressed', edge.x, edge.y, { clickCount });
+      await h.mouse('mouseReleased', edge.x, edge.y, { clickCount });
+    }
     await h.until(`(() => { const th = document.querySelector('.sizing-table tr[data-refdes="M_long_name_here"] th.sizing-name'); return th.scrollWidth <= th.clientWidth; })()`);
     await h.evaluate(`localStorage.removeItem('mosfeteer.sizing.columns')`);
   });

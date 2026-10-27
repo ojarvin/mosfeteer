@@ -1,11 +1,11 @@
 /**
  * Transistor sizing: a MOS part's optional W/L and multiplier, drawn as an
- * owned math label, W_{1}/L_{1} = 4 · 2 μm / 400 nm. The size is authored
- * compactly (`2u/400n x4`) and kept on the part (`ComponentInstance#size`);
- * the label is a projection of it (`Circuit#_syncSizeLabel`). Its W and L
- * take the part's name as their subscript, so the label can stand in for the
- * name label (`replacesName`), which is then hidden. A size may also draw
- * no label (`hidden`), when a parts table (parts-table.js) shows it instead.
+ * owned math label, the size alone: (4 · 2 μm) / 400 nm. The size is
+ * authored compactly (`2u/400n x4`) and kept on the part
+ * (`ComponentInstance#size`); the label is a projection of it
+ * (`Circuit#_syncSizeLabel`). It stands below the name label, or in its
+ * place (`replacesName`), the name then hidden. A size may also draw no
+ * label (`hidden`), when a parts table (parts-table.js) shows it instead.
  */
 
 export const MOS_SIZE_ROLE = 'mos-size';
@@ -93,21 +93,11 @@ function lengthTex(length) {
   return `\\mathrm{${number}\\,${PREFIX_TEX[prefix]}m}`;
 }
 
-/** The subscript W and L take from a part's name: `1` for M1 or M_{1},
- * `in` for M_{in}; a name without the M prefix whole. */
-export function sizeSubscript(nameText, refdes) {
-  const text = String(nameText || refdes || '').trim();
-  const script = text.match(/^[A-Za-z]+_\{([^{}]+)\}$/) || text.match(/^[A-Za-z]+_([A-Za-z0-9])$/);
-  if (script) return script[1];
-  const plain = String(refdes || text).match(/^M(\w+)$/);
-  return plain ? plain[1] : String(refdes || text);
-}
-
-/** The label's TeX: W/L, then the multiplier when it is not 1, then the size. */
-export function mosSizeTex(size, subscript) {
-  const sub = subscript ? `_{${subscript}}` : '';
+/** The label's TeX: the size alone, W over L, the multiplier (when not 1)
+ *  in the numerator before W. */
+export function mosSizeTex(size) {
   const multiplier = size.m > 1 ? `${size.m}\\cdot` : '';
-  return `$\\frac{W${sub}}{L${sub}} = ${multiplier}\\frac{${lengthTex(size.w)}}{${lengthTex(size.l)}}$`;
+  return `$\\frac{${multiplier}${lengthTex(size.w)}}{${lengthTex(size.l)}}$`;
 }
 
 /** Name labels a size label stands in for, so nothing draws or picks them. */

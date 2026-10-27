@@ -8591,7 +8591,7 @@ th[aria-sort="descending"] .sizing-sort { color: var(--text); }
   top: 0;
   right: 0;
   z-index: 2;
-  width: 7px;
+  width: 9px;
   height: 100%;
   cursor: col-resize;
   touch-action: none;

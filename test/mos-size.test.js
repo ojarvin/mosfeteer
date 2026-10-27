@@ -4,7 +4,7 @@ import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
 import { svgString } from '../src/core/render.js';
 import { swapComponentType } from '../src/core/swap.js';
-import { MOS_SIZE_ROLE, formatMosSize, mosSizeTex, parseMosSize, sizeReplacedNameLabels, sizeSubscript } from '../src/core/mos-size.js';
+import { MOS_SIZE_ROLE, formatMosSize, mosSizeTex, parseMosSize, sizeReplacedNameLabels } from '../src/core/mos-size.js';
 
 const run = (circuit, line) => runCommand(circuit, line);
 
@@ -21,12 +21,9 @@ test('parseMosSize reads W/L with prefixes, units, and a multiplier', () => {
   }
 });
 
-test('the size label is TeX: W and L take the name, the multiplier shows only past 1', () => {
-  assert.equal(sizeSubscript('M_{1}', 'M1'), '1');
-  assert.equal(sizeSubscript('M_{in}', 'Min'), 'in');
-  assert.equal(sizeSubscript('M3', 'M3'), '3');
-  assert.equal(mosSizeTex({ w: '2u', l: '400n', m: 1 }, '1'), '$\\frac{W_{1}}{L_{1}} = \\frac{\\mathrm{2\\,μm}}{\\mathrm{400\\,nm}}$');
-  assert.equal(mosSizeTex({ w: '2u', l: '400n', m: 4 }, '1'), '$\\frac{W_{1}}{L_{1}} = 4\\cdot\\frac{\\mathrm{2\\,μm}}{\\mathrm{400\\,nm}}$');
+test('the size label is TeX: the size alone, the multiplier before W only past 1', () => {
+  assert.equal(mosSizeTex({ w: '2u', l: '400n', m: 1 }), '$\\frac{\\mathrm{2\\,μm}}{\\mathrm{400\\,nm}}$');
+  assert.equal(mosSizeTex({ w: '2u', l: '400n', m: 4 }), '$\\frac{4\\cdot\\mathrm{2\\,μm}}{\\mathrm{400\\,nm}}$');
   assert.equal(formatMosSize({ w: '2u', l: '400n', m: 4 }), '2u/400n x4');
   assert.equal(formatMosSize({ w: '2u', l: '400n', m: 1 }), '2u/400n');
 });
@@ -40,7 +37,7 @@ test('size command adds, places, prints, and removes a transistor size label', (
   const label = circuit.sizeLabelOf('M1');
   assert.equal(label.role, MOS_SIZE_ROLE);
   assert.equal(label.math, true);
-  assert.match(label.text, /W_\{1\}/);
+  assert.equal(label.text, '$\\frac{4\\cdot\\mathrm{2\\,μm}}{\\mathrm{400\\,nm}}$');
   // Under the name label, growing away from the part like the name does.
   assert.deepEqual(label.offset, { x: 40, y: 120 });
   assert.equal(label.textAlign(), 'left');
@@ -81,7 +78,7 @@ test('a size survives save and load, follows renames, and goes with its label', 
   run(circuit, 'size M1 2u/400n');
   circuit.sizeLabelOf('M1').offset = { x: 80, y: -160 };
   run(circuit, 'rename M1 M_{in}');
-  assert.match(circuit.sizeLabelOf('Min').text, /W_\{in\}/);
+  assert.equal(circuit.sizeLabelOf('Min').text, '$\\frac{\\mathrm{2\\,μm}}{\\mathrm{400\\,nm}}$', 'the renamed part\'s, the size alone');
 
   const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
   const label = loaded.sizeLabelOf('Min');
