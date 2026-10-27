@@ -3750,17 +3750,7 @@ function doWireClick(x, y, terminalHit) {
     }
   } else if (wire.source) {
     // A free wire end finishes the draft like a terminal: the wire joins it.
-    const end = circuit.openWireEnds().find((e) => e.point.x === x && e.point.y === y);
-    if (end && !(wire.source.x === x && wire.source.y === y)) {
-      const net = circuit.nets.get(end.netId);
-      const path = net.paths()[end.pathIndex];
-      cursor = { x, y };
-      joinWireToNet({ net, branch: end.pathIndex }, {
-        netId: end.netId,
-        pathIndex: end.pathIndex,
-        segmentIndex: end.endpointIndex === 0 ? 1 : path.length - 1,
-        point: { x, y },
-      });
+    if (joinOpenWireEnd({ x, y })) {
       render();
       return;
     }
@@ -3789,6 +3779,28 @@ function doWireClick(x, y, terminalHit) {
     if (wire?.source) noteWireToolStart();
   }
   render();
+}
+
+/** Finish the draft on the free wire end at `point` (not the draft's own
+ *  start), joining its wire there. Returns whether there was one. */
+function joinOpenWireEnd(point) {
+  const end = circuit.openWireEnds().find((e) => e.point.x === point.x && e.point.y === point.y);
+  if (!end || (wire.source.x === point.x && wire.source.y === point.y)) return false;
+  const net = circuit.nets.get(end.netId);
+  const path = net.paths()[end.pathIndex];
+  cursor = { ...point };
+  joinWireToNet({ net, branch: end.pathIndex }, {
+    netId: end.netId,
+    pathIndex: end.pathIndex,
+    segmentIndex: end.endpointIndex === 0 ? 1 : path.length - 1,
+    point: { ...point },
+  });
+  return true;
+}
+
+/** The free end of `net`'s wire within half a cell of `w`, or null. */
+function openWireEndNear(net, w) {
+  return circuit.openWireEnds().find((end) => end.netId === net.id && Math.hypot(end.point.x - w.x, end.point.y - w.y) <= GRID / 2) || null;
 }
 
 /** Whether a wire hit is on a diagonal segment. Only diagonal wire is met at
@@ -4156,7 +4168,8 @@ function pinWireCursor(w) {
   return snappedWorld(w);
 }
 
-/** Ctrl/Cmd-drag from inside a wire: a new branch grows from the grab point. */
+/** Ctrl/Cmd-drag from inside a wire: a new branch grows from the grab point.
+ *  A drag from a free wire end grows the wire from that end. */
 function beginBranchWire(segDrag, w) {
   cancelPreviewTransaction();
   setSelection([]);
@@ -4165,17 +4178,18 @@ function beginBranchWire(segDrag, w) {
   selectedWires.clear();
   wire = newWireDraft();
   gestureWire = true;
-  startWireAt(segDrag.startWorld);
+  startWireAt(segDrag.endGrab?.point || segDrag.startWorld);
   if (!wire.source) {
     endGestureWire();
     drag = null;
     render();
     return;
   }
-  drag = { mode: 'pinwire', startWorld: segDrag.startWorld, startClient: segDrag.startClient };
+  const fromEnd = !!segDrag.endGrab;
+  drag = { mode: 'pinwire', startWorld: segDrag.startWorld, startClient: segDrag.startClient, fromEnd };
   noteTip('pin-drag');
   cursor = pinWireCursor(w);
-  hintLine('WIRE: branch · drop on a pin or wire, or in space to add a part');
+  hintLine(fromEnd ? 'WIRE: from its free end · drop on a pin, a wire, or a free end to join it, or in space to end there' : 'WIRE: branch · drop on a pin or wire, or in space to add a part');
   render();
 }
 
@@ -4238,7 +4252,7 @@ export function endGestureWire() {
   terminalSnap = false;
 }
 
-function finishPinWire(w, ev) {
+function finishPinWire(w, ev, { fromEnd = false } = {}) {
   if (!wire?.source) {
     endGestureWire();
     render();
@@ -4249,6 +4263,11 @@ function finishPinWire(w, ev) {
   if (target && !(target.refdes === source.refdes && target.term === source.term)) {
     cursor = { x: target.x, y: target.y };
     try { connectWireToTerminal(target); } catch (err) { logLine(String(err.message || err)); }
+    endGestureWire();
+    render();
+    return;
+  }
+  if (joinOpenWireEnd(snappedWorld(w))) {
     endGestureWire();
     render();
     return;
@@ -4264,6 +4283,13 @@ function finishPinWire(w, ev) {
   const origin = wireOrigin(source);
   cursor = snappedWorld(w);
   if (origin && origin.x === cursor.x && origin.y === cursor.y) {
+    endGestureWire();
+    render();
+    return;
+  }
+  // A free end dragged into space: the wire ends there.
+  if (fromEnd) {
+    commitWireAtCursor();
     endGestureWire();
     render();
     return;
@@ -4885,6 +4911,8 @@ function canvasMouseDown(ev) {
         doubleWireClick,
         // Ctrl/Cmd-drag grows a new branch from this point instead of moving the run.
         branchGrab: (ev.ctrlKey || ev.metaKey) && !ev.shiftKey,
+        // A drag from a free end grows the wire from that end, any way.
+        endGrab: isSelectionModifier(ev) ? null : openWireEndNear(net, startWorld),
       },
     });
     return;
@@ -5397,7 +5425,7 @@ export function canvasMouseMove(ev) {
     scheduleInteractionRender();
     return;
   }
-  if (drag.mode === 'wireseg' && drag.branchGrab && !drag.moved && movedOut) {
+  if (drag.mode === 'wireseg' && (drag.branchGrab || drag.endGrab) && !drag.moved && movedOut) {
     beginBranchWire(drag, w);
     return;
   }
@@ -5887,8 +5915,9 @@ function finishCanvasMouseUp(ev) {
     return;
   }
   if (drag.mode === 'pinwire') {
+    const { fromEnd } = drag;
     drag = null;
-    finishPinWire(releaseWorld, ev);
+    finishPinWire(releaseWorld, ev, { fromEnd });
     return;
   }
   if (drag.mode === 'bubblemove') {

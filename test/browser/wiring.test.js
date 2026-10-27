@@ -136,4 +136,37 @@ describe('wiring', { skip: browserSkip() }, () => {
     assert.doesNotMatch(rename, /dbl/i);
     await h.key('Escape');
   });
+
+  test('in select mode a free wire end drags out more wire: on along its line, then onto a pin to close the gap', async () => {
+    const dragFromTo = async ([x0, y0], [x1, y1]) => {
+      const a = await at(x0, y0);
+      const b = await at(x1, y1);
+      await h.mouse('mouseMoved', a.x, a.y, { button: 'none', buttons: 0 });
+      await h.mouse('mousePressed', a.x, a.y);
+      for (let i = 1; i <= 6; i++) await h.mouse('mouseMoved', a.x + ((b.x - a.x) * i) / 6, a.y + ((b.y - a.y) * i) / 6, { button: 'left', buttons: 1 });
+      await h.mouse('mouseReleased', b.x, b.y);
+      await h.settle();
+    };
+    const junctions = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.nets.values()].flatMap((n) => n.junctions))`);
+    // A stub from R2.b, ended in space with Enter.
+    await h.key('w');
+    await clickAt(880, 400);
+    await move(1200, 400);
+    await h.key('Enter');
+    await h.key('Escape');
+    await h.key('Escape');
+    // On along its own line: the wire is longer, still one straight run.
+    await dragFromTo([1200, 400], [1440, 400]);
+    let net = await netOf('R2.b');
+    assert.deepEqual(net.paths, [[{ x: 880, y: 400 }, { x: 1440, y: 400 }]], JSON.stringify(net.paths));
+    assert.deepEqual(await junctions(), []);
+    // Onto R1.b: the gap closed, the two pins one net.
+    await dragFromTo([1440, 400], [80, 0]);
+    net = await netOf('R2.b');
+    assert.deepEqual(net.terminals, ['R1.b', 'R2.b'], JSON.stringify(net));
+    // One undo step each.
+    await h.key('u');
+    await h.settle();
+    assert.deepEqual((await netOf('R2.b')).terminals, ['R2.b']);
+  });
 });
