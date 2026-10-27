@@ -319,4 +319,28 @@ describe('sizing window', { skip: browserSkip() }, () => {
     await choose('Value', 'Paste value');
     await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.get('R2').value === '47k')`);
   });
+  test('a heading\'s edge dragged resizes its column alone, kept in this browser; a double-click fits it to its cells', async () => {
+    if (!await shown()) await h.key('Z', { shiftKey: true });
+    await h.until(`!!document.querySelector('.sizing-window:not([hidden])')`);
+    const widths = () => h.evaluate(`[...document.querySelectorAll('.sizing-table thead th[data-key]')].map((th) => Math.round(th.getBoundingClientRect().width))`);
+    const handle = (key) => h.evaluate(`(() => { const r = document.querySelector('.sizing-table thead th[data-key="${key}"] .sizing-resize').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+    const before = await widths();
+    const at = await handle('w');
+    await h.mouse('mousePressed', at.x, at.y);
+    await h.mouse('mouseMoved', at.x + 20, at.y);
+    await h.mouse('mouseMoved', at.x + 40, at.y);
+    await h.mouse('mouseReleased', at.x + 40, at.y);
+    await h.until(`Math.round(document.querySelector('.sizing-table thead th[data-key="w"]').getBoundingClientRect().width) === ${before[1] + 40}`);
+    const after = await widths();
+    assert.deepEqual(after.filter((_, i) => i !== 1), before.filter((_, i) => i !== 1), 'the other columns as they were');
+    assert.equal(JSON.parse(await h.evaluate(`localStorage.getItem('mosfeteer.sizing.columns')`)).w, before[1] + 40);
+    // Made too narrow for its name, a double-click on its edge fits it.
+    await h.evaluate(`window.__run('rename M1 M_long_name_here')`);
+    await h.until(`!!document.querySelector('.sizing-table tr[data-refdes="M_long_name_here"]')`);
+    const clipped = () => h.evaluate(`(() => { const th = document.querySelector('.sizing-table tr[data-refdes="M_long_name_here"] th.sizing-name'); return th.scrollWidth > th.clientWidth; })()`);
+    assert.equal(await clipped(), true);
+    await h.evaluate(`document.querySelector('.sizing-table thead th[data-key="name"] .sizing-resize').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+    await h.until(`(() => { const th = document.querySelector('.sizing-table tr[data-refdes="M_long_name_here"] th.sizing-name'); return th.scrollWidth <= th.clientWidth; })()`);
+    await h.evaluate(`localStorage.removeItem('mosfeteer.sizing.columns')`);
+  });
 });

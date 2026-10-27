@@ -164,7 +164,11 @@ way, a third back to the table's order; **By type** groups the rows under
 their part type (`sortPartRows`, `groupPartRows`). Both are saved with the
 design (`Circuit#windows.sizing`). The order is taken when it is chosen and
 kept while cells are edited; parts added, removed, renamed, or filtered
-take it again.
+take it again. Each column is as wide as it was made: dragging a heading's
+right edge resizes that column alone, a double-click there fits it to its
+widest cell, the room left goes to an empty last column, and columns wider
+than the window scroll sideways. The widths are kept in this browser, as
+the windows' places are.
 
 A transistor's canvas menu, Sizing, has **Copy size** and **Paste size**:
 the size goes on the clipboard as text too, and pastes onto every selected

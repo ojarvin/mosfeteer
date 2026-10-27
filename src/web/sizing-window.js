@@ -258,7 +258,7 @@ function toggleGroup() {
 /** The headings' arrows and the By type toggle, as the order is. */
 function paintHeadings() {
   const { sort, group } = ordering();
-  for (const th of win.head.cells) {
+  for (const th of win.head.querySelectorAll('th[data-key]')) {
     const active = sort?.key === th.dataset.key;
     th.setAttribute('aria-sort', active ? (sort.reverse ? 'descending' : 'ascending') : 'none');
     th.querySelector('.sizing-arrow').textContent = active ? (sort.reverse ? '▼' : '▲') : '';
@@ -287,7 +287,7 @@ function buildRows() {
   }
   const body = win.body;
   const groupRow = (c) => (groupStarts.has(c.refdes)
-    ? [el('tr', { class: 'sizing-group' }, [el('th', { scope: 'rowgroup', colspan: String(COLUMNS.length + 1), text: groupStarts.get(c.refdes) })])]
+    ? [el('tr', { class: 'sizing-group' }, [el('th', { scope: 'rowgroup', colspan: String(COLUMNS.length + 2), text: groupStarts.get(c.refdes) })])]
     : []);
   body.replaceChildren(...rows.flatMap((c) => [...groupRow(c), el('tr', { 'data-refdes': c.refdes }, [
     el('th', { scope: 'row', class: 'sizing-name', title: `${c.refdes} (${c.type})` }, nameNode(c)),
@@ -305,6 +305,7 @@ function buildRows() {
       }
       return td;
     }),
+    el('td', { class: 'sizing-fill' }),
   ])]));
   win.empty.hidden = rows.length > 0;
   win.empty.textContent = win.filter.value.trim() ? 'No part matches the filter.' : 'No transistors, passives, or sources.';
@@ -353,7 +354,7 @@ function paintSelection() {
   const onCanvas = editor.multi?.size ? editor.multi : new Set(editor.selected ? [editor.selected] : []);
   [...win.body.querySelectorAll('tr[data-refdes]')].forEach((tr, i) => {
     tr.classList.toggle('selected', onCanvas.has(tr.dataset.refdes));
-    [...tr.cells].slice(1).forEach((td, j) => {
+    [...tr.cells].slice(1, COLUMNS.length + 1).forEach((td, j) => {
       const inRange = !!r && i >= r.r0 && i <= r.r1 && j >= r.c0 && j <= r.c1;
       td.classList.toggle('in-range', inRange);
       td.classList.toggle('focus', !!focus && tr.dataset.refdes === focus.refdes && COLUMNS[j].key === focus.key);
@@ -763,6 +764,99 @@ function onMouseOver(ev) {
   if (cell && (cell.refdes !== focus?.refdes || cell.key !== focus?.key)) pick(cell, true);
 }
 
+// ----- column widths -------------------------------------------------------------------
+//
+// Each column is as wide as it was made, in pixels: dragging a heading's
+// right edge resizes it, a double-click there fits it to what it holds.
+// What room is left goes to an empty column at the right; columns wider
+// than the window scroll sideways. Kept in this browser, as the windows'
+// places are: a way of looking, not part of the design.
+
+const WIDTHS_KEY = 'mosfeteer.sizing.columns';
+const DEFAULT_WIDTHS = { name: 72, w: 56, l: 56, m: 36, label: 144, value: 64, link: 96 };
+const MIN_WIDTH = 28;
+const MAX_WIDTH = 480;
+
+function readWidths() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(WIDTHS_KEY) || 'null');
+    if (saved && typeof saved === 'object') {
+      const widths = { ...DEFAULT_WIDTHS };
+      for (const key of Object.keys(DEFAULT_WIDTHS)) if (Number.isFinite(saved[key])) widths[key] = clampWidth(saved[key]);
+      return widths;
+    }
+  } catch { /* the defaults */ }
+  return { ...DEFAULT_WIDTHS };
+}
+
+const clampWidth = (px) => Math.round(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, px)));
+
+let widths = readWidths();
+
+function saveWidths() {
+  try { localStorage.setItem(WIDTHS_KEY, JSON.stringify(widths)); } catch { /* this visit only */ }
+}
+
+/** Every column at its width; the table as wide as they are together. */
+function applyWidths() {
+  for (const [key, col] of Object.entries(win.cols)) col.style.width = `${widths[key]}px`;
+  win.table.style.width = `${Object.values(widths).reduce((sum, px) => sum + px, 0)}px`;
+}
+
+/** The width a column's widest heading or cell needs. */
+function fittedWidth(key) {
+  const index = key === 'name' ? 0 : columnIndex(key) + 1;
+  let need = 0;
+  for (const tr of win.table.querySelectorAll('thead tr, tbody tr[data-refdes]')) {
+    const cell = tr.cells[index];
+    if (!cell) continue;
+    const style = getComputedStyle(cell);
+    const pad = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+    const sort = cell.querySelector('.sizing-sort');
+    const choice = cell.querySelector('.sizing-choice');
+    // A heading's button and a menu cell's choice are cut short inside it:
+    // their own width is what they need.
+    const content = sort ? sort.scrollWidth + 8 : choice ? choice.scrollWidth + 14 : cell.scrollWidth - pad;
+    need = Math.max(need, content + pad);
+  }
+  return clampWidth(Math.ceil(need) + 2);
+}
+
+/** A heading's right edge: drag to resize, double-click to fit. */
+function resizeHandle(key) {
+  const handle = el('span', { class: 'sizing-resize', 'aria-hidden': 'true' });
+  handle.addEventListener('pointerdown', (ev) => {
+    if (ev.button !== 0) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    handle.setPointerCapture(ev.pointerId);
+    const start = { x: ev.clientX, width: widths[key] };
+    win.el.classList.add('sizing-resizing');
+    const move = (e) => {
+      widths[key] = clampWidth(start.width + e.clientX - start.x);
+      applyWidths();
+    };
+    const up = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+      handle.removeEventListener('pointercancel', up);
+      win.el.classList.remove('sizing-resizing');
+      saveWidths();
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up);
+    handle.addEventListener('pointercancel', up);
+  });
+  handle.addEventListener('click', (ev) => ev.stopPropagation());
+  handle.addEventListener('dblclick', (ev) => {
+    ev.stopPropagation();
+    widths[key] = fittedWidth(key);
+    applyWidths();
+    saveWidths();
+  });
+  return handle;
+}
+
 // ----- the window --------------------------------------------------------------------
 
 /** "Annotate": a parts table of the range's parts (of every sized or
@@ -791,11 +885,18 @@ function build() {
   const group = el('button', { type: 'button', class: 'sizing-group-toggle', 'aria-pressed': 'false', title: 'Group by type', text: 'By type', onclick: toggleGroup });
   const heading = (key, text, title, cls = '') => el('th', { scope: 'col', class: cls, 'data-key': key }, [
     el('button', { type: 'button', class: 'sizing-sort', title, onclick: () => sortBy(key) }, [text, el('span', { class: 'sizing-arrow', 'aria-hidden': 'true' })]),
+    resizeHandle(key),
   ]);
-  const head = el('tr', {}, [heading('name', 'Name', 'Sort by name'), ...COLUMNS.map((column) => heading(column.key, column.head, column.title, `sizing-${column.key}`))]);
+  const head = el('tr', {}, [
+    heading('name', 'Name', 'Sort by name'),
+    ...COLUMNS.map((column) => heading(column.key, column.head, column.title, `sizing-${column.key}`)),
+    el('th', { class: 'sizing-fill', 'aria-hidden': 'true' }),
+  ]);
   const body = el('tbody');
-  // Fixed columns: a cell opened for typing never reflows the grid.
-  const cols = el('colgroup', {}, [el('col', { class: 'sizing-col-name' }), ...COLUMNS.map((column) => el('col', { class: `sizing-col-${column.key}` }))]);
+  // Fixed columns: a cell opened for typing never reflows the grid. The
+  // last, with no width, takes the room left.
+  const colOf = Object.fromEntries(['name', ...COLUMNS.map((column) => column.key)].map((key) => [key, el('col')]));
+  const cols = el('colgroup', {}, [...Object.values(colOf), el('col')]);
   const table = el('table', { class: 'sizing-table' }, [cols, el('thead', {}, [head]), body]);
   const grid = el('div', { class: 'sizing-grid', tabindex: '0', role: 'grid', 'aria-label': 'Sizes and values' }, [table]);
   const empty = el('p', { class: 'field-hint sizing-empty', hidden: true });
@@ -841,7 +942,8 @@ function build() {
   window.addEventListener('mouseup', () => { dragging = false; });
   canvasEl.closest('.canvas-pane').append(node);
   const chrome = floatingWindow(node, { key: 'sizing', onClose: hide, resizable: true, toggleKey: 'Z' });
-  win = { el: node, grid, body, head, filter, group, empty, status, chrome };
+  win = { el: node, grid, table, body, head, cols: colOf, filter, group, empty, status, chrome };
+  applyWidths();
 }
 
 function syncButton() {

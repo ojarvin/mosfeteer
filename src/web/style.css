@@ -8579,12 +8579,42 @@ th[aria-sort="descending"] .sizing-sort { color: var(--text); }
 
 .sizing-cell:is(.sizing-label, .sizing-link) { text-align: left; }
 
-.sizing-col-name { width: 17%; }
-.sizing-col-w, .sizing-col-l { width: 11%; }
-.sizing-col-m { width: 7%; }
-.sizing-col-label { width: 24%; }
-.sizing-col-value { width: 14%; }
-.sizing-col-link { width: 16%; }
+/* Each column as wide as it was made (sizing-window.js applyWidths); the
+   empty last one takes the room left. */
+.sizing-table { min-width: 100%; }
+.sizing-table .sizing-fill { padding: 0; }
+
+/* Inside its heading: the next heading, drawn later, would cover any of it
+   that stood out. */
+.sizing-resize {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 2;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.sizing-resize::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  right: 0;
+  width: 1px;
+  background: var(--border);
+}
+
+.sizing-resize:hover::after,
+.sizing-resizing .sizing-resize:active::after {
+  width: 2px;
+  background: var(--accent);
+}
+
+.sizing-window.sizing-resizing,
+.sizing-window.sizing-resizing * { cursor: col-resize !important; }
 
 .sizing-cell { overflow: hidden; text-overflow: ellipsis; }
 .sizing-cell:is(.sizing-label, .sizing-link):not(.sizing-none) { cursor: pointer; }
