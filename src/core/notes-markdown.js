@@ -164,8 +164,9 @@ function sectionPlaceholder(entry, context) {
  * - `mention(name)`: what a mention resolves to; `design(name)`: whether a
  *   linked design exists; `figure(name)`: what an embed draws (null: nothing).
  * - `mentionHtml(name, target, nameHtml)`, `designHtml(name, exists)`,
- *   `figureHtml({ name, caption, captionHtml, number, target })`: draw those
- *   another way (the report's).
+ *   `figureHtml({ name, caption, captionHtml, number, target, under })`: draw
+ *   those another way (the report's); `under` is the element level of the
+ *   heading the embed stands under (null: none).
  * - `headingLevel`: the element of a `#` heading (3: the window's own title is h2).
  * - `toc`: what a `[TOC]` line is -- the contents, its headings numbered
  *   (the default); `'place'`, only its place, for the caller to number
@@ -229,6 +230,7 @@ export function renderNotes(source, context = {}) {
     if (heading) {
       flush();
       const level = Math.min(heading[1].length + (context.headingLevel ?? 3) - 1, 6);
+      context.figureAt.under = level;
       out.push(`<h${level}>${inlineHtml(heading[2], context)}</h${level}>`);
       continue;
     }
@@ -261,7 +263,7 @@ export function renderNotes(source, context = {}) {
       else if (figure) {
         const entry = { ...figure, target: context.figure ? context.figure(figure.name) : true };
         out.push(context.figureHtml
-          ? context.figureHtml({ ...entry, captionHtml: inlineHtml(figure.caption, context) })
+          ? context.figureHtml({ ...entry, captionHtml: inlineHtml(figure.caption, context), under: context.figureAt.under ?? null })
           : figurePlaceholder(entry, context));
       }
       continue;

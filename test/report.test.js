@@ -196,7 +196,7 @@ test('an outline places the circuit, the beats and timing, and every annotated f
   circuit.addLabel({ text: 'Parts', x: 1200, y: 0, table: { parts: ['R1', 'R2'] }, figure: { id: newFigureId(circuit), kind: 'table', source: 'sizing' } });
   const outline = notesOutline(circuit, { name: 'divider' });
   assert.equal(outline, [
-    '# divider', '[TOC]', 'What the circuit is and does.', '![[circuit|The circuit.]]',
+    '# divider', '[TOC]', '## Circuit', 'What the circuit is and does.', '![[circuit|The circuit.]]',
     '## Operation', 'How it works, step by step.', '![[beat 1|Beat 1: $\\varphi_1$.]]', '![[beat 2|Beat 2.]]',
     '## Analysis', 'What the analysis shows.', '![[F1|Equations (small-signal analysis).]]',
     '## Sizing', 'How the parts are sized.', '![[F2|Parts.]]',
@@ -207,7 +207,7 @@ test('an outline places the circuit, the beats and timing, and every annotated f
   // A bare circuit: its heading, text, and figure only.
   const bare = new Circuit();
   run(bare, 'add resistor R1 --at 0 0');
-  assert.equal(notesOutline(bare), '# Design\n\n[TOC]\n\nWhat the circuit is and does.\n\n![[circuit|The circuit.]]\n');
+  assert.equal(notesOutline(bare), '# Design\n\n[TOC]\n\n## Circuit\n\nWhat the circuit is and does.\n\n![[circuit|The circuit.]]\n');
 });
 
 test('notes outline starts empty notes and never replaces written ones', () => {
@@ -291,7 +291,23 @@ test('a report\'s [TOC] numbers its sections across the designs it includes, the
   const { html } = buildReport(system, { name: 'system', design: (n) => (n === 'amp' ? { name: 'amp', circuit: amp } : null) });
   assert.equal(html.match(/<nav class="note-toc">/g).length, 1);
   const toc = html.slice(html.indexOf('<nav class="note-toc">'), html.indexOf('</nav>'));
-  assert.deepEqual([...toc.matchAll(/<span class="section-number">([\d.]+)<\/span> ([^<]+)<\/a>/g)].map((m) => `${m[1]} ${m[2]}`), ['1 Overview', '2 Amplifier', '2.1 Gain']);
+  assert.deepEqual([...toc.matchAll(/<span class="section-number">([\d.]+)<\/span> ([^<]+)<\/a>/g)].map((m) => `${m[1]} ${m[2]}`), ['1 Overview', '1.1 Amplifier', '1.1.1 Gain']);
   assert.match(html, /<h1>System<\/h1>/, 'the title is not numbered');
-  assert.match(html, /<h2 id="sec-2"><span class="section-number">2<\/span> Amplifier<\/h2>/);
+  assert.match(html, /<h3 id="sec-1-1"><span class="section-number">1\.1<\/span> Amplifier<\/h3>/);
+});
+
+test('an included design is a section under the heading its embed stands under', () => {
+  const system = divider();
+  const amp = divider();
+  const sub = new Circuit();
+  run(sub, 'add capacitor C1 --at 0 0');
+  system.notes = '# System\n\n[TOC]\n\n## Circuit\n\n![[circuit]]\n\n## Blocks\n\n![[amp]]\n\n## Results';
+  amp.notes = '# Amplifier\n\n## Gain\n\n![[circuit]]\n\n### Load\n\n![[sub]]';
+  const designs = { amp: { name: 'amp', circuit: amp }, sub: { name: 'sub', circuit: sub } };
+  const { html } = buildReport(system, { name: 'system', design: (n) => designs[n] || null });
+  const toc = html.slice(html.indexOf('<nav class="note-toc">'), html.indexOf('</nav>'));
+  assert.deepEqual([...toc.matchAll(/<span class="section-number">([\d.]+)<\/span> ([^<]+)<\/a>/g)].map((m) => `${m[1]} ${m[2]}`),
+    ['1 Circuit', '2 Blocks', '2.1 Amplifier', '2.1.1 Gain', '2.1.1.1 Load', '2.1.1.1.1 sub', '3 Results']);
+  assert.match(html, /<h3 id="sec-2-1"><span class="section-number">2\.1<\/span> Amplifier<\/h3>/);
+  assert.match(html, /<section id="design-sub" class="design-section">\n<h6 id="sec-2-1-1-1-1">/);
 });

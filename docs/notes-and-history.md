@@ -84,7 +84,8 @@ warnings, and writes the HTML.
   offers the targets.
 - **Sections.** `![[amp]]` on a line of its own, naming another design of
   the workspace (and no figure of this one), puts that design's notes there
-  as a section: its `#` heading a level down (its name when it has none),
+  as a section: its `#` heading a level below the heading the embed stands
+  under (the title's when none; its name when it has no `#` heading),
   its own figures, mentions and references, its figures numbered on from
   the report's, and its citations in the report's one list. Sections nest.
   A design is one section, where the report first embeds it: embedding it
@@ -113,7 +114,7 @@ warnings, and writes the HTML.
   own `[TOC]` lines are dropped.
 - **Outline.** Empty notes can start as a report: the notes window's
   **Outline** (shown while the notes are empty) or `notes outline` writes a
-  heading, a `[TOC]`, the circuit, an Operation section (the timing diagram, a figure a
+  heading, a `[TOC]`, a Circuit section, an Operation section (the timing diagram, a figure a
   beat), an Analysis section (the annotated equations, models, plots, and
   noise tables), a Sizing section (the parts tables), and a Blocks section
   embedding each design its parts link to, once, each figure with a

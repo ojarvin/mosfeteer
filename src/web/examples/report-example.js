@@ -40,6 +40,10 @@ The loop's pole sits at $z = 1 - a$ ([[#F3]]): inside the unit circle, and the l
 
 ![[F3|The pole as $a$ moves.]]
 
+## Blocks
+
+The integrator, from its own design.
+
 ![[${REPORT_EXAMPLE_NAMES.integrator}]]
 `;
 

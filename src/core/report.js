@@ -202,7 +202,8 @@ const sectionId = (name) => `design-${figureKey(name).replace(/[^a-z0-9]+/g, '-'
  * design of the workspace, `{ name, circuit }` or null, for the sections
  * its notes embed (`![[amp]]`).
  *
- * A section is the embedded design's notes, a heading level down, with its
+ * A section is the embedded design's notes, a level below the heading the
+ * embed stands under (the title's, under none), with its
  * own figures, mentions and references; its figures continue the report's
  * numbering, and its citations join the one list at the end. Each design
  * is one section, where the report first embeds it: embedding it again,
@@ -244,8 +245,9 @@ export function buildReport(circuit, { name = 'Design', guide = null, fontCss = 
   const citations = noteCitations(readingOrder(circuit));
   const rendered = new Set([figureKey(name)]);
 
-  /** One design's notes as HTML, `depth` sections down. */
-  const section = (owner, ownerName, depth) => {
+  /** One design's notes as HTML, `depth` sections down, its title an
+   *  `h{level}`. */
+  const section = (owner, ownerName, depth, level) => {
     const notes = normalizeNotes(owner.notes);
     const targets = reportTargets(owner);
     const isDesign = isDesignIn(owner);
@@ -288,7 +290,7 @@ export function buildReport(circuit, { name = 'Design', guide = null, fontCss = 
     const mentionFigure = (found) => figures.find((figure) => figure.target && targetShows(owner, figure.target, found));
     let index = 0;
     const body = renderNotes(source, {
-      headingLevel: depth + 1,
+      headingLevel: level,
       // One contents for the report, where its own notes place it.
       toc: depth ? 'drop' : 'place',
       isDesign,
@@ -305,7 +307,7 @@ export function buildReport(circuit, { name = 'Design', guide = null, fontCss = 
         return known ? `<a class="design" href="#${known.id}">${escapeHtml(linked)}</a>` : `<span class="design">${escapeHtml(linked)}</span>`;
       },
       figure: (target) => resolveReportTarget(owner, target, targets),
-      figureHtml: ({ captionHtml }) => {
+      figureHtml: ({ captionHtml, under }) => {
         const figure = figures[index++];
         if (figure.design) {
           const key = figureKey(figure.name);
@@ -313,8 +315,10 @@ export function buildReport(circuit, { name = 'Design', guide = null, fontCss = 
           if (rendered.has(key)) return `<p class="see-section">See <a class="design" href="#${known.id}">${escapeHtml(known.name)}</a>.</p>`;
           rendered.add(key);
           const own = normalizeNotes(known.circuit.notes);
-          const heading = /^#\s/.test(own) ? '' : `<h${Math.min(depth + 2, 6)}>${escapeHtml(known.name)}</h${Math.min(depth + 2, 6)}>\n`;
-          return `<section id="${known.id}" class="design-section">\n${heading}${section(known.circuit, known.name, depth + 1)}\n</section>`;
+          // A level below the heading the embed stands under.
+          const inner = Math.min((under ?? level) + 1, 6);
+          const heading = /^#\s/.test(own) ? '' : `<h${inner}>${escapeHtml(known.name)}</h${inner}>\n`;
+          return `<section id="${known.id}" class="design-section">\n${heading}${section(known.circuit, known.name, depth + 1, inner)}\n</section>`;
         }
         const caption = figure.number
           ? `<figcaption><span class="figure-number">Fig. ${figure.number}.</span>${captionHtml ? ` ${captionHtml}` : ''}</figcaption>`
@@ -328,7 +332,7 @@ export function buildReport(circuit, { name = 'Design', guide = null, fontCss = 
   };
 
   const notes = normalizeNotes(circuit.notes);
-  const body = section(circuit, name, 0);
+  const body = section(circuit, name, 0, 1);
   const references = citations.length ? referencesHtml(citations, 2) : '';
   const title = /^#\s/.test(notes) ? '' : `<h1>${escapeHtml(name)}</h1>\n`;
   const content = numberSections(`${body}${references ? `\n${references}` : ''}`, { titleLevel: 1 });
@@ -434,16 +438,17 @@ const OUTLINE_SECTIONS = [
 ];
 
 /**
- * Notes to start a report from: a heading, its contents, the circuit, then a section for
- * the beats and timing (Operation), the annotated equations, models, plots
- * and noise (Analysis), the parts tables (Sizing), and the designs its
+ * Notes to start a report from: a heading, its contents, then a section
+ * for the circuit (Circuit), the beats and timing (Operation), the
+ * annotated equations, models, plots and noise (Analysis), the parts
+ * tables (Sizing), and the designs its
  * parts link to, each embedded once as a section (Blocks) -- only what the
  * drawing has, each with a caption and a line to replace with text.
  * Nothing is computed: an analysis appears once it is annotated.
  */
 export function notesOutline(circuit, { name = 'Design' } = {}) {
   const figures = listFigures(circuit);
-  const blocks = [`# ${name}`, '[TOC]', 'What the circuit is and does.', '![[circuit|The circuit.]]'];
+  const blocks = [`# ${name}`, '[TOC]', '## Circuit', 'What the circuit is and does.', '![[circuit|The circuit.]]'];
   for (const section of OUTLINE_SECTIONS) {
     const embeds = [];
     for (const kind of section.kinds) {

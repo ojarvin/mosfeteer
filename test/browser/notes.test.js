@@ -196,7 +196,7 @@ describe('design notes', { skip: browserSkip() }, () => {
     await h.until(`document.querySelector('.notes-outline').hidden === false`);
     await h.click('.notes-outline');
     await h.until(`document.querySelector('.notes-source').value.startsWith('# amp')`);
-    assert.match(await editor('editor.circuit.notes'), /^# amp\n\n\[TOC\]\n\nWhat the circuit is and does\.\n\n!\[\[circuit\|The circuit\.\]\]/);
+    assert.match(await editor('editor.circuit.notes'), /^# amp\n\n\[TOC\]\n\n## Circuit\n\nWhat the circuit is and does\.\n\n!\[\[circuit\|The circuit\.\]\]/);
     assert.equal(await h.evaluate(`document.querySelector('.notes-outline').hidden`), true);
     await h.evaluate(`document.querySelector('.notes-source').blur()`);
     await h.key('z', { ctrlKey: true });
