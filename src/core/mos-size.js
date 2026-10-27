@@ -29,6 +29,14 @@ export function parseLength(text, what = 'length') {
   return `${number}${PREFIXES[match[3].toLowerCase()] ?? PREFIXES[match[3]]}`;
 }
 
+const LENGTH_EXPONENT = { f: -15, p: -12, n: -9, u: -6, m: -3 };
+
+/** A stored length's number in meters (`400n` is 4e-7), or NaN. */
+export function lengthMeters(length) {
+  const match = String(length ?? '').match(/^(.*?)([fpnum])$/);
+  return match ? Number(`${match[1]}e${LENGTH_EXPONENT[match[2]]}`) : NaN;
+}
+
 /** A multiplier: a whole number from 1. */
 export function parseMultiplier(text) {
   const m = Number(text);

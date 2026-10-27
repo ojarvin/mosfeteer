@@ -3,7 +3,8 @@
  * (`Circuit#windows`), so another design opens with its own and this one
  * comes back as it was left: the reference windows (designs by path and
  * name, or pasted pictures), the calculator's past results, the time-domain
- * plot's nets and stimulus, and the small-signal analysis form.
+ * plot's nets and stimulus, the small-signal analysis form, and the sizing
+ * window's order (a column sorted by, and grouped by type or not).
  *
  * It is window state, not drawing: an undo or redo keeps it as it is
  * (main.js `applyJson`), and changing it is a settings change that marks the
@@ -14,6 +15,9 @@
 export const CALCULATOR_HISTORY = 50;
 /** A pasted picture larger than this (as a data URL) is shown but not saved. */
 export const MAX_WINDOW_PICTURE = 4_000_000;
+
+/** The sizing window's columns its rows sort by. */
+export const SIZING_SORT_KEYS = ['name', 'w', 'l', 'm', 'label', 'value', 'link'];
 
 const text = (value, max = 200) => (typeof value === 'string' ? value.slice(0, max) : '');
 const object = (value) => (value && typeof value === 'object' && !Array.isArray(value) ? value : null);
@@ -74,6 +78,19 @@ export function normalizeWindows(value) {
       ...(text(scope.amplitude, 40) ? { amplitude: text(scope.amplitude, 40) } : {}),
       ...(text(scope.frequency, 40) ? { frequency: text(scope.frequency, 40) } : {}),
     };
+  }
+  // The sizing window: the column its rows are sorted by, and whether
+  // they are grouped by type.
+  const sizing = object(source.sizing);
+  if (sizing) {
+    const sort = object(sizing.sort);
+    const key = SIZING_SORT_KEYS.includes(sort?.key) ? sort.key : null;
+    if (key || sizing.group === true) {
+      windows.sizing = {
+        ...(key ? { sort: { key, ...(sort.reverse === true ? { reverse: true } : {}) } } : {}),
+        ...(sizing.group === true ? { group: true } : {}),
+      };
+    }
   }
   // The small-signal form: analysis-options.js reads it.
   const analysis = object(source.analysis);

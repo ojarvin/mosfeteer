@@ -12,11 +12,11 @@
  */
 
 import { GRID, ceilGrid } from './grid.js';
-import { MOS_SIZE_TYPES } from './mos-size.js';
+import { MOS_SIZE_TYPES, lengthMeters } from './mos-size.js';
 import { parseLabelRuns } from './model.js';
 import { newFigureId, placeFigure, settlePlaced } from './figures.js';
 import { TABLE_RULE_ROOM_EM, labelFontSize } from './style.js';
-import { THIN_SPACE, VALUE_TYPES, valueText } from './part-value.js';
+import { THIN_SPACE, VALUE_TYPES, valueNumber, valueText, valueUnit } from './part-value.js';
 
 export { VALUE_TYPES, valueText };
 
@@ -39,6 +39,83 @@ export function comparePartRows(a, b) {
 /** Every part the table can show, in table order. */
 export function tableParts(circuit) {
   return [...circuit.components.values()].filter((component) => !component.drawingOnly && partKind(component)).sort(comparePartRows);
+}
+
+/** Where a part's size or value label stands: 'hidden', 'below' (the
+ *  name), or 'name' (in its place); null without a size or value. */
+export function partLabelMode(component) {
+  if (partKind(component) === 'size') {
+    if (!component.size) return null;
+    return component.size.hidden ? 'hidden' : component.size.replacesName ? 'name' : 'below';
+  }
+  if (partKind(component) !== 'value' || !String(component.value ?? '').trim()) return null;
+  return component.valueLabel === 'replace' ? 'name' : component.valueLabel === 'beside' ? 'below' : 'hidden';
+}
+
+/** A part's name as its label writes it, markup left out (M_{in} as Min). */
+function plainName(circuit, component) {
+  return String(circuit.labelOf(component.refdes)?._text || component.refdes).replace(/[$_^{}\\]/g, '');
+}
+
+const LABEL_RANK = { hidden: 0, below: 1, name: 2 };
+
+/** What a column sorts a part by: a number, a text, or null (empty). */
+function sortValue(circuit, component, key) {
+  const { size } = component;
+  switch (key) {
+    case 'name': return plainName(circuit, component);
+    case 'w': case 'l': return size ? lengthMeters(size[key]) : null;
+    case 'm': return size ? size.m : null;
+    case 'label': return LABEL_RANK[partLabelMode(component)] ?? null;
+    case 'value': {
+      const text = partKind(component) === 'value' ? String(component.value ?? '').trim() : '';
+      if (!text) return null;
+      const number = valueNumber(text);
+      return Number.isNaN(number) ? text : number;
+    }
+    case 'link': return component.link || null;
+    default: return null;
+  }
+}
+
+/**
+ * Parts sorted by a column of the sizing window (`name`, `w`, `l`, `m`,
+ * `label`, `value`, `link`): lengths and values by their numbers (400n
+ * before 2u), values in one unit together (Ω, then F, ...), names as M2
+ * before M10. Empty cells go last either way; ties keep the given order.
+ */
+export function sortPartRows(circuit, parts, key, { reverse = false } = {}) {
+  const rows = parts.map((component, index) => ({ component, index, value: sortValue(circuit, component, key), unit: key === 'value' ? valueUnit(component.type) || '' : '' }));
+  const compare = (a, b) => {
+    if (typeof a.value === 'number' && typeof b.value === 'number') return a.value - b.value;
+    if (typeof a.value === 'number') return -1;
+    if (typeof b.value === 'number') return 1;
+    return natural.compare(a.value, b.value);
+  };
+  rows.sort((a, b) => {
+    const empty = (a.value === null) - (b.value === null);
+    if (empty || a.value === null) return empty || a.index - b.index;
+    const unit = natural.compare(a.unit, b.unit);
+    if (unit) return unit;
+    return (reverse ? -compare(a, b) : compare(a, b)) || a.index - b.index;
+  });
+  return rows.map((row) => row.component);
+}
+
+/** The groups of the sizing window's By type, in this order. */
+const PART_GROUPS = [
+  ['nmos', 'NMOS'], ['nmosb', 'NMOS with bulk'], ['pmos', 'PMOS'], ['pmosb', 'PMOS with bulk'],
+  ['resistor', 'Resistors'], ['variable_resistor', 'Variable resistors'],
+  ['capacitor', 'Capacitors'], ['variable_capacitor', 'Variable capacitors'],
+  ['inductor', 'Inductors'], ['variable_inductor', 'Variable inductors'], ['impedance', 'Impedances'],
+  ['current_source', 'Current sources'], ['voltage_source', 'Voltage sources'],
+];
+
+/** Parts in groups of one type, `[{ type, title, parts }]`, each group's
+ *  parts in the order given. */
+export function groupPartRows(parts) {
+  const groups = PART_GROUPS.map(([type, title]) => ({ type, title, parts: parts.filter((component) => component.type === type) }));
+  return groups.filter((group) => group.parts.length);
 }
 
 /** A table annotation's data as saved: the parts it lists, by name, or null

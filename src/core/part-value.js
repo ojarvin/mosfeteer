@@ -51,6 +51,22 @@ export function valueText(value, type) {
   return `${match[1]}${THIN_SPACE}${prefix}${unit}`;
 }
 
+/** A value's number (8p is 8e-12, 1M and 1meg are 1e6), or NaN for one
+ *  that is not a number (R_L). */
+export function valueNumber(value) {
+  const match = String(value ?? '').trim().match(VALUE);
+  if (!match) return NaN;
+  const exponent = VALUE_EXPONENT[match[2]] ?? VALUE_EXPONENT[match[2].toLowerCase()];
+  return exponent === undefined ? NaN : Number(`${match[1]}e${exponent}`);
+}
+
+const VALUE_EXPONENT = { a: -18, f: -15, p: -12, n: -9, u: -6, 'µ': -6, 'μ': -6, m: -3, '': 0, k: 3, K: 3, meg: 6, M: 6, G: 9, T: 12 };
+
+/** The unit a part's value is in (Ω, F, H, A, V), or null. */
+export function valueUnit(type) {
+  return UNITS[type] || null;
+}
+
 /** A value as TeX: a number and its unit upright, `\mathrm{8\,pF}`; a
  *  value that is not a number (R_{L}) as it is. */
 export function valueTex(value, type) {

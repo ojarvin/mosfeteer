@@ -13,8 +13,9 @@ import { clientToWorld } from './canvas-view.js';
 import { SMALL_SIGNAL_TRANSISTOR_TYPES, SMALL_SIGNAL_RESISTOR_TYPES, SMALL_SIGNAL_OPAMP_TYPES, SMALL_SIGNAL_PORT_TYPES, analysisComponentTargets, analysisNetTargets, applyComponentAnalysis, applyNetAnalysis } from './analysis-ui.js';
 import { editor } from './editor-state.js';
 import { editComponentSize, inlineEditLabel } from './label-editor.js';
-import { MOS_SIZE_ROLE, MOS_SIZE_TYPES } from '../core/mos-size.js';
-import { PART_VALUE_ROLE, VALUE_TYPES } from '../core/part-value.js';
+import { MOS_SIZE_ROLE, MOS_SIZE_TYPES, formatMosSize } from '../core/mos-size.js';
+import { PART_VALUE_ROLE, VALUE_TYPES, valueText, valueUnit } from '../core/part-value.js';
+import { setPartValue } from '../core/part-moves.js';
 import { editInSizing } from './sizing-window.js';
 import { WAVEFORM_TYPES } from '../core/components/current.js';
 import { joinSelectedLines, selectedLines } from './annotation-tools.js';
@@ -363,8 +364,21 @@ function partsLike(component, kind) {
   return others.length ? others : [component];
 }
 
-/** A transistor's W/L label: add or edit it, choose where it stands, or
- *  take it away. Offered on the part and on its size label. */
+// A size or value copied from a part's menu, to paste onto others: the
+// text goes on the clipboard too, for the sizing window or a spreadsheet.
+let copiedSize = null; // { w, l, m, replacesName?, hidden? }
+let copiedValue = null; // { value, type }
+
+function copyText(text) {
+  navigator.clipboard?.writeText(text).catch(() => {});
+}
+
+/** Names as a log line lists them: M1, M2, M3. */
+const listNames = (parts) => parts.map((c) => c.refdes).join(', ');
+
+/** A transistor's W/L label: add or edit it, copy it and paste it onto
+ *  others, choose where it stands, or take it away. Offered on the part and
+ *  on its size label. */
 function appendSizingMenu(menu, target) {
   const component = target.kind === 'component' ? target.value
     : target.value?.role === MOS_SIZE_ROLE ? editor.circuit.components.get(target.value.owner) : null;
@@ -373,6 +387,20 @@ function appendSizingMenu(menu, target) {
   const parts = partsLike(component, (c) => MOS_SIZE_TYPES.has(c.type) && c.size);
   appendContextSubmenu(menu, 'Sizing', (submenu) => {
     appendContextItem(submenu, size ? 'Edit W/L…' : 'Add W/L…', () => setTimeout(() => editComponentSize(editor.circuit.components.get(refdes)), 0));
+    appendContextItem(submenu, 'Copy size', () => {
+      copiedSize = { ...size };
+      copyText(formatMosSize(size));
+      logLine(`Copied ${refdes}'s size ${formatMosSize(size)}`);
+    }, { disabled: !size });
+    // Onto every selected transistor; one without a size takes the copied
+    // one's label placement too.
+    const targets = partsLike(component, (c) => MOS_SIZE_TYPES.has(c.type));
+    const pasted = copiedSize;
+    appendContextItem(submenu, pasted ? `Paste size ${formatMosSize(pasted)}` : 'Paste size', () => {
+      commit(() => targets.forEach((c) => editor.circuit.setComponentSize(c.refdes, pasted, c.size ? {} : { replacesName: !!pasted.replacesName, hidden: !!pasted.hidden })));
+      logLine(`Pasted the size ${formatMosSize(pasted)} onto ${listNames(targets)}`);
+      render();
+    }, { disabled: !pasted });
     appendLabelPlacement(submenu, parts.filter((c) => c.size),
       (c) => (c.size.hidden ? 'hidden' : c.size.replacesName ? 'name' : 'below'),
       (c, mode) => editor.circuit.setComponentSize(c.refdes, c.size, { replacesName: mode === 'name', hidden: mode === 'hidden' }),
@@ -391,6 +419,20 @@ function appendValueMenu(menu, target) {
   const parts = partsLike(component, valued);
   appendContextSubmenu(menu, 'Value', (submenu) => {
     appendContextItem(submenu, valued(component) ? 'Edit value…' : 'Add value…', () => setTimeout(() => editInSizing(component.refdes, 'value'), 0));
+    appendContextItem(submenu, 'Copy value', () => {
+      copiedValue = { value: String(component.value).trim(), type: component.type };
+      copyText(copiedValue.value);
+      logLine(`Copied ${component.refdes}'s value ${valueText(copiedValue.value, component.type)}`);
+    }, { disabled: !valued(component) });
+    // Onto every selected part whose value is in the same unit (Ω, F, ...).
+    const pasted = copiedValue;
+    const fits = (c) => VALUE_TYPES.has(c.type) && !!pasted && valueUnit(c.type) === valueUnit(pasted.type);
+    const targets = partsLike(component, fits);
+    appendContextItem(submenu, pasted ? `Paste value ${valueText(pasted.value, pasted.type)}` : 'Paste value', () => {
+      commit(() => targets.forEach((c) => setPartValue(editor.circuit, c.refdes, pasted.value)));
+      logLine(`Pasted the value ${valueText(pasted.value, pasted.type)} onto ${listNames(targets)}`);
+      render();
+    }, { disabled: !fits(component) });
     appendLabelPlacement(submenu, parts.filter(valued),
       (c) => (c.valueLabel === 'replace' ? 'name' : c.valueLabel === 'beside' ? 'below' : 'hidden'),
       (c, mode) => editor.circuit.setValueLabel(c.refdes, mode === 'name' ? 'replace' : mode === 'below' ? 'beside' : null),

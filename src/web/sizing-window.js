@@ -17,18 +17,29 @@
  * marked, until the other is given. Nothing else is kept here; the grid is
  * drawn from the design on every change, so undo, a script, or the canvas
  * show at once. "Annotate" puts a parts table on the drawing.
+ *
+ * A double-click on a name renames the part as the canvas does. The Link
+ * column names the design a part links to: a click picks one, as the
+ * canvas menu does; typed or pasted, the name is taken as it is.
+ *
+ * A heading sorts the rows by its column, again the other way, a third
+ * time back to the table's order; By type groups them under their type.
+ * Both are saved with the design (`Circuit#windows`). The order is taken
+ * when it is chosen and kept while cells are edited, so a row never moves
+ * out from under the range; parts added, removed, or filtered take it again.
  */
 
 import { MOS_SIZE_TYPES, parseLength, parseMosSize, parseMultiplier } from '../core/mos-size.js';
-import { addPartsTable, partKind, partsTableFigure, tableParts } from '../core/parts-table.js';
+import { addPartsTable, groupPartRows, partKind, partLabelMode, partsTableFigure, sortPartRows, tableParts } from '../core/parts-table.js';
 import { chooseFigure } from '../core/figures.js';
 import { setPartValue } from '../core/part-moves.js';
-import { parseLabelRuns } from '../core/model.js';
+import { componentNameIdentity, parseLabelRuns } from '../core/model.js';
 import { canvasEl } from './elements.js';
 import { editor } from './editor-state.js';
 import { floatingWindow } from './floating-window.js';
 import { logLine } from './status-bar-ui.js';
-import { commit, redo, render, setLabelSelection, setSelection, undo } from './main.js';
+import { commit, markSettingsChanged, redo, render, setLabelSelection, setSelection, undo } from './main.js';
+import { openLinkPicker } from './hierarchy.js';
 import { appendContextItem, openMenuAt } from './context-menu.js';
 import { element as el } from './dom.js';
 
@@ -44,13 +55,10 @@ function parseLabelMode(text) {
 }
 
 /** Whether a part has a size or value a label could show. */
-const labeled = (c) => (sized(c) ? !!c.size : valued(c) && !!String(c.value ?? '').trim());
+const labeled = (c) => partLabelMode(c) !== null;
 
 /** Where a part's size or value label stands: hidden, below, or name. */
-function labelMode(c) {
-  if (sized(c)) return c.size.hidden ? 'hidden' : c.size.replacesName ? 'name' : 'below';
-  return c.valueLabel === 'replace' ? 'name' : c.valueLabel === 'beside' ? 'below' : 'hidden';
-}
+const labelMode = partLabelMode;
 
 // ----- columns --------------------------------------------------------------------
 
@@ -100,7 +108,17 @@ const COLUMNS = [
     check: () => true,
     set: (c, text) => setPartValue(editor.circuit, c.refdes, text),
   },
+  {
+    key: 'link', head: 'Link', title: 'The design it links to', takes: () => true,
+    text: (c) => c.link || '',
+    check: () => true,
+    set: (c, text) => editor.circuit.setLink(c.refdes, text),
+    clear: (c) => c.link && editor.circuit.setLink(c.refdes, null),
+  },
 ];
+
+/** The columns a click opens a menu in, rather than an editor. */
+const MENU_COLUMNS = new Set(['label', 'link']);
 
 function setLabelMode(c, mode) {
   if (!labeled(c)) throw new Error(sized(c) ? 'needs W and L first' : 'needs a value first');
@@ -137,8 +155,11 @@ function clearCell(c, column) {
 
 // ----- state ---------------------------------------------------------------------
 
-let win = null; // { el, grid, body, filter, status, chrome }
+let win = null; // { el, grid, body, head, filter, group, status, chrome }
 let rows = []; // the parts shown, in order
+let order = null; // their names, in the order taken when it was chosen
+let groupStarts = new Map(); // name -> the title of the group it starts
+let renaming = null; // { input, refdes, original }
 let anchor = null; // { refdes, key }: where the range started
 let focus = null; // { refdes, key }: the cell in focus
 let editing = null; // { input, cell, original }
@@ -201,15 +222,74 @@ function matches(c) {
   return [c.refdes, name, c.type, c.value].some((text) => text && String(text).toLowerCase().includes(query));
 }
 
+/** The window's saved order: `{ sort: { key, reverse }, group }`. */
+const ordering = () => editor.circuit.windows.sizing || {};
+
+/** The parts in the saved order: sorted by a column, and grouped. */
+function orderedRows(parts) {
+  const { sort, group } = ordering();
+  const sorted = sort ? sortPartRows(editor.circuit, parts, sort.key, { reverse: !!sort.reverse }) : parts;
+  if (!group) return { list: sorted, starts: new Map() };
+  const groups = groupPartRows(sorted);
+  return { list: groups.flatMap((g) => g.parts), starts: new Map(groups.map((g) => [g.parts[0].refdes, g.title])) };
+}
+
+function saveOrdering({ sort, group }) {
+  const value = { ...(sort ? { sort } : {}), ...(group ? { group: true } : {}) };
+  if (Object.keys(value).length) editor.circuit.windows.sizing = value;
+  else delete editor.circuit.windows.sizing;
+  order = null;
+  markSettingsChanged();
+  redraw();
+}
+
+/** A heading clicked: sorted by its column, then the other way, then not. */
+function sortBy(key) {
+  const { sort, group } = ordering();
+  const next = sort?.key !== key ? { key } : !sort.reverse ? { key, reverse: true } : null;
+  saveOrdering({ sort: next, group });
+}
+
+function toggleGroup() {
+  const { sort, group } = ordering();
+  saveOrdering({ sort, group: !group });
+}
+
+/** The headings' arrows and the By type toggle, as the order is. */
+function paintHeadings() {
+  const { sort, group } = ordering();
+  for (const th of win.head.cells) {
+    const active = sort?.key === th.dataset.key;
+    th.setAttribute('aria-sort', active ? (sort.reverse ? 'descending' : 'ascending') : 'none');
+    th.querySelector('.sizing-arrow').textContent = active ? (sort.reverse ? '▼' : '▲') : '';
+  }
+  win.group.setAttribute('aria-pressed', String(!!group));
+}
+
 function buildRows() {
-  rows = tableParts(editor.circuit).filter(matches);
+  const shown = tableParts(editor.circuit).filter(matches);
+  // The order taken stays while the same parts are shown: an edit never
+  // moves a row.
+  const byName = new Map(shown.map((c) => [c.refdes, c]));
+  if (order && order.length === shown.length && order.every((refdes) => byName.has(refdes))) {
+    rows = order.map((refdes) => byName.get(refdes));
+  } else {
+    const { list, starts } = orderedRows(shown);
+    rows = list;
+    groupStarts = starts;
+    order = rows.map((c) => c.refdes);
+  }
+  paintHeadings();
   // Drafts of parts gone, or sized since by other means, are dropped.
   for (const refdes of drafts.keys()) {
     const c = editor.circuit.components.get(refdes);
     if (!c || !MOS_SIZE_TYPES.has(c.type) || c.size) drafts.delete(refdes);
   }
   const body = win.body;
-  body.replaceChildren(...rows.map((c) => el('tr', { 'data-refdes': c.refdes }, [
+  const groupRow = (c) => (groupStarts.has(c.refdes)
+    ? [el('tr', { class: 'sizing-group' }, [el('th', { scope: 'rowgroup', colspan: String(COLUMNS.length + 1), text: groupStarts.get(c.refdes) })])]
+    : []);
+  body.replaceChildren(...rows.flatMap((c) => [...groupRow(c), el('tr', { 'data-refdes': c.refdes }, [
     el('th', { scope: 'row', class: 'sizing-name', title: `${c.refdes} (${c.type})` }, nameNode(c)),
     ...COLUMNS.map((column) => {
       const takes = column.takes(c);
@@ -218,14 +298,14 @@ function buildRows() {
         class: `sizing-cell sizing-${column.key}${takes ? '' : ' sizing-none'}${draft ? ' sizing-draft' : ''}`,
         'data-key': column.key,
         ...(draft ? { title: 'Needs both W and L' } : {}),
-        text: takes && column.key !== 'label' ? column.text(c) : '',
+        text: takes && !MENU_COLUMNS.has(column.key) ? column.text(c) : '',
       });
-      if (column.key === 'label' && labeled(c)) {
+      if ((column.key === 'label' && labeled(c)) || column.key === 'link') {
         td.append(el('span', { class: 'sizing-choice', text: column.text(c) }), el('span', { class: 'sizing-chevron', 'aria-hidden': 'true', text: '▾' }));
       }
       return td;
     }),
-  ])));
+  ])]));
   win.empty.hidden = rows.length > 0;
   win.empty.textContent = win.filter.value.trim() ? 'No part matches the filter.' : 'No transistors, passives, or sources.';
 }
@@ -252,11 +332,26 @@ function openLabelMenu(cell) {
   menu.querySelector('button:not(:disabled)')?.focus();
 }
 
+/** The design a part links to, picked from the canvas's list under its
+ *  cell; picked in a cell of the range, for every part of it. */
+function openLinkMenu(cell) {
+  const part = rows[rowIndex(cell.refdes)];
+  const td = win.body.querySelector(`tr[data-refdes="${CSS.escape(cell.refdes)}"] td[data-key="link"]`);
+  if (!part || !td) return;
+  const box = td.getBoundingClientRect();
+  openLinkPicker(inRange(cell) ? rangeParts() : [part], box.left, box.bottom + 2);
+}
+
+function openCellMenu(cell) {
+  if (cell.key === 'link') openLinkMenu(cell);
+  else openLabelMenu(cell);
+}
+
 /** Mark the range, the focus, and the parts selected on the canvas. */
 function paintSelection() {
   const r = range();
   const onCanvas = editor.multi?.size ? editor.multi : new Set(editor.selected ? [editor.selected] : []);
-  [...win.body.rows].forEach((tr, i) => {
+  [...win.body.querySelectorAll('tr[data-refdes]')].forEach((tr, i) => {
     tr.classList.toggle('selected', onCanvas.has(tr.dataset.refdes));
     [...tr.cells].slice(1).forEach((td, j) => {
       const inRange = !!r && i >= r.r0 && i <= r.r1 && j >= r.c0 && j <= r.c1;
@@ -268,7 +363,7 @@ function paintSelection() {
 
 /** The window follows the document: undo, redo, another design, a script. */
 export function renderSizingWindow() {
-  if (!win || win.el.hidden || editing) return;
+  if (!win || win.el.hidden || editing || renaming) return;
   const key = { circuit: editor.circuit, revision: editor.modelRevision, filter: win.filter.value, drafts: drafts.size };
   if (!shownKey || Object.keys(key).some((field) => shownKey[field] !== key[field])) {
     shownKey = key;
@@ -420,10 +515,84 @@ function onInputKey(ev) {
   }
 }
 
+// ----- renaming ----------------------------------------------------------------------
+
+const IDENTITY = /^[A-Za-z][A-Za-z0-9_]*$/;
+
+/** Rename a part in its name cell, as the canvas does: Enter renames, Esc
+ *  or leaving the field with a name that cannot be keeps it. */
+function startRename(refdes) {
+  if (editing) finishEditing({ keep: true });
+  const th = win.body.querySelector(`tr[data-refdes="${CSS.escape(refdes)}"] th.sizing-name`);
+  if (!th || !editor.circuit.components.has(refdes)) return;
+  const original = editor.circuit.labelOf(refdes)?.text || refdes;
+  const input = el('input', { type: 'text', class: 'sizing-input sizing-rename', 'aria-label': `Rename ${refdes}`, spellcheck: 'false', value: original });
+  th.replaceChildren(input);
+  renaming = { input, refdes, original };
+  input.focus();
+  input.select();
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter' && ev.key !== 'Escape') return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (ev.key === 'Escape' ? endRename() : finishRename()) win.grid.focus();
+  });
+  input.addEventListener('blur', () => {
+    if (renaming?.input === input && !finishRename()) endRename();
+  });
+}
+
+function endRename() {
+  renaming = null;
+  redraw();
+  return true;
+}
+
+/** Rename the part to what was typed; a name that cannot be, or is taken,
+ *  keeps the field open with the reason. */
+function finishRename() {
+  const { input, refdes, original } = renaming;
+  const text = input.value.trim();
+  if (!text || text === original) return endRename();
+  const next = componentNameIdentity(text);
+  if (!IDENTITY.test(next)) {
+    say(`Invalid component name "${text}".`, 'error');
+    return false;
+  }
+  if (next !== refdes && editor.circuit.components.has(next)) {
+    say(`Component name "${next}" is already in use.`, 'error');
+    return false;
+  }
+  renaming = null;
+  commit(() => editor.circuit.renameComponent(refdes, next, { displayLabel: text }));
+  followRename(refdes, next);
+  say('');
+  render();
+  redraw();
+  return true;
+}
+
+/** What the editor and the window hold by a part's name, renamed. */
+function followRename(previous, next) {
+  if (previous === next) return;
+  if (editor.selected === previous) editor.selected = next;
+  if (editor.multi.has(previous)) {
+    editor.multi.delete(previous);
+    editor.multi.add(next);
+  }
+  if (editor.componentRangeAnchor === previous) editor.componentRangeAnchor = next;
+  for (const cell of [anchor, focus]) if (cell?.refdes === previous) cell.refdes = next;
+  if (order) order = order.map((refdes) => (refdes === previous ? next : refdes));
+  if (groupStarts.has(previous)) {
+    groupStarts.set(next, groupStarts.get(previous));
+    groupStarts.delete(previous);
+  }
+}
+
 // ----- the keyboard and the clipboard ----------------------------------------------------
 
 function onGridKey(ev) {
-  if (editing) return;
+  if (editing || renaming) return;
   // Ctrl/Cmd+C, X, V: the browser's copy, cut, and paste events on the
   // grid do them; the canvas must not copy or paste its parts as well.
   if ((ev.ctrlKey || ev.metaKey) && !ev.altKey && !ev.shiftKey && ['c', 'x', 'v'].includes(ev.key.toLowerCase())) {
@@ -466,7 +635,7 @@ function gridKey(ev) {
     return true;
   }
   if (ev.key === 'Enter' || ev.key === 'F2') {
-    if (focus?.key === 'label') openLabelMenu(focus);
+    if (MENU_COLUMNS.has(focus?.key)) openCellMenu(focus);
     else startEditing();
     return true;
   }
@@ -578,8 +747,8 @@ function onMouseDown(ev) {
   if (!cell) return;
   ev.preventDefault();
   if (editing) finishEditing({ keep: true });
-  // A size label's cell in the range keeps the range: its menu is for all.
-  if (cell.key === 'label' && !ev.shiftKey && inRange(cell)) {
+  // A label's or link's cell in the range keeps the range: its menu is for all.
+  if (MENU_COLUMNS.has(cell.key) && !ev.shiftKey && inRange(cell)) {
     win.grid.focus();
     return;
   }
@@ -619,7 +788,11 @@ function annotate() {
 function build() {
   const close = el('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the sizing window', title: 'Close (Shift+Z)', text: '×' });
   const filter = el('input', { type: 'search', class: 'sizing-filter', placeholder: 'Filter parts', 'aria-label': 'Filter parts', spellcheck: 'false' });
-  const head = el('tr', {}, [el('th', { scope: 'col', text: 'Name' }), ...COLUMNS.map((column) => el('th', { scope: 'col', class: `sizing-${column.key}`, title: column.title, text: column.head }))]);
+  const group = el('button', { type: 'button', class: 'sizing-group-toggle', 'aria-pressed': 'false', title: 'Group by type', text: 'By type', onclick: toggleGroup });
+  const heading = (key, text, title, cls = '') => el('th', { scope: 'col', class: cls, 'data-key': key }, [
+    el('button', { type: 'button', class: 'sizing-sort', title, onclick: () => sortBy(key) }, [text, el('span', { class: 'sizing-arrow', 'aria-hidden': 'true' })]),
+  ]);
+  const head = el('tr', {}, [heading('name', 'Name', 'Sort by name'), ...COLUMNS.map((column) => heading(column.key, column.head, column.title, `sizing-${column.key}`))]);
   const body = el('tbody');
   // Fixed columns: a cell opened for typing never reflows the grid.
   const cols = el('colgroup', {}, [el('col', { class: 'sizing-col-name' }), ...COLUMNS.map((column) => el('col', { class: `sizing-col-${column.key}` }))]);
@@ -631,7 +804,7 @@ function build() {
   const annotateButton = el('button', { type: 'button', class: 'sizing-annotate', title: 'Put a parts table on the drawing', text: 'Annotate', onclick: annotate });
   const node = el('section', { class: 'floating-window sizing-window', 'aria-labelledby': 'sizing-title', hidden: true }, [
     el('header', { class: 'floating-window-header' }, [el('h2', { id: 'sizing-title', class: 'floating-window-title', text: 'Sizing' }), close]),
-    el('div', { class: 'sizing-body' }, [filter, grid, empty, status, hint]),
+    el('div', { class: 'sizing-body' }, [el('div', { class: 'sizing-tools' }, [filter, group]), grid, empty, status, hint]),
     el('footer', { class: 'window-footer' }, [annotateButton]),
   ]);
   filter.addEventListener('input', redraw);
@@ -648,23 +821,27 @@ function build() {
   grid.addEventListener('paste', onPaste);
   grid.addEventListener('mousedown', onMouseDown);
   grid.addEventListener('mouseover', onMouseOver);
-  grid.addEventListener('dblclick', (ev) => { if (cellOf(ev.target) && cellOf(ev.target).key !== 'label') startEditing(); });
-  // A click on a size label's cell opens its menu (a drag ends elsewhere).
+  grid.addEventListener('dblclick', (ev) => {
+    const name = ev.target.closest('th.sizing-name');
+    if (name) startRename(name.parentElement.dataset.refdes);
+    else if (cellOf(ev.target) && !MENU_COLUMNS.has(cellOf(ev.target).key)) startEditing();
+  });
+  // A click on a label's or link's cell opens its menu (a drag ends elsewhere).
   grid.addEventListener('click', (ev) => {
     const cell = cellOf(ev.target);
-    if (cell?.key === 'label' && !ev.shiftKey) openLabelMenu(cell);
+    if (MENU_COLUMNS.has(cell?.key) && !ev.shiftKey) openCellMenu(cell);
   });
   grid.addEventListener('contextmenu', (ev) => {
     const cell = cellOf(ev.target);
-    if (cell?.key !== 'label') return;
+    if (!MENU_COLUMNS.has(cell?.key)) return;
     ev.preventDefault();
     if (!inRange(cell)) pick(cell);
-    openLabelMenu(cell);
+    openCellMenu(cell);
   });
   window.addEventListener('mouseup', () => { dragging = false; });
   canvasEl.closest('.canvas-pane').append(node);
   const chrome = floatingWindow(node, { key: 'sizing', onClose: hide, resizable: true, toggleKey: 'Z' });
-  win = { el: node, grid, body, filter, empty, status, chrome };
+  win = { el: node, grid, body, head, filter, group, empty, status, chrome };
 }
 
 function syncButton() {
@@ -678,6 +855,7 @@ export function sizingShown() {
 function show() {
   if (!win) build();
   win.el.hidden = false;
+  order = null;
   redraw();
   win.chrome.place();
   // The parts selected on the canvas come in picked.
@@ -694,6 +872,7 @@ function show() {
 function hide() {
   if (!win || win.el.hidden) return;
   if (editing) finishEditing({ keep: true });
+  renaming = null;
   win.el.hidden = true;
   syncButton();
   canvasEl.focus({ preventScroll: true });
@@ -728,6 +907,8 @@ export function sizingDocumentShown() {
   drafts.clear();
   anchor = null;
   focus = null;
+  order = null;
+  renaming = null;
   if (editing) {
     editing = null;
   }

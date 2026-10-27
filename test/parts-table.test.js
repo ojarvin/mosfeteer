@@ -4,7 +4,9 @@ import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
 import { GRID } from '../src/core/grid.js';
 import { svgString } from '../src/core/render.js';
-import { lengthText, valueText, partsTableLayout, partsTableParts, tableParts } from '../src/core/parts-table.js';
+import { groupPartRows, lengthText, partLabelMode, sortPartRows, valueText, partsTableLayout, partsTableParts, tableParts } from '../src/core/parts-table.js';
+import { lengthMeters } from '../src/core/mos-size.js';
+import { valueNumber } from '../src/core/part-value.js';
 
 function circuitWith(lines) {
   const circuit = new Circuit();
@@ -146,4 +148,43 @@ test('a parts table is set as the math tables are: the math font throughout, nam
   const width = Number(table.match(/<line [^>]*stroke-width="([\d.]+)"/)[1]);
   const fontSize = Number(texts[0].match(/font-size="([\d.]+)"/)[1]);
   assert.ok(Math.abs(width - fontSize * 0.09) < 0.01, `rule ${width} for ${fontSize}`);
+});
+
+test('lengths and values read as numbers', () => {
+  assert.equal(lengthMeters('400n'), 4e-7);
+  assert.equal(lengthMeters('2u'), 2e-6);
+  assert.ok(Number.isNaN(lengthMeters('')));
+  assert.equal(valueNumber('10k'), 1e4);
+  assert.equal(valueNumber('1meg'), 1e6);
+  assert.equal(valueNumber('8 pF'), 8e-12);
+  assert.ok(Number.isNaN(valueNumber('R_L')));
+});
+
+test('the sizing window sorts by a column\'s numbers, empty cells last either way, values one unit at a time', () => {
+  const circuit = circuitWith([
+    'add nmos M1 --at 0 0', 'add nmos M2 --at 400 0', 'add nmos M10 --at 800 0', 'add pmos M3 --at 0 -600',
+    'add resistor R1 --at 400 -600', 'add resistor R2 --at 800 -600', 'add capacitor C1 --at 1200 -600', 'add capacitor C2 --at 1600 -600',
+    'size M1 2u/400n', 'size M2 400n/1u x4', 'size M10 10u/180n',
+    'value R1 10k', 'value R2 R_L', 'value C1 1p', 'value C2 500f',
+  ]);
+  const names = (rows) => rows.map((c) => c.refdes);
+  const sorted = (key, reverse = false) => names(sortPartRows(circuit, tableParts(circuit), key, { reverse }));
+  assert.deepEqual(sorted('w'), ['M2', 'M1', 'M10', 'M3', 'C1', 'C2', 'R1', 'R2'], '400n before 2u; the rest as they were');
+  assert.deepEqual(sorted('w', true), ['M10', 'M1', 'M2', 'M3', 'C1', 'C2', 'R1', 'R2']);
+  assert.deepEqual(sorted('m', true).slice(0, 3), ['M2', 'M1', 'M10']);
+  assert.deepEqual(sorted('name', true), ['R2', 'R1', 'M10', 'M3', 'M2', 'M1', 'C2', 'C1']);
+  // F before Ω; within each, by number, a text after the numbers.
+  assert.deepEqual(sorted('value').slice(0, 4), ['C2', 'C1', 'R1', 'R2']);
+  assert.deepEqual(sorted('value', true).slice(0, 4), ['C1', 'C2', 'R2', 'R1']);
+  circuit.components.get('R1').link = 'bias';
+  assert.deepEqual(sorted('link')[0], 'R1');
+  assert.equal(partLabelMode(circuit.components.get('M1')), 'below');
+  assert.equal(partLabelMode(circuit.components.get('M3')), null);
+});
+
+test('By type groups the rows by their part type, in a fixed order', () => {
+  const circuit = parts();
+  const groups = groupPartRows(tableParts(circuit));
+  assert.deepEqual(groups.map((group) => [group.title, group.parts.map((c) => c.refdes)]),
+    [['NMOS', ['M1', 'M2', 'M10']], ['PMOS', ['M3']], ['Resistors', ['R1']], ['Capacitors', ['C1']]]);
 });

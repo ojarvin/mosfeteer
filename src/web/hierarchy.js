@@ -876,5 +876,25 @@ export function openLinkBubbleMenu(refdes, x, y) {
   menu.querySelector('button:not(:disabled)')?.focus();
 }
 
+/** The design picker on its own, under a Link cell of the sizing window:
+ *  a design for every part given, or none. */
+export function openLinkPicker(parts, x, y) {
+  const menu = openMenuAt(x, y, parts.length > 1 ? `Link of ${parts.length} parts` : 'Link');
+  if (!menu) return;
+  const group = document.createElement('div');
+  group.className = 'context-menu-group';
+  const links = new Set(parts.map((c) => c.link || ''));
+  const current = links.size === 1 ? [...links][0] || null : null;
+  const search = appendDesignChoices(group, linkableDesigns(), {
+    current,
+    label: 'Find a design to link to',
+    empty: 'No other designs in the workspace',
+    pick: (doc) => setLinks(parts, doc.name),
+  });
+  if (parts.some((c) => c.link)) appendContextItem(group, 'None (unlink)', () => setLinks(parts, null));
+  menu.appendChild(group);
+  search.focus();
+}
+
 export function installHierarchy() {
 }

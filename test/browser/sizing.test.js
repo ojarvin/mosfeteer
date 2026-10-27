@@ -1,7 +1,8 @@
 /** The sizing window in a browser: cells picked, typed into many at once,
  *  half a size kept until the other half comes, pasting one value or a
- *  spreadsheet column, one undo step per edit, and a parts table put on the
- *  drawing that follows the sizes. */
+ *  spreadsheet column, one undo step per edit, a parts table put on the
+ *  drawing that follows the sizes, rows sorted and grouped, names renamed,
+ *  links picked; and a part's menu copying its size or value onto others. */
 
 import { describe, before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -20,7 +21,7 @@ function parts() {
 
 describe('sizing window', { skip: browserSkip() }, () => {
   let h;
-  before(async () => { h = await start({ docs: { sizes: parts() } }); });
+  before(async () => { h = await start({ docs: { sizes: parts(), ota: new Circuit().toJSON() } }); });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
   const editor = (expression) => h.evaluate(`${h.module('editor-state.js')}.then((m) => { const editor = m.editor; return ${expression}; })`);
@@ -46,6 +47,25 @@ describe('sizing window', { skip: browserSkip() }, () => {
     document.querySelector('.sizing-grid').dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
   })()`);
   const undoDepth = () => editor('editor.history.length');
+  const rightClick = async (refdes) => {
+    // The middle of the part's body, where the page has it once caught up:
+    // closing the window can move the drawing's pane, and a name label may
+    // stand over the part's origin.
+    await h.settle();
+    const p = await h.evaluate(`${h.module('editor-state.js')}.then(async (m) => { const b = m.editor.circuit.components.get(${JSON.stringify(refdes)}).bboxWorld(); return (await ${h.module('canvas-view.js')}).worldToClient(b.x + b.w / 2, b.y + b.h / 2); })`);
+    await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
+    await h.tap(p.x, p.y, { button: 'right' });
+    try {
+      await h.until(`!document.querySelector('.component-context-menu').hidden`);
+    } catch (error) {
+      const seen = await h.evaluate(`${h.module('editor-state.js')}.then((m) => JSON.stringify({ under: document.elementFromPoint(${p.x}, ${p.y})?.outerHTML.slice(0, 160), drag: m.editor.drag && m.editor.drag.mode, radial: !!document.querySelector('.radial-item'), mode: m.editor.mode, at: ${JSON.stringify(p)}, now: (() => { const c = m.editor.circuit.components.get(${JSON.stringify(refdes)}).transform; return c; })() }))`);
+      throw new Error(`${error.message}\n  ${seen}`);
+    }
+  };
+  const choose = (submenu, item) => h.evaluate(`(() => {
+    [...document.querySelectorAll('.component-context-menu button')].find((b) => b.textContent.startsWith(${JSON.stringify(submenu)})).click();
+    [...document.querySelectorAll('.context-submenu[aria-label=${JSON.stringify(submenu)}] button')].find((b) => b.textContent.trim().startsWith(${JSON.stringify(item)})).click();
+  })()`);
 
   test('Shift+Z lists the transistors first, then the passives, each by name', async () => {
     await h.open('sizes');
@@ -182,24 +202,6 @@ describe('sizing window', { skip: browserSkip() }, () => {
   });
 
   test('a passive\'s menu shows its value below the name or in its place; Edit value… types it in the sizing window', async () => {
-    const rightClick = async (refdes) => {
-      // Where the part is once the page has caught up: closing the window
-      // can move the drawing's pane.
-      await h.settle();
-      const p = await h.evaluate(`${h.module('editor-state.js')}.then(async (m) => { const c = m.editor.circuit.components.get(${JSON.stringify(refdes)}).transform; return (await ${h.module('canvas-view.js')}).worldToClient(c.x, c.y); })`);
-      await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
-      await h.tap(p.x, p.y, { button: 'right' });
-      try {
-        await h.until(`!document.querySelector('.component-context-menu').hidden`);
-      } catch (error) {
-        const seen = await h.evaluate(`${h.module('editor-state.js')}.then((m) => JSON.stringify({ under: document.elementFromPoint(${p.x}, ${p.y})?.outerHTML.slice(0, 160), drag: m.editor.drag && m.editor.drag.mode, radial: !!document.querySelector('.radial-item'), mode: m.editor.mode, at: ${JSON.stringify(p)}, now: (() => { const c = m.editor.circuit.components.get(${JSON.stringify(refdes)}).transform; return c; })() }))`);
-        throw new Error(`${error.message}\n  ${seen}`);
-      }
-    };
-    const choose = (submenu, item) => h.evaluate(`(() => {
-      [...document.querySelectorAll('.component-context-menu button')].find((b) => b.textContent.startsWith(${JSON.stringify(submenu)})).click();
-      [...document.querySelectorAll('.context-submenu[aria-label=${JSON.stringify(submenu)}] button')].find((b) => b.textContent.trim().startsWith(${JSON.stringify(item)})).click();
-    })()`);
     await h.evaluate(`window.__run('value R1 10k')`);
     await h.key('Z', { shiftKey: true });
     await h.until(`!!document.querySelector('.sizing-window[hidden]')`);
@@ -216,5 +218,105 @@ describe('sizing window', { skip: browserSkip() }, () => {
     assert.equal(await h.evaluate(`document.querySelector(${JSON.stringify(cell('R1', 'label'))}).textContent.replace('▾', '')`), 'Instead of the name', 'the window shows it too');
     await h.evaluate(`(() => { const input = document.querySelector('.sizing-input'); input.value = '22k'; input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); })()`);
     await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.valueLabelOf('R1')?.text === '$\\\\mathrm{22\\\\,kΩ}$')`);
+  });
+  const shown = () => h.evaluate(`!!document.querySelector('.sizing-window:not([hidden])')`);
+  const order = () => h.evaluate(`[...document.querySelectorAll('.sizing-table tbody tr[data-refdes]')].map((tr) => tr.dataset.refdes)`);
+  const closeMenu = () => h.evaluate(`${h.module('context-menu.js')}.then((m) => m.closeComponentContextMenu())`);
+
+  test('a heading sorts by its column, then the other way, then back; By type groups; both saved with the design', async () => {
+    for (const line of ['size M1 2u/180n', 'size M2 400n/180n', 'size M3 10u/180n', 'size M10 1u/180n']) await h.evaluate(`window.__run(${JSON.stringify(line)})`);
+    if (!await shown()) await h.key('Z', { shiftKey: true });
+    await h.until(`!!document.querySelector('.sizing-window:not([hidden])')`);
+    const sortBy = (head) => h.evaluate(`[...document.querySelectorAll('.sizing-sort')].find((b) => b.firstChild.textContent === ${JSON.stringify(head)}).click()`);
+    await sortBy('W');
+    await h.until(`document.querySelector('.sizing-table tbody tr[data-refdes]').dataset.refdes === 'M2'`);
+    assert.deepEqual(await order(), ['M2', 'M10', 'M1', 'M3', 'C1', 'R1'], '400n before 1u; the rows without a W as they were');
+    assert.deepEqual(await editor('editor.circuit.windows.sizing'), { sort: { key: 'w' } });
+    assert.equal(await h.evaluate(`document.querySelector('.sizing-table thead th[data-key="w"]').getAttribute('aria-sort')`), 'ascending');
+    // An edit leaves every row where it is.
+    await pickCell('M2', 'w');
+    await type('20u');
+    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.get('M2').size.w === '20u')`);
+    assert.deepEqual(await order(), ['M2', 'M10', 'M1', 'M3', 'C1', 'R1']);
+    await sortBy('W');
+    await h.until(`document.querySelector('.sizing-table thead th[data-key="w"]').getAttribute('aria-sort') === 'descending'`);
+    assert.deepEqual(await order(), ['M2', 'M3', 'M1', 'M10', 'C1', 'R1']);
+    await sortBy('W');
+    await h.until(`document.querySelector('.sizing-table tbody tr[data-refdes]').dataset.refdes === 'M1'`);
+    assert.deepEqual(await order(), ['M1', 'M2', 'M3', 'M10', 'C1', 'R1'], 'the table\'s order again');
+    assert.equal(await editor('editor.circuit.windows.sizing'), undefined);
+    await h.click('.sizing-group-toggle');
+    await h.until(`document.querySelectorAll('.sizing-table tr.sizing-group').length === 4`);
+    assert.deepEqual(await h.evaluate(`[...document.querySelectorAll('.sizing-table tr.sizing-group')].map((tr) => tr.textContent)`), ['NMOS', 'PMOS', 'Resistors', 'Capacitors']);
+    assert.deepEqual(await order(), ['M1', 'M2', 'M10', 'M3', 'R1', 'C1']);
+    assert.deepEqual(await editor('editor.circuit.toJSON().windows.sizing'), { group: true }, 'saved with the design');
+    await h.click('.sizing-group-toggle');
+    await h.until(`!document.querySelector('.sizing-table tr.sizing-group')`);
+  });
+
+  test('a double-click on a name renames the part as the canvas does; a name in use keeps the field with the reason', async () => {
+    const rename = (refdes, text, key = 'Enter') => h.evaluate(`(() => {
+      document.querySelector('.sizing-table tr[data-refdes="${refdes}"] th.sizing-name').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      const input = document.querySelector('.sizing-rename');
+      input.value = ${JSON.stringify(text)};
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true, cancelable: true }));
+    })()`);
+    const depth = await undoDepth();
+    await rename('M10', 'M_{out}');
+    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.has('Mout'))`);
+    assert.equal(await editor(`editor.circuit.labelOf('Mout').text`), 'M_{out}');
+    assert.equal(await undoDepth(), depth + 1, 'one undo step');
+    assert.deepEqual(await order(), ['M1', 'M2', 'M3', 'Mout', 'C1', 'R1'], 'in its place');
+    await rename('M1', 'M2');
+    await h.until(`/already in use/.test(document.querySelector('.sizing-status').textContent)`);
+    assert.ok(await h.evaluate(`!!document.querySelector('.sizing-rename')`), 'still renaming');
+    await h.evaluate(`document.querySelector('.sizing-rename').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))`);
+    await h.until(`!document.querySelector('.sizing-rename')`);
+    assert.equal(await editor(`editor.circuit.components.has('M1')`), true);
+  });
+
+  test('a Link cell picks a design from the workspace; typed or pasted, the name is taken; Delete unlinks', async () => {
+    await pickCell('M1', 'link');
+    await h.until(`!document.getElementById('component-context-menu').hidden`);
+    await h.evaluate(`[...document.querySelectorAll('#component-context-menu button')].find((b) => b.textContent.trim() === 'ota').click()`);
+    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.get('M1').link === 'ota')`);
+    await h.until(`document.querySelector(${JSON.stringify(cell('M1', 'link'))}).textContent.startsWith('ota')`);
+    await closeMenu();
+    await pickCell('M2', 'link');
+    await closeMenu();
+    await h.evaluate(`document.querySelector('.sizing-grid').focus()`);
+    await paste('bias');
+    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.get('M2').link === 'bias')`);
+    await gridKey('Delete');
+    await h.until(`${h.module('editor-state.js')}.then((m) => !m.editor.circuit.components.get('M2').link)`);
+  });
+
+  test('a part\'s menu copies its size onto every selected transistor, and a value onto parts in the same unit', async () => {
+    if (await shown()) await h.key('Z', { shiftKey: true });
+    await h.until(`!!document.querySelector('.sizing-window[hidden]')`);
+    await rightClick('M1');
+    await choose('Sizing', 'Copy size');
+    await h.evaluate(`${h.module('main.js')}.then((m) => { m.setSelection(['M2', 'M3']); m.render(); })`);
+    await rightClick('M2');
+    const depth = await undoDepth();
+    await choose('Sizing', 'Paste size 2u/180n');
+    await h.until(`${h.module('editor-state.js')}.then((m) => ['M2', 'M3'].every((r) => m.editor.circuit.components.get(r).size?.w === '2u'))`);
+    assert.deepEqual(await size('M3'), { w: '2u', l: '180n', m: 1, hidden: true });
+    assert.equal(await undoDepth(), depth + 1, 'one undo step');
+    // A value: onto a part in its unit only.
+    await h.evaluate(`window.__run('value R1 47k')`);
+    await rightClick('R1');
+    await choose('Value', 'Copy value');
+    await rightClick('C1');
+    const pasteOffered = () => h.evaluate(`(() => {
+      [...document.querySelectorAll('.component-context-menu button')].find((b) => b.textContent.startsWith('Value')).click();
+      return !([...document.querySelectorAll('.context-submenu[aria-label="Value"] button')].find((b) => b.textContent.trim().startsWith('Paste value')).disabled);
+    })()`);
+    assert.equal(await pasteOffered(), false, 'a capacitor takes no Ω');
+    await closeMenu();
+    await h.evaluate(`window.__run('add resistor R2 --at 400 600')`);
+    await rightClick('R2');
+    await choose('Value', 'Paste value');
+    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.get('R2').value === '47k')`);
   });
 });

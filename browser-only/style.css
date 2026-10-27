@@ -8438,7 +8438,7 @@ body.chrome-away [data-editor-edge="right"] {
 /* The sizing window (sizing-window.js): a grid of sizes and values. */
 .sizing-window {
   --field-h: var(--control-h-sm);
-  width: min(32rem, calc(100% - 16px));
+  width: min(34rem, calc(100% - 16px));
   min-height: 0;
 }
 
@@ -8451,9 +8451,30 @@ body.chrome-away [data-editor-edge="right"] {
   padding: 10px 12px 12px;
 }
 
-.sizing-filter {
+.sizing-tools {
+  display: flex;
   flex: none;
+  gap: 6px;
+}
+
+.sizing-filter {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: var(--text-sm);
+}
+
+.sizing-group-toggle {
+  flex: none;
+  min-height: var(--control-h-sm);
+  padding: 0 10px;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+
+.sizing-group-toggle[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: var(--accent-tint);
+  color: var(--accent);
 }
 
 .sizing-grid {
@@ -8493,7 +8514,44 @@ body.chrome-away [data-editor-edge="right"] {
 }
 
 .sizing-table thead th:first-child,
-.sizing-table thead th.sizing-label { text-align: left; }
+.sizing-table thead th:is(.sizing-label, .sizing-link) { text-align: left; }
+
+/* A heading sorts by its column; its highlight a few pixels clear of the
+   text, which stays in line with the column's. */
+.sizing-sort {
+  min-height: 0;
+  margin: -2px -5px;
+  padding: 2px 5px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sizing-sort:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+th[aria-sort="ascending"] .sizing-sort,
+th[aria-sort="descending"] .sizing-sort { color: var(--text); }
+
+.sizing-arrow:not(:empty) {
+  margin-left: 3px;
+  font-size: var(--text-2xs);
+}
+
+/* By type: a heading row above each type's parts. */
+.sizing-table tr.sizing-group th {
+  padding: 6px 8px 2px;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-align: left;
+}
 
 .sizing-table tbody tr + tr :is(th, td) { border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
 
@@ -8508,6 +8566,9 @@ body.chrome-away [data-editor-edge="right"] {
 
 .sizing-table tr.selected .sizing-name { color: var(--accent); }
 
+.sizing-name:has(.sizing-rename) { padding: 0; }
+.sizing-rename { font-style: normal; text-align: left; }
+
 .sizing-cell {
   height: var(--control-h-sm);
   padding: 0 8px;
@@ -8516,19 +8577,31 @@ body.chrome-away [data-editor-edge="right"] {
   cursor: cell;
 }
 
-.sizing-cell.sizing-label { text-align: left; }
+.sizing-cell:is(.sizing-label, .sizing-link) { text-align: left; }
 
-.sizing-col-name { width: 22%; }
-.sizing-col-w, .sizing-col-l { width: 13%; }
-.sizing-col-m { width: 8%; }
-.sizing-col-label { width: 26%; }
-.sizing-col-value { width: 18%; }
+.sizing-col-name { width: 17%; }
+.sizing-col-w, .sizing-col-l { width: 11%; }
+.sizing-col-m { width: 7%; }
+.sizing-col-label { width: 24%; }
+.sizing-col-value { width: 14%; }
+.sizing-col-link { width: 16%; }
 
 .sizing-cell { overflow: hidden; text-overflow: ellipsis; }
-.sizing-cell.sizing-label:not(.sizing-none) { cursor: pointer; }
-.sizing-choice { color: var(--text-dim); }
+.sizing-cell:is(.sizing-label, .sizing-link):not(.sizing-none) { cursor: pointer; }
+/* The choice gives way to its menu's mark, cut short rather than wrapped. */
+.sizing-choice {
+  display: inline-block;
+  max-width: calc(100% - 12px);
+  overflow: hidden;
+  color: var(--text-dim);
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
 .sizing-chevron { float: right; color: var(--text-dim); font-size: var(--text-xs); }
-.sizing-cell.sizing-label:hover .sizing-choice { color: var(--text); }
+.sizing-cell:is(.sizing-label, .sizing-link):hover .sizing-choice { color: var(--text); }
+/* An empty link shows its menu's mark only under the pointer. */
+.sizing-link .sizing-choice:empty + .sizing-chevron { visibility: hidden; }
+.sizing-link:hover .sizing-chevron { visibility: visible; }
 .sizing-cell.sizing-none { background: color-mix(in srgb, var(--bg-elevated) 70%, transparent); cursor: default; }
 .sizing-cell.sizing-draft { color: var(--warn); font-style: italic; }
 .sizing-cell.in-range { background: var(--accent-tint); }

@@ -153,6 +153,26 @@ until both make a size; nothing else is kept there, so the grid redraws
 from the design on every change. Annotate adds a
 parts table to the drawing ([`model.md`](model.md)).
 
+A double-click on a name renames the part as the canvas does (one undo
+step; a name in use keeps the field open with the reason). The Link column
+is the design a part links to: a click opens the canvas's design picker
+for the cell's row, or every row of the range when the range holds it;
+typed or pasted, the name is taken as it is, and Delete unlinks. A heading
+sorts the rows by its column -- lengths and values by their numbers,
+values one unit at a time, empty cells last -- a second click the other
+way, a third back to the table's order; **By type** groups the rows under
+their part type (`sortPartRows`, `groupPartRows`). Both are saved with the
+design (`Circuit#windows.sizing`). The order is taken when it is chosen and
+kept while cells are edited; parts added, removed, renamed, or filtered
+take it again.
+
+A transistor's canvas menu, Sizing, has **Copy size** and **Paste size**:
+the size goes on the clipboard as text too, and pastes onto every selected
+transistor in one undo step, one without a size taking the copied one's
+label placement. A passive's or source's Value menu has **Copy value** and
+**Paste value**, which pastes onto the selected parts whose value is in
+the same unit (Ω, F, H, A, V). Neither has a key.
+
 The side panel's Selection shows one selected part's properties to edit in
 place (`detailProperties`, `src/web/side-panel.js`): a transistor's Size
 (`2u/180n x4`, as the sizing window reads it), a passive's or source's
@@ -167,7 +187,7 @@ kept in its file ([`docs/notes-and-history.md`](notes-and-history.md)).
 What the editor's windows show for a design is saved with it
 (`Circuit#windows`, `src/core/window-state.js`): the reference windows
 (pasted pictures included), the calculator's results, the time-domain plot's
-nets and stimulus, and the small-signal form. It is not drawing: undo and redo keep it
+nets and stimulus, the small-signal form, and the sizing window's order. It is not drawing: undo and redo keep it
 (`applyJson` replaces it only with `{ document: true }`), and it never makes
 the design unsaved -- it is written with the next save, or on its own
 (`saveWindowState`) when the design is left or the editor hidden with
