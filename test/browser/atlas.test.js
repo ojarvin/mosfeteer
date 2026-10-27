@@ -938,7 +938,8 @@ describe('Atlas hierarchy chain', { skip: browserSkip() }, () => {
     assert.ok(t.top.lift > t.mid.lift && t.mid.lift > t.leaf.lift && t.leaf.lift > t.deep.lift && t.deep.lift > 0, JSON.stringify(s.tiles.map((x) => [x.name, x.lift])));
     assert.equal(t.user.lift, t.mid.lift, 'a design using the pick lifts as its children do');
     assert.ok(t.deeper.lift === 0 && t.deeper.dim === 1 && t.other.dim === 1, 'past three levels, and off the chain, the rest lie flat and dim');
-    assert.ok(t.mid.dim === 0 && t.leaf.dim > 0 && t.deep.dim > t.leaf.dim, 'the chain dims a little as it goes down');
+    // The pick alone at full strength; its kin a step down, the chain dimmer as it goes.
+    assert.ok(t.top.dim === 0 && t.mid.dim > 0 && t.leaf.dim > t.mid.dim && t.deep.dim > t.leaf.dim, JSON.stringify(s.tiles.map((x) => [x.name, x.dim])));
     const depthOf = (from, to) => s.beams.find((b) => b.from === t[from].id && b.to === t[to].id)?.depth;
     assert.deepEqual([depthOf('top', 'mid'), depthOf('user', 'top'), depthOf('mid', 'leaf'), depthOf('leaf', 'deep'), depthOf('deep', 'deeper')], [1, 1, 2, 3, undefined]);
   });

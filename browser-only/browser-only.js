@@ -49536,6 +49536,15 @@ function requestDraw() {
   });
 }
 
+/** A `#rgb` / `#rrggbb` color at `alpha`, as a canvas shadow takes it. */
+function translucent(color, alpha) {
+  const hex = color.replace('#', '');
+  const full = hex.length === 3 ? [...hex].map((c) => c + c).join('') : hex;
+  if (!/^[0-9a-f]{6}$/i.test(full)) return color;
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16));
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 function colors() {
   const style = getComputedStyle(rootEl);
   const read = (name, fallback) => style.getPropertyValue(name).trim() || fallback;
@@ -49551,6 +49560,8 @@ function colors() {
     // the shadow it casts.
     card: read('--paper', '#fff'),
     shadow: document.documentElement.classList.contains('dark') ? 'rgba(0, 0, 0, 0.7)' : 'rgba(20, 24, 34, 0.28)',
+    // The glow around the picked design's card: the accent, half seen.
+    glow: translucent(read('--accent', '#0e7c7b'), 0.4),
   };
 }
 
@@ -49725,8 +49736,9 @@ function draw() {
 //
 // With nothing picked every design lies flat, at its true size, for
 // comparison. A picked design lifts off the desk as a card -- a touch
-// larger, brighter, on a soft shadow, an accent rim -- the designs it links
-// to and those using it lift only part way, and the rest dim. Each design
+// larger, brighter, on a soft shadow, an accent rim and glow -- the designs
+// it links to and those using it lift only part way and dim a little, and
+// the rest dim more. Each design
 // eases toward its own state, so picking and letting go animate.
 
 const LIFT_GROW = 0.12;
@@ -49735,7 +49747,7 @@ const RELATED_LIFT = 0.3;
  *  designs it links to and those using it, then their children and theirs
  *  -- each lower than the one above, so the chain reads as depth. */
 const LEVEL_LIFT = [1, RELATED_LIFT, 0.13, 0.055];
-const LEVEL_DIM = [0, 0, 0.25, 0.45];
+const LEVEL_DIM = [0, 0.2, 0.35, 0.5];
 /** How much of a design a full dim takes away: the unrelated designs stay
  *  legible beside the pick. */
 const DIMMED = 0.45;
@@ -49867,8 +49879,12 @@ function drawCard(ctx, tile, rect, lift, palette) {
   ctx.globalAlpha = solid;
   // Two shadows: a wide soft one far below, a tighter one close under it.
   ctx.fillStyle = palette.card;
-  for (const [blur, drop, alpha] of [[70 * lift, 34 * lift, 1], [16 * lift, 6 * lift, 0.6]]) {
-    ctx.shadowColor = palette.shadow;
+  // The pick also glows in the accent all round: it reads as the one
+  // picked, above the designs lifted with it.
+  const shadows = [[70 * lift, 34 * lift, 1, palette.shadow], [16 * lift, 6 * lift, 0.6, palette.shadow]];
+  if (picked) shadows.push([22 * lift, 0, 1, palette.glow]);
+  for (const [blur, drop, alpha, color] of shadows) {
+    ctx.shadowColor = color;
     ctx.shadowBlur = blur;
     ctx.shadowOffsetY = drop;
     ctx.globalAlpha = solid * alpha;
@@ -49879,10 +49895,18 @@ function drawCard(ctx, tile, rect, lift, palette) {
   ctx.shadowColor = 'transparent';
   ctx.globalAlpha = solid;
   ctx.fill();
-  ctx.globalAlpha = picked ? lift * 0.9 : solid * 0.3;
-  ctx.strokeStyle = picked ? palette.accent : palette.dim;
-  ctx.lineWidth = Math.max(0.5, Math.min(1.5, 3 * k));
-  ctx.stroke();
+  if (picked) {
+    // Its rim twice its kin's.
+    ctx.globalAlpha = lift;
+    ctx.strokeStyle = palette.accent;
+    ctx.lineWidth = Math.max(1, Math.min(3, 6 * k));
+    ctx.stroke();
+  } else {
+    ctx.globalAlpha = solid * 0.3;
+    ctx.strokeStyle = palette.dim;
+    ctx.lineWidth = Math.max(0.5, Math.min(1.5, 3 * k));
+    ctx.stroke();
+  }
   ctx.restore();
 }
 

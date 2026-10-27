@@ -77,11 +77,12 @@ neighborhoods of related designs.
 
 With nothing picked every design lies flat at its true size, for
 comparison. A picked design lifts off the desk: it eases up onto a card
-larger than the flat drawing, on a deep soft shadow, its rim a hairline in
-drawing units (the accent's); the designs it links to and those using it
-lift only part way, on lower cards of their own. Below them the hierarchy
+larger than the flat drawing, on a deep soft shadow and a glow of the
+accent, its rim in the accent and twice its kin's; the designs it links to
+and those using it lift only part way, on lower cards of their own, and dim
+a little. Below them the hierarchy
 goes on downward only (`linkDepths`): their children lift lower still and
-dim a little, and theirs lower again, three levels in all -- never back up
+dim more, and theirs lower again, three levels in all -- never back up
 to a parent or across to a sibling -- and every other design dims. Grown
 on their cards they would overlap the picked one (or each other), so each
 lifted card floats out of the way, the shortest way clear (`floatClear`),
