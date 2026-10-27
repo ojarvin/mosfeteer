@@ -34924,9 +34924,9 @@ function pageGuideCaption(guide) {
   return `${guide.name} (${guide.widthLabel}) · ${guide.textPt} pt text with \\includegraphics[width=${guide.latexWidth}]`;
 }
 
-/** The guide's name in a list, e.g. `A4 page (16 cm)`; a custom one with its text size. */
+/** The guide's name in a list with its width and text size, e.g. `A4 page (16 cm, 8 pt)`. */
 function pageGuideTitle(guide) {
-  return guide.preset === 'custom' ? `Custom (${guide.widthLabel}, ${guide.textPt} pt)` : `${guide.name} (${guide.widthLabel})`;
+  return `${guide.name} (${guide.widthLabel}, ${guide.textPt} pt)`;
 }
 
 /** The frame an export of `circuit` would get, with the same bounds and
@@ -38216,8 +38216,9 @@ let FIGURE_EMBED_LINE, figureKey, noteCitations, noteFigures, normalizeNotes, re
  * Every figure is drawn at the page guide's width, centered: one narrower
  * than the guide is padded to it, so every figure's text is the guide's
  * size; one wider is fitted to it, its text smaller, and the report says so.
- * A plot is drawn again to fill three quarters of the guide's width, its
- * own text at the guide's size.
+ * A plot is drawn again, its box three fifths of the guide's width (less
+ * where its legend would reach past the guide), its own text at the
+ * guide's size.
  * Without a guide the report uses the A4 one. The page is A4, its text as
  * wide as the guide where that fits on the sheet.
  *
@@ -38315,18 +38316,19 @@ function targetSvg(circuit, target, guide) {
   return { svg: renderDocument(circuit, { ...DRAWING_EXPORT_OPTIONS, pageGuide: guide }) };
 }
 
-/** The share of the guide's width a plot fills in a report. */
-const PLOT_SHARE = 0.75;
+/** The share of the guide's width a plot's box fills in a report. */
+const PLOT_SHARE = 0.6;
 
 const viewBoxWidth = (svg) => Number(svg.match(/viewBox="([^"]+)"/)[1].split(/\s+/)[2]);
 
 /**
  * A plot figure as a report draws it, `{ svg, widthPt, textUnits }`: drawn
- * again in a box of its own proportions sized so that the figure fills
- * PLOT_SHARE of the guide's width with its text -- ticks, axis names, the
- * legend beside it -- at the guide's size; on the canvas a plot's text is
- * smaller than the labels'. The drawing itself is left as it is (a copy is
- * drawn). Null when the figure has no plot box.
+ * again in a box of its own proportions, PLOT_SHARE of the guide's width
+ * -- every plot's box one size, whatever its legend -- with its text --
+ * ticks, axis names, the legend beside it -- at the guide's size; on the
+ * canvas a plot's text is smaller than the labels'. A legend that would
+ * reach past the guide narrows the box instead. The drawing itself is left
+ * as it is (a copy is drawn). Null when the figure has no plot box.
  */
 function reportPlot(circuit, figure, guide) {
   const copy = loadDocument(circuit.toJSON());
@@ -38341,7 +38343,9 @@ function reportPlot(circuit, figure, guide) {
     const w = Math.abs(box.end.x - box.anchor.x);
     const h = Math.abs(box.end.y - box.anchor.y);
     const ptPerUnit = guide.textPt / plotFontSize(box.plot, h);
-    const grow = (PLOT_SHARE * guide.widthPt) / ptPerUnit - viewBoxWidth(svg);
+    // Ticks and legend: what the figure holds beside the box.
+    const beside = viewBoxWidth(svg) - w;
+    const grow = Math.min(PLOT_SHARE * guide.widthPt, guide.widthPt - beside * ptPerUnit) / ptPerUnit - w;
     if (Math.abs(grow) < 1 || w + grow <= 0) break;
     const k = (w + grow) / w;
     const left = Math.min(box.anchor.x, box.end.x);
@@ -82103,15 +82107,17 @@ function spectrumControls() {
   ]);
 }
 
-/** The simulated in-band SNDR, and the amplitude it was simulated at, as a
- *  legend line for an annotated magnitude plot (null without a spectrum and
- *  a band). No " = " in it: a legend's coefficient lines are told apart by
- *  that. */
+/** The simulated in-band SNDR, and the amplitude it was simulated at, as
+ *  legend lines for an annotated magnitude plot (null without a spectrum and
+ *  a band). No " = " in it: an older plot's coefficient lines are told
+ *  apart by that. */
 function sndrNote() {
   if (!spectrum?.raw) return null;
   const measured = inBand(spectrum.raw, spectrum.frequency, bandEdges(editor.circuit.analysisValues.band));
   if (!measured) return null;
-  return { label: `\\text{SNDR }${measured.sndr.toFixed(1)}\\text{ dB at }${spectrum.amplitude}\\text{ dBFS}`, color: MUTED_TRACE_COLOR };
+  // Two short lines, so the legend keeps to the width of the traces' names.
+  const signed = (text) => text.replace(/^-/, '−');
+  return { label: `\\text{SNDR ${signed(measured.sndr.toFixed(1))} dB}\n\\text{at ${signed(String(spectrum.amplitude))} dBFS}`, color: MUTED_TRACE_COLOR };
 }
 
 function spectrumStatus() {

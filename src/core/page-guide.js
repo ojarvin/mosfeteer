@@ -117,9 +117,9 @@ export function pageGuideCaption(guide) {
   return `${guide.name} (${guide.widthLabel}) · ${guide.textPt} pt text with \\includegraphics[width=${guide.latexWidth}]`;
 }
 
-/** The guide's name in a list, e.g. `A4 page (16 cm)`; a custom one with its text size. */
+/** The guide's name in a list with its width and text size, e.g. `A4 page (16 cm, 8 pt)`. */
 export function pageGuideTitle(guide) {
-  return guide.preset === 'custom' ? `Custom (${guide.widthLabel}, ${guide.textPt} pt)` : `${guide.name} (${guide.widthLabel})`;
+  return `${guide.name} (${guide.widthLabel}, ${guide.textPt} pt)`;
 }
 
 /** The frame an export of `circuit` would get, with the same bounds and

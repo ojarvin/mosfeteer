@@ -114,3 +114,14 @@ test('a custom guide outside its bounds is refused, saying why', () => {
   assert.throws(() => customPageGuide({ width: 12, unit: 'cm', textPt: 2 }, { strict: true }), /text size must be from 4 to 36 pt/);
   assert.throws(() => customPageGuide({ width: 'wide', unit: 'cm', textPt: 9 }, { strict: true }), /positive number/);
 });
+
+test('every guide is listed with its width and text size, the menus as pageGuideTitle names them', async () => {
+  assert.equal(pageGuideTitle(normalizePageGuide('a4')), 'A4 page (16 cm, 8 pt)');
+  const { readFile } = await import('node:fs/promises');
+  const html = await readFile(new URL('../src/web/index.html', import.meta.url), 'utf8');
+  for (const preset of ['ieee-1col', 'ieee-2col', 'a4']) {
+    const title = pageGuideTitle(normalizePageGuide(preset));
+    assert.ok(html.includes(`data-page-guide="${preset}">${title}</button>`), `the settings menu names ${title}`);
+    assert.ok(html.includes(`<option value="${preset}">${title}</option>`), `the export dialog names ${title}`);
+  }
+});

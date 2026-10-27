@@ -37,17 +37,21 @@ test('the report example\'s report: the integrator a section, every figure drawn
   assert.equal(report.html.match(/<li id="ref-\d+">/g).length, 2, 'both citations in the one list');
 });
 
-test('a report draws each plot again to fill three quarters of the guide, its text at the guide\'s size, the design untouched', () => {
+test('a report draws each plot again, its box three fifths of the guide whatever its legend, its text at the guide\'s size, the design untouched', () => {
   const [modulator, integrator] = designs();
   const before = JSON.stringify(modulator.circuit.toJSON());
   const report = buildReport(modulator.circuit, { name: modulator.name, design: (name) => (name === integrator.name ? integrator : null) });
   assert.equal(JSON.stringify(modulator.circuit.toJSON()), before);
-  const widths = [...report.html.matchAll(/<figure id="fig-(\d+)"><svg[^>]* width="([\d.]+)pt"/g)].map((m) => [Number(m[1]), Number(m[2])]);
+  // Each figure's plot box on the page: its paper's width, in points.
+  const boxes = [...report.html.matchAll(/<figure id="fig-(\d+)">(<svg[\s\S]*?<\/svg>)/g)].map(([, number, svg]) => {
+    const ptPerUnit = Number(svg.match(/ width="([\d.]+)pt"/)[1]) / Number(svg.match(/viewBox="([^"]+)"/)[1].split(/\s+/)[2]);
+    return [Number(number), Number(svg.match(/class="plot-paper"[^>]* width="([\d.]+)"/)?.[1]) * ptPerUnit];
+  });
   const plotFigures = report.figures.filter((figure) => ['F2', 'F3'].includes(figure.name) && !figure.design).map((figure) => figure.number);
   assert.deepEqual(plotFigures, [3, 4]);
   for (const number of plotFigures) {
-    const width = widths.find(([n]) => n === number)[1];
-    assert.ok(Math.abs(width - 0.75 * 453.54) < 1, `Fig. ${number} is ${width} pt wide`);
+    const width = boxes.find(([n]) => n === number)[1];
+    assert.ok(Math.abs(width - 0.6 * 453.54) < 1, `Fig. ${number}'s box is ${width} pt wide`);
     assert.ok(Math.abs(report.figures.find((figure) => figure.number === number).textPt - 8) < 0.05);
   }
 });

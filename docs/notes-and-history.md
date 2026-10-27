@@ -139,10 +139,10 @@ warnings, and writes the HTML.
   margins narrowing (to 12 mm) for a guide wider than 16 cm; a figure wider
   or taller than the page is scaled to fit, with the same warning. A plot
   is drawn again for the report (a copy; the drawing is left as it is), its
-  box resized in its own proportions and its legend beside it, to fill three
-  quarters of the guide's width with its own text -- ticks, axis names,
-  legend -- at the guide's size; on the canvas a plot's text is smaller than
-  the labels'.
+  box resized in its own proportions to three fifths of the guide's width
+  (narrower where its legend would reach past the guide), its legend
+  beside it, with its own text -- ticks, axis names, legend -- at the
+  guide's size; on the canvas a plot's text is smaller than the labels'.
 - **Layout.** The notes' `#` heading titles the report; without one the
   design's name does. Notes that place no figure get the whole drawing on
   top, unnumbered. Headings stay with what follows, figures are never split

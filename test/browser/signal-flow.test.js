@@ -221,4 +221,20 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     now = await h.evaluate(state);
     assert.ok(now.legend.every((text) => !/\s=\s/.test(text)), JSON.stringify(now.legend));
   });
+
+  test('an annotated spectrum\'s SNDR is two short legend lines', async () => {
+    await openAnalysis('modulator');
+    await h.evaluate(`${h.module('editor-state.js')}.then((m) => { m.editor.circuit.analysisValues.band = { bw: 0.01 }; })`);
+    await derive();
+    await tab('Magnitude');
+    // The spectrum on, at -20 dBFS (the loop runs away at -6), as its checkbox turns it on.
+    await h.until(`!!document.querySelector('.plots-window .signal-flow-spectrum-toggle input')`);
+    await h.evaluate(`(() => { const a = document.querySelector('.plots-window .signal-flow-spectrum input[aria-label="Sine amplitude, dBFS"]'); a.value = '-20'; a.dispatchEvent(new Event('change', { bubbles: true })); const c = document.querySelector('.plots-window .signal-flow-spectrum-toggle input'); if (!c.checked) c.click(); })()`);
+    await h.until(`/SNDR/.test(document.querySelector('.plots-window .signal-flow-spectrum-status')?.textContent || '')`, 20000);
+    await annotate('Graph');
+    const legend = `${h.module('editor-state.js')}.then((m) => { const labels = [...m.editor.circuit.labels.values()]; const box = labels.find((l) => l.plot?.units === 'dBFS'); return box ? labels.filter((l) => l.parent === box.id).map((l) => l.text) : []; })`;
+    await h.until(`${legend}.then((l) => l.some((t) => t.includes('SNDR')))`);
+    const note = (await h.evaluate(legend)).find((text) => text.includes('SNDR'));
+    assert.match(note, /^\$\\text\{SNDR −?[\d.]+ dB\}\n\\text\{at −20 dBFS\}\$$/);
+  });
 });

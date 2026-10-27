@@ -923,15 +923,17 @@ function spectrumControls() {
   ]);
 }
 
-/** The simulated in-band SNDR, and the amplitude it was simulated at, as a
- *  legend line for an annotated magnitude plot (null without a spectrum and
- *  a band). No " = " in it: a legend's coefficient lines are told apart by
- *  that. */
+/** The simulated in-band SNDR, and the amplitude it was simulated at, as
+ *  legend lines for an annotated magnitude plot (null without a spectrum and
+ *  a band). No " = " in it: an older plot's coefficient lines are told
+ *  apart by that. */
 function sndrNote() {
   if (!spectrum?.raw) return null;
   const measured = inBand(spectrum.raw, spectrum.frequency, bandEdges(editor.circuit.analysisValues.band));
   if (!measured) return null;
-  return { label: `\\text{SNDR }${measured.sndr.toFixed(1)}\\text{ dB at }${spectrum.amplitude}\\text{ dBFS}`, color: MUTED_TRACE_COLOR };
+  // Two short lines, so the legend keeps to the width of the traces' names.
+  const signed = (text) => text.replace(/^-/, '−');
+  return { label: `\\text{SNDR ${signed(measured.sndr.toFixed(1))} dB}\n\\text{at ${signed(String(spectrum.amplitude))} dBFS}`, color: MUTED_TRACE_COLOR };
 }
 
 function spectrumStatus() {
