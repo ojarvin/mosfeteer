@@ -68,10 +68,7 @@ design for Shift+V, and closes any other; with the keyboard in it, `f`
 fits it, Ctrl+C copies its picture, and Shift+V hides the windows. Its
 Clear, as the calculator's, empties it to pick a design or paste a picture.
 Escape on the drawing lets go of one thing a press: a tool's draft or a
-pending key, then the selection, and with nothing left the window at the
-front (the one last opened or pressed; `closeFrontWindow` in
-`floating-window.js`), so pressing it again and again closes every window,
-the beats that open themselves with Alt+→ included. Inside a window,
+pending key, then the selection. It never closes a window. Inside a window,
 Escape is the window's own first (a field being typed, a pick). A value
 typed into a window's field (an analysis value, a calculator's number)
 applies on Enter or when the focus leaves the field changed, never while it

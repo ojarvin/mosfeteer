@@ -28,7 +28,6 @@ import { busBits, busWidth, isBusName, netNameMembers, netNamesConnect } from '.
 import { circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } from '../core/page-guide.js';
 import { drawnBusCounts, editorOverlay, svgString } from '../core/render.js';
 import { timingBeatBands } from '../core/timing-diagram.js';
-import { closeFrontWindow } from './floating-window.js';
 import { themeInkSvg } from '../core/style.js';
 import { loadDocument } from '../core/document.js';
 import { snap, GRID } from '../core/grid.js';
@@ -7094,15 +7093,8 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
   if (key === 'Escape') {
-    // One Escape at a time: a tool or a pending key, then the selection, and
-    // with nothing left to let go of, the window at the front -- so pressing
-    // it again and again closes them all, the beats that open themselves too.
-    const engaged = pendingKey || moveMode || copyMode || deleteMode || movePending || copyPending || labelMode
-      || annotationStart || annotationPoints.length || multi.size || selLabels.size || selectedNets.size || selectedWires.size;
-    if (!engaged && closeFrontWindow()) {
-      canvasEl.focus({ preventScroll: true });
-      return;
-    }
+    // A tool or a pending key, then the selection; the windows stay open
+    // (Escape in a window closes that one).
     pendingKey = null;
     moveMode = null;
     copyMode = false;

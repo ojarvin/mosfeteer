@@ -43,8 +43,10 @@ describe('reference windows', { skip: browserSkip() }, () => {
     await h.key('V', { shiftKey: true });
     await h.until(`document.querySelector('.reference-window')?.hidden === false`);
     assert.match(await h.evaluate(`document.querySelector('.reference-window .reference-title').textContent`), /design-07/);
-    // Escape on the drawing closes it the same way.
+    // Escape on the drawing leaves it open; Shift+V there hides it.
     await h.key('Escape');
+    assert.equal(await h.evaluate(`document.querySelector('.reference-window')?.hidden`), false);
+    await h.key('V', { shiftKey: true });
     await h.until(`document.querySelector('.reference-window')?.hidden === true`);
     await h.key('V', { shiftKey: true });
     await h.until(`document.querySelector('.reference-window')?.hidden === false && !document.querySelector('.reference-window .reference-picture').hidden`);
