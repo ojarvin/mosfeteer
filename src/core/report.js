@@ -32,7 +32,7 @@ import { loadDocument, renderDocument } from './document.js';
 import { plotFontSize } from './render.js';
 import { normalizePageGuide } from './page-guide.js';
 import { numberSections, referencesHtml, renderNotes } from './notes-markdown.js';
-import { FIGURE_EMBED_LINE, figureKey, noteCitations, noteFigures, normalizeNotes, resolveMention } from './notes.js';
+import { FIGURE_EMBED_LINE, figureKey, pictureTarget, noteCitations, noteFigures, normalizeNotes, resolveMention } from './notes.js';
 
 const MM = 72 / 25.4;
 /** The sheet: A4, 25 mm margins; the side margins give way, down to 12 mm,
@@ -54,6 +54,8 @@ export function reportTargets(circuit) {
   for (const figure of listFigures(circuit)) {
     targets.push({ name: figure.id, kind: 'figure', figure, detail: `${figure.kind}${figure.source ? ` (${figure.source})` : ''}` });
   }
+  // The pictures pasted into the notes (`![caption](picture:N)`).
+  for (const id of Object.keys(circuit.pictures || {})) targets.push({ name: pictureTarget(id), kind: 'picture', id, detail: 'a picture pasted into the notes' });
   return targets;
 }
 
@@ -84,6 +86,7 @@ function targetSelection(circuit, target) {
 /** Whether a figure of `target` shows what a mention found. */
 function targetShows(circuit, target, found) {
   if (target.kind === 'drawing') return true;
+  if (target.kind === 'picture') return false;
   const selection = targetSelection(circuit, target.kind === 'beat' ? { kind: 'circuit' } : target);
   return found.kind === 'component' ? selection.refs.has(found.refdes) : found.ids.some((id) => selection.netIds.has(id));
 }
@@ -273,6 +276,11 @@ export function buildReport(circuit, { name = 'Design', guide = null, fontCss = 
       figure.owner = depth ? ownerName : null;
       if (!figure.target) {
         warnings.push(`${label(figure)}${where}: nothing named "${figure.name}" to draw.`);
+        continue;
+      }
+      // A picture as pasted, at most the text's width.
+      if (figure.target.kind === 'picture') {
+        drawn.set(figure, { svg: `<img class="note-picture" src="${escapeHtml(owner.pictures[figure.target.id])}" alt="${escapeHtml(figure.caption)}">` });
         continue;
       }
       const { svg, ...sizing } = targetSvg(owner, figure.target, pageGuide);

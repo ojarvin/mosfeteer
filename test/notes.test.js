@@ -232,6 +232,7 @@ test('citations are numbered by first use, one number a source, and listed at th
 });
 
 import { notePictureIds } from '../src/core/notes.js';
+import { buildReport, resolveReportTarget } from '../src/core/report.js';
 
 test('a pasted picture is kept in the design beside the notes and placed by ![caption](picture:N)', () => {
   const png = 'data:image/png;base64,iVBORw0KGgo=';
@@ -244,13 +245,28 @@ test('a pasted picture is kept in the design beside the notes and placed by ![ca
   assert.deepEqual(Object.keys(saved.pictures), ['2', '7']);
   const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify(saved)));
   assert.deepEqual(loaded.pictures, { 2: png });
-  // Drawn: an image, or the caption struck through when it is missing.
-  const html = renderNotes(loaded.notes, { picture: (id) => loaded.pictures[id] || null });
-  assert.match(html, /<img class="note-picture" src="data:image\/png;base64,iVBORw0KGgo=" alt="Output spectrum" title="Output spectrum">/);
+  // Drawn: on a line of its own a numbered figure, its caption under it;
+  // inside a line, the picture itself; missing, the caption struck through.
+  const html = renderNotes(loaded.notes, { picture: (id) => loaded.pictures[id] || null, figure: (name) => resolveReportTarget(loaded, name) });
+  assert.match(html, /<figure id="fig-1" class="note-picture-figure" data-figure="picture 2"><img class="note-picture" src="data:image\/png;base64,iVBORw0KGgo=" alt="Output spectrum"><figcaption><span class="note-figure-number">Fig. 1<\/span> <span class="note-figure-caption">Output spectrum<\/span><\/figcaption><\/figure>/);
   assert.match(html, /<span class="note-picture-missing"[^>]*>picture 7<\/span>/);
   // Copied as Markdown, the picture travels as its data.
   assert.match(notesMarkdown(loaded.notes, loaded.pictures), /!\[Output spectrum\]\(data:image\/png;base64,iVBORw0KGgo=\)/);
   // A design with no pictures placed saves none.
   circuit.notes = 'no pictures';
   assert.equal(circuit.toJSON().pictures, undefined);
+});
+
+test('a picture on a line of its own is numbered with the drawing\'s figures, referred to, and drawn in the report', () => {
+  const png = 'data:image/png;base64,iVBORw0KGgo=';
+  const circuit = new Circuit();
+  circuit.notes = '# Amp\n\n![[circuit|The stage]]\n\nMeasured in [[#picture 1]]:\n\n![Bench capture](picture:1)\n\nSee [[#circuit]].';
+  circuit.pictures = { 1: png };
+  const window = renderNotes(circuit.notes, { picture: (id) => circuit.pictures[id], figure: (name) => resolveReportTarget(circuit, name) });
+  assert.match(window, /href="#fig-2"[^>]*>Fig\. 2<\/a>:/);
+  assert.match(window, /<figure id="fig-2" class="note-picture-figure"/);
+  const report = buildReport(circuit, { name: 'amp' });
+  assert.match(report.html, /<figure id="fig-2"><img class="note-picture" src="data:image\/png;base64,iVBORw0KGgo=" alt="Bench capture"><figcaption><span class="figure-number">Fig\. 2\.<\/span> Bench capture<\/figcaption><\/figure>/);
+  assert.match(report.html, /Measured in <a[^>]*href="#fig-2"[^>]*>Fig\. 2<\/a>/);
+  assert.deepEqual(report.warnings, []);
 });

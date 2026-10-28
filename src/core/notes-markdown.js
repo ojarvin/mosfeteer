@@ -11,7 +11,7 @@
  */
 
 import { texToMathML } from './render.js';
-import { CITATION, FIGURE_EMBED, FIGURE_EMBED_LINE, FIGURE_REFERENCE, MENTION, PICTURE, citationOf, figureKey, normalizeNotes, noteCitations, noteFigures, tokenName } from './notes.js';
+import { CITATION, FIGURE_EMBED, FIGURE_EMBED_LINE, FIGURE_REFERENCE, MENTION, PICTURE, PICTURE_LINE, citationOf, figureKey, normalizeNotes, noteCitations, noteFigures, tokenName } from './notes.js';
 
 const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
 
@@ -153,6 +153,14 @@ function listBlock(lines, start, context) {
 
 /** A figure as the notes window shows it: its number, what it shows, its caption. */
 function figurePlaceholder(figure, context) {
+  // A picture is shown itself, its number and caption under it.
+  const src = figure.target?.kind === 'picture' ? context.picture?.(figure.target.id) : null;
+  if (src) {
+    const caption = figure.caption ? ` <span class="note-figure-caption">${inlineHtml(figure.caption, context)}</span>` : '';
+    return `<figure id="fig-${figure.number}" class="note-picture-figure" data-figure="${escapeHtml(figure.name)}">`
+      + `<img class="note-picture" src="${escapeHtml(src)}" alt="${escapeHtml(figure.caption)}">`
+      + `<figcaption><span class="note-figure-number">Fig. ${figure.number}</span>${caption}</figcaption></figure>`;
+  }
   const broken = !figure.target;
   const caption = figure.caption ? `<span class="note-figure-caption">${inlineHtml(figure.caption, context)}</span>` : '';
   return `<div id="fig-${figure.number}" class="note-figure${broken ? ' broken' : ''}" data-figure="${escapeHtml(figure.name)}"${broken ? ' title="Nothing of this name to draw"' : ''}>`
@@ -264,7 +272,7 @@ export function renderNotes(source, context = {}) {
       out.push(`<blockquote>${renderNotes(body.join('\n'), context)}</blockquote>`);
       continue;
     }
-    if (FIGURE_EMBED_LINE.test(line)) {
+    if (FIGURE_EMBED_LINE.test(line) || PICTURE_LINE.test(line)) {
       flush();
       const figure = context.figures[context.figureAt.next++];
       if (figure?.design && !context.figureHtml) out.push(sectionPlaceholder(figure, context));

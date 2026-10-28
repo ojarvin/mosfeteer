@@ -1229,6 +1229,16 @@ button:disabled {
   color: var(--text-dim);
 }
 
+/* A picture placed as a figure: itself, its number and caption under it. */
+.notes-view .note-picture-figure {
+  margin: 0 0 8px;
+}
+
+.notes-view .note-picture-figure figcaption {
+  margin-top: 4px;
+  color: var(--text-dim);
+}
+
 .notes-view .note-figure-number {
   color: var(--text);
   font-weight: 600;

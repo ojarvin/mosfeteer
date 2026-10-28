@@ -34,6 +34,10 @@ const searchKey = (text) => String(text ?? '').toLowerCase().replace(/[\s$\\_^{}
 
 /** A picture placed in the notes: `![caption](picture:N)`. */
 export const PICTURE = /!\[([^\]\n]*)\]\(picture:(\d+)\)/g;
+/** A line that is one picture, and nothing else: a numbered figure. */
+export const PICTURE_LINE = /^\s*!\[([^\]\n]*)\]\(picture:(\d+)\)\s*$/;
+/** The figure target a picture is: `picture 2`. */
+export const pictureTarget = (id) => `picture ${id}`;
 
 /** The pictures the notes place, by number, each once, in order. */
 export function notePictureIds(text) {
@@ -272,7 +276,8 @@ export const figureKey = (name) => String(name ?? '').trim().replace(/\s+/g, ' '
 
 /**
  * What the notes embed, in order: `[{ name, caption, number, design }]`,
- * each on a line of its own outside code. An embed that `isDesign` says
+ * each on a line of its own outside code -- a picture so placed
+ * (`![caption](picture:2)`) too, as the target `picture 2`. An embed that `isDesign` says
  * names another design is that design's section (`design: true`, no
  * number); the rest are figures, numbered from `first`. A target embedded
  * twice is two figures; a reference finds the first.
@@ -285,11 +290,16 @@ export function noteFigures(text, { isDesign = () => false, first = 1 } = {}) {
   let offset = 0;
   for (const line of source.split('\n')) {
     // A quote's lines are embeds too: its text is rendered as notes.
-    const match = line.replace(/^(\s*>)+/, '').match(FIGURE_EMBED_LINE);
-    if (match && !code.some(([a, b]) => offset >= a && offset < b)) {
+    const bare = line.replace(/^(\s*>)+/, '');
+    const match = bare.match(FIGURE_EMBED_LINE);
+    const picture = match ? null : bare.match(PICTURE_LINE);
+    const inCode = code.some(([a, b]) => offset >= a && offset < b);
+    if (match && !inCode) {
       const name = match[1].trim();
       const caption = (match[2] || '').trim();
       embeds.push(isDesign(name) ? { name, caption, number: null, design: true } : { name, caption, number: number++, design: false });
+    } else if (picture && !inCode) {
+      embeds.push({ name: pictureTarget(picture[2]), caption: picture[1].trim(), number: number++, design: false, picture: picture[2] });
     }
     offset += line.length + 1;
   }

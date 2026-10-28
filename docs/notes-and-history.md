@@ -28,7 +28,10 @@ A picture pasted into the source (a screenshot, a bench capture) is kept
 in the design beside the notes (`Circuit#pictures`, `pictures` in the
 file: PNG, JPEG, or WebP data URLs by number, compressed as a picture
 pasted onto the drawing is, `storedImage`) and placed at the caret as
-`![](picture:1)`; text in the brackets is its caption. The window and the
+`![](picture:1)`; text in the brackets is its caption. On a line of its
+own it is a figure (the target `picture 1`), numbered with the drawing's
+figures, its caption under it, and `[[#picture 1]]` reads its number;
+inside a line it is drawn where it stands, unnumbered. The window and the
 report draw it, at most their width; one placed with no picture of its
 number reads struck through. Only the pictures the notes place are saved,
 and an undo takes a picture back with the text that placed it. Copy puts
