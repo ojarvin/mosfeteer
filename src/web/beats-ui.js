@@ -582,11 +582,13 @@ function openTimingDialog() {
       analog: !!row.values,
       hold: !!row.hold,
       height: row.height || 2,
-      wave: row.values ? row.values.map(String) : row.from === 'complement' ? [] : [...row.bits].map((level) => (level === '1' ? '1' : '0')),
+      // An analog slot left unset is ''.
+      wave: row.values ? row.values.map((value) => (value === null ? '' : String(value))) : row.from === 'complement' ? [] : [...row.bits].map((level) => (level === '1' ? '1' : '0')),
       shift: drawn?.shifts.get(row.key) || { fall: 0, rise: 0 },
     })));
     state.slot = drawn?.slot || DEFAULT_SLOT_CELLS;
     state.gaps = drawn?.gaps ?? 'none';
+    state.lead = drawn?.lead ?? true;
     state.notes = { arrows: [...(drawn?.arrows || [])], marks: [...(drawn?.marks || [])], spans: (drawn?.spans || []).map((span) => ({ ...span })), breaks: (drawn?.breaks || []).map((item) => ({ ...item })) };
     state.pending = null;
     state.session = null;
@@ -617,9 +619,18 @@ function openTimingDialog() {
     const n = length();
     return [shown(row, (at + n - 1) % n), shown(row, at % n)];
   };
-  // An analog row's every slot start is a point arrows, marks and spans take.
+  // An analog row's every slot start from its first value set to its last
+  // (the end of the last slot too, when that is set) is a point arrows,
+  // marks and spans take. Without the lead-in and lead-out, a digital row
+  // has no edge at the start or the end.
   const hasEdge = (r, at) => {
-    if (rows[r].analog) return at >= 0 && at <= length();
+    if (rows[r].analog) {
+      const set = rows[r].wave.flatMap((value, slot) => (value === '' ? [] : [slot]));
+      if (!set.length) return false;
+      const last = set.at(-1) === length() - 1 || rows[r].wave.length < length() ? length() : set.at(-1);
+      return set.length > 1 || set[0] === 0 || set[0] === length() - 1 ? at >= set[0] && at <= last : false;
+    }
+    if (!state.lead && (at <= 0 || at >= length())) return false;
     const [a, b] = levelAround(rows[r], at);
     return a !== b;
   };
@@ -629,7 +640,7 @@ function openTimingDialog() {
   const edgeName = (ref) => {
     const r = rows.findIndex((row) => samePhase(row.key, ref.row));
     if (r < 0) return `${plainMarkup(ref.row)} ${ref.at + 1}`;
-    if (rows[r].analog) return `${plainMarkup(rows[r].source)} ${at(rows[r], ref.at)} @${ref.at + 1}`;
+    if (rows[r].analog) return `${plainMarkup(rows[r].source)} ${at(rows[r], ref.at) || '·'} @${ref.at + 1}`;
     const [a, b] = levelAround(rows[r], ref.at);
     return `${plainMarkup(rows[r].source)} ${a === b ? '·' : b === '1' ? '↑' : '↓'}${ref.at + 1}`;
   };
@@ -645,7 +656,7 @@ function openTimingDialog() {
     const hold = {};
     const heights = {};
     for (const row of rows) {
-      if (!row.follows) bits[row.key] = row.analog ? row.wave.map(Number) : row.wave.join('');
+      if (!row.follows) bits[row.key] = row.analog ? row.wave.map((value) => (value === '' ? null : Number(value))) : row.wave.join('');
       if (row.analog) hold[row.key] = row.hold;
       heights[row.key] = row.height || 2;
     }
@@ -655,7 +666,7 @@ function openTimingDialog() {
     const known = timingPhases(editor.circuit);
     const add = rows.filter((row) => row.signal && !known.some((phase) => samePhase(phase.key, row.key))).map((row) => row.source);
     const remove = known.filter((phase) => phase.signal && !rows.some((row) => samePhase(row.key, phase.key))).map((phase) => phase.source);
-    return { bits, hold, heights, slot: state.slot, gaps: state.gaps, shifts, order, fromBeats: true, add, remove, ...state.notes };
+    return { bits, hold, heights, slot: state.slot, gaps: state.gaps, lead: state.lead, shifts, order, fromBeats: true, add, remove, ...state.notes };
   };
   const redraw = () => {
     const start = snapshot();
@@ -779,7 +790,7 @@ function openTimingDialog() {
         // below zero, down from the middle) and as a number.
         const cell = row.analog
           ? element('span', {
-            class: `timing-cell analog${Number(level) < 0 ? ' negative' : ''}${here ? ' cursor' : ''}`, role: 'gridcell', title: level,
+            class: `timing-cell analog${level === '' ? ' unset' : ''}${Number(level) < 0 ? ' negative' : ''}${here ? ' cursor' : ''}`, role: 'gridcell', title: level === '' ? 'not set' : level,
             style: `--v: ${Math.abs(Number(level))}`,
             text: here && state.entry !== null ? `${state.entry}▏` : String(level).replace(/^(-?)0\./, '$1.'),
           })
@@ -826,6 +837,7 @@ function openTimingDialog() {
     const cursorRow = rows[state.cursor.row];
     analogButton.disabled = !cursorRow?.signal;
     analogButton.setAttribute('aria-pressed', String(!!cursorRow?.analog));
+    leadButton.setAttribute('aria-pressed', String(state.lead));
     holdButton.disabled = !cursorRow?.analog;
     holdButton.setAttribute('aria-pressed', String(!!cursorRow?.hold));
     tallerButton.disabled = !cursorRow || (cursorRow.height || 2) >= MAX_ROW_CELLS;
@@ -1009,16 +1021,24 @@ function openTimingDialog() {
         status.textContent = `${plainMarkup(row.source)} is a switch phase: its slots are 1 or 0 (an analog row is a signal you add)`;
         return;
       }
-      row.analog = true;
+      if (level === '') return;
+      makeAnalog(row);
     }
     detach(row);
     settle();
     // The empty cell after the last slot adds a slot: every other row holds
-    // its last level into it.
-    if (state.cursor.slot >= length()) for (const r of rows) if (!r.follows) r.wave.push(r.wave.at(-1) ?? '0');
+    // its last level into it, an analog row leaves it unset.
+    if (state.cursor.slot >= length()) for (const r of rows) if (!r.follows) r.wave.push(r.analog ? '' : r.wave.at(-1) ?? '0');
     row.wave[state.cursor.slot] = level;
     if (advance) state.cursor.slot = Math.min(state.cursor.slot + 1, length());
     change();
+  };
+  // A row made analog keeps its levels as values, unless it is low
+  // throughout (a new signal): then no slot is set.
+  const makeAnalog = (row) => {
+    settle();
+    row.analog = true;
+    if (row.wave.every((value) => value === '0')) row.wave = row.wave.map(() => '');
   };
   // A signal of the diagram's own, not tied to a switch: low throughout to
   // start with, as long as the other rows.
@@ -1107,6 +1127,11 @@ function openTimingDialog() {
   const commitEntry = ({ advance }) => {
     const text = state.entry;
     state.entry = null;
+    // Nothing typed (F2, then erased) unsets an analog slot.
+    if (text === '' && rows[state.cursor.row]?.analog) {
+      setCell('', { advance });
+      return;
+    }
     let value;
     try {
       value = parseTimingValue(text);
@@ -1236,15 +1261,22 @@ function openTimingDialog() {
     const row = rows[state.cursor.row];
     if (!row?.signal) return;
     settle();
-    row.analog = !row.analog;
-    // Back to digital: each value rounds to the nearer level.
-    if (!row.analog) {
-      row.wave = row.wave.map((value) => (Number(value) >= 0.5 ? '1' : '0'));
+    // Back to digital: each value rounds to the nearer level, one unset low.
+    if (row.analog) {
+      row.analog = false;
+      row.wave = row.wave.map((value) => (value !== '' && Number(value) >= 0.5 ? '1' : '0'));
       row.hold = false;
-    }
+    } else makeAnalog(row);
     change();
   };
   const analogButton = button('Analog', 'Analog values (.N, F2)', toggleAnalog);
+  // The lead-in and lead-out: the waves repeated a little past both ends.
+  const leadButton = button('Lead-in', 'Lead-in and lead-out', () => {
+    state.lead = !state.lead;
+    leadButton.setAttribute('aria-pressed', String(state.lead));
+    change();
+  });
+  leadButton.setAttribute('aria-pressed', String(state.lead));
   const holdButton = button('Hold', 'Hold each value through its slot', () => {
     const row = rows[state.cursor.row];
     if (!row?.analog) return;
@@ -1286,7 +1318,7 @@ function openTimingDialog() {
       grid,
       element('details', { class: 'timing-keys' }, [
         element('summary', { text: 'Keyboard' }),
-        element('p', { text: 'Arrows move the cursor; 1 and 0 set a slot and step on; Space flips it. + repeats the slot at the cursor in all rows (a state held one slot longer), Delete removes it, * repeats the whole sequence. Ctrl+Z undoes. In a signal\'s row . or - begins an analog value (.35, -.5) and the next key sets it; F2 edits the slot\'s value. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. The edge at the cursor is the one at the left of its slot: a begins an arrow there and a again at another edge ends it, s does the same for a span, m marks it (or unmarks it); Esc cancels. b breaks the cursor\'s slot through all rows, again through each row, again not at all.' }),
+        element('p', { text: 'Arrows move the cursor; 1 and 0 set a slot and step on; Space flips it. + repeats the slot at the cursor in all rows (a state held one slot longer), Delete removes it, * repeats the whole sequence. Ctrl+Z undoes. In a signal\'s row . or - begins an analog value (.35, -.5) and the next key sets it; F2 edits the slot\'s value, and erased leaves it unset: the line runs straight across unset slots. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. The edge at the cursor is the one at the left of its slot: a begins an arrow there and a again at another edge ends it, s does the same for a span, m marks it (or unmarks it); Esc cancels. b breaks the cursor\'s slot through all rows, again through each row, again not at all.' }),
       ]),
       section('Slots', [
         segmented('Slots', [
@@ -1295,6 +1327,7 @@ function openTimingDialog() {
           button('Repeat the sequence', 'Repeat the sequence (*)', repeatSequence, { icon: 'repeat' }),
         ]),
         element('label', { class: 'timing-width', title: 'Slot width in grid cells' }, [slotInput, element('span', { text: 'cells each' })]),
+        leadButton,
       ]),
       section('Cursor row', [
         segmented('Falling edges', [

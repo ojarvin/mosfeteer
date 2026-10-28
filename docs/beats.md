@@ -102,7 +102,10 @@ drawing's width, and the phase's name as a free label, right-aligned in a
 column just left of them.
 A wave is a row of slots, each high or low; a short wave holds its last
 level. The waves repeat, so each row shows half a slot of its last level
-before the start and of its first after the end, where its transitions are.
+before the start and of its first after the end, where its transitions are;
+**Lead-in** in the editor (`timing --lead off|on`, saved as `lead: false`)
+leaves that out, the waves starting at the first slot and ending with the
+last.
 
 Non-overlap is kept between the pairs of phases asked for: none in a new
 diagram, or with `auto` every two that are never high in the same slot (a
@@ -140,19 +143,26 @@ diagram, which is its timing until the editor first changes it. A complement fol
 slots is changed; any other phase with no wave is low.
 
 A signal row may be **analog** (a supply ramp, a sampled input): a value
-from -1 to 1 at the start of each slot, joined straight to the next or
-(**Hold**, `--hold`) held through its slot; the first value is held before
-the start and the last after the end, and analog rows do not repeat. A
+from -1 to 1 at the start of the slots it is set for, joined straight
+across the unset slots between or (**Hold**, `--hold`) held until the next;
+no line is drawn before the first value or after the last, nor with fewer
+than two, except that a value at the first slot is held back through the
+lead-in and one at the last slot through it and the lead-out; analog rows
+do not repeat. A
 row with no value below zero runs from 0 at the bottom to 1 at the top;
 one reaching below is drawn about a dashed zero line through its middle.
 In the editor `.` or `-` begins a value (`.35`, `-.5`), digits go on, and
-Enter, Tab, Space or an arrow sets it; F2 begins from the slot's own value.
-A value between the levels makes a signal analog, and **Analog** turns it
-back (each value rounding to the nearer level); `timing VDD=0,.35,.7,1`
-does the same from the command line. Switch phases stay digital. The row is
+Enter, Tab, Space or an arrow sets it; F2 begins from the slot's own value,
+and erased it leaves the slot unset (shown dashed). A value between the
+levels makes a signal analog -- a signal low throughout (a new one) with
+only that slot set, else its levels as values -- and **Analog** turns it
+back (each value rounding to the nearer level, an unset one low);
+`timing VDD=0,.35,.7,1` does the same from the command line, `_` or nothing
+between commas leaving a slot unset (`VDD=0,,,1`); a list shorter than the
+slots holds its last value. Switch phases stay digital. The row is
 drawn as one box annotation on the grid with its curve inside
 (`timing.analog`), so the curve's points need not be on the grid. Every
-slot start of an analog row is a point arrows, marks and spans take, as a
+slot start of an analog row on its line is a point arrows, marks and spans take, as a
 digital row's edges do (an arrow at the row's middle height); a mark on a
 point between 0 and ±1 is a threshold, a dashed line at its level from the
 row's start beside the mark's own. Any row may be taller: **Taller** and

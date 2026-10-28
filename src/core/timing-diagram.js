@@ -10,7 +10,9 @@
  * A wave is typed as slots, one character each: `1` high, `0` low. A short
  * wave holds its last level. The waves repeat, so each row
  * shows a little of its last slot before the start and of its first after
- * the end, where its transitions are.
+ * the end, where its transitions are -- unless the diagram leaves the
+ * lead-in and lead-out out (`lead: false`): then it starts at the first
+ * slot and ends with the last.
  *
  * Non-overlap is kept between the pairs of phases asked for: none in a new
  * diagram; 'auto' picks every two that are never high in the same slot (and
@@ -20,8 +22,13 @@
  * at the start of the gap.
  *
  * A signal row may instead be analog: a value from -1 to 1 at the start of
- * each slot (`values`), joined by straight lines or held through the slot
- * (`hold`), from 0 at the bottom to 1 at the top -- or, with any value below
+ * a slot (`values`, null where none is set), joined by straight lines
+ * across the slots between, or held until the next (`hold`); a short list
+ * holds its last value; nothing is drawn before the first value or after
+ * the last -- except that a value
+ * at the first slot holds back through the lead-in and one at the last
+ * through its slot and the lead-out -- and fewer than two draw no curve.
+ * From 0 at the bottom to 1 at the top -- or, with any value below
  * 0, about a dashed zero line through the middle. It is drawn as one box
  * annotation with its curve inside (`timing.analog`), so the curve's points
  * need not be on the grid while the box is. Its points take arrows, marks
@@ -92,15 +99,19 @@ export function parseTimingValue(text) {
   return Math.round(value * 1e4) / 1e4;
 }
 
+/** An analog slot left unset: null, or as typed `_` or nothing between commas. */
+const unsetValue = (item) => item === null || item === undefined || String(item).trim() === '' || String(item).trim() === '_';
+
 /** A row's wave as given: digital bits (`0101`), or analog values -- a list,
- *  or text with commas or a value that is not 0 or 1 (`0,.5,1`, `.3`).
+ *  or text with commas, a `_`, or a value that is not 0 or 1 (`0,.5,1`,
+ *  `.3`) -- each slot's value or unset (null: `0,,,1`, `0 _ _ 1`).
  *  Returns { bits } or { values }. */
 export function parseTimingWave(wave) {
-  if (Array.isArray(wave)) return { values: wave.map(parseTimingValue) };
+  const values = (items) => ({ values: items.map((item) => (unsetValue(item) ? null : parseTimingValue(item))) });
+  if (Array.isArray(wave)) return values(wave);
   const text = String(wave ?? '').trim();
-  if (/[,.\-]/.test(text)) {
-    return { values: text.split(/[\s,]+/).filter(Boolean).map(parseTimingValue) };
-  }
+  if (text.includes(',')) return values(text.split(',').map((item) => item.trim()));
+  if (/[._\-]/.test(text)) return values(text.split(/\s+/).filter(Boolean));
   return { bits: parseTimingBits(text) };
 }
 
@@ -168,13 +179,14 @@ export function defaultTimingPairs(waves, skip = new Set()) {
  * that other row's levels inverted (a complement); `pairs` ([a, b] row
  * indices) are the rows kept from overlapping. The waves repeat: a lead
  * column before the first slot holds the last slot's level, one after the
- * end the first slot's.
+ * end the first slot's -- with `lead: false`, neither is there.
  */
-export function timingColumns(waves, { slotCells = DEFAULT_SLOT_CELLS, pairs = [], inverted = [] } = {}) {
+export function timingColumns(waves, { slotCells = DEFAULT_SLOT_CELLS, pairs = [], inverted = [], lead: leads = true } = {}) {
   const slots = slotLevels(waves);
   const count = slots[0]?.length || EMPTY_SLOTS;
   // The repeating sequence, with the lead-in and lead-out.
-  const sequence = slots.map((row) => [row.at(-1), ...row, row[0]]);
+  const sequence = slots.map((row) => (leads ? [row.at(-1), ...row, row[0]] : [...row]));
+  const offset = leads ? 1 : 0;
   const lead = Math.max(1, Math.floor(slotCells / 2)) * GRID;
   const columns = [];
   const levels = waves.map(() => []);
@@ -184,12 +196,12 @@ export function timingColumns(waves, { slotCells = DEFAULT_SLOT_CELLS, pairs = [
     const apart = index > 0 ? pairs.filter(([a, b]) => (falls(a) && rises(b)) || (rises(a) && falls(b))) : [];
     if (apart.length) {
       const kept = new Set(apart.flat());
-      columns.push({ w: GRID, kind: 'gap', at: index - 1 });
+      columns.push({ w: GRID, kind: 'gap', at: index - offset });
       // The pair falls early and rises late; the rest change as the gap opens.
       sequence.forEach((row, r) => levels[r].push(kept.has(r) ? gapLevel(row[index - 1], row[index]) : row[index]));
     }
-    const edge = index === 0 || index === sequence[0].length - 1;
-    columns.push({ w: edge ? lead : slotCells * GRID, kind: edge ? 'lead' : 'slot', at: index - 1 });
+    const edge = leads && (index === 0 || index === sequence[0].length - 1);
+    columns.push({ w: edge ? lead : slotCells * GRID, kind: edge ? 'lead' : 'slot', at: index - offset });
     sequence.forEach((row, r) => levels[r].push(row[index]));
   });
   const drawn = levels.map((row, r) => (inverted[r] !== undefined && inverted[r] !== null ? levels[inverted[r]].map(invert) : row));
@@ -226,29 +238,50 @@ function slotStarts(columns) {
     if (column.kind !== 'gap' && column.at >= 0) starts[column.at] = x;
     x += column.w;
   }
+  // With no lead-out, the last slot ends where the waves do.
+  if (!columns.some((column) => column.kind === 'lead')) starts.push(x);
   return starts;
 }
 
 /**
  * An analog row's curve, from the waves' top-left corner: its `values` at
- * the start of each slot, joined straight or (`hold`) held through the
- * slot; the first held before it, the last after. Points are { x, v }, v
- * the value (-1..1). Also each slot boundary's point (`points`, by slot
- * index, through the start of the lead-out), where arrows, marks and spans
+ * the start of the slots they are set for (null: unset), joined straight
+ * across the slots between or (`hold`) each held until the next. A value
+ * at the first slot holds back to the waves' start (through a lead-in), one
+ * at the last slot through it to their end; otherwise the curve starts and
+ * ends at the values set, and with fewer than two there is none. Points
+ * are { x, v }, v the value (-1..1). Also each slot boundary's point
+ * (`points`, by slot index, through the end of the last slot: its value,
+ * set or between two set, else null), where arrows, marks and spans
  * attach, and the whole width.
  */
 export function analogRowGeometry(values, columns, { hold = false } = {}) {
   const starts = slotStarts(columns);
   const end = columns.reduce((sum, column) => sum + column.w, 0);
   const count = starts.length - 1;
-  const valueAt = (slot) => (values.length ? values[Math.min(slot, values.length - 1)] : 0);
-  const curve = [{ x: 0, v: valueAt(0) }];
-  for (let slot = 0; slot <= count; slot += 1) {
-    const x = starts[slot];
-    if (hold && slot > 0) curve.push({ x, v: valueAt(slot - 1) });
-    curve.push({ x, v: valueAt(slot) });
+  // A short list holds its last value, as a short wave holds its level.
+  const given = values.length < count && values.at(-1) !== null && values.at(-1) !== undefined
+    ? [...values, ...Array(count - values.length).fill(values.at(-1))] : values;
+  const set = given.flatMap((v, slot) => (v === null || v === undefined || slot > count ? [] : [{ slot, v }]));
+  // Each boundary's value: a set one, else between the set ones around it.
+  const valueAt = (slot) => {
+    const after = set.findIndex((point) => point.slot >= slot);
+    if (after >= 0 && set[after].slot === slot) return set[after].v;
+    // The end of the last slot carries its value on, as it is drawn.
+    if (slot === count && set.at(-1)?.slot === count - 1) return set.at(-1).v;
+    if (after <= 0) return null;
+    const [a, b] = [set[after - 1], set[after]];
+    return hold ? a.v : a.v + ((b.v - a.v) * (starts[slot] - starts[a.slot])) / (starts[b.slot] - starts[a.slot]);
+  };
+  const curve = [];
+  if (set.length >= 2 || (set.length === 1 && (set[0].slot === 0 || set[0].slot === count - 1))) {
+    if (set[0].slot === 0) curve.push({ x: 0, v: set[0].v });
+    set.forEach((point, i) => {
+      if (hold && i > 0) curve.push({ x: starts[point.slot], v: set[i - 1].v });
+      curve.push({ x: starts[point.slot], v: point.v });
+    });
+    if (set.at(-1).slot === count - 1) curve.push({ x: end, v: set.at(-1).v });
   }
-  curve.push({ x: end, v: valueAt(count) });
   // Straight runs are one segment.
   const trace = curve.filter((point, i) => i === 0 || point.x !== curve[i - 1].x || point.v !== curve[i - 1].v);
   for (let i = trace.length - 2; i > 0; i -= 1) {
@@ -256,11 +289,11 @@ export function analogRowGeometry(values, columns, { hold = false } = {}) {
     if ((a.v === b.v && b.v === c.v) || (a.x === b.x && b.x === c.x)) trace.splice(i, 1);
   }
   const points = starts.map((x, slot) => ({ at: slot, x, v: valueAt(slot) }));
-  return { trace, points, width: end };
+  return { trace: trace.length >= 2 ? trace : [], points, width: end };
 }
 
 /** Whether an analog row reaches below zero: drawn about a middle zero line. */
-export const bipolar = (values) => values.some((value) => value < 0);
+export const bipolar = (values) => values.some((value) => value !== null && value < 0);
 
 /** Each row's top and height, from the first row's top. */
 function rowLayout(rows) {
@@ -410,7 +443,7 @@ export function timingBeatBands(circuit, index) {
   const before = existingTimingDiagram(circuit, { drawing });
   const rows = timingRowSources(circuit, { drawing });
   const { columns, count } = timingColumns(rows.map((row) => row.bits), {
-    slotCells: before.slot || DEFAULT_SLOT_CELLS, pairs: timingPairs(rows, before.gaps), inverted: rows.map((row) => row.complementOf ?? null),
+    slotCells: before.slot || DEFAULT_SLOT_CELLS, pairs: timingPairs(rows, before.gaps), inverted: rows.map((row) => row.complementOf ?? null), lead: before.lead,
   });
   const runs = stateRuns(circuit, { drawing });
   const slots = new Set(runs[state].slots);
@@ -492,7 +525,7 @@ export function existingTimingDiagram(circuit, { drawing = false } = {}) {
     bits, shifts, values, holds, heights,
     order: spec.rows.map((row) => row.phase),
     signals: spec.rows.filter((row) => row.signal).map((row) => ({ key: row.phase, source: row.source })),
-    slot: spec.slot, gaps: spec.gaps === false ? 'none' : spec.gaps ?? 'auto',
+    slot: spec.slot, gaps: spec.gaps === false ? 'none' : spec.gaps ?? 'auto', lead: spec.lead !== false,
     arrows: spec.arrows || [], marks: spec.marks || [], spans: spec.spans || [], breaks: spec.breaks || [],
   };
 }
@@ -540,7 +573,7 @@ export function drawnTimingDiagram(circuit) {
   const drawn = new Set(parts.filter((label) => label.timing.part).map((label) => `${owner[label.timing.part] || label.timing.part}:${label.timing.item}`));
   const missing = Object.entries({ arrow: arrows, mark: marks, span: spans, break: breaks })
     .flatMap(([kind, list]) => list.flatMap((_, index) => (drawn.has(`${kind}:${index}`) ? [] : [{ kind, index }])));
-  return { ids: parts.map((label) => label.id), drawn: true, bits, shifts, values, holds, heights, order, signals, x, y, slot: first.timing.slot, gaps: first.timing.gaps === false ? 'none' : first.timing.gaps ?? 'auto', arrows, marks, spans, breaks, missing };
+  return { ids: parts.map((label) => label.id), drawn: true, bits, shifts, values, holds, heights, order, signals, x, y, slot: first.timing.slot, gaps: first.timing.gaps === false ? 'none' : first.timing.gaps ?? 'auto', lead: first.timing.lead !== false, arrows, marks, spans, breaks, missing };
 }
 
 /** `phases` in `order` (phase keys) where it names them; the rest after, in
@@ -815,7 +848,7 @@ function rowTiming({ key, bits, values, hold, height, from, signal }, shift) {
   };
 }
 
-function timingDiagram(circuit, { bits: given = {}, fromBeats = false, slot = null, gaps = null, shifts: givenShifts = {}, order = null, place = false, add = [], remove = [], arrows = null, marks = null, spans = null, breaks = null, need = [], heights: givenHeights = {}, hold: givenHold = {} } = {}, draw = true) {
+function timingDiagram(circuit, { bits: given = {}, fromBeats = false, slot = null, gaps = null, lead = null, shifts: givenShifts = {}, order = null, place = false, add = [], remove = [], arrows = null, marks = null, spans = null, breaks = null, need = [], heights: givenHeights = {}, hold: givenHold = {} } = {}, draw = true) {
   const current = timingPhases(circuit);
   for (const name of add) {
     if (!String(name).trim()) throw new Error('a signal needs a name');
@@ -872,8 +905,9 @@ function timingDiagram(circuit, { bits: given = {}, fromBeats = false, slot = nu
   const setting = gaps === null || gaps === undefined ? before?.gaps ?? 'none'
     : gaps === false ? 'none'
       : Array.isArray(gaps) ? gaps.map(([a, b]) => [named(a).key, named(b).key]) : gaps;
+  const leads = lead === null || lead === undefined ? before?.lead ?? true : !!lead;
   const { columns, levels } = timingColumns(rows.map((row) => row.bits), {
-    slotCells, pairs: timingPairs(rows, setting), inverted: rows.map((row) => row.complementOf ?? null),
+    slotCells, pairs: timingPairs(rows, setting), inverted: rows.map((row) => row.complementOf ?? null), lead: leads,
   });
   // The edges each row draws, from the waves' top-left corner; the arrows,
   // marks and spans placed on them.
@@ -885,7 +919,7 @@ function timingDiagram(circuit, { bits: given = {}, fromBeats = false, slot = nu
     const r = rows.findIndex((row) => samePhase(row.key, ref.row));
     if (r >= 0 && analog[r]) {
       const point = analog[r].points[ref.at];
-      return point ? { x: point.x, row: r, v: point.v } : null;
+      return point && point.v !== null ? { x: point.x, row: r, v: point.v } : null;
     }
     const edge = r < 0 ? null : edges[r].find((candidate) => candidate.at === ref.at);
     return edge ? { x: edge.x, row: r } : null;
@@ -923,6 +957,7 @@ function timingDiagram(circuit, { bits: given = {}, fromBeats = false, slot = nu
   const settings = {
     slot: slotCells,
     ...(setting === 'auto' ? {} : { gaps: setting === 'none' ? false : setting }),
+    ...(leads ? {} : { lead: false }),
     ...(notes.arrows.length ? { arrows: notes.arrows } : {}),
     ...(notes.marks.length ? { marks: notes.marks } : {}),
     ...(notes.spans.length ? { spans: notes.spans } : {}),

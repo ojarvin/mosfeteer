@@ -45,7 +45,7 @@ function beaten() {
 
 describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () => {
   let h;
-  before(async () => { h = await start({ docs: { clocked: clockAndQ(), phased: twoPhases(), undrawn: undrawn(), noted: clockAndQ(), beaten: beaten(), repeated: clockAndQ(), ramped: clockAndQ(), broken: clockAndQ(), long: longSequence() }, width: 1500, height: 950 }); });
+  before(async () => { h = await start({ docs: { clocked: clockAndQ(), phased: twoPhases(), undrawn: undrawn(), noted: clockAndQ(), beaten: beaten(), repeated: clockAndQ(), ramped: clockAndQ(), broken: clockAndQ(), long: longSequence(), sparse: clockAndQ(), leadless: clockAndQ() }, width: 1500, height: 950 }); });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
   const parts = () => h.evaluate(`window.__circuit().labels.filter((l) => l.timing?.part).map((l) => ({ part: l.timing.part, text: l.text, item: l.timing.item, curve: !!l.curve }))`);
@@ -292,6 +292,43 @@ describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () =
     assert.equal(await seen(), true, 'at the end');
     await gridKey('Home');
     assert.equal(await seen(), true, 'back at the start');
+    await h.key('K', { shiftKey: true });
+  });
+
+  test('a new analog signal starts with no values: those typed are joined straight, an erased one is unset', async () => {
+    await h.open('sparse');
+    if (!(await h.evaluate(`!!document.querySelector('.timing-dialog .timing-grid')`))) await h.key('K', { shiftKey: true });
+    await h.until(`document.querySelectorAll('.timing-grid-line').length === 2`);
+    await h.evaluate(`(() => { const i = document.querySelector('.timing-dialog input[aria-label="New signal name"]'); i.value = 'V'; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); })()`);
+    await h.until(`document.querySelectorAll('.timing-grid-line').length === 3`);
+    const values = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.timing.rows.find((r) => r.phase === 'V')?.values ?? null)`);
+    // The cursor is on V's first slot: step to the second, type .5.
+    await gridKey('ArrowRight');
+    for (const key of ['.', '5', 'Enter']) await gridKey(key);
+    await h.until(`${h.module('editor-state.js')}.then((m) => Array.isArray(m.editor.circuit.timing.rows.find((r) => r.phase === 'V')?.values))`);
+    assert.deepEqual(await values(), [null, 0.5, null, null]);
+    assert.equal(await h.evaluate(`document.querySelectorAll('.timing-grid-line')[2].querySelectorAll('.timing-cell.analog.unset').length`), 3);
+    for (const key of ['ArrowRight', '-', '.', '5', 'Enter']) await gridKey(key);
+    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.timing.rows.find((r) => r.phase === 'V')?.values?.[3] === -0.5)`);
+    assert.deepEqual(await values(), [null, 0.5, null, -0.5]);
+    // F2, erased, Enter: unset again.
+    for (const key of ['ArrowLeft', 'F2', 'Backspace', 'Backspace', 'Backspace', 'Backspace', 'Enter']) await gridKey(key);
+    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.timing.rows.find((r) => r.phase === 'V')?.values?.[3] === null)`);
+    assert.deepEqual(await values(), [null, 0.5, null, null]);
+    await h.key('K', { shiftKey: true });
+  });
+
+  test('Lead-in leaves out the waves\' lead-in and lead-out, and brings them back', async () => {
+    await h.open('leadless');
+    if (!(await h.evaluate(`!!document.querySelector('.timing-dialog .timing-grid')`))) await h.key('K', { shiftKey: true });
+    await h.until(`!!document.querySelector('.timing-dialog button[aria-pressed]')`);
+    const lead = `[...document.querySelectorAll('.timing-dialog button')].find((b) => b.textContent === 'Lead-in')`;
+    assert.equal(await h.evaluate(`${lead}.getAttribute('aria-pressed')`), 'true');
+    await h.evaluate(`${lead}.click()`);
+    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.timing?.lead === false)`);
+    assert.equal(await h.evaluate(`${lead}.getAttribute('aria-pressed')`), 'false');
+    await h.evaluate(`${lead}.click()`);
+    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.timing?.lead === undefined)`);
     await h.key('K', { shiftKey: true });
   });
 

@@ -636,3 +636,28 @@ test('a timing diagram draws one arrowhead size: its spans\' heads are its arrow
   assert.equal(heads.length, 3, 'the arrow\'s, and the span\'s two');
   assert.deepEqual([...new Set(heads.map(String))], ['26,26']);
 });
+
+test('--lead off leaves out the waves\' lead-in and lead-out; --lead on brings them back', () => {
+  const circuit = new Circuit();
+  runCommand(circuit, 'timing --add CLK');
+  runCommand(circuit, 'timing CLK=0110 --slot 4');
+  const wave = () => [...circuit.labels.values()].find((label) => label.kind === 'line' && label.timing?.phase === 'CLK');
+  const xs = () => wave().points.map((p) => p.x);
+  const span = () => Math.max(...xs()) - Math.min(...xs());
+  assert.equal(span(), 4 * 4 * 40 + 2 * 2 * 40, 'four slots and a lead each side');
+  runCommand(circuit, 'timing --lead off');
+  assert.equal(existingTimingDiagram(circuit).lead, false);
+  assert.equal(circuit.timing.lead, false);
+  assert.equal(span(), 4 * 4 * 40, 'the slots alone');
+  // Its edges are the slots' own: none at the start or the end.
+  const columns = timingColumns(['0110'], { lead: false });
+  assert.deepEqual(columns.columns.map((c) => [c.kind, c.at]), [['slot', 0], ['slot', 1], ['slot', 2], ['slot', 3]]);
+  assert.deepEqual(timingRowEdges(columns.levels[0], columns.columns, 0, 0).map((e) => e.at), [1, 3]);
+  // Saved and read back; on again.
+  const reloaded = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
+  assert.equal(existingTimingDiagram(reloaded).lead, false);
+  runCommand(circuit, 'timing --lead on');
+  assert.equal(span(), 4 * 4 * 40 + 2 * 2 * 40);
+  assert.equal(circuit.timing.lead, undefined);
+  assert.throws(() => runCommand(circuit, 'timing --lead maybe'), /--lead takes on or off/);
+});

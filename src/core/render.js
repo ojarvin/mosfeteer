@@ -885,11 +885,12 @@ function analogWaveSvg(label, opacity = '') {
   const d = (points) => points.map(([x, v], i) => `${i ? 'L' : 'M'} ${fmt(x0 + x)} ${fmt(y(v))}`).join(' ');
   const dashed = styleAttrs({ ...label.style, lineStyle: 'dashed', width: 'thin' }, 'annotation');
   const parts = [];
-  if (bipolar) parts.push(`<path d="M ${fmt(x0)} ${fmt(top + h / 2)} H ${fmt(x0 + (trace.at(-1)?.[0] ?? 0))}" fill="none" ${dashed}/>`);
+  if (bipolar && trace.length) parts.push(`<path d="M ${fmt(x0)} ${fmt(top + h / 2)} H ${fmt(x0 + trace.at(-1)[0])}" fill="none" ${dashed}/>`);
   for (const [x, v] of thresholds) parts.push(`<path d="M ${fmt(x0)} ${fmt(y(v))} H ${fmt(x0 + x)}" fill="none" ${dashed}/>`);
   // Round joins at the curve's corners, in place of the annotation's own.
   const curve = styleAttrs({ ...label.style, lineStyle: 'solid' }, 'annotation').replace(/stroke-linejoin="[^"]*"/, 'stroke-linejoin="round"');
-  parts.push(`<path d="${d(trace)}" fill="none" ${curve}/>`);
+  // Fewer than two values set: nothing to join yet.
+  if (trace.length >= 2) parts.push(`<path d="${d(trace)}" fill="none" ${curve}/>`);
   return `<g class="timing-analog"${opacity}>${parts.join('')}</g>`;
 }
 

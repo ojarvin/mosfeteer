@@ -8711,3 +8711,9 @@ html.dark[data-accent] {
 .timing-cell.new.analog {
   background: none;
 }
+
+/* An analog slot with no value of its own: the line runs across it. */
+.timing-cell.analog.unset {
+  background: none;
+  border-style: dashed;
+}

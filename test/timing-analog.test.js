@@ -107,3 +107,31 @@ test('a switch phase stays digital: analog values for it are refused', () => {
   const circuit = circuitWith(['add switch_open S1 --at 0 0', 'value S1 P1']);
   assert.throws(() => runCommand(circuit, 'timing P1=0,.5'), /switch phase/);
 });
+
+test('an analog value may be left unset: joined straight across, nothing before the first or after the last', () => {
+  assert.deepEqual(parseTimingWave('0,,,1'), { values: [0, null, null, 1] });
+  assert.deepEqual(parseTimingWave('0 _ _ 1'), { values: [0, null, null, 1] });
+  assert.deepEqual(parseTimingWave([0.5, null, '', '_']), { values: [0.5, null, null, null] });
+  const { columns } = timingColumns(['000000'], { slotCells: 4 });
+  const slot = 4 * GRID;
+  const lead = 2 * GRID;
+  // Set at slots 2 and 5: one straight line from the one to the other, the
+  // slots between read on it.
+  const { trace, points } = analogRowGeometry([null, 0, null, null, 0.9, null], columns);
+  assert.deepEqual(trace, [{ x: lead + slot, v: 0 }, { x: lead + 4 * slot, v: 0.9 }]);
+  assert.deepEqual(points.map((p) => (p.v === null ? null : Number(p.v.toFixed(4)))), [null, 0, 0.3, 0.6, 0.9, null, null]);
+  // Held: each until the next.
+  assert.deepEqual(analogRowGeometry([null, 0, null, null, 0.9, null], columns, { hold: true }).trace,
+    [{ x: lead + slot, v: 0 }, { x: lead + 4 * slot, v: 0 }, { x: lead + 4 * slot, v: 0.9 }]);
+  // One value set: no curve yet.
+  assert.deepEqual(analogRowGeometry([null, 0.5, null, null, null, null], columns).trace, []);
+  // Drawn: an empty box until two are set, saved with its unset slots.
+  const circuit = circuitWith(['timing --add CLK,V', 'timing CLK=010101 V=_,.5,_,_,_,_']);
+  assert.deepEqual(name(circuit, 'V').timing.values, [null, 0.5, null, null, null, null]);
+  assert.deepEqual(box(circuit, 'V').timing.analog.trace, []);
+  runCommand(circuit, 'timing V=_,.5,_,_,1,_');
+  assert.equal(box(circuit, 'V').timing.analog.trace.length, 2);
+  const reloaded = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
+  assert.deepEqual(existingTimingDiagram(reloaded).values.get('V'), [null, 0.5, null, null, 1, null]);
+  assert.match(runCommand(circuit, 'timing').text, /V _,0\.5,_,_,1,_/);
+});

@@ -943,7 +943,7 @@ export function normalizeTimingSpec(spec) {
   const rows = spec.rows.slice(0, 64).flatMap((row) => {
     const timing = normalizeTiming(row);
     if (!timing || typeof row.source !== 'string' || !row.source.trim()) return [];
-    const { slot, gaps, arrows, marks, spans, breaks, analog: curve, part: kind, item: index, ...own } = timing;
+    const { slot, gaps, lead, arrows, marks, spans, breaks, analog: curve, part: kind, item: index, ...own } = timing;
     return [{ source: row.source.slice(0, 200), ...own }];
   });
   return { ...settings, rows };
@@ -988,10 +988,11 @@ function normalizeTiming(timing) {
     ? { at: value.at, ...(value.rows === true ? { rows: true } : {}) } : null));
   // A drawn arrow, mark, span or break (or a span's or an arrow's text) says which it is.
   const part = ['arrow', 'mark', 'span', 'break', 'note', 'arrow-note'].includes(timing.part) && Number.isInteger(timing.item) && timing.item >= 0 ? timing.part : null;
-  // An analog row: its values (-1..1) at the slots' starts, whether they
-  // hold through the slot; any row's height in cells (even, from 2).
-  const level = (value) => (Number.isFinite(Number(value)) ? Math.max(-1, Math.min(1, Math.round(Number(value) * 1e4) / 1e4)) : null);
-  const values = Array.isArray(timing.values) ? timing.values.slice(0, 512).map(level).filter((value) => value !== null) : null;
+  // An analog row: its values (-1..1) at the slots' starts, null where
+  // unset, whether they hold through the slot; any row's height in cells
+  // (even, from 2).
+  const level = (value) => (value !== null && value !== '' && Number.isFinite(Number(value)) ? Math.max(-1, Math.min(1, Math.round(Number(value) * 1e4) / 1e4)) : null);
+  const values = Array.isArray(timing.values) ? timing.values.slice(0, 512).map(level) : null;
   const height = Math.round(Number(timing.height));
   // The drawn analog curve (timing-diagram.js): [x, value] points from the
   // box's left edge, and the threshold marks' points.
@@ -1009,9 +1010,10 @@ function normalizeTiming(timing) {
     ...(values ? { values } : {}),
     ...(values && timing.hold === true ? { hold: true } : {}),
     ...(Number.isInteger(height) && height > 2 && height % 2 === 0 && height <= 16 ? { height } : {}),
-    ...(analog?.trace.length ? { analog } : {}),
+    ...(analog ? { analog } : {}),
     slot,
     ...(gaps !== undefined ? { gaps } : {}),
+    ...(timing.lead === false ? { lead: false } : {}),
     ...(shift && (shift.fall || shift.rise) ? { shift } : {}),
     ...(timing.signal === true ? { signal: true } : {}),
     ...(arrows.length ? { arrows } : {}),

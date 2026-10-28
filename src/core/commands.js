@@ -96,6 +96,7 @@ const FLAG_ARITY = {
   linear: 1,
   beats: 0,
   gaps: 1,
+  lead: 1,
   'no-gaps': 0,
   fall: 1,
   rise: 1,
@@ -565,20 +566,22 @@ export function commandHelp() {
     '  beat switch N REF|PHASE open|closed - set a switch (its whole phase) from beat N on',
     '  beat phases [--after N|--replace] - add a beat per state of the timing diagram (phases high together close together),',
     '                                   or without one a beat per switch phase: what works shown, the rest dimmed',
-    '  timing [ROW=WAVE ...] [--add NAME,...] [--rm NAME,...] [--slot N] [--beats] [--gaps auto|none|A:B,...] [--fall|--rise ROW=N,...] [--order A,B,...] [--place]',
+    '  timing [ROW=WAVE ...] [--add NAME,...] [--rm NAME,...] [--slot N] [--lead on|off] [--beats] [--gaps auto|none|A:B,...] [--fall|--rise ROW=N,...] [--order A,B,...] [--place]',
     '                                  rows are the switch phases plus signals of the diagram\'s own (--add CLK; --rm removes one); a diagram needs no switches',
     '                                 - set the design\'s timing and draw it (or redraw it in place), a wave per switch phase; WAVE is',
     '                                   one character per slot: 1 high, 0 low. PHASE is its name (φ1,',
     '                                   $\\varphi_1$), row number, or ~PHASE for its complement. Unset rows keep their wave,',
     '                                   a complement is its phase inverted, else one slot per beat, else low; --beats',
-    '                                   retakes them from the beats. Waves repeat past both ends; --slot N is a slot\'s',
+    '                                   retakes them from the beats. Waves repeat past both ends (--lead off leaves that out,',
+    '                                   --lead on shows it again); --slot N is a slot\'s',
     '                                   width in cells. --gaps sets which phases never overlap (a one-cell gap where one',
     '                                   falls as the other rises): none (a new diagram\'s), auto (any two never high together), or pairs.',
     '                                   --fall / --rise move a phase\'s falling / rising edges N cells (negative earlier);',
     '                                   --order φ2,φ1 sets the rows\' order; a drawn diagram stays where it stands,',
     '                                   --place puts it again where the drawing has room for it.',
     '                                   An analog signal (a supply ramp): WAVE as values from -1 to 1, one per slot start, with',
-    '                                   commas (VDD=0,.5,1,1): joined straight, or held through each slot with --hold VDD (--linear',
+    '                                   commas (VDD=0,.5,1,1; _ or nothing leaves a slot unset, VDD=0,,,1, joined straight across it):',
+    '                                   joined straight, or held until the next with --hold VDD (--linear',
     '                                   joins them again); below zero, the row is drawn about a dashed zero line. --height ROW=4,...',
     '                                   sets rows\' heights (2, 4, 6 ... cells). Its points take arrows, marks and spans as edges do;',
     '                                   a mark on a point between 0 and full is a threshold, dashed at its level.',
@@ -1280,9 +1283,13 @@ function dispatch(circuit, cmd, pos, flags, io) {
       heights[item.slice(0, at)] = item.slice(at + 1);
     }
     const hold = Object.fromEntries([...list('hold').map((name) => [name, true]), ...list('linear').map((name) => [name, false])]);
-    const rows = addTimingDiagram(circuit, { bits, fromBeats: !!flags.beats, slot, gaps, shifts, order, place: !!flags.place, add: signalsAdded, remove: signalsRemoved, ...notes, need, heights, hold });
+    // --lead on|off: the waves' lead-in and lead-out (their repeat past both ends).
+    const leadText = flags.lead ? String(flags.lead[0]).trim() : null;
+    if (leadText !== null && !['on', 'off'].includes(leadText)) throw new Error(`--lead takes on or off, not "${leadText}"`);
+    const lead = leadText === null ? null : leadText === 'on';
+    const rows = addTimingDiagram(circuit, { bits, fromBeats: !!flags.beats, slot, gaps, lead, shifts, order, place: !!flags.place, add: signalsAdded, remove: signalsRemoved, ...notes, need, heights, hold });
     if (!rows.length) return result('removed the timing diagram: it had no rows left', [], true);
-    const wave = (row) => (row.values ? `${row.values.join(',')}${row.hold ? ' (held)' : ''}` : row.from === 'complement' ? '(inverted)' : row.bits || '(low)');
+    const wave = (row) => (row.values ? `${row.values.map((v) => v ?? '_').join(',')}${row.hold ? ' (held)' : ''}` : row.from === 'complement' ? '(inverted)' : row.bits || '(low)');
     const moved = (row) => [row.shift.fall ? ` fall ${row.shift.fall > 0 ? '+' : ''}${row.shift.fall}` : '', row.shift.rise ? ` rise ${row.shift.rise > 0 ? '+' : ''}${row.shift.rise}` : ''].join('');
     const drawn = existingTimingDiagram(circuit);
     const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
