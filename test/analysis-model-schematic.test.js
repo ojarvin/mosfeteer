@@ -398,3 +398,27 @@ test('no branch of the model stands across another node\'s wire: a load from the
   assert.ok(x(load) < Math.min(...vin) || x(load) > Math.max(...vin), `R_D at ${x(load)} stands between V_IN's ends ${vin}`);
   assert.equal(evaluate(model.circuit).ok, true, JSON.stringify(evaluate(model.circuit).issues || []).slice(0, 300));
 });
+
+test('a branch lying along a row wears its label on its top edge, as a part\'s own label does', () => {
+  // An inverter driven through R1, its input-output capacitor Miller-split:
+  // R1 lies along the input row.
+  const circuit = new Circuit();
+  [['input', 'VIN'], ['output', 'VOUT'], ['nmos', 'M1'], ['pmos', 'M2'], ['resistor', 'R1'], ['capacitor', 'C1'], ['ground', 'GND'], ['supply', 'VDD']]
+    .forEach(([type, refdes], i) => circuit.addComponent(type, { refdes, x: i * 400, y: 0 }));
+  const net = (name, ...refs) => { circuit._createNet(name).terminals = refs.map((ref) => circuit.resolveTerm(ref)); };
+  net('VIN', 'VIN.p', 'R1.a');
+  net('N1', 'R1.b', 'C1.a', 'M1.g', 'M2.g');
+  net('VOUT', 'C1.b', 'M1.d', 'M2.d', 'VOUT.p');
+  net('VDD', 'M2.s', 'VDD.p');
+  net('VSS', 'M1.s', 'GND.gnd');
+  const model = smallSignalSchematic(analyzeSmallSignalV2(circuit, { input: 'VIN', output: 'VOUT', ignoreBodyEffect: true }));
+  assert.equal(model.ok, true, model.error);
+  const resistor = [...model.circuit.components.values()].find((c) => c.type === 'resistor' && /^R_\{?1\}?$/.test(model.circuit.labelOf(c.refdes)?.text));
+  assert.ok(resistor, 'R1 in the model');
+  const label = model.circuit.labelOf(resistor.refdes);
+  const [box, body] = [label.bbox(), resistor.bboxWorld()];
+  assert.equal(box.y + box.h, body.y, 'the label\'s box stands on the symbol');
+  // The schematic's own resistor: the same.
+  const drawn = circuit.labelOf('R1');
+  if (drawn) assert.equal(drawn.bbox().y + drawn.bbox().h, circuit.components.get('R1').bboxWorld().y);
+});

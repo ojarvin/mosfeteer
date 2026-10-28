@@ -6535,7 +6535,6 @@ function smallSignalSchematic(report, options = {}) {
   // The cells left of a branch its label takes, as `addElement` places it.
   // Beside a symbol, the box stands against its body and reaches left as
   // wide as it will be drawn. Above, a cell clear.
-  const reachAbove = (height) => 40 * Math.ceil((80 + height / 2) / 40);
   // Spaced by ink: the symbol's half, the label's inset, and its text as
   // the browser draws it -- not the box it rounds up to.
   const leftRoom = (element) => {
@@ -6634,7 +6633,9 @@ function smallSignalSchematic(report, options = {}) {
     const box = owned.bbox();
     // A 'parent' label's box ends a cell right of its anchor (model.js bbox).
     const body = component.bboxWorld();
-    const world = upright ? { x: floorGrid(body.x) - GRID - component.transform.x, y: 0 } : { x: 0, y: -reachAbove(box.h) };
+    // Lying along a row, its box stands on the symbol's top edge, as a
+    // part's own label does on the drawing.
+    const world = upright ? { x: floorGrid(body.x) - GRID - component.transform.x, y: 0 } : { x: 0, y: floorGrid(body.y) - component.transform.y - box.h / 2 };
     owned.offset = localOffset(world.x, world.y, placement.rotation || 0);
     owned.clearMeasuredTextBounds();
     if (label.legend) legend.push(label.legend);
