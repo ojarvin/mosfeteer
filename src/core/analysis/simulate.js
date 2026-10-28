@@ -99,7 +99,11 @@ function matVec(M, x, out) {
  * Returns `{ ok, fullScale, frequency, signals, run }`:
  * `signals` `[{ key, name, domain, role }]`, `run(amplitude)` (dBFS) gives
  * `{ peaks (per signal, over the window), tone (the output's amplitude at
- * the input frequency), overloaded }`.
+ * the input frequency), overloaded, quantizers }`, `quantizers` each
+ * quantizer's `{ refdes, levels, gain, errorVariance }`: its output fitted
+ * as `gain` times its input plus an error of that variance (least
+ * squares) -- a two-level quantizer's gain is set by the loop, not by its
+ * levels, so it is rarely 1.
  */
 export function prepareSimulation(circuit, options = {}) {
   circuit = analyzedCircuit(circuit);
@@ -507,6 +511,8 @@ export function prepareSimulation(circuit, options = {}) {
           : shape === 'bin' ? () => a * coin()
             : () => (a * (coin() + coin())) / 2];
     }));
+    // Each quantizer's output against its input, for its effective gain.
+    const fits = order.map(() => ({ vy: 0, vv: 0, yy: 0 }));
     // A state a thousand times full scale: the loop has run away.
     const limit = 1e3 * fullScale;
     const track = (measuring) => {
@@ -524,9 +530,13 @@ export function prepareSimulation(circuit, options = {}) {
       }
       state.set(xd, 0);
       state.set(p, md);
-      for (const q of order) {
+      for (const [k, q] of order.entries()) {
         const y = q.row ? dot(q.row, state) : 0;
         state[q.p] = quantize(y, q.levels);
+        if (measuring) {
+          const fit = fits[k];
+          fit.vy += y * state[q.p]; fit.vv += y * y; fit.yy += state[q.p] ** 2;
+        }
       }
       matVec(Md, state, Yd);
       // The continuous signals at nT^-, and the output, for the peaks and the tone.
@@ -586,7 +596,13 @@ export function prepareSimulation(circuit, options = {}) {
       if (halves[1][i] > 2 * fullScale && halves[1][i] > 2 * halves[0][i]) return { peaks: Array.from(peaks), tone: null, overloaded: true, ...wavesOut() };
     }
     const tone = outputIndex >= 0 ? (2 * Math.hypot(re, im)) / window : null;
-    return { peaks: Array.from(peaks), tone, overloaded: false, ...(recorded ? { samples: recorded } : {}), ...(magnitudes ? { magnitudes } : {}), ...wavesOut() };
+    // y = k v + e, k by least squares: e is then uncorrelated with v.
+    const quantizerFits = order.map((q, k) => {
+      const { vy, vv, yy } = fits[k];
+      const gain = vv > 0 ? vy / vv : 1;
+      return { refdes: q.refdes, levels: q.levels, gain, errorVariance: Math.max(0, yy - gain * vy) / window };
+    });
+    return { peaks: Array.from(peaks), tone, overloaded: false, quantizers: quantizerFits, ...(recorded ? { samples: recorded } : {}), ...(magnitudes ? { magnitudes } : {}), ...wavesOut() };
   };
 
   return { ok: true, fullScale, frequency, period: T, signals: signalList, run };

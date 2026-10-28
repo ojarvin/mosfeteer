@@ -5,7 +5,7 @@ import { runCommand } from '../src/core/commands.js';
 import { swapComponentType } from '../src/core/swap.js';
 import { applyTransform } from '../src/core/geometry.js';
 import { TRANSFER_FUNCTION_ROLE } from '../src/core/transfer-function.js';
-import { analyzeSignalFlow, blockTransferFunction, numericRootsOf, outputChoices, responseCurve, resultSymbols, signalFlowGraph, withCoefficients } from '../src/core/analysis/signal-flow.js';
+import { analyzeSignalFlow, blockTransferFunction, numericRootsOf, outputChoices, responseAt, responseCurve, resultSymbols, signalFlowGraph, withCoefficients } from '../src/core/analysis/signal-flow.js';
 
 function diagram(lines, negatives = []) {
   const circuit = new Circuit();
@@ -606,6 +606,54 @@ test('in the transfer functions a quantizer is a gain of 1 plus its own error so
   assert.equal(ntf.equation, '\\frac{V}{E_{QZ1}} = 1 - 2 z^{-1} + z^{-2}');
   const dt = analyzeSignalFlow(quantizedModulator('dt'), { output: 'V', sources: { QZ1: 'input' } });
   assert.equal(dt.entries[0].equation, '\\frac{V}{E_{QZ1}} = \\frac{1 - 2 z^{-1} + z^{-2}}{1 + \\left(-2 + k_{2}\\right) z^{-1} + \\left(-k_{2} + 1 + k_{1}\\right) z^{-2}}');
+});
+
+test('a two-level quantizer\'s effective gain is measured by the simulation, and the linear model takes it', () => {
+  // A discrete second-order loop with a gain c before a single-bit
+  // quantizer: the rounding ignores c, the k = 1 linear model does not.
+  const build = (c) => {
+    const lines = ['add input U --at -1600 0', 'add signal_sum S1 --at -1200 0', 'add tf_z H1 --at -800 0 --value "tf([0 1], [1 -1])"', 'add signal_sum S3 --at -400 0', 'add tf_z H2 --at 0 0 --value "tf([0 1], [1 -1])"',
+      `add gain K3 --at 400 0 --value ${c}`, 'add quantizer QZ1 --at 800 0', 'add output V --at 1200 0', 'add gain K1 --at -800 400 --rot 180 --value 1', 'add gain K2 --at 0 400 --rot 180 --value 2',
+      'connect U.p S1.w', 'connect S1.e H1.in', 'connect H1.out S3.w', 'connect S3.e H2.in', 'connect H2.out K3.in', 'connect K3.out QZ1.in', 'connect QZ1.out V.p', 'connect V.p K1.in', 'connect V.p K2.in', 'connect K1.out S1.s', 'connect K2.out S3.s'];
+    return diagram(lines, [['S1', 's'], ['S3', 's']]);
+  };
+  const measure = (c) => {
+    const sim = prepareSimulation(build(c), { input: 'U', output: 'name:V', frequency: 1 / 256, samples: 8192 });
+    assert.equal(sim.ok, true, sim.error);
+    const run = sim.run(-12, { record: true });
+    return { run, fit: run.quantizers[0] };
+  };
+  const one = measure(1);
+  const quarter = measure(0.25);
+  assert.equal(one.fit.refdes, 'QZ1');
+  assert.equal(one.fit.levels, 2);
+  // The same bits either way; the gain takes up the scale.
+  assert.deepEqual(Array.from(quarter.run.samples), Array.from(one.run.samples));
+  assert.ok(Math.abs(quarter.fit.gain - 4 * one.fit.gain) < 1e-9 * quarter.fit.gain, `${quarter.fit.gain} vs ${one.fit.gain}`);
+  assert.ok(Math.abs(quarter.fit.errorVariance - one.fit.errorVariance) < 1e-9);
+  // With the measured gain the linear model's NTF is the same for both.
+  const ntf = (c, k) => analyzeSignalFlow(build(c), { output: 'V', sources: { QZ1: 'input' }, ...(k ? { quantizerGains: { QZ1: k } } : {}) }).entries[0].value;
+  const at = (value, f) => Math.hypot(...responseAt(value, 'z', f));
+  for (const f of [0.002, 0.05, 0.3]) {
+    assert.ok(Math.abs(at(ntf(1, one.fit.gain), f) / at(ntf(0.25, quarter.fit.gain), f) - 1) < 1e-6, `f ${f}`);
+  }
+  // And it is what the spectrum shows: the floor near fs/2 (|NTF| near
+  // its peak) at the measured gain and error variance, within a dB, where
+  // k = 1 for c = 1/4 is off by several.
+  const spectrum = outputSpectrum(quarter.run.samples, { segment: 2048, variance: 1 / 3 });
+  const floor = (value, variance) => {
+    let sim = 0;
+    let predicted = 0;
+    let count = 0;
+    for (const p of spectrum.points.filter((p) => p.f > 0.3 && p.f < 0.45)) {
+      sim += 10 ** (p.db / 10);
+      predicted += at(value, p.f) ** 2 * variance * 3;
+      count += 1;
+    }
+    return 10 * Math.log10(sim / predicted);
+  };
+  assert.ok(Math.abs(floor(ntf(0.25, quarter.fit.gain), quarter.fit.errorVariance)) < 1, floor(ntf(0.25, quarter.fit.gain), quarter.fit.errorVariance));
+  assert.ok(Math.abs(floor(ntf(0.25), 1 / 3)) > 3, floor(ntf(0.25), 1 / 3));
 });
 
 test('the swing simulation: the output tracks the input until the loop overloads past full scale', () => {

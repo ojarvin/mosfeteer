@@ -259,8 +259,10 @@ function failure(code, error, issues = []) {
 /**
  * Analyze the drawing. `options`: `output` (a signal key, a net name or id,
  * or a port's refdes), `sources` (`{ [refdes]: 'input' | 'zero' |
- * { constant: value } }`; a source left out is zero), and `values` (the
- * coefficients' numbers, which a sampled loop needs). Returns `{ ok,
+ * { constant: value } }`; a source left out is zero), `values` (the
+ * coefficients' numbers, which a sampled loop needs), and `quantizerGains`
+ * (`{ [refdes]: k }`, a quantizer's gain in the linear model, 1 when left
+ * out). Returns `{ ok,
  * variable, output, entries, issues }`, an entry per input:
  * `{ input, value (exact rational), tex, equation, poles, zeros }`. With a
  * sampler the result is in z and each `value` is a sampled result
@@ -285,7 +287,10 @@ export function analyzeSignalFlow(circuit, options = {}, graph = signalFlowGraph
   const inputs = sources.filter((source) => modeOf(source).kind === 'input');
   if (!inputs.length) return failure('no-input', 'set at least one source to input');
   const sourceBySignal = new Map(sources.map((source) => [source.key, { ...source, mode: modeOf(source) }]));
-  const context = { circuit, signals, sourceBySignal };
+  // A quantizer's gain in the linear model: 1, or as given (its effective
+  // gain, measured by the simulation).
+  const quantizerGains = options.quantizerGains || {};
+  const context = { circuit, signals, sourceBySignal, quantizerGains };
 
   if (parts.some((component) => component.type === 'sampler')) return analyzeSampled(context, output, inputs, options.values || {});
   const domains = new Set(parts.map((component) => TRANSFER_FUNCTION_TYPES[component.type]).filter(Boolean));
@@ -439,7 +444,7 @@ export function loopMargins(curve) {
  * superposition). `extra(signal, row, feed)` builds a row the usual parts
  * do not (a sampler's).
  */
-function linearSystem({ circuit, signals, sourceBySignal }, unknowns, inputKeys, variable, extra = null) {
+function linearSystem({ circuit, signals, sourceBySignal, quantizerGains = {} }, unknowns, inputKeys, variable, extra = null) {
   const index = new Map(unknowns.map((signal, i) => [signal.key, i]));
   // A big diagram's exact algebra is big: give it room, the elimination
   // keeps it as small as the diagram allows.
@@ -485,8 +490,9 @@ function linearSystem({ circuit, signals, sourceBySignal }, unknowns, inputKeys,
       }
       feed(row, k, signalAt(component, 'in'));
     } else if (component.type === 'quantizer') {
-      // Linear model: v = y + E, its error a source of its own.
-      feed(row, ops.one, signalAt(component, 'in'));
+      // Linear model: v = k y + E, its error a source of its own.
+      const k = quantizerGains[component.refdes];
+      feed(row, Number.isFinite(k) && k !== 1 ? exactFloat(k) : ops.one, signalAt(component, 'in'));
       feed(row, ops.one, { key: quantizerErrorKey(component.refdes) });
     } else if (component.type === 'signal_sum') {
       for (const term of JUNCTION_INPUTS) {

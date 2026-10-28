@@ -328,9 +328,18 @@ the coefficients settle (a slider let go, a value typed), not on every
 tick. The graph is then one plot in the spectrum's units, dBFS per bin (a
 full-scale sine reads 0 dBFS; white noise its power in the window's noise
 bandwidth): each NTF (a quantizer's error) is moved to the noise level it
-predicts, white error of variance 1/3 (Schreier's levels) shaped by |NTF|^2, so it lies on the simulated floor; each
+predicts, white error shaped by |NTF|^2, so it lies on the simulated floor; each
 STF (a real input) to where the tone would sit, the amplitude in dBFS plus
-|STF| in dB, so it runs through the tone's peak. With a band, the simulated
+|STF| in dB, so it runs through the tone's peak. The run measures each
+quantizer as `y = k v + e` (least squares, `simulate.js` `quantizers`): its
+effective gain k and its error's variance. A two-level quantizer's gain is
+set by the loop, not by its levels (scaling its input changes no bit), so
+it is rarely 1 -- often near 2 without dither, near 1 with dither of about
+a level step. The curves over the spectrum are therefore solved again with
+each quantizer at its measured gain (`analyzeSignalFlow`'s
+`quantizerGains`) and each NTF at its measured error variance, and the
+status line names the gains. The equations, the other views, and the
+optimizer keep the gain of 1. With a band, the simulated
 SNDR and ENOB beside the predicted SQNR.
 
 **Dither** is a part of the diagram: a **dither source** (`dither`, value

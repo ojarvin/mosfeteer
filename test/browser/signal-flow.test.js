@@ -258,6 +258,8 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     await h.until(`!!document.querySelector('.plots-window .signal-flow-spectrum-toggle input')`);
     await h.evaluate(`(() => { const a = document.querySelector('.plots-window .signal-flow-spectrum input[aria-label="Sine amplitude, dBFS"]'); a.value = '-20'; a.dispatchEvent(new Event('change', { bubbles: true })); const c = document.querySelector('.plots-window .signal-flow-spectrum-toggle input'); if (!c.checked) c.click(); })()`);
     await h.until(`/SNDR/.test(document.querySelector('.plots-window .signal-flow-spectrum-status')?.textContent || '')`, 20000);
+    // The curves over it are drawn at each quantizer's measured gain, as it says.
+    assert.match(await h.evaluate(`document.querySelector('.plots-window .signal-flow-spectrum-status').textContent`), /curves at \w+ gain \d+\.\d\d/);
     await annotate('Graph');
     const legend = `${h.module('editor-state.js')}.then((m) => { const labels = [...m.editor.circuit.labels.values()]; const box = labels.find((l) => l.plot?.units === 'dBFS'); return box ? labels.filter((l) => l.parent === box.id).map((l) => l.text) : []; })`;
     await h.until(`${legend}.then((l) => l.some((t) => t.includes('SNDR')))`);

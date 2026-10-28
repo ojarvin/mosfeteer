@@ -888,12 +888,25 @@ const sAxisSetting = () => editor.circuit.analysisValues.sAxis || 'omega';
 // What the graph shows (saved with the document): magnitude, phase, or the step response.
 const graphView = () => flow().graphView || 'magnitude';
 const graphPlot = (list, view = graphView(), detail = null) => {
-  const numbered = list.map((trace) => ({ ...trace, value: numeric(trace.value, trace.variable) }));
+  const background = view === 'magnitude' && spectrum?.points?.length ? [{ label: '\\text{simulated output}', color: MUTED_TRACE_COLOR, points: spectrum.points }] : [];
+  // Over a simulated spectrum a curve predicts it: solved with each
+  // quantizer at the gain the simulation measured (a two-level one's is
+  // set by the loop), where that solve has the same output and input.
+  const measured = (trace) => (background.length && spectrum.linear?.ok && spectrum.linear.output.key === trace.output
+    ? spectrum.linear.entries.find((entry) => entry.input === trace.input)?.value : null);
+  const numbered = list.map((trace) => {
+    const value = measured(trace) ?? trace.value;
+    return { ...trace, value: numeric(value, trace.variable) };
+  });
   if (view === 'step') return stepPlot(numbered);
   // With a simulated spectrum, one plot in its dBFS: the spectrum, each NTF
-  // as the noise it predicts, each STF as where the tone would sit.
-  const background = spectrum?.points?.length ? [{ label: '\\text{simulated output}', color: MUTED_TRACE_COLOR, points: spectrum.points }] : [];
-  const dbfs = background.length ? { offset: (trace) => dbfsOffset(spectrum.raw, spectrum.fullScale, { noise: trace.noise, amplitude: spectrum.amplitude }) } : null;
+  // as the noise it predicts (its error at the variance measured), each STF
+  // as where the tone would sit.
+  const errorDb = (trace) => {
+    const fit = trace.noise && measured(trace) ? spectrum.quantizers?.find((q) => q.refdes === trace.input) : null;
+    return fit?.errorVariance > 0 ? 10 * Math.log10(fit.errorVariance * 3) : 0;
+  };
+  const dbfs = background.length ? { offset: (trace) => dbfsOffset(spectrum.raw, spectrum.fullScale, { noise: trace.noise, amplitude: spectrum.amplitude }) + errorDb(trace) } : null;
   return responsePlot(numbered, 's', { sAxis: sAxisSetting(), band: editor.circuit.analysisValues.band, quantity: view, background, dbfs, detail });
 };
 
@@ -942,7 +955,9 @@ function spectrumStatus() {
   if (spectrum.error) return spectrum.error;
   const measured = inBand(spectrum.raw, spectrum.frequency, bandEdges(editor.circuit.analysisValues.band));
   const averaged = `${spectrum.raw.averages} averages of ${spectrum.raw.n} samples`;
-  return measured ? `SNDR ${measured.sndr.toFixed(1)} dB in band (ENOB ${measured.enob.toFixed(1)}); ${averaged}` : `${averaged}; set a band for its SNDR`;
+  const gains = (spectrum.quantizers || []).map((q) => `${q.refdes} gain ${q.gain.toFixed(2)}`).join(', ');
+  const curves = gains ? `; curves at ${gains}` : '';
+  return measured ? `SNDR ${measured.sndr.toFixed(1)} dB in band (ENOB ${measured.enob.toFixed(1)}); ${averaged}${curves}` : `${averaged}; set a band for its SNDR${curves}`;
 }
 
 // The spectrum's record: 8192-sample segments overlapping by half, Welch-
@@ -971,8 +986,13 @@ function runSpectrum() {
   else {
     const run = sim.run(amplitude, { record: true });
     const raw = run.overloaded || !run.samples ? null : outputSpectrum(run.samples, { segment: SPECTRUM_SEGMENT, variance: 1 / 3 });
+    // The linear model again, each quantizer at its measured gain.
+    const quantizers = raw ? run.quantizers : [];
+    const linear = quantizers.length
+      ? analyzeSignalFlow(editor.circuit, { output: flow().output, sources: flow().sources, values: numbers, quantizerGains: Object.fromEntries(quantizers.map((q) => [q.refdes, Number(q.gain.toPrecision(6))])) })
+      : null;
     spectrum = raw
-      ? { raw, points: plotSpectrum({ ...raw, points: dbfsSpectrum(raw, sim.fullScale) }, sim.frequency), frequency: sim.frequency, amplitude, fullScale: sim.fullScale }
+      ? { raw, points: plotSpectrum({ ...raw, points: dbfsSpectrum(raw, sim.fullScale) }, sim.frequency), frequency: sim.frequency, amplitude, fullScale: sim.fullScale, quantizers, linear }
       : { error: run.overloaded ? `the loop runs away at ${amplitude} dBFS` : 'no output to take the spectrum of' };
   }
   redrawGraphPlot();
@@ -1036,7 +1056,7 @@ function addTrace(entry, variable, output) {
   const used = new Set(traces.map((trace) => trace.color));
   const color = TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
   // A trace is named by its ratio (OUT/IN); the equation can be annotated on its own.
-  traces.push({ id, label: entry.label, equation: entry.equation, color, value: entry.value, variable, on: true, noise: !!entry.quantizer });
+  traces.push({ id, label: entry.label, equation: entry.equation, color, value: entry.value, variable, on: true, noise: !!entry.quantizer, input: entry.input, output: output.key });
 }
 
 const GRAPH_VIEWS = new Set(['magnitude', 'phase', 'step']);
