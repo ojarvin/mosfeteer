@@ -32,6 +32,7 @@ import { appendContextItem, openMenuAt } from './context-menu.js';
 import { showDesignInReference } from './reference-window.js';
 import { notesOutline, reportTargets, resolveReportTarget } from '../core/report.js';
 import { exportCircuit } from './export-ui.js';
+import { PASTED_IMAGE_TYPES, storedImage } from './copy-paste.js';
 
 /** A pause this long ends one edit (one undo step). */
 const EDIT_PAUSE_MS = 1000;
@@ -78,6 +79,7 @@ function renderView() {
   if (shownKey && Object.keys(key).every((field) => shownKey[field] === key[field])) return;
   shownKey = key;
   const html = renderNotes(key.text, {
+    picture: (id) => editor.circuit.pictures?.[id] || null,
     mention: mentionTarget,
     design: (name) => !!designNamed(name) || name.toLowerCase() === String(editor.currentCircuitName || '').toLowerCase(),
     figure: (name) => resolveReportTarget(editor.circuit, name),
@@ -118,6 +120,25 @@ function onInput() {
   win.outline.hidden = !!next;
   clearTimeout(pauseTimer);
   pauseTimer = setTimeout(finishEditStep, EDIT_PAUSE_MS);
+}
+
+/** A picture pasted into the source: kept in the design under the next
+ *  number, placed at the caret as `![](picture:N)`. */
+function onSourcePaste(ev) {
+  const file = [...(ev.clipboardData?.files || [])].find((item) => PASTED_IMAGE_TYPES.includes(item.type));
+  if (!file) return;
+  ev.preventDefault();
+  const field = win.source;
+  const [start, end] = [field.selectionStart, field.selectionEnd];
+  storedImage(file).then(({ src }) => {
+    if (!win || field !== win.source) return;
+    const pictures = (editor.circuit.pictures ||= {});
+    const id = String(Math.max(0, ...Object.keys(pictures).map(Number)) + 1);
+    pictures[id] = src;
+    field.setSelectionRange(start, end);
+    field.setRangeText(`![](picture:${id})`, start, end, 'end');
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+  }).catch((err) => logLine(`Could not paste the picture: ${err.message}`, 'error'));
 }
 
 function startEditing() {
@@ -272,7 +293,7 @@ function build() {
   const outline = el('button', { type: 'button', class: 'notes-outline window-action', title: 'Start the notes with every figure of the drawing', text: 'Outline' });
   const view = el('div', { class: 'notes-view', tabindex: '0', 'aria-label': 'Notes' });
   const empty = el('p', { class: 'field-hint notes-empty', text: 'Double-click to write. Markdown with $math$; @M1 mentions a part or net, [[amp]] links a design, ![[circuit]] places a figure.' });
-  const source = el('textarea', { class: 'notes-source', 'aria-label': 'Notes (Markdown)', spellcheck: 'true', hidden: true, placeholder: 'Markdown: # headings, $math$, @M1 for a part or net, [[design]] for a link' });
+  const source = el('textarea', { class: 'notes-source', 'aria-label': 'Notes (Markdown)', spellcheck: 'true', hidden: true, placeholder: 'Markdown: # headings, $math$, @M1 for a part or net, [[design]] for a link, a pasted picture' });
   const node = el('section', { class: 'floating-window notes-window', 'aria-labelledby': 'notes-title', hidden: true }, [
     el('header', { class: 'floating-window-header' }, [el('h2', { id: 'notes-title', class: 'floating-window-title', text: 'Notes' }), close]),
     el('div', { class: 'notes-body' }, [empty, view, source]),
@@ -283,6 +304,7 @@ function build() {
   report.addEventListener('click', () => exportCircuit({ content: 'report' }));
   outline.addEventListener('click', writeOutline);
   source.addEventListener('input', onInput);
+  source.addEventListener('paste', onSourcePaste);
   // Before the field's own keys: an open list takes Tab and Esc.
   attachNoteCompletion(source, completionNames);
   source.addEventListener('keydown', onSourceKey);
@@ -323,7 +345,7 @@ function writeOutline() {
 async function copyMarkdown() {
   if (!notes()) return;
   try {
-    await navigator.clipboard.writeText(notesMarkdown(notes()));
+    await navigator.clipboard.writeText(notesMarkdown(notes(), editor.circuit.pictures));
     logLine('Notes copied as Markdown');
   } catch (err) {
     logLine(`Could not copy the notes: ${err.message || err}`, 'error');

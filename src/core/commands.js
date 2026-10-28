@@ -1061,7 +1061,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
       return result('(no notes)', { notes: '' }, changed);
     }
     if (pos.length === 1 && pos[0] === 'markdown') {
-      const markdown = notesMarkdown(circuit.notes);
+      const markdown = notesMarkdown(circuit.notes, circuit.pictures);
       return result(markdown || '(no notes)', { markdown });
     }
     if (pos.length === 1 && pos[0] === 'outline') {

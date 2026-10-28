@@ -1206,7 +1206,15 @@ button:disabled {
   text-decoration: underline;
 }
 
-.notes-view :is(.note-mention-missing, .note-design.broken) {
+/* A picture pasted into the notes: as wide as it is, at most the window. */
+.notes-view .note-picture {
+  max-width: 100%;
+  height: auto;
+  vertical-align: middle;
+  border-radius: var(--radius-xs);
+}
+
+.notes-view :is(.note-mention-missing, .note-design.broken, .note-picture-missing) {
   color: var(--text-dim);
   background: none;
   text-decoration: line-through;

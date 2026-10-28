@@ -297,6 +297,7 @@ export function buildReport(circuit, { name = 'Design', guide = null, fontCss = 
       figures,
       citations,
       references: false,
+      picture: (id) => owner.pictures?.[id] || null,
       mention: (mention) => resolveMention(owner, mention),
       mentionHtml: (mention, found, nameHtml) => {
         const figure = found ? mentionFigure(found) : null;
@@ -399,6 +400,8 @@ a { color: #1d4e89; text-decoration: none; }
 .note-references ol { padding-left: 2em; font-size: 9.5pt; }
 .note-references li { margin-bottom: 3pt; overflow-wrap: anywhere; }
 .note-figure-ref.broken, .note-math-error { color: #b42318; }
+.note-picture { max-width: 100%; height: auto; vertical-align: middle; }
+.note-picture-missing { color: #b42318; text-decoration: line-through; }
 figure { margin: 14pt 0; break-inside: avoid; page-break-inside: avoid; }
 figure svg { display: block; margin: 0 auto; }
 figcaption { margin: 6pt auto 0; max-width: ${pt(page.textWidthPt)}; font-size: 9pt; text-align: center; }

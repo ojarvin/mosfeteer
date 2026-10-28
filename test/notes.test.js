@@ -230,3 +230,27 @@ test('citations are numbered by first use, one number a source, and listed at th
   assert.doesNotMatch(renderNotes('no citations'), /References/);
   assert.match(notesMarkdown(text), /^CLS \[1\] and a book \[2\]\.\n\nAgain \[1\], \[3\] and `\[\^not cited\]`\.\n\n## References\n\n1\. Gregoire and Moon, https:\/\/doi\.org\/10\.1000\/xyz123\n2\. Razavi, Analog CMOS\n3\. https:\/\/doi\.org\/10\.1/);
 });
+
+import { notePictureIds } from '../src/core/notes.js';
+
+test('a pasted picture is kept in the design beside the notes and placed by ![caption](picture:N)', () => {
+  const png = 'data:image/png;base64,iVBORw0KGgo=';
+  const circuit = new Circuit();
+  circuit.notes = 'Measured:\n\n![Output spectrum](picture:2)\n\nand ![](picture:7) inline.';
+  circuit.pictures = { 2: png, 5: png, 7: 'data:image/svg+xml;base64,PHN2Zz4=' };
+  assert.deepEqual(notePictureIds(circuit.notes), ['2', '7']);
+  // Saved: only what the notes place, and only raster data.
+  const saved = circuit.toJSON();
+  assert.deepEqual(Object.keys(saved.pictures), ['2', '7']);
+  const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify(saved)));
+  assert.deepEqual(loaded.pictures, { 2: png });
+  // Drawn: an image, or the caption struck through when it is missing.
+  const html = renderNotes(loaded.notes, { picture: (id) => loaded.pictures[id] || null });
+  assert.match(html, /<img class="note-picture" src="data:image\/png;base64,iVBORw0KGgo=" alt="Output spectrum" title="Output spectrum">/);
+  assert.match(html, /<span class="note-picture-missing"[^>]*>picture 7<\/span>/);
+  // Copied as Markdown, the picture travels as its data.
+  assert.match(notesMarkdown(loaded.notes, loaded.pictures), /!\[Output spectrum\]\(data:image\/png;base64,iVBORw0KGgo=\)/);
+  // A design with no pictures placed saves none.
+  circuit.notes = 'no pictures';
+  assert.equal(circuit.toJSON().pictures, undefined);
+});

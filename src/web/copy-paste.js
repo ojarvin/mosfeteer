@@ -460,7 +460,7 @@ export function commitCopyGhost({ again = true } = {}) {
 // ----- pasted pictures -------------------------------------------------------------
 
 // Raster pictures only: an SVG could carry script into the document.
-const PASTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/bmp'];
+export const PASTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/bmp'];
 // A picture larger than this, on its longer side, is scaled down as pasted.
 const MAX_IMAGE_PX = 1600;
 // The width a pasted picture starts at on the drawing, at most.

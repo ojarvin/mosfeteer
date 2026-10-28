@@ -22,12 +22,23 @@
  * reads `[N]`, numbered in the order the notes first cite each source,
  * and the notes end with the list of them (`noteCitations`).
  *
+ * A picture pasted into the notes is kept in the design beside them
+ * (`Circuit#pictures`, by number) and placed by `![caption](picture:1)`.
+ *
  * notes-markdown.js draws them.
  */
 
 /** Names as mentions compare them: the Atlas search's key (design-index.js
  *  `searchKey`), lower case with markup and spacing gone. */
 const searchKey = (text) => String(text ?? '').toLowerCase().replace(/[\s$\\_^{}]/g, '');
+
+/** A picture placed in the notes: `![caption](picture:N)`. */
+export const PICTURE = /!\[([^\]\n]*)\]\(picture:(\d+)\)/g;
+
+/** The pictures the notes place, by number, each once, in order. */
+export function notePictureIds(text) {
+  return [...new Set([...String(text ?? '').matchAll(PICTURE)].map((match) => match[2]))];
+}
 
 /** The longest notes kept (characters). */
 export const MAX_NOTES = 200_000;
@@ -109,7 +120,7 @@ export function renameMentions(text, from, to) {
  * name (`$...$` math when it has a subscript or superscript, as it is
  * drawn), a design link as the design's name. Code is left as it is.
  */
-export function notesMarkdown(text) {
+export function notesMarkdown(text, pictures = {}) {
   // `lead`: the characters a match takes before its reference.
   const outsideCode = (source, pattern, replace, lead = () => 0) => {
     const code = codeRanges(source);
@@ -124,7 +135,9 @@ export function notesMarkdown(text) {
     const name = tokenName(token);
     return before + (/[_^]\{/.test(name) ? `$${name}$` : name);
   }, (match) => match[1].length);
-  const out = outsideCode(mentions, DESIGN_LINK, (whole, name) => name.trim());
+  const linked = outsideCode(mentions, DESIGN_LINK, (whole, name) => name.trim());
+  // A picture travels inside the Markdown, as its data.
+  const out = outsideCode(linked, PICTURE, (whole, caption, id) => (pictures[id] ? `![${caption}](${pictures[id]})` : whole));
   if (!citations.length) return out;
   const list = citations.map((c) => `${c.number}. ${[c.title, c.url].filter(Boolean).join(', ') || c.key}`);
   return `${out.replace(/\n+$/, '')}\n\n## References\n\n${list.join('\n')}\n`;

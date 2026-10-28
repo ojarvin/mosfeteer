@@ -485,6 +485,7 @@ function drawingOf(text) {
   delete data.analysisValues;
   delete data.windows;
   delete data.notes;
+  delete data.pictures;
   delete data.history;
   return JSON.stringify(data);
 }

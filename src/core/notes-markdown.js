@@ -11,7 +11,7 @@
  */
 
 import { texToMathML } from './render.js';
-import { CITATION, FIGURE_EMBED, FIGURE_EMBED_LINE, FIGURE_REFERENCE, MENTION, citationOf, figureKey, normalizeNotes, noteCitations, noteFigures, tokenName } from './notes.js';
+import { CITATION, FIGURE_EMBED, FIGURE_EMBED_LINE, FIGURE_REFERENCE, MENTION, PICTURE, citationOf, figureKey, normalizeNotes, noteCitations, noteFigures, tokenName } from './notes.js';
 
 const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
 
@@ -52,6 +52,13 @@ function inlineHtml(text, context) {
     if (!citation) return whole;
     const title = escapeHtml([citation.title, citation.url || citation.key].filter(Boolean).join(' · '));
     return hold(`<a href="#ref-${citation.number}" class="note-cite" title="${title}">[${citation.number}]</a>`);
+  });
+  // A pasted picture, from the design (`context.picture(id)`: its data URL).
+  source = source.replace(PICTURE, (whole, caption, id) => {
+    const src = context.picture?.(id);
+    return hold(src && /^data:image\/(png|jpeg|webp);base64,/.test(src)
+      ? `<img class="note-picture" src="${escapeHtml(src)}" alt="${escapeHtml(caption)}"${caption ? ` title="${escapeHtml(caption)}"` : ''}>`
+      : `<span class="note-picture-missing" title="No picture ${escapeHtml(id)} in the design">${escapeHtml(caption || `picture ${id}`)}</span>`);
   });
   // An embed inside text shows as written: only one on its own line is a figure.
   source = source.replace(FIGURE_EMBED, (whole) => hold(escapeHtml(whole)));
@@ -161,6 +168,7 @@ function sectionPlaceholder(entry, context) {
 
 /**
  * The notes as HTML. `context` (every field optional):
+ * - `picture(id)`: a pasted picture's data URL (null: none).
  * - `mention(name)`: what a mention resolves to; `design(name)`: whether a
  *   linked design exists; `figure(name)`: what an embed draws (null: nothing).
  * - `mentionHtml(name, target, nameHtml)`, `designHtml(name, exists)`,

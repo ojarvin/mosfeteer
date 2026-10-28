@@ -86,6 +86,37 @@ describe('design notes', { skip: browserSkip() }, () => {
     assert.equal(saved.notes, 'First line\nSecond');
   });
 
+  test('a picture pasted into the source is kept in the design, placed at the caret, drawn, and saved', async () => {
+    await h.click('.notes-edit');
+    await typeNotes('Before\n\nAfter');
+    // A real PNG on the clipboard, pasted with the caret after "Before\n\n".
+    await h.evaluate(`(async () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 40; canvas.height = 20;
+      const g = canvas.getContext('2d'); g.fillStyle = '#c00'; g.fillRect(0, 0, 40, 20);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+      const data = new DataTransfer();
+      data.items.add(new File([blob], 'shot.png', { type: 'image/png' }));
+      const field = document.querySelector('.notes-source');
+      field.setSelectionRange(8, 8);
+      field.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+    })()`);
+    await h.until(`document.querySelector('.notes-source').value.includes('![](picture:1)')`);
+    assert.equal(await h.evaluate(`document.querySelector('.notes-source').value`), 'Before\n\n![](picture:1)After');
+    assert.match(await editor('editor.circuit.pictures[1]'), /^data:image\/(png|webp);base64,/);
+    await finish();
+    await h.until(`!!document.querySelector('.notes-view img.note-picture')`);
+    // Nothing went onto the drawing.
+    assert.equal(await editor('[...editor.circuit.labels.values()].some((l) => l.image)'), false);
+    await h.key('s', { ctrlKey: true });
+    await h.until(`${h.module('document-session.js')}.then((m) => !m.hasUnsavedChanges())`);
+    const saved = JSON.parse(await readFile(join(h.workspace, 'amp.json'), 'utf8'));
+    assert.match(saved.pictures['1'], /^data:image\//);
+    // Undone with the notes: the reference and the picture go together.
+    await h.key('u');
+    await h.until(`!document.querySelector('.notes-view img.note-picture')`);
+  });
+
   test('Copy puts the notes on the clipboard as plain Markdown', async () => {
     await h.click('.notes-edit');
     await typeNotes('Gain from @M1 into @V_{SS}, see [[child]]');

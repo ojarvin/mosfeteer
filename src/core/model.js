@@ -1,6 +1,6 @@
 import { RAIL_NAMES, railNameKey } from './rail-names.js';
 import { normalizeWindows, windowsJSON } from './window-state.js';
-import { normalizeNotes, renameMentions } from './notes.js';
+import { normalizeNotes, notePictureIds, renameMentions } from './notes.js';
 import { normalizeHistory } from './save-history.js';
 import { normalizeBand, normalizeOptimizeSetup } from './analysis/optimize-setup.js';
 import { applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverlap, rectUnion, transformRect } from './geometry.js';
@@ -960,6 +960,22 @@ export function normalizeImage(image) {
   if (src.length > MAX_IMAGE_DATA || !/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/.test(src)) return null;
   if (!(aspect > 0) || !Number.isFinite(aspect)) return null;
   return { src, aspect };
+}
+
+/** The pictures the notes place, as saved: one no longer placed is left out. */
+function picturesJSON(notes, pictures) {
+  const kept = Object.fromEntries(notePictureIds(notes).filter((id) => pictures?.[id]).map((id) => [id, pictures[id]]));
+  return Object.keys(kept).length ? { pictures: kept } : {};
+}
+
+/** The notes' pictures as saved (`Circuit#pictures`): PNG, JPEG, or WebP
+ *  data URLs by number, at most 64, each within MAX_IMAGE_DATA. */
+export function normalizePictures(value) {
+  const out = {};
+  for (const [id, src] of Object.entries(value && typeof value === 'object' ? value : {}).slice(0, 64)) {
+    if (/^\d{1,6}$/.test(id) && typeof src === 'string' && src.length <= MAX_IMAGE_DATA && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/.test(src)) out[id] = src;
+  }
+  return out;
 }
 
 /**
@@ -2728,8 +2744,10 @@ export class Circuit {
     this.analysisValues = { coefficients: {}, bode: null, links: {} };
     // What the editor's windows show for this design (window-state.js).
     this.windows = {};
-    // The design's notes: Markdown, never drawn (notes.js).
+    // The design's notes: Markdown, never drawn (notes.js), and the
+    // pictures pasted into them, by number (`![...](picture:1)`).
     this.notes = '';
+    this.pictures = {};
     // Its save points and checkpoints, as stored (save-history.js): not
     // drawing, written and read by whoever writes the file.
     this.history = null;
@@ -7179,6 +7197,7 @@ export class Circuit {
       ...(this.savedNames?.length ? { names: [...this.savedNames] } : {}),
       ...analysisValuesJSON(this.analysisValues),
       ...(this.notes ? { notes: this.notes } : {}),
+      ...picturesJSON(this.notes, this.pictures),
       ...windowsJSON(this.windows),
       ...(this.history ? { history: this.history } : {}),
     };
@@ -7201,6 +7220,7 @@ export class Circuit {
     circuit.analysisValues = normalizeAnalysisValues(data.analysisValues);
     circuit.windows = normalizeWindows(data.windows);
     circuit.notes = normalizeNotes(data.notes);
+    circuit.pictures = normalizePictures(data.pictures);
     circuit.history = normalizeHistory(data.history);
     for (const [key, color] of Object.entries(data.netHighlights || {})) {
       if (NET_HIGHLIGHT_COLORS.includes(color)) circuit.netHighlights.set(key, color);
