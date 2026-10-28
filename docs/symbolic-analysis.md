@@ -183,7 +183,11 @@ never takes the port quantities down with it. Past that budget (a two-stage
 Miller OTA, whose plain A_v is already too large), it is solved again with
 the Bode sketch's relative values for every symbol (`sketchRatios`, the
 sliders as they were), leaving only s: a numeric T(s), titled so, still with
-its crossover and phase margin. The Values list the symbols that model
+its crossover and phase margin, written in decimals (four digits, its
+denominator's constant term 1: `present.js` `numericRationalTex`). The
+loop gain is checked against an independent MNA solve on a shunt-feedback
+stage, a 5T OTA in feedback, a folded cascode and a Miller buffer, its
+crossover and phase margin included (`test/loop-gain-oracle.test.js`). The Values list the symbols that model
 stamps. A loop broken at a terminal or a net is also built in numbers
 (`numericLoopGain`, as `numericSmallSignal` for the port quantities: the
 lifted copy solved at each frequency), so its curve, crossover, and phase

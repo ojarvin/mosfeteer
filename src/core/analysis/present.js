@@ -1,4 +1,4 @@
-import { INFINITY_NAMES, ONE, isNumber, isZero, keyOf } from './rational.js';
+import { INFINITY_NAMES, ONE, isNumber, isZero, keyOf, polynomialCoefficients } from './rational.js';
 
 const PRECEDENCE = Object.freeze({ sum: 10, product: 20, power: 30, atom: 40 });
 const PARALLEL_KINDS = new Set(['parallel', 'parallel-resistance']);
@@ -628,7 +628,44 @@ export function quantityLabel(quantity, argument = undefined) {
 
 /** Render `Z_in(s)`, `Z_out(0)`, or `A_v(s)` with its expression. */
 export function renderQuantityEquation(quantity, argument, value, options = {}) {
+  const numeric = options.numericDisplay ? numericRationalTex(value, options.variable || 's') : null;
+  if (numeric) return `${quantityLabel(quantity, argument)} = ${numeric}`;
   return renderEquation(quantityLabel(quantity, argument), value, options);
+}
+
+/** A number to four significant digits, a power of ten past 10^5. */
+function decimalTex(x) {
+  const magnitude = Math.abs(x);
+  if (magnitude === 0) return '0';
+  if (magnitude >= 1e-3 && magnitude < 1e5) return String(Number(x.toPrecision(4)));
+  const exponent = Math.floor(Math.log10(magnitude));
+  const mantissa = Number((x / 10 ** exponent).toPrecision(4));
+  return `${mantissa === 1 ? '' : mantissa === -1 ? '-' : `${mantissa} \\cdot `}10^{${exponent}}`;
+}
+
+/**
+ * A rational in `variable` whose coefficients are all numbers (a loop gain
+ * solved at numbers), in decimals: its denominator's lowest power's
+ * coefficient made 1 -- the DC gain reads off a pole-type loop at once --
+ * each coefficient to four significant digits before its power of s.
+ * Null when it is not one.
+ */
+export function numericRationalTex(value, variable = 's') {
+  const [numerator, denominator] = value?.kind === 'rational' ? [value.numerator, value.denominator] : [value, ONE];
+  const list = (part) => polynomialCoefficients(part, variable);
+  const [top, bottom] = [list(numerator), list(denominator)];
+  if (!top?.length || !bottom?.length || ![...top, ...bottom].every((term) => isNumber(term.coefficient))) return null;
+  const number = (coefficient) => Number(coefficient.numerator) / Number(coefficient.denominator);
+  const scale = number(bottom.at(-1).coefficient);
+  const polynomial = (terms) => terms.map(({ power, coefficient }, i) => {
+    const x = number(coefficient) / scale;
+    const tail = power === 0 ? '' : power === 1 ? variable : `${variable}^{${power}}`;
+    const text = decimalTex(Math.abs(x));
+    const body = tail && text === '1' ? tail : `${text}${tail ? ` \\, ${tail}` : ''}`;
+    return `${x < 0 ? (i ? ' - ' : '-') : i ? ' + ' : ''}${body}`;
+  }).join('');
+  const den = polynomial(bottom);
+  return den === '1' ? polynomial(top) : `\\frac{${polynomial(top)}}{${den}}`;
 }
 
 /** Render a zero-based pole or zero equation. */

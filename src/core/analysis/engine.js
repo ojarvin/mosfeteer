@@ -478,7 +478,8 @@ function analyzeLoopGain(circuit, pipeline, pipelineOptions, request, mainOps, m
       : new Set([...solved.nets.values()].filter((net) => net.id === outputNode || model.context.nodeAliases.get(net.id) === outputNode).flatMap((net) => net.terminals.map((t) => t.comp)));
     const values = sketchValues(sketchParameters(new Set(Object.keys(provenance)), provenance, { outputComponents }), rawOptions.sketchRatios || {});
     const numericPipelineOptions = { ...symbolicOptions, valueOf: (value, primitive) => symbolicValue(value, primitive, { ...rawOptions, values }, numericOps) };
-    const numericOptions = { ...mainOptions, budget: numericOps.budget };
+    // Only s is left: its coefficients read as decimals (present.js numericRationalTex).
+    const numericOptions = { ...mainOptions, budget: numericOps.budget, numericDisplay: true };
     const numericApproximation = { ...mainApproximationOptions, budget: numericOps.budget, rational: { ...(mainApproximationOptions.rational || {}), budget: numericOps.budget } };
     const numeric = loopGainReport(numericPipelineOptions, numericOps, numericOptions, numericApproximation);
     // What it was solved at, so the Values sliders can set it again: the

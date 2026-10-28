@@ -114,3 +114,16 @@ test('collects a pole reciprocal and all multiplying factors into its numerator'
   assert.equal(renderExpression(multiply(integer(-2), gm1)), '-2 \\, g_{m1}');
   assert.equal(renderExpression(multiply(integer(-2), s, gm1)), '-s \\, 2 \\, g_{m1}');
 });
+
+import { numericRationalTex } from '../src/core/analysis/present.js';
+import { rationalFunction as numericRational, integer as numericInteger, add as numericAdd, multiply as numericMultiply, power as numericPower, symbol as numericSymbol } from '../src/core/analysis/rational.js';
+
+test('a rational of numbers in s reads as decimals: the denominator\'s constant term 1, four digits, a power of ten past 10^5', () => {
+  const s = numericSymbol('s');
+  const poly = (...terms) => numericAdd(...terms.map(([c, p]) => numericMultiply(numericInteger(c), numericPower(s, p))));
+  const value = numericRational(poly([2233125, 1]), poly([66296250, 2], [735075, 1], [977, 0]), { variable: 's' });
+  assert.equal(numericRationalTex(value), '\\frac{2286 \\, s}{67860 \\, s^{2} + 752.4 \\, s + 1}');
+  const big = numericRational(poly([-3, 0]), poly([2000000, 1], [1, 0]), { variable: 's' });
+  assert.equal(numericRationalTex(big), '\\frac{-3}{2 \\cdot 10^{6} \\, s + 1}');
+  assert.equal(numericRationalTex(numericRational(numericSymbol('g_m'), numericInteger(1), { variable: 's' })), null);
+});

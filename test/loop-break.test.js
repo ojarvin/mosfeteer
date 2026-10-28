@@ -158,6 +158,9 @@ test('a loop too large for its symbols is solved at the same numbers wherever it
     assert.equal(result.ok, true, result.error);
     assert.equal(result.numeric, true);
   }
+  // In numbers, as decimals: the denominator's constant term 1, four
+  // significant digits, each before its power of s.
+  for (const result of [element, gate]) assert.match(result.equations[0], /^T\(s\) = \\frac\{[\d.]+ \\, s\}\{[\d.]+ \\, s\^\{2\} \+ [\d.]+ \\, s \+ 1\}$/);
   // C_L and C_M sit on the output: loads, ten units, also when the break
   // is solved to its return net (VO1).
   assert.deepEqual(gate.values, element.values);

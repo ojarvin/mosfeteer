@@ -1011,3 +1011,97 @@ test('samplers at periods written differently are refused, whatever their values
   assert.equal(same.variable, 'z');
   assert.notEqual(prepareSimulation(twoSamplers('T', 'T'), { values: { T: 1 }, input: 'U', output: 'name:V' }).code, 'mixed-periods');
 });
+
+// ----- the loop gain checked: hand results, multi-loop and mixed s/z ---------------------
+
+/** A number-valued T, NTF, ... at f/fs: [re, im]. */
+const responseOf = (value, f, values) => responseAt(value?.kind === 'sampled' ? value.at(values) : withCoefficients(value, values), 'z', f);
+const complex = {
+  add: ([a, b], [c, d]) => [a + c, b + d],
+  mul: ([a, b], [c, d]) => [a * c - b * d, a * d + b * c],
+  div: ([a, b], [c, d]) => { const m = c * c + d * d; return [(a * c + b * d) / m, (b * c - a * d) / m]; },
+  near: (x, y, tolerance = 1e-9) => Math.hypot(x[0] - y[0], x[1] - y[1]) <= tolerance * Math.max(1, Math.hypot(...y)),
+};
+const breakAt = (circuit, comp) => loopBreakSignals(circuit).find((signal) => signal.driver.comp === comp);
+const BAND = [0.001, 0.01, 0.07, 0.2, 0.35, 0.49];
+
+test('the loop gain at each break of a two-loop modulator is the hand result there', () => {
+  // H = z^-1/(1 - z^-1). Every loop runs through V, H2's output and S3's:
+  // T = k_2 H + k_1 H^2 there, NTF = 1/(1 + T). Only the outer loop runs
+  // through S1, H1 and K1 (the inner one closed): T = k_1 H^2/(1 + k_2 H);
+  // only the inner one through K2: T = k_2 H/(1 + k_1 H^2).
+  const circuit = quantizedModulator('dt');
+  const values = { k_1: 0.7, k_2: 1.6 };
+  const [k1, k2] = [[values.k_1, 0], [values.k_2, 0]];
+  const ntf = analyzeSignalFlow(circuit, { output: 'V', sources: { QZ1: 'input' }, values }).entries[0].value;
+  const expected = {
+    QZ1: (H) => complex.add(complex.mul(k2, H), complex.mul(k1, complex.mul(H, H))),
+    H2: (H) => complex.add(complex.mul(k2, H), complex.mul(k1, complex.mul(H, H))),
+    S3: (H) => complex.add(complex.mul(k2, H), complex.mul(k1, complex.mul(H, H))),
+    S1: (H) => complex.div(complex.mul(k1, complex.mul(H, H)), complex.add([1, 0], complex.mul(k2, H))),
+    H1: (H) => complex.div(complex.mul(k1, complex.mul(H, H)), complex.add([1, 0], complex.mul(k2, H))),
+    K1: (H) => complex.div(complex.mul(k1, complex.mul(H, H)), complex.add([1, 0], complex.mul(k2, H))),
+    K2: (H) => complex.div(complex.mul(k2, H), complex.add([1, 0], complex.mul(k1, complex.mul(H, H)))),
+  };
+  assert.deepEqual(loopBreakSignals(circuit).map((signal) => signal.driver.comp).sort(), Object.keys(expected).sort());
+  for (const [comp, formula] of Object.entries(expected)) {
+    const loop = loopGain(circuit, { breakAt: breakAt(circuit, comp).key, values });
+    assert.equal(loop.ok, true, `${comp}: ${loop.error}`);
+    for (const f of BAND) {
+      const z1 = [Math.cos(2 * Math.PI * f), -Math.sin(2 * Math.PI * f)]; // z^-1
+      const H = complex.div(z1, complex.add([1, 0], complex.mul([-1, 0], z1)));
+      assert.ok(complex.near(responseOf(loop.value, f, values), formula(H)), `${comp} at f/fs ${f}`);
+      // Where every loop passes, the NTF is 1/(1 + T).
+      if (['QZ1', 'H2', 'S3'].includes(comp)) assert.ok(complex.near(complex.div([1, 0], complex.add([1, 0], formula(H))), responseOf(ntf, f, values)), `${comp} NTF at ${f}`);
+    }
+  }
+});
+
+test('a continuous-time loop with excess delay and a digital path inside it: each break\'s T, and the NTF through V', () => {
+  // The CT loop alone: T_ct from its break at V. A digital path c z^-1
+  // from V added after the sampler makes a sampled inner loop: at V,
+  // T = T_ct - c z^-1 and NTF = 1/(1 + T); at the digital path's output,
+  // only that loop: T = -c z^-1/(1 + T_ct).
+  const values = { T: 1, T_d: 0.3, k_1: 1, k_2: 1.5, c: 0.4 };
+  const plain = quantizedModulator('ct');
+  const ct = loopGain(plain, { breakAt: 'V', values });
+  assert.equal(ct.ok, true, ct.error);
+  const circuit = diagram(['add input U --at -1600 0', 'add signal_sum S1 --at -1200 0', 'add tf_s H1 --at -800 0 --value "1/s"', 'add signal_sum S3 --at -400 0', 'add tf_s H2 --at 0 0 --value "1/s"',
+    'add output V --at 1800 0', 'add gain K1 --at -800 400 --rot 180 --value k_1', 'add gain K2 --at 0 400 --rot 180 --value k_2',
+    'add sampler SMP1 --at 400 0', 'add tf_s D1 --at 400 640 --rot 180 --value "exp(-s*T_d)*(1 - exp(-s*T))/s"',
+    'add signal_sum S2 --at 800 0', 'add quantizer QZ1 --at 1200 0', 'add tf_zdelay DL1 --at 1200 -480 --rot 180', 'add gain K3 --at 800 -480 --rot 180 --value c',
+    'connect U.p S1.w', 'connect S1.e H1.in', 'connect H1.out S3.w', 'connect S3.e H2.in', 'connect K1.out S1.s', 'connect K2.out S3.s',
+    'connect H2.out SMP1.in', 'connect D1.out K1.in', 'connect D1.out K2.in',
+    'connect SMP1.out S2.w', 'connect S2.e QZ1.in', 'connect QZ1.out V.p', 'connect V.p D1.in', 'connect V.p DL1.in', 'connect DL1.out K3.in', 'connect K3.out S2.n'], [['S1', 's'], ['S3', 's']]);
+  const offered = loopBreakSignals(circuit).map((signal) => signal.driver.comp);
+  for (const comp of ['QZ1', 'SMP1', 'S2', 'DL1', 'K3']) assert.ok(offered.includes(comp), `${comp} in ${offered}`);
+  const ntf = analyzeSignalFlow(circuit, { output: 'V', sources: { QZ1: 'input' }, values }).entries[0].value;
+  const at = (comp) => loopGain(circuit, { breakAt: breakAt(circuit, comp).key, values });
+  for (const f of BAND) {
+    const tct = responseOf(ct.value, f, values);
+    const cz = complex.mul([values.c, 0], [Math.cos(2 * Math.PI * f), -Math.sin(2 * Math.PI * f)]);
+    const outer = complex.add(tct, complex.mul([-1, 0], cz));
+    for (const comp of ['QZ1', 'S2']) assert.ok(complex.near(responseOf(at(comp).value, f, values), outer, 1e-7), `${comp} at ${f}`);
+    assert.ok(complex.near(complex.div([1, 0], complex.add([1, 0], outer)), responseOf(ntf, f, values), 1e-7), `NTF at ${f}`);
+    const inner = complex.div(complex.mul([-1, 0], cz), complex.add([1, 0], tct));
+    for (const comp of ['DL1', 'K3']) assert.ok(complex.near(responseOf(at(comp).value, f, values), inner, 1e-7), `${comp} at ${f}`);
+  }
+});
+
+test('a digital biquad\'s feedback: T = -(a_1 z^-1 + a_2 z^-2), and its poles are 1 + T\'s zeros', () => {
+  // y = x + a_1 y z^-1 + a_2 y z^-2: a direct-form recursion, no quantizer.
+  const circuit = diagram(['add input X --at -800 0', 'add signal_sum S1 --at -400 0', 'add output Y --at 400 0',
+    'add tf_zdelay D1 --at 0 400 --rot 180', 'add tf_zdelay D2 --at 0 800 --rot 180', 'add gain A1 --at -400 400 --rot 180 --value a_1', 'add gain A2 --at -400 800 --rot 180 --value a_2',
+    'add signal_sum S2 --at -800 400',
+    'connect X.p S1.w', 'connect S1.e Y.p', 'connect Y.p D1.in', 'connect D1.out D2.in', 'connect D1.out A1.in', 'connect D2.out A2.in', 'connect A1.out S2.n', 'connect A2.out S2.s', 'connect S2.e S1.s']);
+  const values = { a_1: 1.2, a_2: -0.5 };
+  const loop = loopGain(circuit, { breakAt: 'Y', values });
+  assert.equal(loop.ok, true, loop.error);
+  const closed = analyzeSignalFlow(circuit, { output: 'Y', sources: { X: 'input' }, values });
+  for (const f of BAND) {
+    const [z1, z2] = [1, 2].map((n) => [Math.cos(2 * Math.PI * f * n), -Math.sin(2 * Math.PI * f * n)]);
+    const T = complex.mul([-1, 0], complex.add(complex.mul([values.a_1, 0], z1), complex.mul([values.a_2, 0], z2)));
+    assert.ok(complex.near(responseOf(loop.value, f, values), T), `T at ${f}`);
+    assert.ok(complex.near(responseOf(closed.entries[0].value, f, values), complex.div([1, 0], complex.add([1, 0], T))), `Y/X at ${f}`);
+  }
+});
