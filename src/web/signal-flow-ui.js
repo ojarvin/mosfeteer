@@ -19,7 +19,7 @@
 
 import { MUTED_TRACE_COLOR, TRACE_COLORS, ditherSymbols, outputChoices, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } from '../core/analysis/signal-flow.js';
 import { symbolText } from '../core/analysis/present.js';
-import { linkMakesCycle, parseCoefficientLink, parseCoefficientVectors, resolveCoefficients } from '../core/analysis/coefficient-links.js';
+import { linkMakesCycle, parseCoefficientLink, parseCoefficientNumber, parseCoefficientVectors, resolveCoefficients } from '../core/analysis/coefficient-links.js';
 import { PER_DECADE, indexE24, stepE24 } from './e-series.js';
 import { locusSpec, responseSpec, stepSpec, swingSpec } from '../core/plot-spec.js';
 import { createPlotView, linkPlots } from './plot-view.js';
@@ -80,11 +80,6 @@ const resolved = () => resolveCoefficients({ ...defaultCoefficients(), ...coeffi
 const fractions = () => (editor.circuit.analysisValues.fractions ||= {});
 /** A coefficient as written: its fraction, else its number. */
 const coefficientText = (name, value) => fractions()[name] || String(value);
-/** A typed value: a number, or a fraction m/n. */
-function typedNumber(text) {
-  const match = text.match(/^(-?\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)$/);
-  return match ? Number(match[1]) / Number(match[2]) : (text ? Number(text) : NaN);
-}
 let modeBar = null;
 let section = null;
 let plots = null; // the Plots window's content (plots-window.js)
@@ -818,14 +813,20 @@ function renderCoefficients({ force = false } = {}) {
         }
         links()[name] = link.text;
       } else {
-        const number = typedNumber(text);
-        if (!text || !Number.isFinite(number)) return;
+        let typed;
+        try {
+          typed = parseCoefficientNumber(text);
+        } catch (err) {
+          field.classList.add('invalid');
+          field.title = err.message;
+          return;
+        }
         delete links()[name];
-        coefficients()[name] = number;
-        // A fraction stays written as one.
-        if (/\//.test(text) && /^-?\d+\s*\/\s*\d+$/.test(text)) fractions()[name] = text.replace(/\s/g, '');
+        coefficients()[name] = typed.value;
+        // A ratio (5/32, 2^-5) stays written as typed.
+        if (typed.text) fractions()[name] = typed.text;
         else delete fractions()[name];
-        if (number) slider.value = String(indexE24(Math.abs(number)));
+        if (typed.value) slider.value = String(indexE24(Math.abs(typed.value)));
       }
       refreshLinkedRows();
       coefficientsChanged();
@@ -1253,8 +1254,11 @@ function coefficientRows() {
   // A linked one too, once the coefficients are rounded: it follows
   // fractions, so its number is one (c_1 = b_1 = 7/32), never 0.2188.
   const rounded = Object.keys(fractions()).length > 0;
-  const numberOf = (name) => {
+  const numberOf = (name, seen = new Set()) => {
     if (fractions()[name] && !Object.hasOwn(links(), name)) return fractions()[name];
+    // A link to one coefficient (b_1 = c_1) is written as that one is.
+    const link = links()[name]?.trim();
+    if (link && Object.hasOwn(numbers, link) && !seen.has(link)) return numberOf(link, seen.add(name));
     const number = numbers[name] ?? 1;
     return (rounded && Object.hasOwn(links(), name) && fractionText(number)) || Number(number.toPrecision(4));
   };

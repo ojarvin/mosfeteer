@@ -23,11 +23,16 @@ export function element(tag, props = {}, children = []) {
  */
 export function onFieldCommit(input, apply) {
   let applied = input.value;
+  // Typed since the last commit: a value set from elsewhere since (by a
+  // slider) and typed back to the one last applied applies too.
+  let edited = false;
   const commit = () => {
-    if (input.value === applied) return;
+    if (!edited && input.value === applied) return;
+    edited = false;
     applied = input.value;
     apply(input.value);
   };
+  input.addEventListener('input', () => { edited = true; });
   input.addEventListener('change', commit);
   input.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Enter') return;

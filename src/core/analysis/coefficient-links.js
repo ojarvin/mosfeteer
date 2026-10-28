@@ -30,6 +30,26 @@ export function parseCoefficientLink(text) {
   return { ast, reads: names(ast), text: source };
 }
 
+/**
+ * A coefficient's own value as typed: a number (`0.15`, `-2e-3`) or an
+ * expression of numbers (`5/32`, `1/3.5`, `2^-5`, `(3 + 1)/16`). Returns
+ * `{ value, text }`, `text` the expression as typed (spaces dropped) when it
+ * is more than a plain number, for showing it as written; throws when it
+ * does not read or names a coefficient (that is a link: `= b_1`).
+ */
+export function parseCoefficientNumber(text) {
+  const source = String(text ?? '').trim();
+  if (!source) throw new Error('type a number, a ratio such as 5/32, or = a coefficient');
+  const plain = Number(source);
+  if (Number.isFinite(plain) && /^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(source)) return { value: plain, text: null };
+  let ast;
+  try { ast = parseExpression(source); } catch { throw new Error(`${source} does not read as a number`); }
+  if (names(ast).size) throw new Error(`${source} names a coefficient: type = ${source} to link it`);
+  const value = evaluate(ast, () => NaN);
+  if (!Number.isFinite(value)) throw new Error(`${source} is not a finite number`);
+  return { value, text: source.replace(/\s+/g, '') };
+}
+
 /** A parsed expression's number, its names read from `values` (NaN when one is missing). */
 export function evaluateCoefficientExpression(ast, values) {
   return evaluate(ast, (name) => (Number.isFinite(values[name]) ? values[name] : NaN));

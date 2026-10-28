@@ -499,7 +499,7 @@ test('the sampler: a switch with its period beside it, swapped in with a period 
   assert.equal(block.value, 'T');
 });
 
-import { linkMakesCycle, parseCoefficientLink, resolveCoefficients } from '../src/core/analysis/coefficient-links.js';
+import { linkMakesCycle, parseCoefficientLink, parseCoefficientNumber, resolveCoefficients } from '../src/core/analysis/coefficient-links.js';
 
 test('linked coefficients follow others, through chains, and are saved with the document', () => {
   const values = { b_1: 0.05, c_1: 9, T: 2 };
@@ -523,6 +523,18 @@ test('linked coefficients follow others, through chains, and are saved with the 
   const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
   assert.deepEqual(loaded.analysisValues.links, { c_1: 'b_1' });
   assert.deepEqual(new Circuit().toJSON().analysisValues, undefined);
+});
+
+test('a coefficient typed as a number or an expression of numbers keeps its text when it is more than a number', () => {
+  assert.deepEqual(parseCoefficientNumber('0.15'), { value: 0.15, text: null });
+  assert.deepEqual(parseCoefficientNumber('-2e-3'), { value: -0.002, text: null });
+  assert.deepEqual(parseCoefficientNumber(' 5 / 32 '), { value: 5 / 32, text: '5/32' });
+  assert.deepEqual(parseCoefficientNumber('1/3.5'), { value: 1 / 3.5, text: '1/3.5' });
+  assert.deepEqual(parseCoefficientNumber('2^-5'), { value: 1 / 32, text: '2^-5' });
+  assert.deepEqual(parseCoefficientNumber('(3+1)/16'), { value: 0.25, text: '(3+1)/16' });
+  assert.throws(() => parseCoefficientNumber('b_1/2'), /= b_1\/2 to link/);
+  assert.throws(() => parseCoefficientNumber('1/0'), /not a finite number/);
+  assert.throws(() => parseCoefficientNumber(''), /type a number/);
 });
 
 test('a sampled result follows a linked coefficient', () => {

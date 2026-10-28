@@ -181,6 +181,33 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     assert.equal(await shown('.signal-flow-stale'), false, 'the equations are still current');
   });
 
+  test('a coefficient typed as a ratio applies, again after a slider move, and is tabled as typed', async () => {
+    await openAnalysis('modulator');
+    await derive();
+    const row = (name) => `document.querySelector('.signal-flow-coefficient[data-name="${name}"]')`;
+    const type = (name, text) => h.evaluate(`(() => { const f = ${row(name)}.querySelector('.signal-flow-coefficient-value'); f.value = ${JSON.stringify(text)}; f.dispatchEvent(new Event('input', { bubbles: true })); f.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    const values = `${h.module('editor-state.js')}.then((m) => ({ k: m.editor.circuit.analysisValues.coefficients.k_1, text: m.editor.circuit.analysisValues.fractions?.k_1 ?? null }))`;
+    await type('k_1', '5/32');
+    assert.deepEqual(await h.evaluate(values), { k: 5 / 32, text: '5/32' });
+    // The slider moves it; typing the same ratio back takes it back.
+    await h.evaluate(`(() => { const s = ${row('k_1')}.querySelector('input[type=range]'); s.value = String(Number(s.value) + 3); s.dispatchEvent(new Event('input', { bubbles: true })); s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    assert.notEqual((await h.evaluate(values)).k, 5 / 32);
+    await type('k_1', '5/32');
+    assert.deepEqual(await h.evaluate(values), { k: 5 / 32, text: '5/32' });
+    // Any expression of numbers reads; a name without = is refused, said so.
+    await type('k_1', '2^-3');
+    assert.deepEqual(await h.evaluate(values), { k: 0.125, text: '2^-3' });
+    await type('k_1', 'q_9/2');
+    assert.equal(await h.evaluate(`${row('k_1')}.querySelector('.signal-flow-coefficient-value').classList.contains('invalid')`), true);
+    assert.deepEqual(await h.evaluate(values), { k: 0.125, text: '2^-3' });
+    await type('k_1', '7/32');
+    await h.evaluate(`${h.module('editor-state.js')}.then((m) => { m.editor.circuit.analysisValues.links = { k_2: 'k_1' }; })`);
+    await annotate('Coefficients');
+    const table = `${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].find((l) => l.figure?.kind === 'coefficients')?.text || '')`;
+    await h.until(`${table}.then((t) => /^k_\\{?1\\}? & 7\\/32$/m.test(t))`);
+    assert.match(await h.evaluate(table), /^k_\{?2\}? & 7\/32$/m, 'a link to it is written the same');
+  });
+
   test('a long explanation folds to its first sentence', async () => {
     assert.ok(await h.evaluate(`[...document.querySelectorAll('#analysis-dialog p.field-hint .hint-more')].length`) > 0);
     const rest = `document.querySelector('#analysis-dialog p.field-hint .hint-rest')`;

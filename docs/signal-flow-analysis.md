@@ -112,14 +112,20 @@ slider through the E24 values from 0.001 to 1000 and a field for any value
 (negative too), starting at 1 -- and a symbol never set is 1 in the
 simulations and the optimizer too, as its slider shows. The graph and the poles and zeros use these
 numbers -- symbolic results show their roots "at the coefficients below" --
-while the equations stay symbolic; moving one redraws as it moves. Typing
+while the equations stay symbolic; moving one redraws as it moves. A value
+is typed as a number or an expression of numbers (`5/32`, `1/3.5`, `2^-5`;
+`parseCoefficientNumber`), kept as typed for the field and the
+coefficients table (`analysisValues.fractions`); one that does not read
+marks the field and changes nothing. Typing
 `= b_1` (or any expression of other coefficients: `= 2*b_1`, `= T/2`) in a
 coefficient's field links it: it follows those others through any chain,
 its slider only showing the number, until a number is typed again
 (`coefficient-links.js`; a link that would make a coefficient follow
 itself is refused). Links are saved with the numbers
 (`analysisValues.links`), and an annotated graph lists a linked
-coefficient as `c_1 = b_1 = 0.05`. The
+coefficient as `c_1 = b_1 = 0.05`; in the coefficients table a link to
+one coefficient is written as that one is (`b_1` following `c_1 = 86/128`
+reads `86/128`). The
 numbers are saved with the document (`analysisValues.coefficients`), as the
 Bode sketch's ratios are (`analysisValues.bode`): a slider move edits the
 document (it shows as unsaved) without marking the derived equations stale
