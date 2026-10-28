@@ -955,7 +955,7 @@ function spectrumStatus() {
   if (spectrum.error) return spectrum.error;
   const measured = inBand(spectrum.raw, spectrum.frequency, bandEdges(editor.circuit.analysisValues.band));
   const averaged = `${spectrum.raw.averages} averages of ${spectrum.raw.n} samples`;
-  const gains = (spectrum.quantizers || []).map((q) => `${q.refdes} gain ${q.gain.toFixed(2)}`).join(', ');
+  const gains = (spectrum.quantizers || []).map((q) => `${q.refdes} gain ${Number(q.gain.toPrecision(3))}`).join(', ');
   const curves = gains ? `; curves at ${gains}` : '';
   return measured ? `SNDR ${measured.sndr.toFixed(1)} dB in band (ENOB ${measured.enob.toFixed(1)}); ${averaged}${curves}` : `${averaged}; set a band for its SNDR${curves}`;
 }
@@ -1110,7 +1110,7 @@ function renderGraph() {
   host.replaceChildren();
   const view = graphView();
   if (!GRAPH_VIEWS.has(view)) return;
-  if (!traces.length) {
+  if (!traces.length && !(view === 'magnitude' && spectrum?.points?.length)) {
     host.append(el('p', { class: 'field-hint', text: 'Derive, and each result joins this graph.' }));
     return;
   }

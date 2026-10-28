@@ -705,6 +705,17 @@ test('coefficients paste from the delta-sigma toolbox: vectors name their entrie
 import { bandEdges, responsePlot as bandedPlot } from '../src/core/analysis/signal-flow.js';
 import { responseFigure, swingFigure, swingFullScale, swingLimit, swingOverload, swingRunaway } from '../src/core/bode-figure.js';
 
+test('a simulated spectrum plots alone, its curves all off', () => {
+  const background = [{ label: 'sim', color: '#888', points: [{ f: 1 / 1024, db: -100 }, { f: 0.1, db: -60 }, { f: 0.5, db: -40 }] }];
+  const plot = bandedPlot([], 'z', { background, dbfs: { offset: () => 0 }, band: { bw: 0.01 } });
+  assert.equal(plot.units, 'dBFS');
+  assert.equal(plot.axis, 'normalized');
+  assert.deepEqual(plot.range, { low: -4, high: Math.log10(0.5) });
+  assert.deepEqual(plot.traces.map((t) => t.background), [true]);
+  assert.equal(bandedPlot([], 'z', { background, quantity: 'phase' }), null);
+  assert.equal(bandedPlot([], 'z'), null);
+});
+
 test('the band: a line at bw for a baseband signal, two at f0 +- bw/2, saved with the plot', () => {
   assert.deepEqual(bandEdges({ f0: 0, bw: 1 / 128 }), [1 / 128]);
   assert.deepEqual(bandEdges({ f0: 0.25, bw: 0.02 }), [0.24, 0.26]);

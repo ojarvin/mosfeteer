@@ -339,7 +339,8 @@ a level step. The curves over the spectrum are therefore solved again with
 each quantizer at its measured gain (`analyzeSignalFlow`'s
 `quantizerGains`) and each NTF at its measured error variance, and the
 status line names the gains. The equations, the other views, and the
-optimizer keep the gain of 1. With a band, the simulated
+optimizer keep the gain of 1. With every curve unticked the spectrum
+plots, and annotates, alone. With a band, the simulated
 SNDR and ENOB beside the predicted SQNR.
 
 **Dither** is a part of the diagram: a **dither source** (`dither`, value

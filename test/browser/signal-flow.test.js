@@ -259,7 +259,17 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     await h.evaluate(`(() => { const a = document.querySelector('.plots-window .signal-flow-spectrum input[aria-label="Sine amplitude, dBFS"]'); a.value = '-20'; a.dispatchEvent(new Event('change', { bubbles: true })); const c = document.querySelector('.plots-window .signal-flow-spectrum-toggle input'); if (!c.checked) c.click(); })()`);
     await h.until(`/SNDR/.test(document.querySelector('.plots-window .signal-flow-spectrum-status')?.textContent || '')`, 20000);
     // The curves over it are drawn at each quantizer's measured gain, as it says.
-    assert.match(await h.evaluate(`document.querySelector('.plots-window .signal-flow-spectrum-status').textContent`), /curves at \w+ gain \d+\.\d\d/);
+    assert.match(await h.evaluate(`document.querySelector('.plots-window .signal-flow-spectrum-status').textContent`), /curves at \w+ gain -?[\d.e-]+/);
+    // Every curve unticked: the spectrum stays, and annotates alone.
+    const checks = `[...document.querySelectorAll('.plots-window .signal-flow-legend-row input[type=checkbox]')]`;
+    // Each click redraws the legend: one at a time.
+    await h.evaluate(`(() => { for (let i = 0; i < 20; i++) { const c = ${checks}.find((c) => c.checked); if (!c) break; c.click(); } })()`);
+    await h.until(`${checks}.every((c) => !c.checked)`);
+    assert.equal(await shown('.plots-window .signal-flow-graph .plot-view'), true, 'the spectrum is still plotted');
+    assert.equal(await h.evaluate(`[...document.querySelectorAll('.plots-window .signal-flow-graph-actions button')].find((b) => b.textContent === 'Annotate').disabled`), false);
+    await annotate('Graph');
+    await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some((l) => l.plot?.units === 'dBFS' && l.plot.traces.length === 1 && l.plot.traces[0].background))`);
+    await h.evaluate(`(() => { for (let i = 0; i < 20; i++) { const c = ${checks}.find((c) => !c.checked); if (!c) break; c.click(); } })()`);
     await annotate('Graph');
     const legend = `${h.module('editor-state.js')}.then((m) => { const labels = [...m.editor.circuit.labels.values()]; const box = labels.find((l) => l.plot?.units === 'dBFS'); return box ? labels.filter((l) => l.parent === box.id).map((l) => l.text) : []; })`;
     await h.until(`${legend}.then((l) => l.some((t) => t.includes('SNDR')))`);

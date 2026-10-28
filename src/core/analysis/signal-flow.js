@@ -1612,9 +1612,11 @@ export function responsePlot(traces, variable, { sAxis = 'omega', band = null, q
   const curves = withVariable
     .map((trace) => ({ trace, curve: responseCurve(trace.value, trace.variable, { sAxis: axis, at: bandPoints(trace.variable) }) }))
     .filter(({ curve }) => curve && curve.points.length > 1);
-  if (!curves.length) return null;
-  const all = curves.flatMap(({ curve }) => curve.points.map((point) => point.f));
-  const curveAxis = curves[0].curve.axis;
+  // A simulated spectrum plots alone too, on f/fs, its curves all off.
+  const alone = !curves.length && quantity !== 'phase' && background.some((trace) => trace.points?.length) ? background : [];
+  if (!curves.length && !alone.length) return null;
+  const all = curves.length ? curves.flatMap(({ curve }) => curve.points.map((point) => point.f)) : alone.flatMap((trace) => trace.points.map((point) => point.f)).filter((f) => f > 0 && f <= 0.5);
+  const curveAxis = curves.length ? curves[0].curve.axis : 'normalized';
   const low = Math.floor(Math.log10(Math.min(...all)) + 1e-9);
   // A sampled system's frequencies end at f_s/2, where its curves do.
   const high = curveAxis === 'normalized' ? Math.log10(0.5) : Math.ceil(Math.log10(Math.max(...all)) - 1e-9);
