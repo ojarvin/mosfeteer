@@ -1052,3 +1052,23 @@ test('an aligned math label keeps its inset whether or not a browser measured it
   assert.equal(label.textMeasured(), true);
   assert.equal(padding(svgString(saved)), `6px 6px 6px ${GRID / 2}px`);
 });
+
+import { hasInlineMath, inlineMathTex } from '../src/core/model.js';
+
+test('a label mixing words and $...$ draws as math, its words as text, while its text does', () => {
+  assert.equal(hasInlineMath('Edge after $f_s/2$ delay'), true);
+  assert.equal(hasInlineMath('$a$ and $b$'), true);
+  for (const whole of ['$x_1$', '$$\\frac{a}{b}$$', 'plain', 'a lone $ sign', 'costs \\$5 and \\$6']) assert.equal(hasInlineMath(whole), false, whole);
+  assert.equal(inlineMathTex('Edge after $f_s/2$ delay'), '\\text{Edge\u00a0after\u00a0}f_s/2\\text{\u00a0delay}');
+  assert.equal(inlineMathTex('$a$ costs \\$5'), 'a\\text{\u00a0costs\u00a0$5}');
+  const circuit = new Circuit();
+  const label = circuit.addLabel({ text: 'Edge after $f_s/2$ delay', x: 0, y: 0 });
+  assert.equal(label.math, true);
+  const svg = svgString(circuit);
+  assert.match(svg, /<mtext>Edge&#160;after&#160;<\/mtext><msub>/);
+  assert.doesNotMatch(svg.replace(/aria-label="[^"]*"/g, ''), /\$/);
+  // Derived from the text, not saved: plain text again, it is plain.
+  assert.equal(label.toJSON().math, undefined);
+  label.setText('Edge after half a period');
+  assert.equal(label.math, false);
+});

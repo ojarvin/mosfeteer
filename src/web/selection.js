@@ -22,7 +22,7 @@ export function copyableLabelPayload(label) {
     style: { ...(label.style || {}) },
     // An equation stays an equation; it and aligned text keep their measured
     // box until they render.
-    math: !!label.math,
+    math: !!(label._math ?? label.math),
     mathBox: (typeof label.toJSON === 'function' && label.toJSON().mathBox) || null,
     ...(label.plot ? { plot: label.plot } : {}),
     ...(label.image ? { image: label.image } : {}),

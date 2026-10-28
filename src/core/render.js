@@ -2,7 +2,7 @@ import { applyTransform, fmt, transformRect, transformToSvg } from './geometry.j
 import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute } from './router.js';
 import { TABLE_RULE_ROOM_EM, escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } from './style.js';
-import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } from './model.js';
+import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, hasInlineMath, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } from './model.js';
 import { TIMING_ARROWHEAD, arrowheadEnds, curvedArrowGeometry, defaultArrowhead, polylineArrowheads } from './line-style.js';
 import { hiddenSupplyBarLabels, supplyBars } from './supply-bars.js';
 import { VALUE_TYPES, replacedNameLabels } from './part-value.js';
@@ -715,8 +715,8 @@ function mathLabelSvg(label, opacity = '', ink = null) {
   // and bold labels; a thin outline in the text color thickens every glyph.
   const style = `width:100%;height:100%;display:flex;flex-direction:column;align-items:stretch;justify-content:center;box-sizing:border-box;padding:${padding};overflow:visible;white-space:nowrap;color:${escapeSvg(colorCss)};font-family:${MATH_FONT_FAMILY};font-size:${fontSize}px;line-height:1.2;font-weight:normal;-webkit-text-stroke:${MATH_LABEL_STROKE} currentColor;pointer-events:none;`;
   const lineStyle = `display:flex;flex-shrink:0;align-items:center;justify-content:${justify};width:100%;min-height:1.2em;`;
-  const rows = stripMathDelimiters(label.text).split(/\r?\n/);
-  const lines = isMathTable(rows) ? mathTableHtml(rows, label.columns, justify)
+  const rows = label.mathSource().split(/\r?\n/);
+  const lines = !hasInlineMath(label.text) && isMathTable(rows) ? mathTableHtml(rows, label.columns, justify)
     : rows.map((line) => `<div class="schematic-math-line" style="${lineStyle}">${texToMathML(line)}</div>`).join('');
   return `<foreignObject x="${fmt(box.x)}" y="${fmt(box.y)}" width="${fmt(box.w)}" height="${fmt(box.h)}" pointer-events="none"${opacity}><div xmlns="http://www.w3.org/1999/xhtml" class="schematic-math-label" style="${style}" aria-label="${aria}">${lines}</div></foreignObject>`;
 }

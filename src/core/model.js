@@ -792,6 +792,39 @@ export function stripMathDelimiters(value) {
   return source;
 }
 
+// A `$` that is not escaped (`\$` is a dollar sign).
+const DOLLAR = /(?<!\\)\$/g;
+
+/**
+ * Whether a text mixes plain words and inline TeX (`Edge after $f_s/2$
+ * delay`): two unescaped `$` on one line, and not one formula wholly in
+ * `$...$` or `$$...$$`.
+ */
+export function hasInlineMath(value) {
+  const source = String(value ?? '').trim();
+  const whole = source.startsWith('$$') && source.endsWith('$$') && source.length >= 4 ? source.slice(2, -2)
+    : source.startsWith('$') && source.endsWith('$') && source.length >= 2 ? source.slice(1, -1) : null;
+  if (whole !== null && !whole.match(DOLLAR)) return false;
+  return source.split(/\r?\n/).some((line) => (line.match(DOLLAR) || []).length >= 2);
+}
+
+/**
+ * One line of mixed text as TeX: its `$...$` parts as they are, the words
+ * around them as `\text{}` (spaces kept, `\$` a dollar sign). A lone `$`
+ * left over stays text.
+ */
+export function inlineMathTex(line) {
+  const parts = String(line).split(DOLLAR);
+  if (parts.length % 2 === 0) parts.splice(-2, 2, `${parts.at(-2)}$${parts.at(-1)}`);
+  return parts.map((part, i) => {
+    if (i % 2) return part;
+    if (!part) return '';
+    // Braces would end the \text early: kept as their escaped forms' glyphs.
+    const words = part.replace(/\\\$/g, '$').replace(/[{}]/g, (brace) => (brace === '{' ? '\u2774' : '\u2775')).replace(/ /g, '\u00a0');
+    return `\\text{${words}}`;
+  }).join('');
+}
+
 /** A compact source approximation used for grid-snapped math label bounds.
  * TeX command names should not make an equation's box wider than the glyphs
  * they produce in MathML. This is deliberately a metric helper, not a TeX
@@ -1288,7 +1321,9 @@ export class LabelInstance {
     if (this.kind !== 'label' && (this.netId || opts.owner || this.parent || this.connectorId)) throw new Error('annotations cannot have owners, nets, or connectors');
     if (this.parent && (this.netId || opts.owner || this.connectorId)) throw new Error('child labels cannot have owners, nets, or connectors');
     if (this.connectorId && this.netId) throw new Error('label cannot have both connectorId and netId');
-    this.math = !!opts.math;
+    // Math as made (an equation); a free label whose text mixes words and
+    // `$...$` is math too while it does (`math`).
+    this._math = !!opts.math;
     // Browser-rendered text metrics are runtime-only. The deterministic
     // character-width estimate remains the fallback for headless/CLI use,
     // while the web renderer can replace it with actual SVG/MathML bounds.
@@ -1304,7 +1339,7 @@ export class LabelInstance {
       && [mathBox.w, mathBox.h].every((size) => Number.isFinite(size) && size >= 2 * GRID && size % (2 * GRID) === 0)
       ? { w: mathBox.w, h: mathBox.h } : null;
     this._text = opts.text !== undefined
-      ? (this.math ? normalizeMathSource(opts.text) : String(opts.text))
+      ? (this._math ? normalizeMathSource(opts.text) : String(opts.text))
       : 'label';
     // Net labels and a part's own label face what they name; other text centers.
     this.align = LABEL_ALIGNS.includes(opts.align) ? opts.align
@@ -1352,11 +1387,28 @@ export class LabelInstance {
     // What a tool annotated is a figure (figures.js): its identity.
     this.figure = normalizeFigure(opts.figure);
     // A math table's column alignment (render.js mathTableHtml): l, c, r each.
-    this.columns = this.math && typeof opts.columns === 'string' && /^[lcr]{1,16}$/.test(opts.columns) ? opts.columns : null;
+    this.columns = this._math && typeof opts.columns === 'string' && /^[lcr]{1,16}$/.test(opts.columns) ? opts.columns : null;
     const net = this.netId ? circuit.nets.get(this.netId) : null;
     this.netSide = this.netId && ['above', 'below', 'left', 'right'].includes(opts.netSide)
       ? opts.netSide
       : net ? circuit._defaultNetLabelSide(net, this.anchor) : this.netId ? 'above' : null;
+  }
+
+  /** Drawn as math: made so (an equation), or a free label's text mixing
+   *  words and inline `$...$`. */
+  get math() {
+    return this._math || (!this.netId && !this.owner && this.kind === 'label' && hasInlineMath(this._text));
+  }
+
+  set math(value) {
+    this._math = !!value;
+  }
+
+  /** The TeX a math label draws, without its delimiters: a mixed text's
+   *  lines each as inlineMathTex makes them. */
+  mathSource() {
+    if (hasInlineMath(this.text)) return this.text.split(/\r?\n/).map(inlineMathTex).join('\n');
+    return stripMathDelimiters(this.text);
   }
 
   get text() {
@@ -1370,7 +1422,7 @@ export class LabelInstance {
       this.circuit._markReferenceLabelsLocal?.(net);
     }
     else {
-      const next = this.math ? normalizeMathSource(value) : String(value);
+      const next = this._math ? normalizeMathSource(value) : String(value);
       // A switch's label is its phase, math or not.
       if (this.owner && !this.role && this.circuit._syncSwitchLabel(this.owner, next)) return;
       if (this.owner && !this.role && !this.math && this.circuit._syncComponentLabel(this.owner, next)) return;
@@ -1441,13 +1493,13 @@ export class LabelInstance {
       const gap = (this.columns ? 1.2 : 0) * labelFontSize(this.style?.width);
       return Math.max(across, columns.reduce((sum, width) => sum + width, 0) + gap * Math.max(0, columns.length - 1));
     }
-    return Math.max(...widths(this.math ? mathTextForMetrics(this.text) : this.text), 0);
+    return Math.max(...widths(this.math ? mathTextForMetrics(this.mathSource()) : this.text), 0);
   }
 
   /** A math table's rows (render.js mathTableHtml): each its cells, a rule
    *  null; null when the label is no table. */
   mathTableRows() {
-    if (!this.math) return null;
+    if (!this._math || hasInlineMath(this.text)) return null;
     const lines = stripMathDelimiters(this.text).split(/\r?\n/);
     const cells = (line) => line.split(/(?<!\\)&/);
     if (!lines.some((line) => line.trim() === '\\hline' || cells(line).length > 1)) return null;
@@ -1463,7 +1515,7 @@ export class LabelInstance {
   textHeight() {
     if (this._renderedTextBounds?.h > 0) return this._renderedTextBounds.h;
     if (this.math) {
-      const source = stripMathDelimiters(this.text);
+      const source = this.mathSource();
       // MathML scripts and fractions need more ascent/descent than ordinary
       // label tspans. The renderer adds a small internal inset as well.
       // A simple fraction needs a four-cell content box before the outer
@@ -1767,7 +1819,7 @@ export class LabelInstance {
       const net = this.circuit.renameNet(this.netId, text);
       this.circuit._markReferenceLabelsLocal?.(net);
     } else {
-      const next = this.math ? normalizeMathSource(text) : String(text);
+      const next = this._math ? normalizeMathSource(text) : String(text);
       if (this.owner && !this.role && this.circuit._syncSwitchLabel(this.owner, next)) return;
       if (this.owner && !this.role && !this.math && this.circuit._syncComponentLabel(this.owner, next)) return;
       if (this.owner && !this.role && this.circuit._syncReferenceMarkerLabel(this.owner, next)) return;
@@ -1982,7 +2034,7 @@ export class LabelInstance {
       id: this.id,
       kind: this.kind,
       text: this.netId ? this.text : this._text,
-      ...(this.math ? { math: true } : {}),
+      ...(this._math ? { math: true } : {}),
       ...(this.keepsMeasuredBox() && (this._renderedTextBounds || this._mathBox)
         ? { mathBox: { w: this.colWidth() * GRID, h: this.rowHeight() * GRID } } : {}),
       align: this.align,

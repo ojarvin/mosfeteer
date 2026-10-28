@@ -246,6 +246,13 @@ hover glows) in that color without changing their own styles.
   windows: lone letters in its math italic, words, units, and numbers
   upright, minus signs true (`src/core/math-text.js`). Exports embed the
   face whenever their text is set in it. Persisted/exported text never contains provenance markers.
+- A free label's text may mix words and inline TeX (`Edge after $f_s/2$
+  delay`, a timing arrow's or span's text too): while it holds two
+  unescaped `$` on a line and is not one formula wholly in `$...$`
+  (`hasInlineMath`), it draws as math (`LabelInstance#math`, derived, not
+  saved), each line's words as `\text{}` in the math face and its `$...$`
+  parts as TeX (`inlineMathTex`; `\$` is a dollar sign). A part's or a
+  net's label never mixes.
 
 ## Linked designs
 
