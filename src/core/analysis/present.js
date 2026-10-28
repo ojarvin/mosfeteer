@@ -682,7 +682,9 @@ export function renderRootEquation(kind, index, value, options = {}) {
  */
 export function equivalenceTable(proofs) {
   const table = new Map();
-  for (const proof of proofs) table.set(structuralKey(proof.equivalent), proof);
+  // A plain number is never drawn as something else: a stage whose gain is
+  // 1 at DC must not turn every 1 into its product (1/R_1 R_1).
+  for (const proof of proofs) if (symbolNames(proof.equivalent).length) table.set(structuralKey(proof.equivalent), proof);
   return table;
 }
 

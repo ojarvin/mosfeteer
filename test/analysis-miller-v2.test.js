@@ -287,3 +287,38 @@ test('still finds the Miller bridge when the gate also carries an unrelated bias
     ['M1'],
   );
 });
+
+/** An inverter (M1, M2) with C1 from its input to its output, driven
+ *  through R1: the input node is no port, the bridge still Miller's. */
+function drivenInverter() {
+  const circuit = new Circuit();
+  [['input', 'VIN'], ['output', 'VOUT'], ['nmos', 'M1'], ['pmos', 'M2'], ['resistor', 'R1'], ['capacitor', 'C1'], ['ground', 'GND'], ['supply', 'VDD']]
+    .forEach(([type, refdes], i) => circuit.addComponent(type, { refdes, x: i * 400, y: 0 }));
+  const net = (name, ...refs) => { circuit._createNet(name).terminals = refs.map((ref) => circuit.resolveTerm(ref)); };
+  net('VIN', 'VIN.p', 'R1.a');
+  net('N1', 'R1.b', 'C1.a', 'M1.g', 'M2.g');
+  net('VOUT', 'C1.b', 'M1.d', 'M2.d', 'VOUT.p');
+  net('VDD', 'M2.s', 'VDD.p');
+  net('VSS', 'M1.s', 'GND.gnd');
+  return circuit;
+}
+
+test('a gate driven through a resistor is still Miller-split, its definitions and poles in textbook form', () => {
+  const report = analyzeSmallSignalV2(drivenInverter(), { input: 'VIN', output: 'VOUT', ignoreBodyEffect: true });
+  assert.equal(report.ok, true, report.error);
+  assert.ok(report.assumptions.includes('Miller approximation (M1)'), JSON.stringify(report.assumptions));
+  const definitions = report.derivedSymbols.map((symbol) => `${symbol.name} = ${symbol.tex}`);
+  assert.deepEqual(definitions, [
+    'C_{M1,in} = C_{1} \\, \\left(1 + \\left(g_{m1} + g_{m2}\\right) \\, \\left(r_{o1} \\parallel r_{o2}\\right)\\right)',
+    'C_{M1,out} = C_{1} \\, \\left(1 + \\frac{1}{\\left(g_{m1} + g_{m2}\\right) \\, \\left(r_{o1} \\parallel r_{o2}\\right)}\\right)',
+  ]);
+  const gui = adaptCombinedReport(report);
+  const text = JSON.stringify(gui, (key, value) => (typeof value === 'bigint' ? String(value) : value));
+  // The input resistor's stage reads as its gain, never 1/R_1 times R_1.
+  assert.ok(!text.includes('\\\\frac{1}{R_{1}} \\\\, R_{1}') && !text.includes('\\\\frac{1}{R_{1}} \\\\, \\\\frac{R_{1}}'), 'no 1/R_1 R_1');
+  assert.ok(text.includes('Z_{in}(s) = \\\\frac{s \\\\, C_{M1,in} \\\\, R_{1} + 1}{s \\\\, C_{M1,in}}'));
+  // The two poles, input and output, each its own first-order term.
+  assert.ok(text.includes('p_{1} = -\\\\frac{1}{C_{M1,in} \\\\, R_{1}}'), 'the input pole');
+  assert.ok(text.includes('p_{0} = -\\\\frac{r_{o1} + r_{o2}}{C_{M1,out} \\\\, r_{o1} \\\\, r_{o2}}'), 'the output pole');
+  assert.ok(!text.includes('\\\\sqrt'), 'no quadratic formula for a quadratic that factors');
+});

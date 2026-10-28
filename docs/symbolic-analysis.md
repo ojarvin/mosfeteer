@@ -245,7 +245,10 @@ let the analyzer discard a finite resistor paralleled with a cascode load.
 Miller approximation is a separate pre-solve option, enabled by default
 (`millerApproximation: false` disables it). Private series/parallel feedback
 networks that open at DC, such as a capacitor or series RC bridge, are split
-into input/output shunts using the bridge-open DC gain. Conducting feedback
+into input/output shunts using the bridge-open DC gain. The bridge is what
+lies between gate and drain: a branch off the gate that leads elsewhere (a
+gate driven through a resistor) is no part of it, and is left out of the
+gain, which the gate's test source fixes. Conducting feedback
 networks remain in the solved model, preserving resistor loading and direct
 feedthrough. Exact Miller identities can still simplify their presentation.
 A shunt that is a capacitance enters the solve as its own symbol, named as
@@ -278,7 +281,10 @@ This makes capacitors open and inductors short without rebuilding a separate
 DC circuit. AC rows are shown only when `s` remains after cancellation. Poles
 and zeros are taken from the canceled denominator and numerator; indexing
 starts at zero (`p_0`, `z_0`). First- and second-order roots are explicit, while
-higher-order results may remain polynomial.
+higher-order results may remain polynomial. A second-order one that
+factors into first-order terms over the symbols (a Miller-split stage's
+input and output poles) is two first-order roots, never the quadratic
+formula (`splitQuadraticRoots`, `response.js`).
 
 The report order is:
 

@@ -128,6 +128,28 @@ function monomialSquareRoot(value) {
   return null;
 }
 
+/**
+ * The two roots of a s^2 + b s + c when it factors into first-order terms
+ * over the symbols: b's terms split into P + Q with P Q = a c, the roots
+ * then -P/a and -Q/a (as a Miller-split stage's input and output poles,
+ * (1 + s C_in R)(1 + s C_out R_out)). Null when no split of b does.
+ */
+function splitQuadraticRoots(a, b, c, variable) {
+  const terms = b.kind === 'add' ? b.terms : [b];
+  if (terms.length < 2 || terms.length > 10) return null;
+  const target = multiply(a, c);
+  const isZero = (value) => {
+    const difference = rationalFunction(value, ONE, { variable });
+    return difference.numerator.kind === 'number' && difference.numerator.numerator === 0n;
+  };
+  for (let mask = 1; mask < 2 ** (terms.length - 1); mask++) {
+    const p = add(...terms.filter((_, i) => mask & (1 << i)));
+    const q = add(...terms.filter((_, i) => !(mask & (1 << i))));
+    if (isZero(add(multiply(p, q), negate(target)))) return [p, q].map((part) => rootExpression(negate(part), a, variable));
+  }
+  return null;
+}
+
 /** Cancel common factors of a root fraction (as a rational function). */
 function rootValue(numerator, denominator, variable) {
   return rationalFunction(numerator, denominator, { variable });
@@ -162,6 +184,8 @@ function rootRecords(coefficients, role, variable) {
     const a = coefficientAt(coefficients, 2);
     const b = coefficientAt(coefficients, 1);
     const c = coefficientAt(coefficients, 0);
+    const split = splitQuadraticRoots(a, b, c, variable);
+    if (split) return split.map((root, index) => ({ ...base, index, kind: 'root', root }));
     const discriminant = add(multiply(b, b), negate(multiply(integer(4), a, c)));
     // Monic form s^2 + B s + C, B = b/a and C = c/a, both canceled, so
     // s = (-B_n +- sqrt(B_n^2 - 4 C B_d^2)) / (2 B_d).

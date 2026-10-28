@@ -153,7 +153,7 @@ export function approximateTopology(topology, queries, options) {
       // Keep the proven product only while the factored form is the shorter
       // read. Once the load has collapsed to 1/g_m, `g_m (1/g_m)` says less
       // than the 1 it multiplies out to.
-      if (carriesSum(gm.selected) || carriesSum(load.selected)) {
+      if (stage.active !== false && (carriesSum(gm.selected) || carriesSum(load.selected))) {
         identities.push({ kind: 'product', equivalent: gain, operands: [gm.selected, load.selected] });
       }
       return { gain, gm, load };
@@ -167,6 +167,19 @@ export function approximateTopology(topology, queries, options) {
     return null;
   }
 }
+
+/** The symbol names in a value (a name as a string counts as one). */
+function symbolNames(value, out = new Set()) {
+  if (typeof value === 'string') out.add(value);
+  else if (value?.kind === 'symbol') out.add(value.name);
+  else if (value && typeof value === 'object') {
+    for (const key of ['terms', 'factors']) for (const item of value[key] || []) symbolNames(item, out);
+    for (const key of ['base', 'numerator', 'denominator']) symbolNames(value[key], out);
+  }
+  return out;
+}
+
+const namesAny = (value, names) => [...symbolNames(value)].some((name) => names.has(name));
 
 /**
  * Construct a hierarchy of exact port identities: stage gain = signed
@@ -183,6 +196,8 @@ export function buildTopologyIdentities(pipeline, options = {}) {
   const ops = createRationalOps({ variable: options.variable || 's', maxOperations: 12000 });
   try {
     const graph = findSignalCuts(pipeline, ops);
+    const transconductances = new Set();
+    for (const primitive of pipeline.selectedMna) if (primitive.kind === 'vccs') symbolNames(primitive.value, transconductances);
     const stages = [];
     const identities = [];
     const gains = [];
@@ -196,11 +211,15 @@ export function buildTopologyIdentities(pipeline, options = {}) {
       const transadmittance = shortCircuitTransadmittance(pipeline, index, previous, graph, ops);
       if (!transadmittance) return empty;
       const gain = ops.mul(transadmittance, impedance);
-      identities.push({ kind: 'product', equivalent: gain, operands: [transadmittance, impedance] });
+      // g_m times what it drives reads as a textbook stage; a passive one
+      // (a series input resistor, 1/R_1 times R_1/(1 + s C R_1)) reads
+      // better as its gain.
+      const active = namesAny(transadmittance, transconductances);
+      if (active) identities.push({ kind: 'product', equivalent: gain, operands: [transadmittance, impedance] });
       gains.push(gain);
       stages.push({
         from: pipeline.system.unknowns[previous], to: pipeline.system.unknowns[index],
-        gain, transadmittance, impedance,
+        gain, transadmittance, impedance, active,
       });
       previous = index;
     }

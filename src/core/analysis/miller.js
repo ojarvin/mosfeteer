@@ -52,7 +52,20 @@ function collectBridgeCandidates(primitives, gate, drain) {
       }
     }
   }
-  return foundDrain ? collected : null;
+  if (!foundDrain) return null;
+  // Only what lies between gate and drain: a branch that leads off to a
+  // dead end (a gate's series input resistor, its other end the input) is
+  // no part of the bridge.
+  let bridge = collected;
+  for (let pruned = true; pruned;) {
+    pruned = false;
+    const degree = new Map();
+    for (const { terminals: { a, b } } of bridge) for (const node of [a, b]) degree.set(node, (degree.get(node) || 0) + 1);
+    const deadEnd = (node) => node !== gate && node !== drain && degree.get(node) === 1;
+    const kept = bridge.filter(({ terminals: { a, b } }) => !deadEnd(a) && !deadEnd(b));
+    if (kept.length < bridge.length) { bridge = kept; pruned = true; }
+  }
+  return bridge.length ? bridge : null;
 }
 
 /** Every internal node of `bridge` must be touched only by primitives inside it. */
@@ -83,7 +96,22 @@ function localGain(primitives, bridge, gate, drain, context, options, ops) {
     nodeAliases: context.nodeAliases,
   });
   if (coupled.diagnostics.length) return null;
-  const resolved = coupled.primitives.map((primitive) => resolvedCopy(primitive, options, ops));
+  // The gate is held by the test source: what hangs off it alone (a series
+  // input resistor) cannot change the gain, and is left out so the gain
+  // carries none of its symbols. Kept: what the drain side reaches without
+  // passing the gate, and the transconductances it reads.
+  const reached = new Set([drain]);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const primitive of coupled.primitives) {
+      const { a, b } = primitive.terminals || {};
+      for (const [from, to] of [[a, b], [b, a]]) {
+        if (reached.has(from) && to !== gate && to !== AC_GROUND && to !== undefined && !reached.has(to)) { reached.add(to); grew = true; }
+      }
+    }
+  }
+  const drainSide = coupled.primitives.filter((primitive) => [primitive.terminals?.a, primitive.terminals?.b].some((node) => reached.has(node)));
+  const resolved = drainSide.map((primitive) => resolvedCopy(primitive, options, ops));
   let mnaPrimitives;
   try {
     mnaPrimitives = toMnaPrimitives(resolved, { ...options, s: ops.zero }, ops);
