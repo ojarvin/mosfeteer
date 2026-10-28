@@ -1,6 +1,6 @@
 {
   "name": "mosfeteer",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "description": "A drawing tool for analog circuit schematics, for figures in papers, slides, and documentation.",
   "type": "module",
   "scripts": {
