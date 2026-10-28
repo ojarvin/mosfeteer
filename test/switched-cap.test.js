@@ -261,3 +261,39 @@ test('the noise calculator: sqrt(kT/C) a sample, the RMS over the band to f_s/2,
   assert.equal(switchedCapNoiseFigures(integrator(), { values: { CS: 1e-12 }, fs: 1e6 }).code, 'values');
   assert.equal(switchedCapNoiseFigures(integrator(), { values: { CS: 1e-12, CF: 1e-12 }, fs: 0 }).code, 'noise');
 });
+
+import { STRAY, switchedCapStrays } from '../src/core/analysis/switched-cap.js';
+
+test('plate parasitics: none reach the stray-insensitive integrator; the sensitive one\'s floating plate adds its stray to C_S', () => {
+  // Every plate of the stray-insensitive integrator is held in every phase:
+  // by the input, ground, the virtual ground, or the output.
+  const quiet = switchedCapStrays(integrator(), {});
+  assert.equal(quiet.ok, true, quiet.error);
+  assert.equal(quiet.nodes.length, 4);
+  assert.deepEqual(quiet.nodes.filter((node) => node.sensitive), []);
+  // The parasitic-sensitive one: C_S's lower plate grounded, its upper one
+  // switched from the input (φ1) to the virtual ground (φ2).
+  const p1 = '"$\\varphi_1$"';
+  const p2 = '"$\\varphi_2$"';
+  const circuit = new Circuit();
+  for (const line of ['add input VIN --at -1400 0', 'add output VOUT --at 600 0', `add switch_open S1 --at -1000 0 --value ${p1}`, 'add capacitor CS --at -600 400 --rot 90',
+    `add switch_open S4 --at -400 0 --value ${p2}`, 'add opamp U1 --at 0 0', 'add capacitor CF --at 0 -400', 'add ground G1 --at -600 800', 'add ground G3 --at -400 400',
+    'connect VIN.p S1.a', 'connect S1.b CS.a', 'connect CS.b G1.gnd', 'connect CS.a S4.a', 'connect S4.b U1.im', 'connect U1.ip G3.gnd', 'connect CF.a U1.im', 'connect CF.b U1.o', 'connect U1.o VOUT.p', 'timing 1=10 2=01']) runCommand(circuit, line);
+  const loud = switchedCapStrays(circuit, {});
+  assert.equal(loud.ok, true, loud.error);
+  const sensitive = loud.nodes.filter((node) => node.sensitive);
+  assert.equal(sensitive.length, 1);
+  assert.deepEqual(sensitive[0].plates, ['CS.a']);
+  assert.deepEqual(sensitive[0].parts, ['CS', 'S1', 'S4']);
+  assert.equal(sensitive[0].tex, `\\frac{-\\frac{${STRAY} + C_{S}}{C_{F}}}{1 - z^{-1}}`);
+  // The design's own result is unchanged: no stray among its capacitors.
+  assert.deepEqual(analyzeSwitchedCap(circuit).capacitors, ['CS', 'CF']);
+  // With a finite-gain op-amp the virtual ground moves with the output:
+  // the stray-insensitive integrator's virtual-ground node shows, and the
+  // plate switched onto it.
+  const leaky = integrator();
+  leaky.components.get('U1').analysis.model = 'finite-gain';
+  const finite = switchedCapStrays(leaky, {});
+  assert.equal(finite.ok, true, finite.error);
+  assert.deepEqual(finite.nodes.filter((node) => node.sensitive).map((node) => node.parts), [['CS', 'S3', 'S4'], ['CF', 'S4', 'U1']]);
+});

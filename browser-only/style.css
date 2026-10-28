@@ -8735,3 +8735,8 @@ html.dark[data-accent] {
   background: none;
   border-style: dashed;
 }
+
+/* The plate parasitics' H(z): a nested fraction, set large enough to read. */
+.sc-stray-table td .sc-math.display {
+  font-size: 1.25em;
+}

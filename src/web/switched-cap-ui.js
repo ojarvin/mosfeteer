@@ -11,7 +11,7 @@
  * put it on the drawing.
  */
 
-import { analyzeSwitchedCap, switchedCapNoiseFigures, switchedCapPhases } from '../core/analysis/switched-cap.js';
+import { STRAY, analyzeSwitchedCap, switchedCapNoiseFigures, switchedCapPhases, switchedCapStrays } from '../core/analysis/switched-cap.js';
 import { calculate, siResult } from '../core/calculator.js';
 import { TRACE_COLORS, complexText, transferTex, numericRootsOf, responsePlot, resultSymbols, withCoefficients } from '../core/analysis/signal-flow.js';
 import { symbolText } from '../core/analysis/present.js';
@@ -217,8 +217,11 @@ function renderValues({ force = false } = {}) {
 
 function derive() {
   const s = settings();
-  const result = analyzeSwitchedCap(editor.circuit, { input: s.input || undefined, output: s.output || undefined, readout: s.readout || undefined, noise: !!s.noise });
-  latest = { revision: editor.modelRevision, result };
+  const ports = { input: s.input || undefined, output: s.output || undefined, readout: s.readout || undefined };
+  const result = analyzeSwitchedCap(editor.circuit, { ...ports, noise: !!s.noise });
+  // The plates' strays, when asked for: H(z) again per plate node.
+  const strays = result.ok && s.strays ? switchedCapStrays(editor.circuit, ports) : null;
+  latest = { revision: editor.modelRevision, result, strays };
   if (result.ok) addTrace(result);
   renderResult();
   runCalculator();
@@ -248,6 +251,7 @@ function renderResult() {
   const host = section.querySelector('.sc-results');
   section.querySelector('.sc-stale').hidden = !latest || latest.revision === editor.modelRevision;
   renderNoise();
+  renderStrays();
   if (!latest) { host.replaceChildren(); renderValues(); return; }
   const { result } = latest;
   if (!result.ok) {
@@ -327,6 +331,38 @@ function renderNoise() {
     noise.total,
     (row) => [math(transferTex(row.input, 'z', { symbolicLead: true }))],
   ));
+}
+
+/** The plate parasitics: each node a capacitor plate sits on, the plates
+ *  and parts there, and H(z) with a stray C_p there -- or none, the node
+ *  always held. */
+function renderStrays() {
+  const host = section?.querySelector('.sc-stray-result');
+  if (!host) return;
+  const on = !!settings().strays;
+  section.querySelector('#sc-stray-on').checked = on;
+  const result = latest?.result;
+  if (!on || !result?.ok) { host.replaceChildren(); return; }
+  const strays = latest.strays;
+  if (!strays) { host.replaceChildren(el('p', { class: 'field-hint', text: 'Derive to work it out.' })); return; }
+  if (!strays.ok) { host.replaceChildren(el('p', { class: 'field-hint', role: 'status', text: strays.error })); return; }
+  const th = (content, attrs = {}) => el('th', attrs, [content]);
+  const plates = (row) => [...new Set(row.plates.map((plate) => plate.slice(0, plate.lastIndexOf('.'))))];
+  const body = [...strays.nodes].sort((a, b) => Number(!!b.sensitive) - Number(!!a.sensitive)).map((row) => el('tr', { 'data-components': row.parts.join(' ') }, [
+    th(row.name ? math(row.name) : row.parts.join(', '), { scope: 'row' }),
+    el('td', {}, [math(plates(row).map(symbolText).join(',\\ '))]),
+    el('td', {}, [row.error ? row.error : row.sensitive ? math(row.tex, true) : 'none']),
+  ]));
+  const table = el('table', {}, [
+    el('thead', {}, [el('tr', {}, [th('Node', { scope: 'col' }), th('Plates', { scope: 'col' }), th(el('span', {}, [math('H(z)'), ' with ', math(STRAY), ' there']), { scope: 'col' })])]),
+    el('tbody', {}, body),
+  ]);
+  table.addEventListener('pointerover', (ev) => {
+    const row = ev.target.closest?.('tr[data-components]');
+    emphasize(row ? row.dataset.components.split(' ') : []);
+  });
+  table.addEventListener('pointerleave', () => emphasize([]));
+  host.replaceChildren(el('div', { class: 'analysis-noise-table sc-stray-table' }, [el('div', { class: 'analysis-noise-table-scroll' }, [table])]));
 }
 
 // The calculator's defaults: a capacitance 1 pF, a gain 60 dB, 27 °C, 1 MHz.
@@ -600,6 +636,15 @@ export function installSwitchedCapUi() {
       ]),
       el('div', { class: 'sc-noise-result' }),
       el('p', { class: 'field-hint', text: 'Switch noise, kT/C per phase, referred to the input. Op-amp noise is not included.' }),
+    ]),
+    el('fieldset', { class: 'analysis-approximations sc-strays' }, [
+      el('legend', { text: 'Plate parasitics' }),
+      el('label', { class: 'sc-noise-toggle' }, [
+        el('input', { type: 'checkbox', id: 'sc-stray-on', onchange: (ev) => { settings().strays = ev.target.checked; changed(); if (ev.target.checked && latest?.result.ok && !latest.strays) derive(); else renderStrays(); } }),
+        ' Stray capacitance at each plate\'s node with each Derive',
+      ]),
+      el('div', { class: 'sc-stray-result' }),
+      el('p', { class: 'field-hint', text: 'A capacitance from the node to ground. A node the input, ground, a virtual ground, or an output always holds is unaffected.' }),
     ]),
     el('fieldset', { class: 'analysis-approximations sc-calc', hidden: true }, [
       el('legend', { text: 'Noise calculator' }),

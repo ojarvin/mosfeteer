@@ -199,4 +199,20 @@ describe('switched-capacitor analysis', { skip: browserSkip() }, () => {
     await h.until(`!!document.querySelector('.sc-error')`);
     assert.match(await text('.sc-error'), /Draw a timing diagram/);
   });
+  test('plate parasitics: off until asked, then each plate node, the stray-insensitive integrator\'s all unaffected, saved with the design', async () => {
+    await h.open('integrator');
+    await openWindow();
+    await h.evaluate(`document.querySelector('.sc-derive').click()`);
+    await h.until(`!!document.querySelector('.sc-equation')`);
+    assert.equal(await h.evaluate(`!!document.querySelector('.sc-stray-result table')`), false, 'none unless asked');
+    await h.evaluate(`document.getElementById('sc-stray-on').click()`);
+    await h.until(`!!document.querySelector('.sc-stray-result table')`, 10000);
+    const effects = await h.evaluate(`[...document.querySelectorAll('.sc-stray-result tbody tr')].map((tr) => tr.lastChild.textContent)`);
+    assert.equal(effects.length, 4);
+    assert.ok(effects.every((effect) => effect === 'none'), JSON.stringify(effects));
+    assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.analysisValues.sc.strays)`), true);
+    await h.evaluate(`document.getElementById('sc-stray-on').click()`);
+    await h.until(`!document.querySelector('.sc-stray-result table')`);
+  });
+
 });

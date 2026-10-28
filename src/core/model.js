@@ -1173,6 +1173,8 @@ function normalizeAnalysisValues(value) {
     // Its kT/C noise: worked out with each Derive when on; the calculator's
     // fields as typed (a value per symbol, the temperature in Celsius, f_s).
     if (rawSc.noise === true) sc.noise = true;
+    // The plates' strays: worked out with each Derive when on.
+    if (rawSc.strays === true) sc.strays = true;
     const rawCalc = rawSc.calc;
     if (rawCalc && typeof rawCalc === 'object') {
       const field = (raw) => (typeof raw === 'string' ? raw.trim().slice(0, 60) : typeof raw === 'number' && Number.isFinite(raw) ? String(raw) : '');

@@ -151,6 +151,9 @@ export function analyzeSwitchedCap(circuit, options = {}) {
     }
   }
   if (!capacitors.length) return failure('no-capacitors', 'There are no capacitors to switch.');
+  // A stray capacitance asked for (switchedCapStrays): one more capacitor,
+  // from its node to ground, in a symbol of its own.
+  for (const stray of options.strays || []) capacitors.push({ refdes: stray.name, a: stray.node, b: AC_GROUND, value: symbol(stray.name), stray: true });
 
   // Each state: its joined nodes and what holds each.
   const outputsOf = (opamp) => (opamp.type === 'opamp' ? [opamp.o] : [opamp.op, opamp.om]);
@@ -349,7 +352,7 @@ export function analyzeSwitchedCap(circuit, options = {}) {
     readout,
     input: context.input.name,
     output: context.output.name,
-    capacitors: capacitors.map((cap) => cap.refdes),
+    capacitors: capacitors.filter((cap) => !cap.stray).map((cap) => cap.refdes),
     // The op-amps' finite gains' symbols (A1), apart from the capacitances.
     gains: opamps.filter((opamp) => opamp.gain).map((opamp) => opamp.gain),
     // Every symbol a number can be given for: the capacitances, the gains.
@@ -361,6 +364,52 @@ export function analyzeSwitchedCap(circuit, options = {}) {
     noise,
     ...numericRootsOf(value),
   };
+}
+
+/** The stray capacitance switchedCapStrays puts at a node. */
+export const STRAY = 'C_{p}';
+
+/**
+ * Which capacitor plates' strays reach the output: for each node a
+ * capacitor plate sits on (ground aside), H(z) again with a capacitance
+ * C_p from that node to ground. A node that is always held -- by the
+ * input, ground, an ideal op-amp's virtual ground, or its output -- gives
+ * the same H(z): its strays are harmless (the stray-insensitive
+ * integrator's every plate). One that floats in some phase gives an H(z)
+ * in C_p. `options` as analyzeSwitchedCap's. Returns `{ ok, nodes: [{
+ * node, name, plates: [refdes.terminal], parts, sensitive, value, tex,
+ * error }] }` or a failure; `name` the net's name, or null for an unnamed
+ * one; `parts` every part with a terminal there, to tell it by.
+ */
+export function switchedCapStrays(circuit, options = {}) {
+  const base = analyzeSwitchedCap(circuit, { ...options, noise: false });
+  if (!base.ok) return base;
+  const context = resolveAnalysisContext(analyzedCircuit(circuit), { input: options.input, output: options.output });
+  const plates = new Map();
+  const parts = new Map();
+  for (const [key, node] of context.terminalNodes) {
+    const refdes = key.slice(0, key.lastIndexOf('.'));
+    if (!parts.has(node)) parts.set(node, new Set());
+    parts.get(node).add(refdes);
+  }
+  for (const component of analyzedCircuit(circuit).components.values()) {
+    if (component.type !== 'capacitor' && component.type !== 'variable_capacitor') continue;
+    for (const term of ['a', 'b']) {
+      const node = context.terminalNodes.get(`${component.refdes}.${term}`);
+      if (!node || node === AC_GROUND) continue;
+      if (!plates.has(node)) plates.set(node, []);
+      plates.get(node).push(`${component.refdes}.${term}`);
+    }
+  }
+  const nodes = [...plates].map(([node, on]) => {
+    const name = circuit.nets.get(node)?.name || null;
+    const result = analyzeSwitchedCap(circuit, { ...options, noise: false, strays: [{ node, name: STRAY }], maxOperations: options.strayMaxOperations ?? 300_000 });
+    const own = { node, name, plates: on, parts: [...(parts.get(node) || [])].sort() };
+    if (!result.ok) return { ...own, error: result.error };
+    const sensitive = expressionSymbols(result.value, VARIABLE).has(STRAY);
+    return { ...own, sensitive, ...(sensitive ? { value: result.value, tex: result.tex } : {}) };
+  });
+  return { ok: true, nodes };
 }
 
 const BOLTZMANN = 1.380649e-23;

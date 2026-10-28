@@ -155,3 +155,21 @@ finished adjustment, never making it unsaved.
 
 Not yet: parasitic capacitances (the integrators are stray-insensitive by
 design, so these would show which ones are not), and the op-amps' own noise.
+
+## Plate parasitics
+
+**Plate parasitics** (a checkbox, saved as `analysisValues.sc.strays`)
+works out, with each Derive, which capacitor plates' stray capacitance
+reaches the output (`switchedCapStrays`): for each node a capacitor plate
+sits on, ground aside, H(z) again with a capacitance `C_p` from that node
+to ground. A node the input, ground, an ideal op-amp's virtual ground, or
+an output holds in every phase gives the same H(z) and reads "none"; one
+that floats in some phase reads its H(z) in `C_p`. The table lists each
+node by its net's name, else by the parts on it, with the capacitors whose
+plates are there; hovering a row glows its parts. Every plate of the
+stray-insensitive integrator reads "none"; the parasitic-sensitive one
+(C_S's upper plate switched between the input and the virtual ground)
+reads -((C_p + C_S)/C_F)/(1 - z^-1) there. With a finite-gain op-amp a
+virtual ground moves with the output, so its node's stray shows, and so
+does that of a plate switched onto it.
+
