@@ -4,7 +4,7 @@ import { Circuit } from '../src/core/model.js';
 import { buildExactAnalysisPipeline } from '../src/core/analysis/pipeline.js';
 import { createRationalOps } from '../src/core/analysis/algebra-ops.js';
 import { poleTimeConstants } from '../src/core/analysis/time-constants.js';
-import { analyzeSmallSignalV2 } from '../src/core/analysis/engine.js';
+import { analyzeSmallSignalV2, numericSmallSignal } from '../src/core/analysis/engine.js';
 import { adaptCombinedReport } from '../src/core/analysis/report-adapter.js';
 
 function build(parts, nets) {
@@ -85,4 +85,34 @@ test('a capacitor straight across the source has a zero time constant and drops 
   // C_gd and C_L both see R_O = 2.1, and shorting one puts the other across the source.
   assert.ok(equals(result.b1, 63));
   assert.ok(equals(result.b2, 0));
+});
+
+/** A common-source amplifier: C1 coupling the input onto R_G at the gate,
+ *  C_S bypassing R_S, C2 coupling the drain into R_L. */
+function coupledAmplifier() {
+  return build(
+    [['input', 'VIN'], ['output', 'VOUT'], ['nmos', 'M1'], ['capacitor', 'C1'], ['resistor', 'RG'], ['resistor', 'RS'], ['capacitor', 'CS'], ['resistor', 'RD'], ['capacitor', 'C2'], ['resistor', 'RL'], ['ground', 'GND'], ['supply', 'VDD']],
+    [['VIN', 'VIN.p', 'C1.a'], ['G', 'C1.b', 'RG.a', 'M1.g'], ['S', 'M1.s', 'RS.a', 'CS.a'], ['D', 'M1.d', 'RD.a', 'C2.a'], ['VOUT', 'C2.b', 'RL.a', 'VOUT.p'],
+      ['VSS', 'RG.b', 'RS.b', 'CS.b', 'RL.b', 'GND.gnd'], ['VDD', 'RD.b', 'VDD.p']],
+  );
+}
+
+test('short-circuit time constants: each capacitor with the others shorted, their inverses summing to the poles\' sum exactly', () => {
+  const values = { gm1: 2, gmb1: 0, ro1: 50, RG: 7, RS: 3, RD: 10, RL: 20, C1: 1, CS: 1, C2: 1 };
+  const { result, equals } = atValues(coupledAmplifier(), values);
+  assert.equal(result.ok, true, result.error);
+  const r = Object.fromEntries(result.shorted.map(({ cap, resistance }) => [cap.component, resistance]));
+  // C1 sees R_G; C2 sees R_L + R_D || r_o = 20 + 50/6; C_S sees
+  // R_S || (r_o + R_D || R_L)/(1 + g_m r_o) = 3 || (170/3)/101 = 510/1079.
+  assert.ok(equals(r.C1, 7));
+  assert.ok(equals(r.C2, 170, 6));
+  assert.ok(equals(r.CS, 510, 1079), 'the bypass capacitor');
+  // The identity, exactly: sum 1/(C_i R_i^s) is b_{n-1}/b_n, the sum of the
+  // poles' magnitudes -- here every pole of A_v.
+  const sum = 1 / 7 + 6 / 170 + 1079 / 510;
+  const model = numericSmallSignal(coupledAmplifier(), { input: 'VIN', output: 'VOUT', ignoreBodyEffect: true });
+  const poles = model.at(values).quantities.transfer.poles;
+  assert.equal(poles.length, 3);
+  const poleSum = poles.reduce((total, pole) => total + Math.hypot(pole.re, pole.im), 0);
+  assert.ok(Math.abs(poleSum / sum - 1) < 1e-9, `${poleSum} vs ${sum}`);
 });

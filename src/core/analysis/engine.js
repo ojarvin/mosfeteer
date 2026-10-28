@@ -523,7 +523,12 @@ function analyzeTimeConstants(circuit, pipelineOptions, options, rawOptions = {}
     const tidy = (value) => {
       const cleanupOps = createRationalOps({ variable: 's', maxOperations: 12000 });
       const compact = compactRational(value, cleanupOps);
-      return canonicalResponseValue(cleanupOps.budget.exceeded ? value : compact, options).expression;
+      // A time constant has no s: a common factor is one in any of its symbols.
+      let canceled = cleanupOps.budget.exceeded ? value : compact;
+      for (const name of [...expressionSymbols(canceled, 's')].sort()) {
+        canceled = cancelCommonPolynomialFactor(canceled, { variable: name, maxWork: EXACT_CANCELLATION_WORK });
+      }
+      return canonicalResponseValue(canceled, options).expression;
     };
     const name = (cap) => renderExpression(tidy(cap.capacitance), options);
     const tau = (cap) => `\\tau_{${name(cap)}}`;
@@ -549,6 +554,15 @@ function analyzeTimeConstants(circuit, pipelineOptions, options, rawOptions = {}
       }
       rows.push({ title: 'Sum over the pairs', equation: `b_{2} = ${pairs.map((pair) => `${tau(first(pair))} \\, ${shortedTau(pair)}`).join(' + ')}` });
       rows.push({ title: 'Second pole', equation: 'p_{1} \\approx -\\frac{b_{1}}{b_{2}} \\quad (|p_{1}| \\gg |p_{0}|)' });
+    }
+    // The low end: each with the others shorted.
+    if (result.shorted) {
+      const shortTau = (cap) => `\\tau_{${name(cap)}}^{s}`;
+      for (const { cap, resistance: r } of result.shorted) {
+        rows.push({ title: `Short-circuit time constant of ${which(cap)}`, equation: renderEquation(shortTau(cap), tidy(ops.mul(cap.capacitance, r)), options) });
+      }
+      rows.push({ title: 'Sum of their inverses', equation: `\\frac{b_{n-1}}{b_{n}} = ${result.shorted.map(({ cap }) => `\\frac{1}{${shortTau(cap)}}`).join(' + ')}` });
+      rows.push({ title: 'Low-frequency corner', equation: '\\omega_{L} \\approx \\frac{b_{n-1}}{b_{n}} \\quad (\\text{coupling and bypass capacitors})' });
     }
     if (ops.budget.exceeded) return tooLarge;
     return { ok: true, rows, ...(result.pairsOmitted ? { pairsOmitted: true } : {}) };

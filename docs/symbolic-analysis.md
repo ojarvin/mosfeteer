@@ -318,6 +318,18 @@ stage driven through R_S, C_gd's time constant is the textbook
 C_gd (R_S + R_O + g_m R_S R_O). The sums are exact: D is the denominator
 of every response before any cancellation, normalized to D(0) = 1.
 
+The short-circuit time constants are the other end of D: each capacitor's
+\tau^s = C R^s with every other capacitor shorted, and \sum 1/\tau^s =
+b_{n-1}/b_n, the sum of the poles' magnitudes, exactly. When the
+capacitors are the coupling and bypass ones that set a low-frequency
+corner, the highest of those poles dominates: \omega_L \approx \sum
+1/\tau^s, its largest term naming the capacitor that sets the corner
+(a bypass capacitor across R_S sees R_S \parallel (r_o + R_D \parallel
+R_L)/(1 + g_m r_o)). With a compensation or device capacitance among
+them, the sum is the highest pole's instead. Listed only when every
+capacitor sees a resistance with the others shorted. Each time constant's
+common factors are canceled in every symbol.
+
 They are solved in the model without Miller splitting (which would hide the
 bridging C_gd behind its two shunts) or series/parallel merging (which folds
 capacitors into other branches), with an operation budget of their own, and

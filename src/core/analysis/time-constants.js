@@ -14,6 +14,16 @@
  * Exact in the model it is given: D is the denominator of every response
  * of the circuit before any cancellation, normalized to D(0) = 1.
  *
+ * The short-circuit time constants are the other end of D: each
+ * capacitor's tau_i^s = C_i R_i^s with every other capacitor shorted, and
+ *
+ *   sum_i 1/tau_i^s = b_{n-1}/b_n = sum of the poles' magnitudes,
+ *
+ * exactly. When the capacitors are the ones that set a low-frequency
+ * corner (coupling and bypass), the highest of those poles dominates the
+ * sum: omega_L ~ sum 1/tau_i^s, its largest term naming the capacitor that
+ * sets the corner.
+ *
  * Only capacitors may carry s: an inductor, a one-pole opamp, or a Miller
  * shunt is refused rather than left out of the sum.
  */
@@ -29,8 +39,11 @@ export const MAX_PAIR_CAPACITORS = 6;
  * `pipeline` a built exact pipeline (unsolved is fine), `s` the frequency
  * symbol it was built with. Returns `{ ok, capacitors: [{ id, component,
  * capacitance, resistance }], dropped (those with a zero time constant),
- * b1, pairs: [{ i, j, resistance }] | null, b2, pairsOmitted }` or
+ * b1, pairs: [{ i, j, resistance }] | null, b2, pairsOmitted, shorted }` or
  * `{ ok: false, error }`. `pairsOmitted`: too many capacitors for b2.
+ * `shorted`: each capacitor's resistance with the others shorted, `[{ cap,
+ * resistance }]` (null when one sees none: in parallel with another, or a
+ * node they hold), for the short-circuit time constants.
  */
 export function poleTimeConstants(pipeline, ops, s, { pairs: wantPairs = true } = {}) {
   const primitives = pipeline.selectedMna || [];
@@ -81,6 +94,11 @@ export function poleTimeConstants(pipeline, ops, s, { pairs: wantPairs = true } 
   const dropped = named.filter((cap) => !capacitorsLeft.includes(cap));
   const b1 = capacitorsLeft.reduce((sum, cap) => ops.add(sum, tau(cap)), ops.zero);
   const result = { ok: true, capacitors: capacitorsLeft, dropped, b1, pairs: null, b2: null };
+  // Each with every other capacitor shorted: the short-circuit time constants.
+  if (live.length >= 1) {
+    const shorted = live.map(({ cap, index }) => ({ cap, resistance: resistance(index, live.filter((other) => other.index !== index).map((other) => other.index)) }));
+    result.shorted = shorted.every(({ resistance: r }) => r && !ops.isZero(r)) ? shorted : null;
+  }
   if (!wantPairs || live.length < 2) return result;
   if (live.length > MAX_PAIR_CAPACITORS) return { ...result, pairsOmitted: true };
   const pairs = [];

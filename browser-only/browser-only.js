@@ -3833,7 +3833,12 @@ function analyzeTimeConstants(circuit, pipelineOptions, options, rawOptions = {}
     const tidy = (value) => {
       const cleanupOps = createRationalOps({ variable: 's', maxOperations: 12000 });
       const compact = compactRational(value, cleanupOps);
-      return canonicalResponseValue(cleanupOps.budget.exceeded ? value : compact, options).expression;
+      // A time constant has no s: a common factor is one in any of its symbols.
+      let canceled = cleanupOps.budget.exceeded ? value : compact;
+      for (const name of [...expressionSymbols(canceled, 's')].sort()) {
+        canceled = cancelCommonPolynomialFactor(canceled, { variable: name, maxWork: EXACT_CANCELLATION_WORK });
+      }
+      return canonicalResponseValue(canceled, options).expression;
     };
     const name = (cap) => renderExpression(tidy(cap.capacitance), options);
     const tau = (cap) => `\\tau_{${name(cap)}}`;
@@ -3859,6 +3864,15 @@ function analyzeTimeConstants(circuit, pipelineOptions, options, rawOptions = {}
       }
       rows.push({ title: 'Sum over the pairs', equation: `b_{2} = ${pairs.map((pair) => `${tau(first(pair))} \\, ${shortedTau(pair)}`).join(' + ')}` });
       rows.push({ title: 'Second pole', equation: 'p_{1} \\approx -\\frac{b_{1}}{b_{2}} \\quad (|p_{1}| \\gg |p_{0}|)' });
+    }
+    // The low end: each with the others shorted.
+    if (result.shorted) {
+      const shortTau = (cap) => `\\tau_{${name(cap)}}^{s}`;
+      for (const { cap, resistance: r } of result.shorted) {
+        rows.push({ title: `Short-circuit time constant of ${which(cap)}`, equation: renderEquation(shortTau(cap), tidy(ops.mul(cap.capacitance, r)), options) });
+      }
+      rows.push({ title: 'Sum of their inverses', equation: `\\frac{b_{n-1}}{b_{n}} = ${result.shorted.map(({ cap }) => `\\frac{1}{${shortTau(cap)}}`).join(' + ')}` });
+      rows.push({ title: 'Low-frequency corner', equation: '\\omega_{L} \\approx \\frac{b_{n-1}}{b_{n}} \\quad (\\text{coupling and bypass capacitors})' });
     }
     if (ops.budget.exceeded) return tooLarge;
     return { ok: true, rows, ...(result.pairsOmitted ? { pairsOmitted: true } : {}) };
@@ -17355,6 +17369,16 @@ let AC_GROUND; __bind(() => { ({ AC_GROUND } = __require("src/core/analysis/cont
  * Exact in the model it is given: D is the denominator of every response
  * of the circuit before any cancellation, normalized to D(0) = 1.
  *
+ * The short-circuit time constants are the other end of D: each
+ * capacitor's tau_i^s = C_i R_i^s with every other capacitor shorted, and
+ *
+ *   sum_i 1/tau_i^s = b_{n-1}/b_n = sum of the poles' magnitudes,
+ *
+ * exactly. When the capacitors are the ones that set a low-frequency
+ * corner (coupling and bypass), the highest of those poles dominates the
+ * sum: omega_L ~ sum 1/tau_i^s, its largest term naming the capacitor that
+ * sets the corner.
+ *
  * Only capacitors may carry s: an inductor, a one-pole opamp, or a Miller
  * shunt is refused rather than left out of the sum.
  */
@@ -17370,8 +17394,11 @@ const MAX_PAIR_CAPACITORS = 6;
  * `pipeline` a built exact pipeline (unsolved is fine), `s` the frequency
  * symbol it was built with. Returns `{ ok, capacitors: [{ id, component,
  * capacitance, resistance }], dropped (those with a zero time constant),
- * b1, pairs: [{ i, j, resistance }] | null, b2, pairsOmitted }` or
+ * b1, pairs: [{ i, j, resistance }] | null, b2, pairsOmitted, shorted }` or
  * `{ ok: false, error }`. `pairsOmitted`: too many capacitors for b2.
+ * `shorted`: each capacitor's resistance with the others shorted, `[{ cap,
+ * resistance }]` (null when one sees none: in parallel with another, or a
+ * node they hold), for the short-circuit time constants.
  */
 function poleTimeConstants(pipeline, ops, s, { pairs: wantPairs = true } = {}) {
   const primitives = pipeline.selectedMna || [];
@@ -17422,6 +17449,11 @@ function poleTimeConstants(pipeline, ops, s, { pairs: wantPairs = true } = {}) {
   const dropped = named.filter((cap) => !capacitorsLeft.includes(cap));
   const b1 = capacitorsLeft.reduce((sum, cap) => ops.add(sum, tau(cap)), ops.zero);
   const result = { ok: true, capacitors: capacitorsLeft, dropped, b1, pairs: null, b2: null };
+  // Each with every other capacitor shorted: the short-circuit time constants.
+  if (live.length >= 1) {
+    const shorted = live.map(({ cap, index }) => ({ cap, resistance: resistance(index, live.filter((other) => other.index !== index).map((other) => other.index)) }));
+    result.shorted = shorted.every(({ resistance: r }) => r && !ops.isZero(r)) ? shorted : null;
+  }
   if (!wantPairs || live.length < 2) return result;
   if (live.length > MAX_PAIR_CAPACITORS) return { ...result, pairsOmitted: true };
   const pairs = [];

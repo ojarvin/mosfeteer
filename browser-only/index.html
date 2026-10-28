@@ -440,7 +440,7 @@
               <label class="analysis-loop-row">Loop gain at <input id="analysis-loop-element" name="loopElement" type="text" list="analysis-loop-points" autocomplete="off" spellcheck="false" placeholder="M2.g, V_{out}, V_{fb} to V_{inn}" aria-label="Break the loop at" /></label>
               <datalist id="analysis-loop-points"></datalist>
               <p class="field-hint">Where the loop breaks: an opamp (<span class="math-inline">T = Aβ</span>), a terminal (M2.g), the net that closes the loop, or two nets when it is not drawn closed (V_fb to V_inn). Empty: no loop gain.</p>
-              <label><input id="analysis-time-constants" name="timeConstants" type="checkbox" /> List the poles' time constants, one per capacitor (<span class="math-inline">p<sub>0</sub> ≈ −1/Σ C<sub>i</sub>R<sub>i</sub></span>)</label>
+              <label><input id="analysis-time-constants" name="timeConstants" type="checkbox" /> List the poles' time constants, one per capacitor (<span class="math-inline">p<sub>0</sub> ≈ −1/Σ C<sub>i</sub>R<sub>i</sub></span>, <span class="math-inline">ω<sub>L</sub> ≈ Σ 1/C<sub>i</sub>R<sub>i</sub><sup>s</sup></span>)</label>
               <p class="field-hint">Each capacitor's time constant <span class="math-inline">C R</span>, R what it sees with the others open: their sum sets the dominant pole, and with up to six capacitors the pairs give the next.</p>
             </fieldset>
             <fieldset class="analysis-approximations">
