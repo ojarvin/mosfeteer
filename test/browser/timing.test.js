@@ -9,6 +9,13 @@ import { start, browserSkip } from './harness.js';
 import { Circuit } from '../../src/core/model.js';
 import { runCommand } from '../../src/core/commands.js';
 
+/** A long sequence, wider than the editor. */
+function longSequence() {
+  const circuit = new Circuit();
+  for (const line of ['timing --add CLK,Q', `timing CLK=${'01'.repeat(40)} Q=${'0011'.repeat(20)}`]) runCommand(circuit, line);
+  return circuit.toJSON();
+}
+
 function clockAndQ() {
   const circuit = new Circuit();
   for (const line of ['timing --add CLK,Q', 'timing CLK=0101 Q=0011']) runCommand(circuit, line);
@@ -38,7 +45,7 @@ function beaten() {
 
 describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () => {
   let h;
-  before(async () => { h = await start({ docs: { clocked: clockAndQ(), phased: twoPhases(), undrawn: undrawn(), noted: clockAndQ(), beaten: beaten(), repeated: clockAndQ(), ramped: clockAndQ(), broken: clockAndQ() }, width: 1500, height: 950 }); });
+  before(async () => { h = await start({ docs: { clocked: clockAndQ(), phased: twoPhases(), undrawn: undrawn(), noted: clockAndQ(), beaten: beaten(), repeated: clockAndQ(), ramped: clockAndQ(), broken: clockAndQ(), long: longSequence() }, width: 1500, height: 950 }); });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
   const parts = () => h.evaluate(`window.__circuit().labels.filter((l) => l.timing?.part).map((l) => ({ part: l.timing.part, text: l.text, item: l.timing.item, curve: !!l.curve }))`);
@@ -270,6 +277,21 @@ describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () =
     await h.until(`!window.__circuit().labels.some((l) => l.kind === 'box' && l.timing?.phase === 'Q')`);
     await h.until(q(`(row) => row.bits === '0011'`));
     await h.until(`!document.querySelector('.timing-cell.analog')`);
+    await h.key('K', { shiftKey: true });
+  });
+
+  test('the arrow keys scroll the grid to keep the cursor in view', async () => {
+    await h.open('long');
+    if (!(await h.evaluate(`!!document.querySelector('.timing-dialog .timing-grid')`))) await h.key('K', { shiftKey: true });
+    await h.until(`document.querySelectorAll('.timing-grid-line')[0]?.querySelectorAll('.timing-cell:not(.new)').length === 80`);
+    const seen = () => h.evaluate(`(() => { const g = document.querySelector('.timing-grid').getBoundingClientRect(); const c = document.querySelector('.timing-cell.cursor').getBoundingClientRect(); return c.left >= g.left && c.right <= g.right; })()`);
+    assert.ok(await h.evaluate(`document.querySelector('.timing-grid').scrollWidth > document.querySelector('.timing-grid').clientWidth`), 'the grid is wider than its window');
+    for (let i = 0; i < 40; i++) await gridKey('ArrowRight');
+    assert.equal(await seen(), true, 'stepping right');
+    await gridKey('End');
+    assert.equal(await seen(), true, 'at the end');
+    await gridKey('Home');
+    assert.equal(await seen(), true, 'back at the start');
     await h.key('K', { shiftKey: true });
   });
 

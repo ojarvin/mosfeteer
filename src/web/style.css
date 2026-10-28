@@ -6693,6 +6693,8 @@ details.analysis-options > * + * {
   cursor: pointer;
   user-select: none;
   min-height: 0;
+  /* Scrolled to by the keys, it keeps a little of its neighbours in view. */
+  scroll-margin: 8px 40px;
 }
 
 .timing-cell.level-1 {

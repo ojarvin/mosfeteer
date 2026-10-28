@@ -117,7 +117,8 @@ The menu item opens an editor beside the drawing: a grid with a row of slots
 per phase, started from the diagram already drawn, else from the beats (one
 slot per beat, high where the phase's switches are closed; **Read the beats**
 refills it). Click a slot to flip it, or move a cursor with the arrows and
-type `1` or `0` (or an analog value, below); the empty cell after the last slot adds one. `+` repeats
+type `1` or `0` (or an analog value, below); a key that moves the cursor
+scrolls the grid to keep it in view; the empty cell after the last slot adds one. `+` repeats
 the slot at the cursor in every row -- a state held one slot longer -- `*` (**Repeat period**) copies
 every wave once after itself, a second period to edit, and Delete removes
 a slot. The slot width is in cells, and **Gaps** lists

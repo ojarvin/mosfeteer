@@ -54044,6 +54044,11 @@ function openTimingDialog() {
     event.preventDefault();
   });
 
+  // A key that moved the cursor (or typed past the edge) scrolls it into view.
+  grid.addEventListener('keydown', () => {
+    grid.querySelector('.timing-cell.cursor')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  });
+
   const slotInput = element('input', { type: 'number', min: '1', max: '64', step: '1', value: String(state.slot), 'aria-label': 'Slot width in cells' });
   slotInput.addEventListener('change', () => { state.slot = Math.max(1, Math.round(Number(slotInput.value)) || DEFAULT_SLOT_CELLS); redraw(); });
   // A button; with `icon` an icon-only one (its text the accessible name).
