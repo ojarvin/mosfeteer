@@ -1182,13 +1182,23 @@ function normalizeResponsePlot(plot) {
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   const band = (Array.isArray(plot.band) ? plot.band : []).filter((f) => finite(f) && f > 0).slice(0, 2).map((f) => round(f, 6));
-  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces, ...(band.length ? { band } : {}), ...(plot.quantity === 'phase' ? { quantity: 'phase' } : {}), ...(plot.units === 'dBFS' ? { units: 'dBFS' } : {}), ...markersOf(plot), ...(plot.role === 'loop' ? { role: 'loop' } : {}), ...sourceOf(plot) };
+  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces, ...(band.length ? { band } : {}), ...(plot.quantity === 'phase' ? { quantity: 'phase' } : {}), ...(plot.units === 'dBFS' ? { units: 'dBFS' } : {}), ...markersOf(plot), ...(plot.role === 'loop' ? { role: 'loop' } : {}), ...sourceOf(plot), ...viewOf(plot, { positiveX: true }) };
 }
 
 /** What a plot was drawn from, so it can be drawn again at new numbers:
  *  a loop plot's signal, a root locus's coefficient. */
 function sourceOf(plot) {
   return typeof plot.source === 'string' && plot.source ? { source: plot.source.slice(0, 200) } : {};
+}
+
+/** A plot's own axis limits, `view: { x: [low, high], y: [low, high] }` in
+ *  its data's units (an x range of frequencies is positive): the zoom it
+ *  was annotated at, kept through updates. Either axis may be left out. */
+function viewOf(plot, { positiveX = false } = {}) {
+  const pair = (v, positive) => (Array.isArray(v) && v.length === 2 && v.every(finite) && v[0] < v[1] && (!positive || v[0] > 0) ? [round(v[0], 9), round(v[1], 9)] : null);
+  const x = pair(plot.view?.x, positiveX);
+  const y = pair(plot.view?.y, false);
+  return x || y ? { view: { ...(x ? { x } : {}), ...(y ? { y } : {}) } } : {};
 }
 
 /** A plot's marked frequencies: `{ f, label }`, a few. */
@@ -1234,7 +1244,7 @@ function normalizeStepPlot(plot) {
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   // A waveform (the time-domain plot's) is drawn as a step response is, in time.
-  return { kind: plot.kind === 'wave' ? 'wave' : 'step', unit: plot.unit === 'n' ? 'n' : 't', range: { low, high }, traces };
+  return { kind: plot.kind === 'wave' ? 'wave' : 'step', unit: plot.unit === 'n' ? 'n' : 't', range: { low, high }, traces, ...viewOf(plot) };
 }
 
 /** A swing plot (signal-flow simulation): colored traces of each net's
@@ -1253,7 +1263,7 @@ function normalizeSwingPlot(plot) {
     ...(trace?.tone ? { tone: true } : {}),
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
-  return { kind: 'swing', range: { low, high }, traces };
+  return { kind: 'swing', range: { low, high }, traces, ...viewOf(plot) };
 }
 
 export class LabelInstance {

@@ -428,6 +428,8 @@ export function createPlotView({ height = 230, fill = false, aspect = null, maxH
       refineTimer = setTimeout(refine, 120);
     },
     zoomed: () => !following,
+    /** The zoomed view's limits in the data's units, `{ x, y }`; null when it shows it all. */
+    zoom: () => (spec && view && !following ? { x: view.x.map((u) => fromU(scaleX(), u)), y: [...view.y] } : null),
     /** The x range in view, in the data's units; null before anything is shown. */
     xRange: () => (spec && view ? view.x.map((u) => fromU(scaleX(), u)) : null),
     /** Hear each change of view made on this plot (not one set from outside). */

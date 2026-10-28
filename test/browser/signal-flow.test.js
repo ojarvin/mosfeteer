@@ -208,6 +208,31 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     assert.match(await h.evaluate(table), /^k_\{?2\}? & 7\/32$/m, 'a link to it is written the same');
   });
 
+  test('a zoomed graph annotates at its zoom, and the plot keeps those limits when updated', async () => {
+    await openAnalysis('modulator');
+    await h.evaluate(`${h.module('editor-state.js')}.then((m) => { const v = m.editor.circuit.analysisValues; v.coefficients = { ...v.coefficients, k_1: 1, k_2: 2 }; v.flow = { ...v.flow, spectrum: { on: false } }; })`);
+    await derive();
+    await tab('Magnitude');
+    await h.until(`!!document.querySelector('.plots-window .signal-flow-graph .plot-view-svg')`);
+    const at = await h.evaluate(`(() => { const r = document.querySelector('.plots-window .signal-flow-graph .plot-view').getBoundingClientRect(); return { x: r.x + r.width * 0.6, y: r.y + r.height / 2 }; })()`);
+    await h.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: at.x, y: at.y, deltaX: 0, deltaY: -400, modifiers: 2 });
+    await h.until(`!!document.querySelector('.plots-window .signal-flow-graph .plot-view-fit:not([hidden])')`);
+    const view = `${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].find((l) => l.plot?.kind === 'response')?.plot.view ?? null)`;
+    await annotate('Graph');
+    await h.until(`${view}.then((v) => !!v)`);
+    const zoomed = await h.evaluate(view);
+    assert.ok(zoomed.x[0] > 0 && zoomed.x[1] > zoomed.x[0] && zoomed.y[1] > zoomed.y[0], JSON.stringify(zoomed));
+    // New numbers, every plot updated: the limits stay.
+    await h.evaluate(`${h.module('editor-state.js')}.then((m) => { m.editor.circuit.analysisValues.coefficients.k_2 = 1.5; })`);
+    await annotate('Update all plots');
+    await h.settle();
+    assert.deepEqual(await h.evaluate(view), zoomed);
+    // Fitted again and annotated: all of it.
+    await h.click('.plots-window .signal-flow-graph .plot-view-fit');
+    await annotate('Graph');
+    await h.until(`${view}.then((v) => v === null)`);
+  });
+
   test('a long explanation folds to its first sentence', async () => {
     assert.ok(await h.evaluate(`[...document.querySelectorAll('#analysis-dialog p.field-hint .hint-more')].length`) > 0);
     const rest = `document.querySelector('#analysis-dialog p.field-hint .hint-rest')`;

@@ -478,7 +478,7 @@ function renderLoop() {
     view.set(graphSpec({ ...data.phase, role: 'loop', markers }, detailed('phase', { role: 'loop', markers })));
   }
   body.append(el('div', { class: 'signal-flow-graph-actions' }, [
-    el('button', { type: 'button', text: 'Annotate', title: 'Put the loop gain\'s magnitude, its crossover and margin marked, on the drawing', disabled: !data.magnitude, onclick: () => placePlot(data.annotated, data.shown) }),
+    el('button', { type: 'button', text: 'Annotate', title: 'Put the loop gain\'s magnitude, its crossover and margin marked, on the drawing', disabled: !data.magnitude, onclick: () => placePlot(data.annotated, data.shown, { view: plotViews['loop-magnitude']?.zoom() }) }),
   ]));
 }
 
@@ -687,7 +687,7 @@ function renderSwing() {
     };
   }), (key, on) => { if (on) swingShown.add(key); else swingShown.delete(key); renderSwing(); }));
   host.append(el('div', { class: 'signal-flow-graph-actions' }, [
-    el('button', { type: 'button', text: 'Annotate', title: 'Put the plot on the drawing', disabled: !shown.length, onclick: () => placePlot(swingPlotOf(shown), shown) }),
+    el('button', { type: 'button', text: 'Annotate', title: 'Put the plot on the drawing', disabled: !shown.length, onclick: () => placePlot(swingPlotOf(shown), shown, { view: plotViews.swing?.zoom() }) }),
   ]));
 }
 
@@ -1165,11 +1165,13 @@ function renderGraph() {
  *  math label in its color beside it (children of the box, moving with it). */
 function annotateGraph() {
   const shown = shownTraces();
-  const plot = graphPlot(shown);
+  // Zoomed, at the window's limits, its curves dense across them.
+  const view = plotViews.graph?.zoom() || null;
+  const plot = graphPlot(shown, graphView(), view && graphView() !== 'step' ? view.x : null);
   if (!plot) return;
   // A simulated spectrum on it: its SNDR in band under the traces.
   const note = graphView() === 'magnitude' && plot.units === 'dBFS' ? sndrNote() : null;
-  placePlot(plot, note ? [...shown, note] : shown);
+  placePlot(plot, note ? [...shown, note] : shown, { view });
 }
 
 const PLOT_LEGEND_ROLE = 'plot-legend';
@@ -1177,8 +1179,8 @@ const PLOT_LEGEND_ROLE = 'plot-legend';
 /** A response plot (signal-flow.js `responsePlot`'s shape) on the drawing,
  *  as Annotate graph puts this graph there: `shown` names its traces
  *  ({ label, color }). The small-signal Bode graph's annotation. */
-export function placeResponsePlot(plot, shown, { source = 'signal-flow' } = {}) {
-  placePlot(plot, shown, { source });
+export function placeResponsePlot(plot, shown, { source = 'signal-flow', view = null } = {}) {
+  placePlot(plot, shown, { source, view });
 }
 
 /**
@@ -1190,8 +1192,12 @@ export function placeResponsePlot(plot, shown, { source = 'signal-flow' } = {}) 
  * the drawing at its left edge. The coefficients' numbers are a table of
  * their own (annotateCoefficients).
  */
-function placePlot(plot, shown, { source = 'signal-flow' } = {}) {
+function placePlot(plot, shown, { source = 'signal-flow', view = null } = {}) {
   const circuit = editor.circuit;
+  // As the window shows it: zoomed, the plot keeps those limits (`view`)
+  // through later updates; fitted, it shows all of its data.
+  const { view: _old, ...rest } = plot;
+  plot = view ? { ...rest, view } : rest;
   // The same tool's plot of the same kind (a response graph also of the
   // same quantity): figures.js chooseFigure.
   const identity = { kind: 'plot', source, key: plotKey(plot) };
@@ -1329,7 +1335,8 @@ async function updatePlots() {
     // its legend (lines of "name = value"; a trace's name never is one):
     // they move to the table.
     const hadValues = updates.some((update) => legendOf(update.box).some((label) => /\s=\s/.test(String(label.text))));
-    for (const update of updates) written.push(writePlot(update.box, update.plot, update.shown));
+    // Each keeps the limits it was annotated at.
+    for (const update of updates) written.push(writePlot(update.box, update.box.plot.view ? { ...update.plot, view: update.box.plot.view } : update.plot, update.shown));
     // The coefficients table, at the same numbers.
     const rows = coefficientRows();
     if (rows.length) table = writeMathFigure({ ...COEFFICIENTS, text: rows.join('\n'), create: hadValues });
@@ -1619,7 +1626,7 @@ export function installSignalFlowUi() {
     timeSection(),
   ]);
   installPlotsWindow({ mode: 'signal-flow', view: plots, shown: refreshPlots });
-  installTimePlot({ flow, resolved, placePlot: (plot, shown) => placePlot(plot, shown), visible: () => plotsShown() && graphView() === 'time' });
+  installTimePlot({ flow, resolved, placePlot: (plot, shown, options) => placePlot(plot, shown, options), visible: () => plotsShown() && graphView() === 'time' });
   // Another document starts clean: its own mode, none of the last one's results.
   onDocumentShown(() => {
     chosenThisSession = false;

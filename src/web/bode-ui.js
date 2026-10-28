@@ -487,7 +487,7 @@ function annotateGraph({ phase = graphChoice.phase, magnitude = true } = {}) {
   const traces = sketches.map(({ trace }) => trace);
   for (const quantity of [...(magnitude ? ['magnitude'] : []), ...(phase ? ['phase'] : [])]) {
     const plot = responsePlotOf(sketches, quantity);
-    if (plot) placeResponsePlot(plot, traces, { source: 'small-signal' });
+    if (plot) placeResponsePlot(plot, traces, { source: 'small-signal', view: graphs?.[quantity]?.zoom() });
   }
 }
 

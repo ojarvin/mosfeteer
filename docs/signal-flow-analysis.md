@@ -298,7 +298,10 @@ document): **Magnitude**, **Phase**, **Step**, **Locus**, **Swing**, **Loop**.
 Each view annotates the same way -- a plot box with its legend beside it,
 updated in place on the next annotate (a plot's identity is its kind, its
 quantity, and its role, so a loop plot and the graph never replace each
-other).
+other). A plot annotates as its window shows it: zoomed, at those
+limits (`plot.view`, `{ x, y }` in its data's units; the small-signal and
+switched-cap graphs too), its curves cut at the frame; fitted, all of it.
+Update all plots keeps each plot's limits.
 
 **Loop** (`loopGain`, `loopMargins`): the loop broken at a picked signal (a
 quantizer's output first): 1 injected into what reads it, every source at

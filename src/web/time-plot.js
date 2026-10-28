@@ -204,7 +204,7 @@ function annotate() {
   const range = parts.plot.xRange() || [0, last.samples - 1];
   const plot = wavePlot(last.series, range);
   if (!plot) return;
-  api.placePlot(plot, plot.traces.map((t) => ({ label: t.label, color: t.color })));
+  api.placePlot(plot, plot.traces.map((t) => ({ label: t.label, color: t.color })), { view: parts.plot.zoom() });
 }
 
 /** An annotated waveform at the numbers now (Update plots): its nets by

@@ -55,3 +55,33 @@ test('a plot whose range spans implausibly many decades is not kept', () => {
   assert.equal(normalizePlot({ ...plotData(), range: { low: 1, high: 1e6 } }), null);
   assert.ok(normalizePlot({ ...plotData(), range: { low: -3, high: 9 } }));
 });
+
+import { responseFigure, stepFigure, swingFigure } from '../src/core/bode-figure.js';
+
+test('a plot annotated zoomed keeps its limits: saved, drawn at them, its curves cut to its pane', () => {
+  const points = Array.from({ length: 200 }, (_, i) => { const f = 10 ** (-4 + (i * 3.7) / 199); return { f, db: 20 * Math.log10(f) }; });
+  const plot = { kind: 'response', axis: 'normalized', range: { low: -4, high: Math.log10(0.5) }, traces: [{ label: 'H', color: '#3b74e0', points }], view: { x: [0.01, 0.05], y: [-45, -25] } };
+  const kept = normalizePlot(plot);
+  assert.deepEqual(kept.view, { x: [0.01, 0.05], y: [-45, -25] });
+  // A broken or inverted limit is dropped; a frequency limit must be positive.
+  assert.equal(normalizePlot({ ...plot, view: { x: [0.05, 0.01] } }).view, undefined);
+  assert.equal(normalizePlot({ ...plot, view: { x: [0, 0.01], y: [-1, 1] } }).view.x, undefined);
+  const figure = responseFigure(kept);
+  const { pane } = figure;
+  const curves = figure.items.filter((item) => item.role === 'curve');
+  assert.ok(curves.length >= 1);
+  for (const curve of curves) for (const p of curve.points) {
+    assert.ok(p.x >= pane.x - 1e-6 && p.x <= pane.x + pane.w + 1e-6 && p.y >= pane.y - 1e-6 && p.y <= pane.y + pane.h + 1e-6, JSON.stringify(p));
+  }
+  // The axes read in the zoom: no decade ticks, numbers inside it.
+  const numbers = figure.items.filter((item) => item.role === 'number').map((item) => item.text);
+  assert.ok(numbers.includes('0.02') && numbers.includes('-40'), JSON.stringify(numbers));
+  assert.ok(!numbers.includes('10^{-3}'));
+  assert.deepEqual(figure.ranges.db, [-45, -25]);
+  // A step plot and a swing plot the same way.
+  const step = stepFigure({ kind: 'step', unit: 'n', range: { low: 0, high: 100 }, traces: [{ color: '#000', points: Array.from({ length: 101 }, (_, t) => ({ t, y: t / 10 })) }], view: { x: [20, 40], y: [1, 5] } });
+  assert.deepEqual(step.ranges.y, [1, 5]);
+  for (const curve of step.items.filter((item) => item.role === 'curve')) for (const p of curve.points) assert.ok(p.x >= step.pane.x - 1e-6 && p.x <= step.pane.x + step.pane.w + 1e-6);
+  const swing = swingFigure({ kind: 'swing', range: { low: -60, high: 3 }, traces: [{ color: '#000', points: [{ a: -60, db: -50 }, { a: 0, db: 5 }] }], view: { x: [-20, 0], y: [-20, 0] } });
+  assert.deepEqual(swing.ranges.db, [-20, 0]);
+});

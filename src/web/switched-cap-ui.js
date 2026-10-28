@@ -552,7 +552,7 @@ const graphChoice = { phase: false };
 function annotateGraph({ magnitude = true, phase = graphChoice.phase } = {}) {
   for (const quantity of [...(magnitude ? ['magnitude'] : []), ...(phase ? ['phase'] : [])]) {
     const plot = graphPlot(quantity);
-    if (plot) placeResponsePlot(plot, shownTraces(), { source: 'switched-cap' });
+    if (plot) placeResponsePlot(plot, shownTraces(), { source: 'switched-cap', view: graphs?.[quantity]?.zoom() });
   }
 }
 
