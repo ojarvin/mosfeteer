@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, carryDeskPlace, floatClear, layoutAtlas, neighborTile, rectsIntersect, reshapedPlaces, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing, layoutAtlasShaped, extraShapeTries, tidyAtlas } from '../src/web/atlas-layout.js';
+import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, carryDeskPlace, floatClear, layoutAtlas, neighborTile, rectsIntersect, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing, layoutAtlasShaped, extraShapeTries } from '../src/web/atlas-layout.js';
 import { GRID } from '../src/core/grid.js';
 
 const items = [
@@ -50,38 +50,6 @@ test('a narrow window packs the ball tall, a wide one wide', () => {
   const wide = layoutAtlas(many, { aspect: 2 }).bounds;
   assert.ok(tall.h > tall.w, `tall: ${tall.w} x ${tall.h}`);
   assert.ok(wide.w > 1.3 * wide.h, `wide: ${wide.w} x ${wide.h}`);
-});
-
-test('a desk remembered at another shape fills the window, its neighbors kept', () => {
-  const wide = layoutAtlas(many, { aspect: 2 });
-  const places = reshapedPlaces(wide.slots, 0.6);
-  assert.equal(places.reshaped, true);
-  const reshaped = layoutAtlas(many, { aspect: 0.6, previous: places, keep: false });
-  assert.ok(reshaped.bounds.h > reshaped.bounds.w, `${reshaped.bounds.w} x ${reshaped.bounds.h}`);
-  // Left of and above stay so for most pairs: far more of the arrangement
-  // is kept than a fresh pack at the new shape keeps.
-  const ids = many.map((item) => item.id);
-  const kept = (before, after) => {
-    const center = (slots) => ids.map((id) => slots.get(id)).map((slot) => [slot.x + slot.w / 2, slot.y + slot.h / 2]);
-    const a = center(before);
-    const b = center(after);
-    let same = 0;
-    let pairs = 0;
-    for (let i = 0; i < a.length; i++) {
-      for (let j = i + 1; j < a.length; j++) {
-        pairs += 2;
-        if (Math.sign(a[i][0] - a[j][0]) === Math.sign(b[i][0] - b[j][0])) same += 1;
-        if (Math.sign(a[i][1] - a[j][1]) === Math.sign(b[i][1] - b[j][1])) same += 1;
-      }
-    }
-    return same / pairs;
-  };
-  const fresh = layoutAtlas(many, { aspect: 0.6 });
-  assert.ok(kept(wide.slots, reshaped.slots) >= 0.7, `kept ${kept(wide.slots, reshaped.slots)}`);
-  assert.ok(kept(wide.slots, reshaped.slots) > kept(wide.slots, fresh.slots) + 0.2, `fresh keeps ${kept(wide.slots, fresh.slots)}`);
-  // Of the window's shape already, places come back untouched.
-  assert.equal(reshapedPlaces(wide.slots, 2.1), wide.slots);
-  for (const tile of reshaped.tiles) assert.ok(tile.x % 40 === 0 && tile.y % 40 === 0);
 });
 
 test('the same designs always get the same layout', () => {
@@ -309,55 +277,4 @@ test('a fresh packing holds the shape it is shown in, kinship notwithstanding', 
   // a large workspace tries fewer shapes.
   assert.deepEqual(layoutAtlasShaped(items, { aspect: 1, related }), shaped);
   assert.deepEqual([40, 80, 120, 200].map(extraShapeTries), [3, 3, 1, 0]);
-});
-
-test('tidying keeps each design among its neighbors, never grows the desk, and moves nothing a second time', () => {
-  const items = Array.from({ length: 16 }, (_, i) => ({ id: `d${i}`, w: GRID * (6 + (i * 7) % 13), h: GRID * (5 + (i * 5) % 9), tags: [i % 3 ? 'a' : 'b'] }));
-  const first = layoutAtlas(items);
-  // Days of edits: designs grow, one is added, one goes; the desk keeps
-  // its places and gaps open up.
-  const later = [...items.filter((item) => item.id !== 'd4').map((item) => (['d1', 'd7', 'd9'].includes(item.id) ? { ...item, w: item.w + 5 * GRID, h: item.h + 3 * GRID } : item)), { id: 'new', w: 12 * GRID, h: 8 * GRID, tags: ['b'] }];
-  const kept = layoutAtlas(later, { previous: first.slots });
-  const tidy = tidyAtlas(later, { previous: kept.slots });
-  const fresh = layoutAtlas(later);
-  const ids = later.map((item) => item.id);
-  const sides = (a, b) => {
-    let same = 0;
-    let pairs = 0;
-    const center = (slot) => [slot.x + slot.w / 2, slot.y + slot.h / 2];
-    for (let i = 0; i < ids.length; i++) {
-      for (let j = i + 1; j < ids.length; j++) {
-        const [p, q, r, t] = [center(a.get(ids[i])), center(a.get(ids[j])), center(b.get(ids[i])), center(b.get(ids[j]))];
-        pairs += 2;
-        if (Math.sign(p[0] - q[0]) === Math.sign(r[0] - t[0])) same += 1;
-        if (Math.sign(p[1] - q[1]) === Math.sign(r[1] - t[1])) same += 1;
-      }
-    }
-    return same / pairs;
-  };
-  assert.ok(sides(kept.slots, tidy.slots) >= 0.9, `neighbors kept ${sides(kept.slots, tidy.slots)}`);
-  assert.ok(sides(kept.slots, tidy.slots) > sides(kept.slots, fresh.slots), `a fresh pack keeps ${sides(kept.slots, fresh.slots)}`);
-  assert.ok(tidy.bounds.w * tidy.bounds.h <= kept.bounds.w * kept.bounds.h, 'no larger');
-  for (const a of tidy.tiles) for (const b of tidy.tiles) {
-    if (a === b) continue;
-    assert.ok(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h + ATLAS_CAPTION <= b.y || b.y + b.h + ATLAS_CAPTION <= a.y, `${a.id} overlaps ${b.id}`);
-  }
-  for (const tile of tidy.tiles) assert.ok(tile.x % GRID === 0 && tile.y % GRID === 0);
-  assert.deepEqual(tidyAtlas(later, { previous: tidy.slots }).slots, tidy.slots);
-});
-
-test('tidying tucks a design left far out into a hole near the middle', () => {
-  const items = Array.from({ length: 9 }, (_, i) => ({ id: `d${i}`, w: 6 * GRID, h: 4 * GRID }));
-  const first = layoutAtlas(items);
-  // The middle design is gone and one sits far out to the right.
-  const middle = first.tiles.find((tile) => tile.x <= 0 && tile.x + tile.w >= 0 && tile.y <= 0 && tile.y + tile.h >= 0);
-  const previous = new Map(first.slots);
-  previous.delete(middle.id);
-  const far = [...previous.keys()][0];
-  previous.set(far, { ...previous.get(far), x: 60 * GRID, y: 0 });
-  const left = items.filter((item) => item.id !== middle.id);
-  const tidy = tidyAtlas(left, { previous });
-  const fresh = layoutAtlas(left);
-  assert.ok(tidy.bounds.w <= fresh.bounds.w + 7 * GRID, `${tidy.bounds.w} wide, a fresh desk ${fresh.bounds.w}`);
-  assert.deepEqual(tidyAtlas(left, { previous: tidy.slots }).slots, tidy.slots);
 });

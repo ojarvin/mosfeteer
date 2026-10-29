@@ -72,9 +72,17 @@ The desk stays put between visits: this browser remembers where each design
 of a workspace sat, and a design keeps its spot while it still fits there. A
 design that grew or shrank yields to the others (it keeps its corner, else its
 center, else moves to the nearest free spot), and a new design is placed near
-its kin. `Shift+T` tidies the desk: every design keeps its place among
-its neighbors, the desk is centered, and all slide in until none can, so
-the gaps close; tidying a tidy desk moves nothing.
+its kin. The window's size never changes the desk: it lies in its own
+shape, and fitting the view takes up the difference.
+
+`Shift+T` arranges the desk by kinship (`src/web/atlas-arrange.js`). The
+same designs with the same tags always come out the same, whatever the
+window and whatever the desk looked like before; the previous desk only
+decides which way round it lies (turned and mirrored to match), so it does
+not flip, and arranging an arranged desk moves nothing. Related designs sit
+together, each group in one piece; a design with no kin sits beside the
+designs it is most like, never on its own. A workspace with no remembered
+desk opens arranged so.
 
 With nothing picked every design lies flat at its true size, for
 comparison. A picked design lifts off the desk: it eases up onto a card
@@ -204,7 +212,7 @@ folder on the Atlas does the same. Symbols view hides both buttons.
 | Ctrl/Cmd+O | another workspace folder (browser-only: add files) |
 | `z` or Space | zoom to the picked design |
 | `f` | fit the whole workspace |
-| `Shift+T` | tidy the desk: close its gaps, every design among the same neighbors |
+| `Shift+T` | arrange the desk by kinship, the same every time |
 | `+` / `-` | zoom about the middle |
 | `Shift+D` | theme |
 | Esc | clear the pick of several, then the search, then the pick; it never leaves the Atlas (the symbol sheet it closes) |
@@ -272,23 +280,30 @@ open no design: a double-click zooms to a card, Esc returns.
   browser measures an open design's math tighter than a file's saved
   boxes, and a design that changes size gives up its place, so drawn live
   it would move the desk each time it was opened and left.
-- **Layout** (`src/web/atlas-layout.js`): the designs packed into one
-  loose ball shaped like the window's room for designs (between the top
-  bar and the hint bar; its width over height, kept between 1:3 and 3:1),
-  largest in the middle, each next in the free spot nearest the center.
-  Kinship can pull a fresh packing taller or wider than that: when it
-  misses by more than a little, a few nearby shapes are tried and the one
-  that shows largest when fitted is kept: up to three tries, fewer for
-  large workspaces, never depending on time, so the same designs pack the
-  same desk again (`layoutAtlasShaped`). Fit (`F`, `Z`) frames the designs in that same
-  room, clear of both bars (`viewFittingIn`). Remembered places stay put while the window keeps their
-  shape; opened in a window of another shape (more than 1.25 times
-  narrower or wider), the desk is packed again to fill it, each design as
-  near its remembered spot stretched to the new shape as it fits, so
-  neighbors stay neighbors (`reshapedPlaces`). `Shift+T` tidies them in place (`layoutAtlas` `tidy`). Real size means one drawing unit is one world
-  unit, and every design is shifted by whole grid cells, so its grid lines
-  continue the desk's and entering or leaving the editor does not move a
-  line.
+- **Layout** (`src/web/atlas-layout.js`): what a search found packs into
+  one loose ball shaped like the window's room for designs (between the
+  top bar and the hint bar; its width over height, kept between 1:3 and
+  3:1), largest in the middle, each next in the free spot nearest the
+  center; when kinship pulls it taller or wider than that, a few nearby
+  shapes are tried and the one that shows largest when fitted is kept, up
+  to three tries, fewer for large workspaces, never depending on time
+  (`layoutAtlasShaped`). Fit (`F`, `Z`) frames the designs in that same
+  room, clear of both bars (`viewFittingIn`). The whole desk lies in its
+  own shape (`DESK_ASPECT`, 1.6), whatever the window. Real size means
+  one drawing unit is one world unit, and every design is shifted by
+  whole grid cells, so its grid lines continue the desk's and entering or
+  leaving the editor does not move a line.
+- **Arrangement** (`src/web/atlas-arrange.js`): each pair of designs gets a
+  distance, the two side by side for close kin and longer the weaker their
+  kinship (much longer below it, where only faint likeness orders them),
+  shortened through designs between. Stress majorization (Gansner, Koren &
+  North), started from classical MDS, turns the distances into places with
+  no randomness. With a previous desk the places are turned (in 10° steps)
+  and mirrored to lie nearest it, and a desk that the same turn reproduces
+  exactly comes back as it was. They are stretched to the desk's shape and
+  scaled to about fill it, then pushed apart where they overlap (each the
+  side its place puts it) while pulled back to their places and toward the
+  middle, and laid on the grid from the middle out.
 - **Levels of detail**: one canvas paints every design from a baked image, small (256 px longest
   side) or large (1280 px), and once even the large one would blur, the live
   SVG is laid over it (at most six at a time). At most 24 large images

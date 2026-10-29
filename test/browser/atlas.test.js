@@ -515,51 +515,41 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
   });
 });
 
-describe('the Atlas desk takes the window\'s shape', { skip: browserSkip() }, () => {
+describe('the Atlas desk keeps its own shape, whatever the window', { skip: browserSkip() }, () => {
   const docs = Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`d${i}`, i % 2 ? wideAmplifier() : tagged(`T${i}`)]));
-  const spread = async (width, height) => {
+  const desk = async (h) => {
+    await h.click('#app-mark');
+    await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !!s && !s.busy && s.tiles.length === 9; })`, 15000);
+    const tiles = await h.evaluate(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot().tiles.map((t) => [t.name, t.x, t.y]))`);
+    await h.click('#app-mark');
+    await h.until(`${h.module('atlas.js')}.then((m) => !m.atlasSnapshot())`, 15000);
+    return Object.fromEntries(tiles.map(([name, x, y]) => [name, [x, y]]));
+  };
+  const fresh = async (width, height) => {
     const h = await start({ docs, width, height });
     try {
       await h.open('d0');
-      await h.click('#app-mark');
-      await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !!s && !s.busy && s.tiles.length === 9; })`, 15000);
-      const tiles = await h.evaluate(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot().tiles)`);
-      const x = Math.min(...tiles.map((t) => t.x)), y = Math.min(...tiles.map((t) => t.y));
-      return { w: Math.max(...tiles.map((t) => t.x + t.w)) - x, h: Math.max(...tiles.map((t) => t.y + t.h)) - y };
+      return await desk(h);
     } finally {
       await h.stop();
     }
   };
 
-  test('a desk remembered wide opens tall in a narrow window', async () => {
+  test('a remembered desk opens the same in a narrow window', async () => {
     const h = await start({ docs, width: 1600, height: 800 });
     try {
-      const shape = async () => {
-        await h.click('#app-mark');
-        await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !!s && !s.busy && s.tiles.length === 9; })`, 15000);
-        const tiles = await h.evaluate(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot().tiles)`);
-        await h.click('#app-mark');
-        await h.until(`${h.module('atlas.js')}.then((m) => !m.atlasSnapshot())`, 15000);
-        const x = Math.min(...tiles.map((t) => t.x)), y = Math.min(...tiles.map((t) => t.y));
-        return { w: Math.max(...tiles.map((t) => t.x + t.w)) - x, h: Math.max(...tiles.map((t) => t.y + t.h)) - y };
-      };
       await h.open('d0');
-      const wide = await shape();
-      assert.ok(wide.w > wide.h, `wide ${JSON.stringify(wide)}`);
+      const wide = await desk(h);
       await h.send('Emulation.setDeviceMetricsOverride', { width: 700, height: 1200, deviceScaleFactor: 1, mobile: false });
       await h.settle();
-      const narrow = await shape();
-      assert.ok(narrow.h > narrow.w, `narrow ${JSON.stringify(narrow)}`);
+      assert.deepEqual(await desk(h), wide);
     } finally {
       await h.stop();
     }
   });
 
-  test('a narrow window packs a fresh desk tall, a wide one wide', async () => {
-    const narrow = await spread(700, 1200);
-    const wide = await spread(1600, 800);
-    assert.ok(narrow.h / narrow.w > wide.h / wide.w, `narrow ${JSON.stringify(narrow)}, wide ${JSON.stringify(wide)}`);
-    assert.ok(narrow.h > narrow.w, `narrow ${JSON.stringify(narrow)}`);
+  test('a fresh desk is the same in a narrow window and a wide one', async () => {
+    assert.deepEqual(await fresh(700, 1200), await fresh(1600, 800));
   });
 });
 

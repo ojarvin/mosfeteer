@@ -26,7 +26,8 @@ import { GRID } from '../core/grid.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { relatednessOf } from '../core/design-related.js';
 import { linkArrow, linkCurve, linkDepths, linkGraph } from '../core/design-links.js';
-import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, layoutAtlasShaped, tidyAtlas, neighborTile, rectsIntersect, reshapedPlaces, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing } from './atlas-layout.js';
+import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, layoutAtlasShaped, neighborTile, rectsIntersect, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing } from './atlas-layout.js';
+import { DESK_ASPECT, arrangeAtlas } from './atlas-arrange.js';
 import { INDEX_CACHE, bakeTiles, cacheGet, cachePut, renderingKey, trimCache } from './atlas-cache.js';
 import { easeOutCubic, wheelIntent, lerpView } from './gestures.js';
 import { editor } from './editor-state.js';
@@ -235,8 +236,13 @@ const cellCeil = (value) => Math.ceil(value / GRID) * GRID;
 
 /** Pack the designs by the whole grid cells they cover, then shift each
  *  drawing by whole cells into its slot: its grid lines continue the desk's.
- *  A tile is the drawing's rectangle on the desk. */
-function placeDrawings(entries, previous = null, { tidy = false } = {}) {
+ *  A tile is the drawing's rectangle on the desk.
+ *
+ *  The whole workspace (`desk`) lies in the desk's own shape, whatever the
+ *  window: remembered places stay as they were, and with none -- or for
+ *  Shift+T (`arrange`) -- it is arranged by kinship (atlas-arrange.js).
+ *  Anything else (what a search found, a sheet) packs to the window. */
+function placeDrawings(entries, previous = null, { desk = false, arrange = false } = {}) {
   const cells = new Map(entries.map((entry) => {
     const x = cellFloor(entry.box.x);
     const y = cellFloor(entry.box.y);
@@ -247,19 +253,18 @@ function placeDrawings(entries, previous = null, { tidy = false } = {}) {
   const idsByName = new Map(entries.map((entry) => [entry.name, entry.id]));
   const linksOf = (entry) => (entry.index?.links || []).map((name) => idsByName.get(name)).filter(Boolean);
   const related = relatednessOf(entries.map((entry) => ({ id: entry.id, name: entry.name, dir: entry.dir, tags: entry.index?.tags || [], index: entry.index, links: linksOf(entry) })));
-  // The ball takes the shape of the window's room for designs (between the
-  // top bar and the hint bar): a narrow window packs tall.
-  const pane = paneSize();
-  const { top, bottom } = chromeInsets();
-  const aspect = Math.min(3, Math.max(1 / 3, pane.w / (pane.h - top - bottom) || 1.6));
-  // Remembered places keep the arrangement, stretched to the window if it
-  // is another shape now (narrower, wider) than when they were packed. A
-  // fresh packing holds the shape, kinship's pull notwithstanding.
-  const places = reshapedPlaces(previous, aspect);
-  const keep = !places?.reshaped;
   const items = entries.map((entry) => ({ id: entry.id, w: cells.get(entry.id).w, h: cells.get(entry.id).h }));
-  const options = { previous: places, keep, related, aspect };
-  const layout = tidy ? tidyAtlas(items, options) : places && keep ? layoutAtlas(items, options) : layoutAtlasShaped(items, options);
+  let layout;
+  if (desk && (arrange || !previous?.size)) layout = arrangeAtlas(items, { related, previous, aspect: DESK_ASPECT });
+  else if (desk) layout = layoutAtlas(items, { previous, related, aspect: DESK_ASPECT });
+  else {
+    // The window's room for designs (between the top bar and the hint
+    // bar): a narrow window packs tall.
+    const pane = paneSize();
+    const { top, bottom } = chromeInsets();
+    const aspect = Math.min(3, Math.max(1 / 3, pane.w / (pane.h - top - bottom) || 1.6));
+    layout = layoutAtlasShaped(items, { related, aspect });
+  }
   const tiles = layout.tiles.map((slot) => {
     const box = boxes.get(slot.id);
     const cell = cells.get(slot.id);
@@ -1729,7 +1734,7 @@ function arrangeDesk({ animate = true } = {}) {
   // packs tight.
   const whole = state.source === 'workspace' && !state.matches;
   if (!layout) {
-    layout = placeDrawings(shown.map((id) => state.entries.get(id)), whole ? rememberedSlots(state.folder) : null);
+    layout = placeDrawings(shown.map((id) => state.entries.get(id)), whole ? rememberedSlots(state.folder) : null, { desk: whole });
     if (state.layouts.size >= 16) state.layouts.delete(state.layouts.keys().next().value);
   }
   if (whole) rememberSlots(state.folder, layout.slots);
@@ -1751,21 +1756,21 @@ function arrangeDesk({ animate = true } = {}) {
   void animateView(clampView(fitAllView()), ARRANGE_MS);
 }
 
-/** Shift+T: tidy the whole desk. Every design keeps its place among its
- *  neighbors, and all slide in to close the gaps. */
-function tidyDesk() {
+/** Shift+T: arrange the whole desk by kinship (atlas-arrange.js): the same
+ *  designs always the same way, mirrored as the desk lay. */
+function arrangeWholeDesk() {
   if (!state) return;
   if (state.matches) clearSearch();
   arrangePending();
   const ids = [...state.entries.keys()];
   const key = [...ids].sort().join('\n');
   const current = state.arranged === key ? state.layouts.get(key)?.slots : null;
-  const layout = placeDrawings(ids.map((id) => state.entries.get(id)), current || rememberedSlots(state.folder), { tidy: true });
+  const layout = placeDrawings(ids.map((id) => state.entries.get(id)), current || rememberedSlots(state.folder), { desk: true, arrange: true });
   state.layouts.clear();
   state.layouts.set(key, layout);
   state.arranged = null;
   arrangeDesk({ animate: true });
-  logLine('Atlas: tidied the desk');
+  logLine('Atlas: arranged the desk by kinship');
 }
 
 /** Search keys that act on what was found pack the desk first. */
@@ -3394,7 +3399,7 @@ export function onAtlasKey(ev) {
   else if (key === 'Delete' && selected && state.source === 'workspace') void deletePicked();
   else if ((key === 'z' || key === ' ') && selected) focusTile(selected, { zoom: true });
   else if (key === 'f' || key === 'F') void animateView(clampView(fitAllView()));
-  else if (key === 'T' && state.source === 'workspace') tidyDesk();
+  else if (key === 'T' && state.source === 'workspace') arrangeWholeDesk();
   else if (key === 'L' && state.source === 'workspace') toggleList();
   else if (key === 'l' && state.source === 'workspace') toggleLinks();
   else if (key === '+' || key === '=') zoomAbout(1 / 1.5, centerOf().x, centerOf().y);
