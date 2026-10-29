@@ -33,10 +33,29 @@ significant, so the rows count up in binary.
 The state transition table has the present state (each flip-flop's and
 latch's Q) and the inputs on the left, the next state (Q⁺) and the outputs
 on the right; the outputs are read in the present state (Mealy outputs
-included). The flip-flops share one clock: an input that takes no column,
-named under the table with its edge. A latch's next state is what it holds
-once its enable has been and gone (Q⁺ = EN·L + EN̄·Q). A reset (`RST`,
-active-low `RSTB`) forces the state, and Q, to 0.
+included).
+
+**The clock** is one input: the flip-flops' clock net nothing drives, else
+the one input that reaches them only through gates (a gated clock), else
+the one chosen -- `analyze logic --clock NET`, or **Clock** in the window
+(saved with the design as `analysisValues.logic.clock`), offered when
+several inputs could be it. It takes no column, and may reach nothing but
+clock pins (through gates). The other flip-flops may be clocked from it
+through logic: a ripple counter's stages each clocked by the stage before.
+
+**A row is one period of the clock**: it rises, then falls, and after each
+edge every flip-flop whose clock just had its edge (rising, or falling for
+`CLKB`) takes its D, all together, until no more edges ripple through.
+Delays are zero, so a clock through logic has clean edges: the table says
+so (glitch-free) whenever a flip-flop is clocked through logic. With every
+flip-flop on the clock itself and one edge, the table says "On each rising
+(falling) edge"; otherwise "After each period", rippling when stages clock
+others. A ripple counter's passing states are not rows: the table shows
+where each period settles.
+
+A latch's next state is what it holds once its enable has been and gone
+(Q⁺ = EN·L + EN̄·Q). A reset (`RST`, active-low `RSTB`) forces the state,
+and Q, to 0.
 
 ## What it refuses
 
@@ -47,8 +66,10 @@ It says why rather than guessing:
 - two drivers on one signal, unless all are tri-state; a signal tied to
   both rails, or to a rail and driven;
 - a part that is not logic (or a port, rail, or junction) on a logic signal;
-- flip-flops on more than one clock, or on both edges of one; a clock that
-  comes from logic, or also feeds anything but clock pins;
+- more than one clock input wired to the flip-flops; a clock left open with
+  none chosen (it names the choices); no flip-flop clocked from an input;
+  a clock that reaches anything but clock pins (an output, a data pin, a
+  latch); flip-flops that clock themselves or each other (they would race);
 - more than 12 inputs and states together (4096 rows).
 
 ## Expressions and annotations

@@ -11,15 +11,20 @@
  *
  * Flip-flops and latches make it sequential: a state transition table, its
  * present state (each element's Q) and inputs on the left, the next state
- * (Q⁺) and outputs on the right, with each next state as an equation. The
- * flip-flops share one clock, an input of its own that takes no column; a
- * latch's next state is what it holds once its enable has been and gone
+ * (Q⁺) and outputs on the right, with each next state as an equation. One
+ * input clocks the flip-flops, takes no column, and reaches only clock pins
+ * (through gates, if gated); the others may be clocked from it through
+ * logic, as a ripple counter's stages are. A row is one period of it: it
+ * rises, then falls, and after each edge every flip-flop whose clock just
+ * had its edge takes its D, all together, until no more edges ripple
+ * through (zero delays: clocks are taken as glitch-free). A latch's next
+ * state is what it holds once its enable has been and gone
  * (Q⁺ = EN·L + EN̄·Q). A reset forces the state to 0.
  *
  * It refuses rather than guesses: a loop through gates with no flip-flop or
  * latch in it, two drivers on one signal (unless tri-state), a part that is
- * not logic on a logic signal, flip-flops on more than one clock or edge, a
- * clock that also feeds logic or comes from it.
+ * not logic on a logic signal, more than one clock input, a clock that
+ * reaches anything but clock pins, flip-flops that clock each other.
  */
 
 import { analyzedCircuit, canonicalNetName } from '../model.js';
@@ -89,15 +94,19 @@ export function logicNameTex(name) {
 }
 
 /**
- * Analyze the logic of `circuit`. Returns `{ ok: false, error }`, or
- * `{ ok: true, sequential, inputs, outputs, states, clock, rows,
- * expressions }`: `inputs`, `outputs`, `states` are `{ key, name }` (a
+ * Analyze the logic of `circuit`, clocked from `options.clock` (a signal's
+ * name) where the drawing leaves the clock open. Returns `{ ok: false,
+ * error, clockChoices? }`, or
+ * `{ ok: true, sequential, inputs, outputs, states, clock, clockChoices,
+ * rows, expressions }`: `clock` is `{ name, edges, ripple, gated, text }`, and
+ * `clockChoices` the inputs it could be; `inputs`, `outputs`, `states` are
+ * `{ key, name }` (a
  * state's `next` is its Q⁺ name), `rows` each `{ inputs, states, next,
  * outputs }` of 0, 1, 'Z', 'X' in that order, and `expressions` one
  * `{ name, tex, sop }` per next state and output (`tex` null for an output
  * that can be Z or X).
  */
-export function analyzeLogic(source) {
+export function analyzeLogic(source, options = {}) {
   const circuit = analyzedCircuit(source);
   const signals = new Map(); // key -> { key, name, drivers: [], readers: [], ports: Set, constant }
   const signalOf = (key, name) => {
@@ -170,17 +179,44 @@ export function analyzeLogic(source) {
     if (signal.drivers.length && signal.ports.has('input')) return { ok: false, error: `${signal.name} is an input port and is driven by ${signal.drivers[0].component.refdes}.${signal.drivers[0].pin}.` };
   }
 
-  // The clock: every flip-flop's, one input on one edge.
+  // The clock: the one input among the flip-flops' clocks, else the one
+  // input that reaches them through gates (a gated clock), or the one
+  // chosen (`options.clock`). The rest come from logic -- a stage clocked
+  // by another's output.
   const flipFlops = sequential.filter((e) => !e.latch);
   let clock = null;
+  let clockChoices = [];
+  let rippled = false;
   if (flipFlops.length) {
-    const clocks = new Set(flipFlops.map((e) => e.signals[e.clock]));
-    if (clocks.size > 1) return { ok: false, error: `The flip-flops are on ${clocks.size} clocks (${[...clocks].map((s) => s.name).join(', ')}): the analysis takes one.` };
-    clock = [...clocks][0];
-    if (new Set(flipFlops.map((e) => e.falling)).size > 1) return { ok: false, error: `The flip-flops on ${clock.name} trigger on both edges: the analysis takes one.` };
-    if (clock.drivers.length || clock.constant !== null) return { ok: false, error: `The clock ${clock.name} comes from logic: clock the flip-flops from an input.` };
-    const other = clock.readers.find((r) => !r.clock);
-    if (other) return { ok: false, error: `The clock ${clock.name} also feeds ${other.component.refdes}.${other.pin}: the analysis takes a clock that only clocks.` };
+    const clocks = [...new Set(flipFlops.map((e) => e.signals[e.clock]))];
+    const railed = clocks.find((signal) => signal.constant !== null);
+    if (railed) return { ok: false, error: `The clock ${railed.name} is tied to ${railed.constant ? 'the supply' : 'ground'}.` };
+    const direct = clocks.filter((signal) => !signal.drivers.length);
+    if (direct.length > 1) return { ok: false, error: `The flip-flops are on ${direct.length} clock inputs (${direct.map((signal) => signal.name).join(', ')}): the analysis takes one, the rest clocked from it.` };
+    // Inputs whose way through gates ends at clock pins only.
+    const gateOf = new Map(gates.map((gate) => [gate.component, gate]));
+    const clocksOnly = (start) => {
+      const reached = new Set([start]);
+      let any = false;
+      for (const signal of reached) {
+        for (const reader of signal.readers) {
+          if (reader.clock) { any = true; continue; }
+          const gate = gateOf.get(reader.component);
+          if (!gate) return false;
+          reached.add(gate.output);
+        }
+      }
+      return any;
+    };
+    clockChoices = direct.length ? direct : [...signals.values()]
+      .filter((signal) => !signal.drivers.length && signal.constant === null && signal.readers.length && clocksOnly(signal))
+      .sort((a, b) => natural(a.name, b.name));
+    if (options.clock) {
+      clock = [...signals.values()].find((signal) => signal.name === options.clock && !signal.drivers.length && signal.constant === null) || null;
+      if (!clock) return { ok: false, error: `${options.clock} is not an input to clock from.`, clockChoices: clockChoices.map((signal) => signal.name) };
+    } else if (clockChoices.length > 1) {
+      return { ok: false, error: `The clock could be ${clockChoices.map((signal) => signal.name).join(' or ')}: pick it.`, clockChoices: clockChoices.map((signal) => signal.name) };
+    } else clock = clockChoices[0] || null;
   }
 
   // Inputs: what nothing drives (bar the clock and the rails); outputs: the
@@ -227,12 +263,59 @@ export function analyzeLogic(source) {
 
   if (!outputs.length && !states.length) return { ok: false, error: 'The logic has no output: add an output port, or leave a gate\'s output unwired.' };
 
-  // Every signal's value for one row: inputs and states set, the rest
-  // worked out gate by gate.
-  const evaluate = (inputValues, stateValues) => {
+  // The clock reaches clock pins only, through gates if it is gated: an
+  // output or a data pin it reached would have no value between periods.
+  if (flipFlops.length) {
+    if (!clock) return { ok: false, error: 'No flip-flop is clocked from an input: clock one from an input, the others from it or from each other.' };
+    const reached = new Set([clock]);
+    for (const signal of reached) {
+      if (signal !== clock && outputs.includes(signal)) return { ok: false, error: `The clock ${clock.name} reaches the output ${signal.name}: the analysis takes a clock that only clocks.` };
+      for (const reader of signal.readers) {
+        if (reader.clock) continue;
+        const gate = gates.find((g) => g.component === reader.component);
+        if (!gate) return { ok: false, error: `The clock ${clock.name} reaches ${reader.component.refdes}.${reader.pin}, not a clock pin: the analysis takes a clock that only clocks.` };
+        reached.add(gate.output);
+      }
+    }
+    // Who clocks whom: a flip-flop whose clock depends on its own output
+    // (directly or through others) would race.
+    const depends = new Map();
+    for (const e of flipFlops) for (const pin of ['Q', 'QB']) if (e.signals[pin]) depends.set(e.signals[pin], new Set([e]));
+    for (const gate of order) {
+      const all = new Set(depends.get(gate.output) || []);
+      for (const signal of gate.inputs.values()) for (const e of depends.get(signal) || []) all.add(e);
+      depends.set(gate.output, all);
+    }
+    const clockedBy = new Map(flipFlops.map((e) => [e, [...(depends.get(e.signals[e.clock]) || [])]]));
+    rippled = flipFlops.some((e) => clockedBy.get(e).length);
+    const mark = new Map();
+    const race = (e, path) => {
+      if (mark.get(e) === 'done') return null;
+      if (mark.get(e) === 'open') return path.slice(path.indexOf(e));
+      mark.set(e, 'open');
+      for (const before of clockedBy.get(e)) {
+        const found = race(before, [...path, e]);
+        if (found) return found;
+      }
+      mark.set(e, 'done');
+      return null;
+    };
+    for (const e of flipFlops) {
+      const loop = race(e, []);
+      if (loop) {
+        const names = loop.map((x) => x.component.refdes);
+        return { ok: false, error: names.length === 1 ? `${names[0]} clocks itself: it would race.` : `${names.join(', ')} clock each other: they would race.` };
+      }
+    }
+  }
+
+  // Every signal's value with the inputs and the states set, and the clock
+  // at `clockValue`, worked out gate by gate.
+  const settle = (inputValues, stateValues, clockValue = 0) => {
     const value = new Map();
     for (const signal of signals.values()) if (signal.constant !== null) value.set(signal, signal.constant);
     inputs.forEach((signal, i) => value.set(signal, inputValues[i]));
+    if (clock) value.set(clock, clockValue);
     const resetOf = (e) => {
       if (!e.reset) return 0;
       const r = value.get(e.signals[e.reset]);
@@ -271,20 +354,59 @@ export function analyzeLogic(source) {
     }
     for (const signal of signals.values()) delete signal.drivenBy;
     setStates();
-    const next = states.map(({ element }, i) => {
-      const r = resetOf(element);
-      if (r === 1) return 0;
-      const d = read(element.signals[element.data]);
-      let q;
-      if (!element.latch) q = known(d);
-      else {
-        const en = read(element.signals[element.clock]);
-        const enabled = element.falling ? not(en) : known(en);
-        q = enabled === 1 ? known(d) : enabled === 0 ? stateValues[i] : (known(d) === stateValues[i] ? stateValues[i] : 'X');
-      }
-      return r === 0 ? q : (q === 0 ? 0 : 'X');
+    return { read, resetOf };
+  };
+
+  // A row: the outputs in the present state; a latch's next state what it
+  // holds once its enable has gone; the flip-flops' after one period of the
+  // clock -- it rises, then falls, and after each edge every flip-flop
+  // whose clock just had its edge takes its D, together, until no more
+  // edges ripple through.
+  const evaluate = (inputValues, stateValues) => {
+    const present = settle(inputValues, stateValues, 0);
+    const next = [...stateValues];
+    states.forEach(({ element }, i) => {
+      if (!element.latch) return;
+      const r = present.resetOf(element);
+      const d = present.read(element.signals[element.data]);
+      const en = present.read(element.signals[element.clock]);
+      const enabled = element.falling ? not(en) : known(en);
+      const q = enabled === 1 ? known(d) : enabled === 0 ? stateValues[i] : (known(d) === stateValues[i] ? stateValues[i] : 'X');
+      next[i] = r === 1 ? 0 : r === 0 ? q : (q === 0 ? 0 : 'X');
     });
-    return { next, outputs: outputs.map((signal) => read(signal)) };
+    if (flipFlops.length) {
+      const state = [...stateValues];
+      let before = present;
+      for (const level of [1, 0]) {
+        let now = settle(inputValues, state, level);
+        for (let round = 0; round <= flipFlops.length; round += 1) {
+          const taken = [];
+          states.forEach(({ element }, i) => {
+            if (element.latch) return;
+            const signal = element.signals[element.clock];
+            const [a, b] = [before.read(signal), now.read(signal)];
+            if (a === b) return;
+            const edge = element.falling ? a === 1 && b === 0 : a === 0 && b === 1;
+            const unknown = a === 'X' || b === 'X' || a === 'Z' || b === 'Z';
+            if (!edge && !unknown) return;
+            const d = known(now.read(element.signals.D));
+            taken.push([i, edge ? d : d === state[i] ? d : 'X']);
+          });
+          if (!taken.length) break;
+          for (const [i, q] of taken) state[i] = q;
+          before = now;
+          now = settle(inputValues, state, level);
+        }
+        before = now;
+      }
+      states.forEach(({ element }, i) => {
+        if (element.latch) return;
+        // A reset holds the state at 0 whatever the clock did.
+        const r = before.resetOf(element);
+        next[i] = r === 1 ? 0 : r === 0 ? state[i] : (state[i] === 0 ? 0 : 'X');
+      });
+    }
+    return { next, outputs: outputs.map((signal) => present.read(signal)) };
   };
 
   const width = states.length + inputs.length;
@@ -309,10 +431,27 @@ export function analyzeLogic(source) {
     inputs: inputs.map((s) => ({ key: s.key, name: s.name })),
     outputs: outputs.map((s) => ({ key: s.key, name: s.name })),
     states: states.map((s) => ({ ref: s.element.component.refdes, name: s.name, next: nextName(s.name), latch: s.element.latch })),
-    clock: clock ? { name: clock.name, falling: flipFlops[0].falling } : null,
+    clock: clock ? clockOf(clock, flipFlops, rippled) : null,
+    clockChoices: clockChoices.map((signal) => signal.name),
     rows,
     expressions,
   };
+}
+
+/** The clock as the table names it: its edges (the flip-flops on it
+ *  directly; one through gates may see either), whether others are
+ *  clocked from flip-flops (a ripple) or through any logic (gated), and
+ *  the sentence that says what a row is. */
+function clockOf(clock, flipFlops, ripple) {
+  const direct = flipFlops.filter((e) => e.signals[e.clock] === clock);
+  const edges = new Set(direct.map((e) => (e.falling ? 'falling' : 'rising')));
+  const which = edges.size > 1 || direct.length < flipFlops.length ? 'both' : [...edges][0];
+  const text = which !== 'both'
+    ? `On each ${which} edge of ${clock.name}`
+    : `After each period of ${clock.name}, its rising edge then its falling edge${ripple ? ', the flip-flops clocked from others rippling through until they settle' : ''}`;
+  // Clocked through logic, a flip-flop sees clean edges here, as with no delays.
+  const gated = direct.length < flipFlops.length;
+  return { name: clock.name, edges: which, ripple, gated, text };
 }
 
 /**

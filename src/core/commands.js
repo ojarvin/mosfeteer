@@ -69,6 +69,7 @@ const FLAG_ARITY = {
   comment: 1,
   reference: 1,
   'device-region': 1,
+  clock: 1,
   'ac-ground': 1,
   'ignore-channel-length-modulation': 0,
   'ignore-body-effect': 0,
@@ -549,8 +550,9 @@ export function commandHelp() {
     '  analyze model NET [options]    - place the small-signal model, its output at NET, below the drawing as drawing-only parts',
     '  analyze loop-gain AT [options] - the loop gain broken at AT: an opamp (U1), a terminal (M2.g), the net that closes',
     '                                   the loop (V_{out}), or "V_{fb} to V_{inn}" when the loop is not drawn closed',
-    '  analyze logic                  - the truth table of the gates, muxes, tri-states, flip-flops, and latches (a state table',
-    '                                   with them), and each output (and next state) as a minimized sum of products',
+    '  analyze logic [--clock NET]    - the truth table of the gates, muxes, tri-states, flip-flops, and latches (a state table',
+    '                                   with them), and each output (and next state) as a minimized sum of products;',
+    '                                   --clock picks the clock input where the drawing leaves it open (a gated clock)',
     '  analyze signal-flow --output NET --input PORT,... [--zero PORT,...] [--const PORT=VALUE,...]',
     '                                 - transfer functions of a block diagram (tf_s/tf_z blocks, sum and multiply junctions):',
     '                                   one per input port to the output; the other sources are zero or constant',
@@ -698,8 +700,8 @@ function dispatch(circuit, cmd, pos, flags, io) {
     return result(lines.join('\n'), { variable: report.variable, output: report.output, entries: report.entries.map(({ value, ...entry }) => entry) });
   }
   if ((cmd === 'analyze' || cmd === 'analysis') && pos[0] === 'logic') {
-    if (pos.length > 1) throw new Error('usage: analyze logic');
-    const report = analyzeLogic(circuit);
+    if (pos.length > 1) throw new Error('usage: analyze logic [--clock NET]');
+    const report = analyzeLogic(circuit, { clock: flags.clock?.[0] });
     if (!report.ok) throw new Error(report.error);
     // The table as text: inputs (state first) | next state, outputs.
     const left = [...report.states.map((st) => st.name), ...report.inputs.map((input) => input.name)];
@@ -709,7 +711,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const lines = [
       `${cells(left, 0)} | ${cells(right, left.length)}`,
       ...report.rows.map((row) => `${cells([...row.states, ...row.inputs], 0)} | ${cells([...row.next, ...row.outputs], left.length)}`),
-      ...(report.clock ? [`clocked by ${report.clock.name} (${report.clock.falling ? 'falling' : 'rising'} edge)`] : []),
+      ...(report.clock ? [`${report.clock.text}${report.clock.gated ? '; clocks taken as glitch-free' : ''}`] : []),
       ...report.expressions.map((expression) => `${expression.name} = ${expression.tex ?? '(Z or X in places)'}`),
     ];
     return result(lines.join('\n'), { sequential: report.sequential, inputs: report.inputs, outputs: report.outputs, states: report.states, clock: report.clock, rows: report.rows, expressions: report.expressions });

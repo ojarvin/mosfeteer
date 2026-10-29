@@ -1186,7 +1186,9 @@ function normalizeAnalysisValues(value) {
       if (Object.keys(calcValues).length || calc.celsius || calc.fs) sc.calc = calc;
     }
   }
-  return { coefficients, bode, links, ...(Object.keys(fractions).length ? { fractions } : {}), ...(sAxis ? { sAxis } : {}), ...(band ? { band } : {}), ...(flow ? { flow } : {}), ...(sc ? { sc } : {}) };
+  // The logic mode's settings: the clock input, where the drawing leaves it open.
+  const logic = value?.logic && typeof value.logic === 'object' && text(value.logic.clock) ? { clock: text(value.logic.clock) } : null;
+  return { coefficients, bode, links, ...(Object.keys(fractions).length ? { fractions } : {}), ...(sAxis ? { sAxis } : {}), ...(band ? { band } : {}), ...(flow ? { flow } : {}), ...(sc ? { sc } : {}), ...(logic ? { logic } : {}) };
 }
 
 /** Names as notes' mentions compare them (notes.js). */
@@ -1204,7 +1206,8 @@ function analysisValuesJSON(values) {
   const band = normalizeBand(values?.band);
   const flow = values?.flow && (values.flow.output || Object.keys(values.flow.sources || {}).length || values.flow.swingInput || values.flow.swingFrequency || values.flow.graphView || values.flow.spectrum || values.flow.optimize) ? values.flow : null;
   const sc = values?.sc && (values.sc.input || values.sc.output || values.sc.readout || Object.keys(values.sc.values || {}).length || values.sc.noise || values.sc.calc) ? values.sc : null;
-  if (!Object.keys(coefficients).length && !hasBode && !sAxis && !Object.keys(links).length && !band && !flow && !sc) return {};
+  const logic = values?.logic?.clock ? { clock: values.logic.clock } : null;
+  if (!Object.keys(coefficients).length && !hasBode && !sAxis && !Object.keys(links).length && !band && !flow && !sc && !logic) return {};
   const fractionList = Object.entries(fractions).filter(([name, text]) => Number.isFinite(coefficients[name]) && typeof text === 'string');
   return { analysisValues: {
     ...(Object.keys(coefficients).length ? { coefficients: { ...coefficients } } : {}),
@@ -1215,6 +1218,7 @@ function analysisValuesJSON(values) {
     ...(sc ? { sc: { ...sc, values: { ...sc.values }, ...(sc.calc ? { calc: { ...sc.calc, values: { ...sc.calc.values } } } : {}) } } : {}),
     ...(hasBode ? { bode: { ...bode, multipliers: { ...bode.multipliers } } } : {}),
     ...(sAxis ? { sAxis: 'normalized' } : {}),
+    ...(logic ? { logic } : {}),
   } };
 }
 

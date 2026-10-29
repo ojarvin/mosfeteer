@@ -2,16 +2,18 @@
  * The analysis window's logic mode: a drawing of gates, multiplexers,
  * tri-states, flip-flops, and latches as its truth table -- a state
  * transition table with flip-flops or latches -- and each output and next
- * state as a minimized sum of products (core/analysis/logic.js). Nothing to
- * set: the inputs and outputs are found in the drawing, listed before
- * Derive. Annotate puts the table, or the equations, on the drawing.
+ * state as a minimized sum of products (core/analysis/logic.js). The
+ * inputs and outputs are found in the drawing, listed before Derive; only
+ * a clock the drawing leaves open (a gated clock) is chosen here, and
+ * saved with the design. Annotate puts the table, or the equations, on the
+ * drawing.
  */
 
 import { analyzeLogic, logicNameTex } from '../core/analysis/logic.js';
 import { texToMathML } from '../core/render.js';
 import { registerAnalysisMode } from './signal-flow-ui.js';
 import { editor } from './editor-state.js';
-import { onDocumentShown } from './main.js';
+import { markSettingsChanged, onDocumentShown } from './main.js';
 import { logLine } from './status-bar-ui.js';
 import { element as el } from './dom.js';
 import { annotateMathFigure } from './figure-annotate.js';
@@ -27,6 +29,18 @@ const ANALOG_TYPES = /^(nmos|pmos|nmosb|pmosb|npn|pnp|resistor|capacitor|inducto
 
 let section = null;
 let latest = null; // { revision, result }
+
+// The clock input, where the drawing leaves it open: saved with the design
+// (analysisValues.logic) once chosen.
+const chosenClock = () => editor.circuit.analysisValues.logic?.clock || undefined;
+function chooseClock(name) {
+  editor.circuit.analysisValues.logic = name ? { clock: name } : undefined;
+  if (!name) delete editor.circuit.analysisValues.logic;
+  markSettingsChanged();
+  renderSignals();
+  if (latest) derive();
+}
+const analyzed = () => analyzeLogic(editor.circuit, { clock: chosenClock() });
 
 /** A drawing the mode suits: logic parts and nothing analog. */
 function suggested(circuit) {
@@ -52,9 +66,18 @@ function columnsOf(result) {
 /** What the drawing gives: its inputs, outputs, state, and clock. */
 function renderSignals() {
   const host = section.querySelector('.logic-signals');
-  const result = analyzeLogic(editor.circuit);
+  const result = analyzed();
+  // Where the drawing leaves the clock open (a gated clock): a choice.
+  const choices = result.clockChoices || [];
+  const picker = choices.length > 1 || chosenClock() ? [el('div', { class: 'signal-flow-source' }, [
+    el('label', { for: 'logic-clock', class: 'signal-flow-source-name', text: 'Clock' }),
+    el('select', { id: 'logic-clock', onchange: (ev) => chooseClock(ev.target.value) }, [
+      el('option', { value: '', text: choices.length > 1 ? 'pick the clock' : 'found in the drawing' }),
+      ...[...new Set([...choices, ...(chosenClock() ? [chosenClock()] : [])])].map((name) => el('option', { value: name, text: name, selected: name === chosenClock() })),
+    ]),
+  ])] : [];
   if (!result.ok) {
-    host.replaceChildren(el('p', { class: 'field-hint', text: result.error }));
+    host.replaceChildren(...picker, el('p', { class: 'field-hint', text: result.error }));
     return;
   }
   const list = (label, names) => el('div', { class: 'logic-signal-row' }, [
@@ -65,13 +88,13 @@ function renderSignals() {
     list('Inputs', result.inputs.map((input) => input.name)),
     list('Outputs', result.outputs.map((output) => output.name)),
     ...(result.states.length ? [list('State', result.states.map((state) => state.name))] : []),
-    ...(result.clock ? [list('Clock', [`${result.clock.name}`])] : []),
+    ...(picker.length ? picker : result.clock ? [list('Clock', [`${result.clock.name}`])] : []),
     el('p', { class: 'field-hint', text: 'Input and output ports, and pins wired to nothing: an unwired input is an input, an unwired output an output.' }),
   );
 }
 
 function derive() {
-  const result = analyzeLogic(editor.circuit);
+  const result = analyzed();
   latest = { revision: editor.modelRevision, result };
   renderResult();
   if (!result.ok) logLine(`Logic analysis: ${result.error}`, 'error');
@@ -97,7 +120,7 @@ function renderResult() {
     ...[...row.next, ...row.outputs].map((v, i) => el('td', { class: `${i === 0 ? 'logic-first-out' : ''} ${v === 1 ? 'logic-high' : ''}`.trim() || undefined, text: String(v) })),
   ]));
   const title = result.sequential ? 'State transition table' : 'Truth table';
-  const clock = result.clock ? `On each ${result.clock.falling ? 'falling' : 'rising'} edge of ${result.clock.name}; ` : '';
+  const clock = result.clock ? `${result.clock.text}${result.clock.gated ? ' (clocks taken as glitch-free)' : ''}; ` : '';
   const latches = result.states.some((state) => state.latch) ? 'a latch\'s next state is what it holds once its enable has gone; ' : '';
   host.replaceChildren(
     el('h3', { class: 'logic-title', text: title }),

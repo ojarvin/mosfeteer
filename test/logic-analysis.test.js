@@ -72,7 +72,7 @@ test('a flip-flop makes a state table: the clock takes no column, the next state
   assert.equal(result.sequential, true);
   assert.deepEqual(result.inputs.map((s) => s.name), ['T']);
   assert.deepEqual(result.states.map((s) => [s.name, s.next]), [['Q', 'Q^{+}']]);
-  assert.deepEqual(result.clock, { name: 'CLK', falling: false });
+  assert.deepEqual(result.clock, { name: 'CLK', edges: 'rising', ripple: false, gated: false, text: 'On each rising edge of CLK' });
   assert.deepEqual(result.outputs, [], 'Q is the state, not an output too');
   assert.deepEqual(table(result), ['00|0', '01|1', '10|1', '11|0']);
   assert.equal(equations(result)['Q^{+}'], 'Q \\cdot \\overline{T} + \\overline{Q} \\cdot T');
@@ -87,15 +87,53 @@ test('a latch holds while its enable is low; an active-low reset forces 0', () =
   assert.equal(equations(reset)['\\text{U1.Q}^{+}'], 'D \\cdot \\mathrm{RSTB}');
 });
 
-test('it refuses what it cannot read: a gate loop, two drivers, an analog part, two clocks, a clock from logic or into it', () => {
+test('it refuses what it cannot read: a gate loop, two drivers, an analog part, two clock inputs, a clock into logic, flip-flops clocking each other', () => {
   const error = (lines) => analyzeLogic(build(lines)).error || '';
   assert.match(error(['add nand2_gate U1 --at 0 0', 'add nand2_gate U2 --at 600 400', 'connect U1.y U2.a', 'connect U2.y U1.b']), /loop runs through U1, U2|loop runs through U2, U1/);
   assert.match(error(['add inverter U1 --at 0 -200', 'add inverter U2 --at 0 200', 'add output Y --at 400 0', 'connect U1.y Y.p', 'connect U2.y Y.p']), /driven by U1\.y and U2\.y/);
   assert.match(error(['add inverter U1 --at 0 0', 'add resistor R1 --at 400 0', 'connect U1.y R1.a']), /R1 \(resistor\) is on the logic signal/);
-  assert.match(error(['add dff U1 --at 0 0', 'add dff U2 --at 0 400', 'add input C1 --at -400 40', 'add input C2 --at -400 440', 'connect C1.p U1.CLK', 'connect C2.p U2.CLK']), /on 2 clocks/);
-  assert.match(error(['add dff U1 --at 0 0', 'add inverter U2 --at -400 40', 'connect U2.y U1.CLK']), /comes from logic/);
-  assert.match(error(['add dff U1 --at 0 0', 'add inverter U2 --at -400 400', 'add input CLK --at -800 40', 'connect CLK.p U1.CLK', 'connect CLK.p U2.a']), /also feeds U2\.a/);
+  assert.match(error(['add dff U1 --at 0 0', 'add dff U2 --at 0 400', 'add input C1 --at -400 40', 'add input C2 --at -400 440', 'connect C1.p U1.CLK', 'connect C2.p U2.CLK']), /on 2 clock inputs/);
+  assert.match(error(['add dff_qb U1 --at 0 0', 'connect U1.QB U1.CLK']), /No flip-flop is clocked from an input/);
+  assert.match(error(['add dff U1 --at 0 0', 'add inverter U2 --at -400 400', 'add input CLK --at -800 40', 'add output Y --at 0 600', 'connect CLK.p U1.CLK', 'connect CLK.p U2.a', 'connect U2.y Y.p']), /reaches the output Y/);
+  assert.match(error(['add dff U1 --at 0 0', 'add input CLK --at -800 40', 'connect CLK.p U1.CLK', 'connect CLK.p U1.D']), /reaches U1\.D, not a clock pin/);
+  assert.match(error(['add dff U1 --at 0 0', 'add dff_qb U2 --at 600 0', 'add dff_qb U3 --at 1200 0', 'add input CLK --at -400 40',
+    'connect CLK.p U1.CLK', 'connect U2.Q U3.CLK', 'connect U3.Q U2.CLK']), /U\d, U\d clock each other/);
   assert.match(analyzeLogic(new Circuit()).error, /no logic/);
+});
+
+test('a ripple counter: each stage clocked by the one before, a row one period of the clock, settled', () => {
+  const lines = ['add input CLK --at -400 40'];
+  for (let i = 1; i <= 3; i++) lines.push(`add dff_qb U${i} --at ${(i - 1) * 600} 0`, `connect U${i}.QB U${i}.D`);
+  lines.push('connect CLK.p U1.CLK', 'connect U1.Q U2.CLK', 'connect U2.Q U3.CLK');
+  const result = analyzeLogic(build(lines));
+  assert.equal(result.ok, true, result.error);
+  assert.deepEqual(result.inputs, []);
+  assert.equal(result.clock.ripple, true);
+  assert.match(result.clock.text, /^After each period of CLK, .*rippling through/);
+  // U1 is the least significant stage; each rising Q clocks the next: it counts down.
+  const count = (row) => row[0] + 2 * row[1] + 4 * row[2];
+  for (const row of result.rows) assert.equal(count(row.next), (count(row.states) + 7) % 8, JSON.stringify(row));
+  assert.equal(equations(result)['\\text{U1.Q}^{+}'], '\\overline{\\text{U1.Q}}');
+});
+
+test('a gated clock clocks through its gate; flip-flops on both edges of one clock each take their edge', () => {
+  const gatedDrawing = build(['add dff U1 --at 0 0', 'add and2_gate U2 --at -600 40', 'add input CLK --at -1000 0', 'add input EN --at -1000 80', 'add input D --at -400 -80',
+    'connect CLK.p U2.a', 'connect EN.p U2.b', 'connect U2.y U1.CLK', 'connect D.p U1.D']);
+  // Either input could be the clock: it asks rather than guesses.
+  const open = analyzeLogic(gatedDrawing);
+  assert.match(open.error, /clock could be CLK or EN: pick it/);
+  assert.deepEqual(open.clockChoices, ['CLK', 'EN']);
+  const gated = analyzeLogic(gatedDrawing, { clock: 'CLK' });
+  assert.equal(gated.ok, true, gated.error);
+  assert.deepEqual(gated.inputs.map((s) => s.name), ['D', 'EN']);
+  assert.match(analyzeLogic(gatedDrawing, { clock: 'D' }).error, /D is not an input to clock from|reaches U1\.D/);
+  assert.equal(equations(gated)['\\text{U1.Q}^{+}'], '\\text{U1.Q} \\cdot \\overline{\\mathrm{EN}} + D \\cdot \\mathrm{EN}');
+  // A falling-edge stage after a rising-edge one shifts it on within the same period.
+  const both = analyzeLogic(build(['add dff U1 --at 0 0', 'add dff_clkb U2 --at 600 0', 'add input CLK --at -400 40', 'add input D --at -400 -80',
+    'connect CLK.p U1.CLK', 'connect CLK.p U2.CLKB', 'connect D.p U1.D', 'connect U1.Q U2.D']));
+  assert.equal(both.ok, true, both.error);
+  assert.equal(both.clock.edges, 'both');
+  assert.equal(equations(both)['\\text{U2.Q}^{+}'], 'D');
 });
 
 test('a drawing-only part is not analyzed', () => {
@@ -133,4 +171,17 @@ test('analyze logic prints the table and the equations; with no logic it says so
   assert.match(text, /S = A \\cdot \\overline\{B\} \+ \\overline\{A\} \\cdot B/);
   assert.throws(() => runCommand(new Circuit(), 'analyze logic'), /no logic/);
   assert.throws(() => runCommand(halfAdder(), 'analyze logic extra'), /usage: analyze logic/);
+  const gated = build(['add dff U1 --at 0 0', 'add and2_gate U2 --at -600 40', 'add input CLK --at -1000 0', 'add input EN --at -1000 80',
+    'connect CLK.p U2.a', 'connect EN.p U2.b', 'connect U2.y U1.CLK']);
+  assert.throws(() => runCommand(gated, 'analyze logic'), /pick it/);
+  const clocked = runCommand(gated, 'analyze logic --clock CLK');
+  assert.match(clocked.output ?? clocked.text, /After each period of CLK, its rising edge then its falling edge; clocks taken as glitch-free/);
+});
+
+test('the chosen clock is saved with the design', () => {
+  const circuit = halfAdder();
+  circuit.analysisValues.logic = { clock: 'CLK' };
+  const again = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
+  assert.deepEqual(again.analysisValues.logic, { clock: 'CLK' });
+  assert.equal(Circuit.fromJSON({ ...circuit.toJSON(), analysisValues: { logic: { clock: 7 } } }).analysisValues.logic, undefined);
 });

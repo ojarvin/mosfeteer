@@ -23,9 +23,19 @@ const toggle = () => build([
   'connect T.p U2.a', 'connect U2.y U1.D', 'connect U1.Q Q.p', 'connect U1.Q U2.b', 'connect CLK.p U1.CLK',
 ]);
 
+const ripple = () => {
+  const lines = ['add input CLK --at -400 40'];
+  for (let i = 1; i <= 3; i++) lines.push(`add dff_qb U${i} --at ${(i - 1) * 600} 0`, `connect U${i}.QB U${i}.D`);
+  return build([...lines, 'connect CLK.p U1.CLK', 'connect U1.Q U2.CLK', 'connect U2.Q U3.CLK']);
+};
+const gated = () => build([
+  'add dff U1 --at 0 0', 'add and2_gate U2 --at -600 40', 'add input CLK --at -1000 0', 'add input EN --at -1000 80', 'add input D --at -400 -80',
+  'connect CLK.p U2.a', 'connect EN.p U2.b', 'connect U2.y U1.CLK', 'connect D.p U1.D',
+]);
+
 describe('logic analysis', { skip: browserSkip() }, () => {
   let h;
-  before(async () => { h = await start({ docs: { adder: halfAdder(), toggle: toggle() }, width: 1500, height: 950 }); });
+  before(async () => { h = await start({ docs: { adder: halfAdder(), toggle: toggle(), ripple: ripple(), gated: gated() }, width: 1500, height: 950 }); });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
   const openWindow = async () => {
@@ -70,5 +80,25 @@ describe('logic analysis', { skip: browserSkip() }, () => {
     await h.until(`document.querySelector('.logic-title')?.textContent === 'State transition table'`);
     assert.deepEqual(await cells(), ['000', '011', '101', '110']);
     assert.match(await h.evaluate(`document.querySelector('.logic-results').textContent`), /rising edge of CLK/);
+  });
+
+  test('a ripple counter: a row is one period of the clock, the stages rippling', async () => {
+    await h.open('ripple');
+    await openWindow();
+    await h.click('.logic-derive');
+    await h.until(`document.querySelectorAll('.logic-table tbody tr').length === 8`);
+    assert.match(await h.evaluate(`document.querySelector('.logic-results').textContent`), /After each period of CLK.*rippling through.*glitch-free/);
+  });
+
+  test('a gated clock leaves the clock open: picked in the window, and saved with the design', async () => {
+    await h.open('gated');
+    await openWindow();
+    await h.until(`!!document.getElementById('logic-clock')`);
+    assert.deepEqual(await h.evaluate(`[...document.querySelectorAll('#logic-clock option')].map((o) => o.value)`), ['', 'CLK', 'EN']);
+    await h.evaluate(`(() => { const s = document.getElementById('logic-clock'); s.value = 'CLK'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.toJSON().analysisValues?.logic?.clock)`), 'CLK');
+    await h.click('.logic-derive');
+    await h.until(`document.querySelectorAll('.logic-table tbody tr').length === 8`);
+    assert.deepEqual(await h.evaluate(`[...document.querySelectorAll('.logic-signal-row')].map((row) => row.textContent)`), ['InputsD, EN', 'Outputsnone', 'StateU1.Q']);
   });
 });
