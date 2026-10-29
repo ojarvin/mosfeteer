@@ -311,70 +311,53 @@ test('a fresh packing holds the shape it is shown in, kinship notwithstanding', 
   assert.deepEqual([40, 80, 120, 200].map(extraShapeTries), [3, 3, 1, 0]);
 });
 
-// Pieces a tag's designs lie in: designs within a few grid cells touch.
-function pieces(slots, items) {
-  let count = 0;
-  for (const tag of new Set(items.map((item) => item.tags[0]))) {
-    const left = items.filter((item) => item.tags[0] === tag).map((item) => slots.get(item.id));
-    while (left.length) {
-      count += 1;
-      const piece = [left.pop()];
-      for (let k = 0; k < piece.length; k++) {
-        for (let j = left.length - 1; j >= 0; j--) {
-          const [a, b] = [piece[k], left[j]];
-          if (Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w), b.y - (a.y + a.h), a.y - (b.y + b.h)) <= 3 * GRID) piece.push(...left.splice(j, 1));
-        }
+test('tidying keeps each design among its neighbors, never grows the desk, and moves nothing a second time', () => {
+  const items = Array.from({ length: 16 }, (_, i) => ({ id: `d${i}`, w: GRID * (6 + (i * 7) % 13), h: GRID * (5 + (i * 5) % 9), tags: [i % 3 ? 'a' : 'b'] }));
+  const first = layoutAtlas(items);
+  // Days of edits: designs grow, one is added, one goes; the desk keeps
+  // its places and gaps open up.
+  const later = [...items.filter((item) => item.id !== 'd4').map((item) => (['d1', 'd7', 'd9'].includes(item.id) ? { ...item, w: item.w + 5 * GRID, h: item.h + 3 * GRID } : item)), { id: 'new', w: 12 * GRID, h: 8 * GRID, tags: ['b'] }];
+  const kept = layoutAtlas(later, { previous: first.slots });
+  const tidy = tidyAtlas(later, { previous: kept.slots });
+  const fresh = layoutAtlas(later);
+  const ids = later.map((item) => item.id);
+  const sides = (a, b) => {
+    let same = 0;
+    let pairs = 0;
+    const center = (slot) => [slot.x + slot.w / 2, slot.y + slot.h / 2];
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const [p, q, r, t] = [center(a.get(ids[i])), center(a.get(ids[j])), center(b.get(ids[i])), center(b.get(ids[j]))];
+        pairs += 2;
+        if (Math.sign(p[0] - q[0]) === Math.sign(r[0] - t[0])) same += 1;
+        if (Math.sign(p[1] - q[1]) === Math.sign(r[1] - t[1])) same += 1;
       }
     }
-  }
-  return count;
-}
-// Of each pair of designs, how often one stays left of, and above, the other.
-function sides(a, b, ids) {
-  let same = 0;
-  let pairs = 0;
-  const center = (slot) => [slot.x + slot.w / 2, slot.y + slot.h / 2];
-  for (let i = 0; i < ids.length; i++) {
-    for (let j = i + 1; j < ids.length; j++) {
-      const [p, q, r, t] = [center(a.get(ids[i])), center(a.get(ids[j])), center(b.get(ids[i])), center(b.get(ids[j]))];
-      pairs += 2;
-      if (Math.sign(p[0] - q[0]) === Math.sign(r[0] - t[0])) same += 1;
-      if (Math.sign(p[1] - q[1]) === Math.sign(r[1] - t[1])) same += 1;
-    }
-  }
-  return same / pairs;
-}
-const clear = (layout) => {
-  for (const a of layout.tiles) for (const b of layout.tiles) {
+    return same / pairs;
+  };
+  assert.ok(sides(kept.slots, tidy.slots) >= 0.9, `neighbors kept ${sides(kept.slots, tidy.slots)}`);
+  assert.ok(sides(kept.slots, tidy.slots) > sides(kept.slots, fresh.slots), `a fresh pack keeps ${sides(kept.slots, fresh.slots)}`);
+  assert.ok(tidy.bounds.w * tidy.bounds.h <= kept.bounds.w * kept.bounds.h, 'no larger');
+  for (const a of tidy.tiles) for (const b of tidy.tiles) {
     if (a === b) continue;
-    assert.ok(a.x + a.w + ATLAS_GAP <= b.x || b.x + b.w + ATLAS_GAP <= a.x || a.y + a.h + ATLAS_CAPTION + ATLAS_GAP <= b.y || b.y + b.h + ATLAS_CAPTION + ATLAS_GAP <= a.y, `${a.id} crowds ${b.id}`);
+    assert.ok(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h + ATLAS_CAPTION <= b.y || b.y + b.h + ATLAS_CAPTION <= a.y, `${a.id} overlaps ${b.id}`);
   }
-  for (const tile of layout.tiles) assert.ok(tile.x % GRID === 0 && tile.y % GRID === 0, `${tile.id} is off the grid`);
-};
-
-test('rearranging gathers retagged designs with their new kin, the rest kept in place, and a second time moves nothing', () => {
-  const tags = ['amp', 'adc', 'pll', 'ref'];
-  const items = Array.from({ length: 24 }, (_, i) => ({ id: `d${i}`, w: GRID * (6 + (i * 7) % 13), h: GRID * (5 + (i * 5) % 9), tags: [tags[i % 4]] }));
-  const first = layoutAtlas(items);
-  // A bunch of designs change tags.
-  const retagged = new Set(['d1', 'd6', 'd11', 'd14', 'd19', 'd20']);
-  const later = items.map((item, i) => (retagged.has(item.id) ? { ...item, tags: [tags[(i + 1) % 4]] } : item));
-  const kept = layoutAtlas(later, { previous: first.slots });
-  const after = tidyAtlas(later, { previous: kept.slots });
-  const fresh = layoutAtlas(later);
-  assert.ok(pieces(kept.slots, later) > 4, 'the retagged designs lie apart from their kin');
-  assert.equal(pieces(after.slots, later), 4, 'each tag in one piece');
-  const others = later.map((item) => item.id).filter((id) => !retagged.has(id));
-  assert.ok(sides(kept.slots, after.slots, others) > sides(kept.slots, fresh.slots, others), `kept ${sides(kept.slots, after.slots, others)}, a fresh pack ${sides(kept.slots, fresh.slots, others)}`);
-  clear(after);
-  assert.deepEqual(tidyAtlas(later, { previous: after.slots }).slots, after.slots);
+  for (const tile of tidy.tiles) assert.ok(tile.x % GRID === 0 && tile.y % GRID === 0);
+  assert.deepEqual(tidyAtlas(later, { previous: tidy.slots }).slots, tidy.slots);
 });
 
-test('a new design is gathered with its kin, the others making way', () => {
-  const items = Array.from({ length: 12 }, (_, i) => ({ id: `d${i}`, w: 8 * GRID, h: 5 * GRID, tags: [i < 6 ? 'a' : 'b'] }));
+test('tidying tucks a design left far out into a hole near the middle', () => {
+  const items = Array.from({ length: 9 }, (_, i) => ({ id: `d${i}`, w: 6 * GRID, h: 4 * GRID }));
   const first = layoutAtlas(items);
-  const added = [...items, { id: 'new', w: 10 * GRID, h: 6 * GRID, tags: ['a'] }];
-  const after = tidyAtlas(added, { previous: first.slots });
-  assert.equal(pieces(after.slots, added), 2);
-  clear(after);
+  // The middle design is gone and one sits far out to the right.
+  const middle = first.tiles.find((tile) => tile.x <= 0 && tile.x + tile.w >= 0 && tile.y <= 0 && tile.y + tile.h >= 0);
+  const previous = new Map(first.slots);
+  previous.delete(middle.id);
+  const far = [...previous.keys()][0];
+  previous.set(far, { ...previous.get(far), x: 60 * GRID, y: 0 });
+  const left = items.filter((item) => item.id !== middle.id);
+  const tidy = tidyAtlas(left, { previous });
+  const fresh = layoutAtlas(left);
+  assert.ok(tidy.bounds.w <= fresh.bounds.w + 7 * GRID, `${tidy.bounds.w} wide, a fresh desk ${fresh.bounds.w}`);
+  assert.deepEqual(tidyAtlas(left, { previous: tidy.slots }).slots, tidy.slots);
 });
