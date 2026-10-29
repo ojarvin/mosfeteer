@@ -65,7 +65,8 @@ export function reshapedPlaces(previous, aspect) {
  * the desk steady: a design stays where it was while its slot there is still
  * free. A design that changed size yields to those that did not: it keeps its
  * top-left, else its center, else moves to the free spot nearest its old one.
- * Only new designs and those are placed again.
+ * Only new designs and those are placed again. `tidy` closes the gaps too
+ * (tidyAtlas).
  *
  * `related(a, b)` (0..1, core/design-related.js; by default a shared tag)
  * groups designs into neighborhoods: related designs are placed one after
@@ -74,7 +75,7 @@ export function reshapedPlaces(previous, aspect) {
  * Returns { tiles: [{ id, x, y, w, h }] (the designs' rectangles, captions
  * excluded), slots: Map id -> { x, y, w, h }, bounds }.
  */
-export function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = ATLAS_CAPTION, previous = null, keep = true, related = null } = {}) {
+export function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = ATLAS_CAPTION, previous = null, keep = true, tidy = false, related = null } = {}) {
   if (!items.length) return { tiles: [], slots: new Map(), bounds: { x: 0, y: 0, w: 0, h: 0 } };
   const tagsOf = new Map(items.map((item) => [item.id, new Set(item.tags || [])]));
   const affinity = related || ((a, b) => ([...tagsOf.get(a)].some((tag) => tagsOf.get(b).has(tag)) ? 1 : 0));
@@ -156,7 +157,10 @@ export function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = AT
   // Each design, nearest the middle first, slides toward the middle while it
   // can, so the gaps a design that shrank, moved, or went leaves behind close
   // up. A settled desk does not move: only a gap moves anything.
-  settle(placed, gap);
+  // Tidying, a design far out moves into a hole much nearer the middle
+  // first, and the desk then settles until nothing moves.
+  if (tidy) tuck(placed, gap, stretch);
+  settle(placed, gap, tidy ? Infinity : 4);
   const byId = new Map(placed.map((slot) => [slot.id, slot]));
   const tiles = items.map(({ id, h }) => {
     const slot = byId.get(id);
@@ -172,13 +176,13 @@ export function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = AT
 
 /** Slide slots toward the middle of the desk (the origin, where packing
  *  starts), a grid cell at a time along each axis, while the way is free. */
-function settle(placed, gap) {
+function settle(placed, gap, passes = 4) {
   if (placed.length < 2) return;
   const middle = { x: 0, y: 0 };
   const free = (slot, x, y) => placed.every((p) => p === slot ||
     x >= p.x + p.w + gap || p.x >= x + slot.w + gap || y >= p.y + p.h + gap || p.y >= y + slot.h + gap);
   const away = (slot) => Math.hypot(slot.x + slot.w / 2 - middle.x, slot.y + slot.h / 2 - middle.y);
-  for (let pass = 0; pass < 4; pass += 1) {
+  for (let pass = 0; pass < passes; pass += 1) {
     let moved = false;
     for (const slot of [...placed].sort((a, b) => away(a) - away(b) || a.id.localeCompare(b.id))) {
       for (const axis of ['x', 'y']) {
@@ -195,6 +199,57 @@ function settle(placed, gap) {
     if (!moved) break;
   }
 }
+
+/** The remembered places of `items`, moved so the middle of their desk
+ *  (the median of their centers, which a design far out does not pull)
+ *  is the origin, where packing starts and settling pulls. */
+function centeredPlaces(previous, items) {
+  const slots = items.map((item) => previous.get(item.id)).filter((slot) => slot?.w !== undefined);
+  if (!slots.length) return previous;
+  const median = (values) => {
+    const sorted = values.sort((a, b) => a - b);
+    return (sorted[(sorted.length - 1) >> 1] + sorted[sorted.length >> 1]) / 2;
+  };
+  const dx = snap(median(slots.map((slot) => slot.x + slot.w / 2)));
+  const dy = snap(median(slots.map((slot) => slot.y + slot.h / 2)));
+  const out = new Map();
+  for (const [id, slot] of previous) out.set(id, slot.w === undefined ? slot : { ...slot, x: slot.x - dx, y: slot.y - dy });
+  return out;
+}
+
+/**
+ * Move designs far out into free spots much nearer the middle (distances
+ * stretched to the desk's shape), the farthest first, until none has such
+ * a spot. A spot touches another design, lined up with its edge or middle.
+ */
+function tuck(placed, gap, stretch) {
+  const away = (slot, x = slot.x, y = slot.y) => Math.hypot((x + slot.w / 2) / stretch, (y + slot.h / 2) * stretch);
+  for (let moves = 0; moves < placed.length; moves += 1) {
+    let moved = false;
+    for (const slot of [...placed].sort((a, b) => away(b) - away(a) || a.id.localeCompare(b.id))) {
+      const others = placed.filter((p) => p !== slot);
+      const free = (x, y) => others.every((p) => x >= p.x + p.w + gap || p.x >= x + slot.w + gap || y >= p.y + p.h + gap || p.y >= y + slot.h + gap);
+      const { w, h } = slot;
+      const spots = [];
+      for (const p of others) {
+        for (const y of [p.y, p.y + p.h - h, snap(p.y + p.h / 2 - h / 2)]) spots.push([p.x - gap - w, y], [p.x + p.w + gap, y]);
+        for (const x of [p.x, p.x + p.w - w, snap(p.x + p.w / 2 - w / 2)]) spots.push([x, p.y - gap - h], [x, p.y + p.h + gap]);
+      }
+      const limit = TUCK * away(slot);
+      const best = spots.filter(([x, y]) => away(slot, x, y) < limit)
+        .sort((a, b) => away(slot, ...a) - away(slot, ...b) || a[0] - b[0] || a[1] - b[1])
+        .find(([x, y]) => free(x, y));
+      if (!best) continue;
+      [slot.x, slot.y] = best;
+      moved = true;
+      break;
+    }
+    if (!moved) return;
+  }
+}
+
+/** A design tucks in only for a spot this much nearer the middle. */
+const TUCK = 0.7;
 
 /** Relatedness below this is no kinship at all. */
 const RELATED = 0.3;
@@ -379,6 +434,27 @@ export function layoutAtlasShaped(items, options = {}) {
     if (span(next) < span(best)) best = next;
   }
   return best;
+}
+
+/**
+ * Shift+T: tidy a desk packed before (`options.previous`), keeping its
+ * arrangement: centered on the middle, the designs far out move into holes
+ * much nearer it, then all slide in until none can. Tidying a tidy desk
+ * moves nothing.
+ */
+export function tidyAtlas(items, options = {}) {
+  if (!options.previous?.size) return layoutAtlasShaped(items, options);
+  // Centering moves the middle the designs close in on: again until a
+  // round moves nothing, so the result is a tidy desk.
+  let previous = options.previous;
+  let layout = null;
+  for (let round = 0; round < 8; round += 1) {
+    const centered = centeredPlaces(previous, items);
+    layout = layoutAtlas(items, { ...options, previous: centered, tidy: true });
+    if ([...layout.slots].every(([id, slot]) => centered.get(id)?.x === slot.x && centered.get(id)?.y === slot.y && centered.get(id)?.w === slot.w)) break;
+    previous = layout.slots;
+  }
+  return layout;
 }
 
 /**

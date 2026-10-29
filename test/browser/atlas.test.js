@@ -698,7 +698,7 @@ describe('a design keeps its place on the desk whether or not it is open', { ski
     return Object.fromEntries(s.tiles.map((t) => [t.name, { x: t.x, y: t.y, w: t.w, h: t.h }]));
   };
 
-  test('opening and leaving designs, with no edits, moves nothing on the desk; nor does packing afresh twice', async () => {
+  test('opening and leaving designs, with no edits, moves nothing on the desk; nor does tidying it twice', async () => {
     const { readFile } = await import('node:fs/promises');
     const file = join(h.workspace, 'formula.json');
     const before = await readFile(file, 'utf8');
@@ -715,10 +715,12 @@ describe('a design keeps its place on the desk whether or not it is open', { ski
     await h.open('formula');
     await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].filter((l) => l.math).every((l) => l.textMeasured()))`);
     assert.deepEqual(await tiles(), open);
-    // Shift+T packs afresh; with nothing changed, again it packs the same.
+    // Shift+T tidies; with nothing changed, a second time moves nothing,
+    // and the tidy desk is remembered.
     const packed = await tiles({ repack: true });
     await h.open('plain');
     assert.deepEqual(await tiles({ repack: true }), packed);
+    assert.deepEqual(await tiles(), packed);
   });
 });
 

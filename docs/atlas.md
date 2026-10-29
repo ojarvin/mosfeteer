@@ -72,8 +72,9 @@ The desk stays put between visits: this browser remembers where each design
 of a workspace sat, and a design keeps its spot while it still fits there. A
 design that grew or shrank yields to the others (it keeps its corner, else its
 center, else moves to the nearest free spot), and a new design is placed near
-its kin. `Shift+T` forgets the places and packs the desk afresh in
-neighborhoods of related designs.
+its kin. `Shift+T` tidies the desk: every design keeps its place among
+its neighbors, the desk is centered, and all slide in until none can, so
+the gaps close; tidying a tidy desk moves nothing.
 
 With nothing picked every design lies flat at its true size, for
 comparison. A picked design lifts off the desk: it eases up onto a card
@@ -203,7 +204,7 @@ folder on the Atlas does the same. Symbols view hides both buttons.
 | Ctrl/Cmd+O | another workspace folder (browser-only: add files) |
 | `z` or Space | zoom to the picked design |
 | `f` | fit the whole workspace |
-| `Shift+T` | pack the desk afresh, related designs together |
+| `Shift+T` | tidy the desk: close its gaps, every design among the same neighbors |
 | `+` / `-` | zoom about the middle |
 | `Shift+D` | theme |
 | Esc | clear the pick of several, then the search, then the pick; it never leaves the Atlas (the symbol sheet it closes) |
@@ -278,13 +279,13 @@ open no design: a double-click zooms to a card, Esc returns.
   Kinship can pull a fresh packing taller or wider than that: when it
   misses by more than a little, a few nearby shapes are tried and the one
   that shows largest when fitted is kept: up to three tries, fewer for
-  large workspaces, never depending on time, so `Shift+T` with nothing
-  changed packs the same desk again (`layoutAtlasShaped`). Fit (`F`, `Z`) frames the designs in that same
+  large workspaces, never depending on time, so the same designs pack the
+  same desk again (`layoutAtlasShaped`). Fit (`F`, `Z`) frames the designs in that same
   room, clear of both bars (`viewFittingIn`). Remembered places stay put while the window keeps their
   shape; opened in a window of another shape (more than 1.25 times
   narrower or wider), the desk is packed again to fill it, each design as
   near its remembered spot stretched to the new shape as it fits, so
-  neighbors stay neighbors (`reshapedPlaces`). `Shift+T` packs afresh. Real size means one drawing unit is one world
+  neighbors stay neighbors (`reshapedPlaces`). `Shift+T` tidies them in place (`layoutAtlas` `tidy`). Real size means one drawing unit is one world
   unit, and every design is shifted by whole grid cells, so its grid lines
   continue the desk's and entering or leaving the editor does not move a
   line.

@@ -48997,6 +48997,7 @@ __exports.viewFitting = viewFitting;
 __exports.viewFittingIn = viewFittingIn;
 __exports.extraShapeTries = extraShapeTries;
 __exports.layoutAtlasShaped = layoutAtlasShaped;
+__exports.tidyAtlas = tidyAtlas;
 __exports.throughDepth = throughDepth;
 __exports.viewShowing = viewShowing;
 __exports.carryDeskPlace = carryDeskPlace;
@@ -49068,7 +49069,8 @@ function reshapedPlaces(previous, aspect) {
  * the desk steady: a design stays where it was while its slot there is still
  * free. A design that changed size yields to those that did not: it keeps its
  * top-left, else its center, else moves to the free spot nearest its old one.
- * Only new designs and those are placed again.
+ * Only new designs and those are placed again. `tidy` closes the gaps too
+ * (tidyAtlas).
  *
  * `related(a, b)` (0..1, core/design-related.js; by default a shared tag)
  * groups designs into neighborhoods: related designs are placed one after
@@ -49077,7 +49079,7 @@ function reshapedPlaces(previous, aspect) {
  * Returns { tiles: [{ id, x, y, w, h }] (the designs' rectangles, captions
  * excluded), slots: Map id -> { x, y, w, h }, bounds }.
  */
-function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = ATLAS_CAPTION, previous = null, keep = true, related = null } = {}) {
+function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = ATLAS_CAPTION, previous = null, keep = true, tidy = false, related = null } = {}) {
   if (!items.length) return { tiles: [], slots: new Map(), bounds: { x: 0, y: 0, w: 0, h: 0 } };
   const tagsOf = new Map(items.map((item) => [item.id, new Set(item.tags || [])]));
   const affinity = related || ((a, b) => ([...tagsOf.get(a)].some((tag) => tagsOf.get(b).has(tag)) ? 1 : 0));
@@ -49159,7 +49161,10 @@ function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = ATLAS_CAP
   // Each design, nearest the middle first, slides toward the middle while it
   // can, so the gaps a design that shrank, moved, or went leaves behind close
   // up. A settled desk does not move: only a gap moves anything.
-  settle(placed, gap);
+  // Tidying, a design far out moves into a hole much nearer the middle
+  // first, and the desk then settles until nothing moves.
+  if (tidy) tuck(placed, gap, stretch);
+  settle(placed, gap, tidy ? Infinity : 4);
   const byId = new Map(placed.map((slot) => [slot.id, slot]));
   const tiles = items.map(({ id, h }) => {
     const slot = byId.get(id);
@@ -49175,13 +49180,13 @@ function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = ATLAS_CAP
 
 /** Slide slots toward the middle of the desk (the origin, where packing
  *  starts), a grid cell at a time along each axis, while the way is free. */
-function settle(placed, gap) {
+function settle(placed, gap, passes = 4) {
   if (placed.length < 2) return;
   const middle = { x: 0, y: 0 };
   const free = (slot, x, y) => placed.every((p) => p === slot ||
     x >= p.x + p.w + gap || p.x >= x + slot.w + gap || y >= p.y + p.h + gap || p.y >= y + slot.h + gap);
   const away = (slot) => Math.hypot(slot.x + slot.w / 2 - middle.x, slot.y + slot.h / 2 - middle.y);
-  for (let pass = 0; pass < 4; pass += 1) {
+  for (let pass = 0; pass < passes; pass += 1) {
     let moved = false;
     for (const slot of [...placed].sort((a, b) => away(a) - away(b) || a.id.localeCompare(b.id))) {
       for (const axis of ['x', 'y']) {
@@ -49198,6 +49203,57 @@ function settle(placed, gap) {
     if (!moved) break;
   }
 }
+
+/** The remembered places of `items`, moved so the middle of their desk
+ *  (the median of their centers, which a design far out does not pull)
+ *  is the origin, where packing starts and settling pulls. */
+function centeredPlaces(previous, items) {
+  const slots = items.map((item) => previous.get(item.id)).filter((slot) => slot?.w !== undefined);
+  if (!slots.length) return previous;
+  const median = (values) => {
+    const sorted = values.sort((a, b) => a - b);
+    return (sorted[(sorted.length - 1) >> 1] + sorted[sorted.length >> 1]) / 2;
+  };
+  const dx = snap(median(slots.map((slot) => slot.x + slot.w / 2)));
+  const dy = snap(median(slots.map((slot) => slot.y + slot.h / 2)));
+  const out = new Map();
+  for (const [id, slot] of previous) out.set(id, slot.w === undefined ? slot : { ...slot, x: slot.x - dx, y: slot.y - dy });
+  return out;
+}
+
+/**
+ * Move designs far out into free spots much nearer the middle (distances
+ * stretched to the desk's shape), the farthest first, until none has such
+ * a spot. A spot touches another design, lined up with its edge or middle.
+ */
+function tuck(placed, gap, stretch) {
+  const away = (slot, x = slot.x, y = slot.y) => Math.hypot((x + slot.w / 2) / stretch, (y + slot.h / 2) * stretch);
+  for (let moves = 0; moves < placed.length; moves += 1) {
+    let moved = false;
+    for (const slot of [...placed].sort((a, b) => away(b) - away(a) || a.id.localeCompare(b.id))) {
+      const others = placed.filter((p) => p !== slot);
+      const free = (x, y) => others.every((p) => x >= p.x + p.w + gap || p.x >= x + slot.w + gap || y >= p.y + p.h + gap || p.y >= y + slot.h + gap);
+      const { w, h } = slot;
+      const spots = [];
+      for (const p of others) {
+        for (const y of [p.y, p.y + p.h - h, snap(p.y + p.h / 2 - h / 2)]) spots.push([p.x - gap - w, y], [p.x + p.w + gap, y]);
+        for (const x of [p.x, p.x + p.w - w, snap(p.x + p.w / 2 - w / 2)]) spots.push([x, p.y - gap - h], [x, p.y + p.h + gap]);
+      }
+      const limit = TUCK * away(slot);
+      const best = spots.filter(([x, y]) => away(slot, x, y) < limit)
+        .sort((a, b) => away(slot, ...a) - away(slot, ...b) || a[0] - b[0] || a[1] - b[1])
+        .find(([x, y]) => free(x, y));
+      if (!best) continue;
+      [slot.x, slot.y] = best;
+      moved = true;
+      break;
+    }
+    if (!moved) return;
+  }
+}
+
+/** A design tucks in only for a spot this much nearer the middle. */
+const TUCK = 0.7;
 
 /** Relatedness below this is no kinship at all. */
 const RELATED = 0.3;
@@ -49385,6 +49441,27 @@ function layoutAtlasShaped(items, options = {}) {
 }
 
 /**
+ * Shift+T: tidy a desk packed before (`options.previous`), keeping its
+ * arrangement: centered on the middle, the designs far out move into holes
+ * much nearer it, then all slide in until none can. Tidying a tidy desk
+ * moves nothing.
+ */
+function tidyAtlas(items, options = {}) {
+  if (!options.previous?.size) return layoutAtlasShaped(items, options);
+  // Centering moves the middle the designs close in on: again until a
+  // round moves nothing, so the result is a tidy desk.
+  let previous = options.previous;
+  let layout = null;
+  for (let round = 0; round < 8; round += 1) {
+    const centered = centeredPlaces(previous, items);
+    layout = layoutAtlas(items, { ...options, previous: centered, tidy: true });
+    if ([...layout.slots].every(([id, slot]) => centered.get(id)?.x === slot.x && centered.get(id)?.y === slot.y && centered.get(id)?.w === slot.w)) break;
+    previous = layout.slots;
+  }
+  return layout;
+}
+
+/**
  * A rect on its way between the desk and the screen, seen in perspective:
  * the screen is depth 1, the desk lies behind it at depth 0, and something
  * `ratio` times larger at the screen than on the desk is that much nearer
@@ -49566,7 +49643,7 @@ let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let relatednessOf; __bind(() => { ({ relatednessOf } = __require("src/core/design-related.js")); });
 let linkArrow, linkCurve, linkDepths, linkGraph; __bind(() => { ({ linkArrow, linkCurve, linkDepths, linkGraph } = __require("src/core/design-links.js")); });
-let ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, layoutAtlasShaped, neighborTile, rectsIntersect, reshapedPlaces, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, layoutAtlasShaped, neighborTile, rectsIntersect, reshapedPlaces, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing } = __require("src/web/atlas-layout.js")); });
+let ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, layoutAtlasShaped, tidyAtlas, neighborTile, rectsIntersect, reshapedPlaces, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, layoutAtlasShaped, tidyAtlas, neighborTile, rectsIntersect, reshapedPlaces, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing } = __require("src/web/atlas-layout.js")); });
 let INDEX_CACHE, bakeTiles, cacheGet, cachePut, renderingKey, trimCache; __bind(() => { ({ INDEX_CACHE, bakeTiles, cacheGet, cachePut, renderingKey, trimCache } = __require("src/web/atlas-cache.js")); });
 let easeOutCubic, wheelIntent, lerpView; __bind(() => { ({ easeOutCubic, wheelIntent, lerpView } = __require("src/web/gestures.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
@@ -49821,7 +49898,7 @@ const cellCeil = (value) => Math.ceil(value / GRID) * GRID;
 /** Pack the designs by the whole grid cells they cover, then shift each
  *  drawing by whole cells into its slot: its grid lines continue the desk's.
  *  A tile is the drawing's rectangle on the desk. */
-function placeDrawings(entries, previous = null) {
+function placeDrawings(entries, previous = null, { tidy = false } = {}) {
   const cells = new Map(entries.map((entry) => {
     const x = cellFloor(entry.box.x);
     const y = cellFloor(entry.box.y);
@@ -49844,7 +49921,7 @@ function placeDrawings(entries, previous = null) {
   const keep = !places?.reshaped;
   const items = entries.map((entry) => ({ id: entry.id, w: cells.get(entry.id).w, h: cells.get(entry.id).h }));
   const options = { previous: places, keep, related, aspect };
-  const layout = places && keep ? layoutAtlas(items, options) : layoutAtlasShaped(items, options);
+  const layout = tidy ? tidyAtlas(items, options) : places && keep ? layoutAtlas(items, options) : layoutAtlasShaped(items, options);
   const tiles = layout.tiles.map((slot) => {
     const box = boxes.get(slot.id);
     const cell = cells.get(slot.id);
@@ -51325,16 +51402,21 @@ function arrangeDesk({ animate = true } = {}) {
   void animateView(clampView(fitAllView()), ARRANGE_MS);
 }
 
-/** Shift+T: pack the whole desk afresh, related designs together, forgetting
- *  where they sat. */
-function repackDesk() {
+/** Shift+T: tidy the whole desk. Every design keeps its place among its
+ *  neighbors, and all slide in to close the gaps. */
+function tidyDesk() {
   if (!state) return;
-  rememberSlots(state.folder, null);
-  state.layouts.clear();
-  state.arranged = null;
   if (state.matches) clearSearch();
+  arrangePending();
+  const ids = [...state.entries.keys()];
+  const key = [...ids].sort().join('\n');
+  const current = state.arranged === key ? state.layouts.get(key)?.slots : null;
+  const layout = placeDrawings(ids.map((id) => state.entries.get(id)), current || rememberedSlots(state.folder), { tidy: true });
+  state.layouts.clear();
+  state.layouts.set(key, layout);
+  state.arranged = null;
   arrangeDesk({ animate: true });
-  logLine('Atlas: packed the desk afresh, related designs together (tags, names, links, parts)');
+  logLine('Atlas: tidied the desk');
 }
 
 /** Search keys that act on what was found pack the desk first. */
@@ -52963,7 +53045,7 @@ function onAtlasKey(ev) {
   else if (key === 'Delete' && selected && state.source === 'workspace') void deletePicked();
   else if ((key === 'z' || key === ' ') && selected) focusTile(selected, { zoom: true });
   else if (key === 'f' || key === 'F') void animateView(clampView(fitAllView()));
-  else if (key === 'T' && state.source === 'workspace') repackDesk();
+  else if (key === 'T' && state.source === 'workspace') tidyDesk();
   else if (key === 'L' && state.source === 'workspace') toggleList();
   else if (key === 'l' && state.source === 'workspace') toggleLinks();
   else if (key === '+' || key === '=') zoomAbout(1 / 1.5, centerOf().x, centerOf().y);
@@ -88209,7 +88291,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['f', 'fit all designs'],
     ['l', 'show or hide the links between designs'],
     ['Shift+L', 'list all designs: ↑/↓ steps through them, Enter opens one, F2 or a double-click renames, # edits tags'],
-    ['Shift+T', 'repack the desk by kinship'],
+    ['Shift+T', 'tidy the desk: close its gaps, every design among the same neighbors'],
     ['Esc', 'clear the search, then the pick'],
     ['Enter (nothing picked) / Shift+Backspace', 'back to the drawing'],
   ]],

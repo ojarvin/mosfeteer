@@ -26,7 +26,7 @@ import { GRID } from '../core/grid.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { relatednessOf } from '../core/design-related.js';
 import { linkArrow, linkCurve, linkDepths, linkGraph } from '../core/design-links.js';
-import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, layoutAtlasShaped, neighborTile, rectsIntersect, reshapedPlaces, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing } from './atlas-layout.js';
+import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, layoutAtlasShaped, tidyAtlas, neighborTile, rectsIntersect, reshapedPlaces, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing } from './atlas-layout.js';
 import { INDEX_CACHE, bakeTiles, cacheGet, cachePut, renderingKey, trimCache } from './atlas-cache.js';
 import { easeOutCubic, wheelIntent, lerpView } from './gestures.js';
 import { editor } from './editor-state.js';
@@ -235,7 +235,7 @@ const cellCeil = (value) => Math.ceil(value / GRID) * GRID;
 /** Pack the designs by the whole grid cells they cover, then shift each
  *  drawing by whole cells into its slot: its grid lines continue the desk's.
  *  A tile is the drawing's rectangle on the desk. */
-function placeDrawings(entries, previous = null) {
+function placeDrawings(entries, previous = null, { tidy = false } = {}) {
   const cells = new Map(entries.map((entry) => {
     const x = cellFloor(entry.box.x);
     const y = cellFloor(entry.box.y);
@@ -258,7 +258,7 @@ function placeDrawings(entries, previous = null) {
   const keep = !places?.reshaped;
   const items = entries.map((entry) => ({ id: entry.id, w: cells.get(entry.id).w, h: cells.get(entry.id).h }));
   const options = { previous: places, keep, related, aspect };
-  const layout = places && keep ? layoutAtlas(items, options) : layoutAtlasShaped(items, options);
+  const layout = tidy ? tidyAtlas(items, options) : places && keep ? layoutAtlas(items, options) : layoutAtlasShaped(items, options);
   const tiles = layout.tiles.map((slot) => {
     const box = boxes.get(slot.id);
     const cell = cells.get(slot.id);
@@ -1739,16 +1739,21 @@ function arrangeDesk({ animate = true } = {}) {
   void animateView(clampView(fitAllView()), ARRANGE_MS);
 }
 
-/** Shift+T: pack the whole desk afresh, related designs together, forgetting
- *  where they sat. */
-function repackDesk() {
+/** Shift+T: tidy the whole desk. Every design keeps its place among its
+ *  neighbors, and all slide in to close the gaps. */
+function tidyDesk() {
   if (!state) return;
-  rememberSlots(state.folder, null);
-  state.layouts.clear();
-  state.arranged = null;
   if (state.matches) clearSearch();
+  arrangePending();
+  const ids = [...state.entries.keys()];
+  const key = [...ids].sort().join('\n');
+  const current = state.arranged === key ? state.layouts.get(key)?.slots : null;
+  const layout = placeDrawings(ids.map((id) => state.entries.get(id)), current || rememberedSlots(state.folder), { tidy: true });
+  state.layouts.clear();
+  state.layouts.set(key, layout);
+  state.arranged = null;
   arrangeDesk({ animate: true });
-  logLine('Atlas: packed the desk afresh, related designs together (tags, names, links, parts)');
+  logLine('Atlas: tidied the desk');
 }
 
 /** Search keys that act on what was found pack the desk first. */
@@ -3377,7 +3382,7 @@ export function onAtlasKey(ev) {
   else if (key === 'Delete' && selected && state.source === 'workspace') void deletePicked();
   else if ((key === 'z' || key === ' ') && selected) focusTile(selected, { zoom: true });
   else if (key === 'f' || key === 'F') void animateView(clampView(fitAllView()));
-  else if (key === 'T' && state.source === 'workspace') repackDesk();
+  else if (key === 'T' && state.source === 'workspace') tidyDesk();
   else if (key === 'L' && state.source === 'workspace') toggleList();
   else if (key === 'l' && state.source === 'workspace') toggleLinks();
   else if (key === '+' || key === '=') zoomAbout(1 / 1.5, centerOf().x, centerOf().y);
