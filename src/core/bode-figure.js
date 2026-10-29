@@ -11,7 +11,7 @@
  * corner, label, number. `zero` also marks the phase's multiples of 180°.
  */
 
-import { axisTicks } from './plot-scale.js';
+import { axisTicks, logMinorGrid } from './plot-scale.js';
 
 const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
 
@@ -163,7 +163,14 @@ export function bodeFigure(sketch, {
     }
   }
 
-  // Decades along the bottom; dB and degrees up the side.
+  // Decades along the bottom, faint lines through each under the
+  // numbered ones; dB and degrees up the side.
+  if (numbers) {
+    const decades = Array.from({ length: Math.max(0, Math.floor(high) - Math.ceil(low) + 1) }, (_, i) => Math.ceil(low) + i);
+    for (const u of logMinorGrid(low, high, { ticks: decades, length: plotW, minDecade: 4 * em })) {
+      for (const pane of phase ? [mag, ph] : [mag]) items.push({ type: 'line', x1: x(10 ** u), y1: pane.y, x2: x(10 ** u), y2: pane.y + pane.h, role: 'minor' });
+    }
+  }
   for (let decade = Math.ceil(low); decade <= high; decade++) {
     const at = x(10 ** decade);
     for (const pane of phase ? [mag, ph] : [mag]) {
@@ -276,6 +283,12 @@ export function responseFigure(plot, { width = 480, height = 260, fontSize = 11 
     ? zoomTicks('log', low, high, pane.w, 6 * em).map((tick) => ({ at: pane.x + ((tick.u - low) / (high - low)) * pane.w, text: tick.text }))
     : Array.from({ length: Math.max(0, Math.floor(high) - Math.ceil(low) + 1) }, (_, i) => Math.ceil(low) + i)
       .map((decade) => ({ at: x(10 ** decade), text: decade === 0 ? '1' : decade === 1 ? '10' : `10^{${decade}}` }));
+  // Faint lines through each decade, under the numbered ones.
+  const xAt = (u) => pane.x + ((u - low) / (high - low)) * pane.w;
+  const ticked = xTicks.map(({ at }) => low + ((at - pane.x) / pane.w) * (high - low));
+  for (const u of logMinorGrid(low, high, { ticks: ticked, length: pane.w, minDecade: 4 * em })) {
+    items.push({ type: 'line', x1: xAt(u), y1: pane.y, x2: xAt(u), y2: pane.y + pane.h, role: 'minor' });
+  }
   for (const { at, text } of xTicks) {
     items.push({ type: 'line', x1: at, y1: pane.y, x2: at, y2: pane.y + pane.h, role: 'grid' });
     items.push({ type: 'line', x1: at, y1: pane.y + pane.h, x2: at, y2: pane.y + pane.h - 0.36 * em, role: 'tick' });

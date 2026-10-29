@@ -85,3 +85,17 @@ test('a plot annotated zoomed keeps its limits: saved, drawn at them, its curves
   const swing = swingFigure({ kind: 'swing', range: { low: -60, high: 3 }, traces: [{ color: '#000', points: [{ a: -60, db: -50 }, { a: 0, db: 5 }] }], view: { x: [-20, 0], y: [-20, 0] } });
   assert.deepEqual(swing.ranges.db, [-20, 0]);
 });
+
+test('an annotated response plot lines each decade faintly under its numbered lines', () => {
+  const points = Array.from({ length: 50 }, (_, i) => { const f = 10 ** (-3 + (i * 2.5) / 49); return { f, db: -20 * Math.log10(f) }; });
+  const plot = normalizePlot({ kind: 'response', axis: 'normalized', range: { low: -3, high: Math.log10(0.5) }, traces: [{ label: 'H', color: '#3b74e0', points }] });
+  const figure = responseFigure(plot, { width: 900, height: 500, fontSize: 20 });
+  const minor = figure.items.filter((item) => item.role === 'minor');
+  const grid = figure.items.filter((item) => item.role === 'grid' && item.x1 === item.x2);
+  assert.ok(minor.length >= 16, `${minor.length}`);
+  assert.ok(figure.items.indexOf(minor.at(-1)) < figure.items.indexOf(grid[0]), 'under the numbered lines');
+  for (const line of minor) assert.ok(!grid.some((g) => Math.abs(g.x1 - line.x1) < 1e-6));
+  const circuit = new Circuit();
+  circuit.addAnnotation('box', { x: 0, y: 0, end: { x: 900, y: 500 }, plot });
+  assert.match(svgString(circuit), /stroke-opacity="0.3"/);
+});

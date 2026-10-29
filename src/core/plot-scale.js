@@ -84,6 +84,28 @@ export function axisTicks(scale, u0, u1, { target = 6, step = null } = {}) {
 }
 
 /**
+ * A log axis's faint grid between u0 and u1 (u = log10): 2 to 9 of each
+ * decade, those not already ticked (`ticks`, u values), for lines without
+ * numbers. None zoomed in under most of a decade, where the ticks are plain
+ * numbers, nor where a decade is narrower than `minDecade` (in the units
+ * of `length`, the axis's length) and the lines would crowd.
+ */
+export function logMinorGrid(u0, u1, { ticks = [], length = Infinity, minDecade = 0 } = {}) {
+  const low = Math.min(u0, u1);
+  const high = Math.max(u0, u1);
+  if (!(high - low >= 0.8) || length / (high - low) < minDecade) return [];
+  const lines = [];
+  for (let d = Math.floor(low); d <= Math.ceil(high); d++) {
+    for (let m = 2; m <= 9; m++) {
+      const u = d + Math.log10(m);
+      if (u <= low || u >= high || ticks.some((t) => Math.abs(t - u) < 1e-9)) continue;
+      lines.push(u);
+    }
+  }
+  return lines;
+}
+
+/**
  * The u range that fits `values` (already in u coordinates): rounded out to
  * `step` when given (whole 20 dB), else padded by `pad` of the span. A
  * single value, or none, gets a range around it.

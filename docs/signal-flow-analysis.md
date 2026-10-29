@@ -154,7 +154,10 @@ optimizer's run, a circuit's Bode plots -- is one interactive plot
 right-drag zooms to a box (a flat stroke along x only, a tall one along y
 only), a right-click steps back out, Ctrl+wheel or a pinch zooms, a
 double-click (or **Fit**) shows it all, and hovering reads every curve at
-the pointer. A frequency response is sampled densely across the signal
+the pointer. A log frequency axis has faint lines at 2 to 9 of each decade,
+without numbers (`logMinorGrid`), in the window and on the drawing, unless
+zoomed in under most of a decade or the decades are too narrow to fit
+them. A frequency response is sampled densely across the signal
 band, and again across whatever range a zoom shows (`responsePlot`'s
 `detail`), so a narrow band's ripple is drawn from its own points. A plot
 annotation keeps the whole-range figure the window had before zooming.

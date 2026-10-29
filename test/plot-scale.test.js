@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { axisTicks, fitRange, thinSeries, tickText, valueAt, zoomAbout, zoomAxes } from '../src/core/plot-scale.js';
+import { axisTicks, fitRange, logMinorGrid, thinSeries, tickText, valueAt, zoomAbout, zoomAxes } from '../src/core/plot-scale.js';
 
 test('a dragged box zooms the axis it runs along', () => {
   assert.equal(zoomAxes(200, 4), 'x');
@@ -49,4 +49,15 @@ test('series are read between points and thinned without losing peaks', () => {
   assert.ok(thin.length < 2000, String(thin.length));
   assert.ok(thin.some((p) => p[1] === 99), 'the spike survives');
   assert.ok(thin.every((p, i) => !i || p[0] >= thin[i - 1][0]), 'in order');
+});
+
+test('a log axis has faint lines at 2 to 9 of each decade, not where it is ticked, nor zoomed in or crowded', () => {
+  const lines = logMinorGrid(0, 2, { ticks: [0, 1, 2] });
+  assert.equal(lines.length, 16);
+  assert.ok(Math.abs(lines[0] - Math.log10(2)) < 1e-12);
+  assert.ok(Math.abs(lines.at(-1) - (1 + Math.log10(9))) < 1e-12);
+  // 2 and 5 ticked (a 1-2-5 axis) are not lined again.
+  assert.equal(logMinorGrid(0, 1, { ticks: [0, Math.log10(2), Math.log10(5), 1] }).length, 6);
+  assert.deepEqual(logMinorGrid(0, 0.5), [], 'zoomed in under a decade');
+  assert.deepEqual(logMinorGrid(0, 10, { length: 300, minDecade: 40 }), [], 'decades too narrow');
 });

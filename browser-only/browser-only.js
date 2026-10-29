@@ -19788,7 +19788,7 @@ __exports.swingRunaway = swingRunaway;
 __exports.swingFullScale = swingFullScale;
 __exports.swingLimit = swingLimit;
 __exports.locusFigure = locusFigure;
-let axisTicks; __bind(() => { ({ axisTicks } = __require("src/core/plot-scale.js")); });
+let axisTicks, logMinorGrid; __bind(() => { ({ axisTicks, logMinorGrid } = __require("src/core/plot-scale.js")); });
 /**
  * The layout of a Bode sketch as plain drawing items in a box: lines, paths,
  * and short texts (with `_{}`/`^{}` markup). One layout, two renderers -- the
@@ -19954,7 +19954,14 @@ function bodeFigure(sketch, {
     }
   }
 
-  // Decades along the bottom; dB and degrees up the side.
+  // Decades along the bottom, faint lines through each under the
+  // numbered ones; dB and degrees up the side.
+  if (numbers) {
+    const decades = Array.from({ length: Math.max(0, Math.floor(high) - Math.ceil(low) + 1) }, (_, i) => Math.ceil(low) + i);
+    for (const u of logMinorGrid(low, high, { ticks: decades, length: plotW, minDecade: 4 * em })) {
+      for (const pane of phase ? [mag, ph] : [mag]) items.push({ type: 'line', x1: x(10 ** u), y1: pane.y, x2: x(10 ** u), y2: pane.y + pane.h, role: 'minor' });
+    }
+  }
   for (let decade = Math.ceil(low); decade <= high; decade++) {
     const at = x(10 ** decade);
     for (const pane of phase ? [mag, ph] : [mag]) {
@@ -20067,6 +20074,12 @@ function responseFigure(plot, { width = 480, height = 260, fontSize = 11 } = {})
     ? zoomTicks('log', low, high, pane.w, 6 * em).map((tick) => ({ at: pane.x + ((tick.u - low) / (high - low)) * pane.w, text: tick.text }))
     : Array.from({ length: Math.max(0, Math.floor(high) - Math.ceil(low) + 1) }, (_, i) => Math.ceil(low) + i)
       .map((decade) => ({ at: x(10 ** decade), text: decade === 0 ? '1' : decade === 1 ? '10' : `10^{${decade}}` }));
+  // Faint lines through each decade, under the numbered ones.
+  const xAt = (u) => pane.x + ((u - low) / (high - low)) * pane.w;
+  const ticked = xTicks.map(({ at }) => low + ((at - pane.x) / pane.w) * (high - low));
+  for (const u of logMinorGrid(low, high, { ticks: ticked, length: pane.w, minDecade: 4 * em })) {
+    items.push({ type: 'line', x1: xAt(u), y1: pane.y, x2: xAt(u), y2: pane.y + pane.h, role: 'minor' });
+  }
   for (const { at, text } of xTicks) {
     items.push({ type: 'line', x1: at, y1: pane.y, x2: at, y2: pane.y + pane.h, role: 'grid' });
     items.push({ type: 'line', x1: at, y1: pane.y + pane.h, x2: at, y2: pane.y + pane.h - 0.36 * em, role: 'tick' });
@@ -36034,6 +36047,7 @@ __modules["src/core/plot-scale.js"] = function (__require, __exports) {
 __exports.niceStep = niceStep;
 __exports.tickText = tickText;
 __exports.axisTicks = axisTicks;
+__exports.logMinorGrid = logMinorGrid;
 __exports.fitRange = fitRange;
 __exports.zoomAxes = zoomAxes;
 __exports.zoomAbout = zoomAbout;
@@ -36122,6 +36136,28 @@ function axisTicks(scale, u0, u1, { target = 6, step = null } = {}) {
     ticks.push({ u: value, text: tickText(value, s), major: true });
   }
   return ticks;
+}
+
+/**
+ * A log axis's faint grid between u0 and u1 (u = log10): 2 to 9 of each
+ * decade, those not already ticked (`ticks`, u values), for lines without
+ * numbers. None zoomed in under most of a decade, where the ticks are plain
+ * numbers, nor where a decade is narrower than `minDecade` (in the units
+ * of `length`, the axis's length) and the lines would crowd.
+ */
+function logMinorGrid(u0, u1, { ticks = [], length = Infinity, minDecade = 0 } = {}) {
+  const low = Math.min(u0, u1);
+  const high = Math.max(u0, u1);
+  if (!(high - low >= 0.8) || length / (high - low) < minDecade) return [];
+  const lines = [];
+  for (let d = Math.floor(low); d <= Math.ceil(high); d++) {
+    for (let m = 2; m <= 9; m++) {
+      const u = d + Math.log10(m);
+      if (u <= low || u >= high || ticks.some((t) => Math.abs(t - u) < 1e-9)) continue;
+      lines.push(u);
+    }
+  }
+  return lines;
 }
 
 /**
@@ -37355,7 +37391,7 @@ function shapeAnnotationSvg(label, opacity = '') {
     return `<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" fill="none"${opacity} ${attrs}/>`;
   }
 }
-/** Stroke widths and dashes of a plot's parts, in drawing units. */
+/** Stroke widths, dashes, and opacities of a plot's parts, in drawing units. */
 const PLOT_STROKES = {
   axis: { width: 3 },
   tick: { width: 3 },
@@ -37364,6 +37400,7 @@ const PLOT_STROKES = {
   asymptote: { width: 3, dash: '16 12' },
   corner: { width: 2, dash: '4 10' },
   grid: { width: 1 },
+  minor: { width: 1, opacity: 0.3 },
   band: { width: 3, dash: '18 9' },
   spectrum: { width: 3 },
   marker: { width: 3, dash: '18 9' },
@@ -37404,7 +37441,7 @@ function plotAnnotationSvg(label, opacity = '') {
   const color = escapeSvg(resolveColor(label.style?.color || '#111'));
   const stroke = (role, ink = color) => {
     const part = PLOT_STROKES[role] || PLOT_STROKES.axis;
-    return `stroke="${ink}" stroke-width="${part.width}" fill="none"${part.dash ? ` stroke-dasharray="${part.dash}"` : ''}`;
+    return `stroke="${ink}" stroke-width="${part.width}" fill="none"${part.dash ? ` stroke-dasharray="${part.dash}"` : ''}${part.opacity ? ` stroke-opacity="${part.opacity}"` : ''}`;
   };
   // Its text is math (math-text.js), in the math font with math labels'
   // outline to give the light face their weight.
@@ -54192,7 +54229,7 @@ function openTimingDialog() {
     return `${plainMarkup(rows[r].source)} ${a === b ? '·' : b === '1' ? '↑' : '↓'}${ref.at + 1}`;
   };
 
-  const grid = element('div', { class: 'timing-grid', tabindex: '0', role: 'grid', 'aria-label': 'Timing slots: arrows move, 1 and 0 set, Space flips, + repeats a slot, Delete removes it' });
+  const grid = element('div', { class: 'timing-grid', tabindex: '0', role: 'grid', 'aria-label': 'Timing slots: arrows move, 1 and 0 set, Space flips, + repeats a slot, Delete clears it, Shift+Delete removes it' });
   const pairsBox = element('div', { class: 'timing-section timing-pairs' });
   const status = element('p', { class: 'timing-dialog-status', role: 'status' });
 
@@ -79516,7 +79553,7 @@ __modules["src/web/plot-view.js"] = function (__require, __exports) {
 __exports.createPlotView = createPlotView;
 __exports.linkPlots = linkPlots;
 let mathRuns; __bind(() => { ({ mathRuns } = __require("src/core/math-text.js")); });
-let axisTicks, fitRange, fromU, thinSeries, toU, valueAt, zoomAbout, zoomAxes; __bind(() => { ({ axisTicks, fitRange, fromU, thinSeries, toU, valueAt, zoomAbout, zoomAxes } = __require("src/core/plot-scale.js")); });
+let axisTicks, fitRange, logMinorGrid, fromU, thinSeries, toU, valueAt, zoomAbout, zoomAxes; __bind(() => { ({ axisTicks, fitRange, logMinorGrid, fromU, thinSeries, toU, valueAt, zoomAbout, zoomAxes } = __require("src/core/plot-scale.js")); });
 /**
  * The one interactive plot every analysis view uses (responses, steps,
  * swing, root locus, loop gain, Bode, the optimizer's run, the
@@ -79698,6 +79735,12 @@ function createPlotView({ height = 230, fill = false, aspect = null, maxHeight =
     const grid = svg('g', { class: 'plot-grid' });
     const xTicks = axisTicks(scaleX(), view.x[0], view.x[1], { target: Math.max(2, Math.round(p.w / 80)) });
     const yTicks = axisTicks('linear', view.y[0], view.y[1], { target: Math.max(2, Math.round(p.h / 38)), step: spec.y.step });
+    // On a log axis, faint lines through each decade, without numbers.
+    if (scaleX() === 'log') {
+      for (const u of logMinorGrid(view.x[0], view.x[1], { ticks: xTicks.map((tick) => tick.u), length: p.w, minDecade: 40 })) {
+        grid.append(svg('line', { x1: X(u), y1: p.y, x2: X(u), y2: p.y + p.h, class: 'role-grid faint' }));
+      }
+    }
     for (const tick of xTicks) {
       const at = X(tick.u);
       grid.append(svg('line', { x1: at, y1: p.y, x2: at, y2: p.y + p.h, class: tick.major ? 'role-grid' : 'role-grid minor' }));

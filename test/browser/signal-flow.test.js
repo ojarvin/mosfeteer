@@ -63,6 +63,8 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
   test('Derive opens the Plots window with every view a loop with a quantizer offers', async () => {
     await h.until(`!document.querySelector('.plots-window').hidden`);
     assert.deepEqual(await tabs(), ['Magnitude*', 'Phase', 'Step', 'Locus', 'Swing', 'Loop', 'Time']);
+    // The log frequency axis has faint lines through each decade, without numbers.
+    await h.until(`document.querySelectorAll('.plots-window .plot-grid .role-grid.faint').length > 0`);
     assert.equal(await shown('.plots-window .signal-flow-spectrum-toggle'), true, 'a quantizer: the simulated spectrum is offered');
     assert.equal(await h.evaluate(`${h.module('plots-window.js')}.then((m) => m.plotsShown())`), true);
   });

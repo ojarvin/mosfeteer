@@ -20,7 +20,7 @@
  */
 
 import { mathRuns } from '../core/math-text.js';
-import { axisTicks, fitRange, fromU, thinSeries, toU, valueAt, zoomAbout, zoomAxes } from '../core/plot-scale.js';
+import { axisTicks, fitRange, logMinorGrid, fromU, thinSeries, toU, valueAt, zoomAbout, zoomAxes } from '../core/plot-scale.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const MARGIN = { left: 46, right: 12, top: 10, bottom: 24 };
@@ -179,6 +179,12 @@ export function createPlotView({ height = 230, fill = false, aspect = null, maxH
     const grid = svg('g', { class: 'plot-grid' });
     const xTicks = axisTicks(scaleX(), view.x[0], view.x[1], { target: Math.max(2, Math.round(p.w / 80)) });
     const yTicks = axisTicks('linear', view.y[0], view.y[1], { target: Math.max(2, Math.round(p.h / 38)), step: spec.y.step });
+    // On a log axis, faint lines through each decade, without numbers.
+    if (scaleX() === 'log') {
+      for (const u of logMinorGrid(view.x[0], view.x[1], { ticks: xTicks.map((tick) => tick.u), length: p.w, minDecade: 40 })) {
+        grid.append(svg('line', { x1: X(u), y1: p.y, x2: X(u), y2: p.y + p.h, class: 'role-grid faint' }));
+      }
+    }
     for (const tick of xTicks) {
       const at = X(tick.u);
       grid.append(svg('line', { x1: at, y1: p.y, x2: at, y2: p.y + p.h, class: tick.major ? 'role-grid' : 'role-grid minor' }));

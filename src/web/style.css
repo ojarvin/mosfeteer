@@ -7694,6 +7694,10 @@ body.chrome-away [data-editor-edge="right"] {
   stroke-opacity: 0.55;
 }
 
+.plot-view-svg .role-grid.faint {
+  stroke-opacity: 0.25;
+}
+
 .plot-view-svg .role-zero {
   stroke-dasharray: 2 4;
 }

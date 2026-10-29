@@ -771,7 +771,7 @@ function shapeAnnotationSvg(label, opacity = '') {
     return `<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" fill="none"${opacity} ${attrs}/>`;
   }
 }
-/** Stroke widths and dashes of a plot's parts, in drawing units. */
+/** Stroke widths, dashes, and opacities of a plot's parts, in drawing units. */
 const PLOT_STROKES = {
   axis: { width: 3 },
   tick: { width: 3 },
@@ -780,6 +780,7 @@ const PLOT_STROKES = {
   asymptote: { width: 3, dash: '16 12' },
   corner: { width: 2, dash: '4 10' },
   grid: { width: 1 },
+  minor: { width: 1, opacity: 0.3 },
   band: { width: 3, dash: '18 9' },
   spectrum: { width: 3 },
   marker: { width: 3, dash: '18 9' },
@@ -820,7 +821,7 @@ function plotAnnotationSvg(label, opacity = '') {
   const color = escapeSvg(resolveColor(label.style?.color || '#111'));
   const stroke = (role, ink = color) => {
     const part = PLOT_STROKES[role] || PLOT_STROKES.axis;
-    return `stroke="${ink}" stroke-width="${part.width}" fill="none"${part.dash ? ` stroke-dasharray="${part.dash}"` : ''}`;
+    return `stroke="${ink}" stroke-width="${part.width}" fill="none"${part.dash ? ` stroke-dasharray="${part.dash}"` : ''}${part.opacity ? ` stroke-opacity="${part.opacity}"` : ''}`;
   };
   // Its text is math (math-text.js), in the math font with math labels'
   // outline to give the light face their weight.

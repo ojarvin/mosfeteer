@@ -645,7 +645,7 @@ function openTimingDialog() {
     return `${plainMarkup(rows[r].source)} ${a === b ? '·' : b === '1' ? '↑' : '↓'}${ref.at + 1}`;
   };
 
-  const grid = element('div', { class: 'timing-grid', tabindex: '0', role: 'grid', 'aria-label': 'Timing slots: arrows move, 1 and 0 set, Space flips, + repeats a slot, Delete removes it' });
+  const grid = element('div', { class: 'timing-grid', tabindex: '0', role: 'grid', 'aria-label': 'Timing slots: arrows move, 1 and 0 set, Space flips, + repeats a slot, Delete clears it, Shift+Delete removes it' });
   const pairsBox = element('div', { class: 'timing-section timing-pairs' });
   const status = element('p', { class: 'timing-dialog-status', role: 'status' });
 
