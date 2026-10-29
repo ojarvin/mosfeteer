@@ -57,6 +57,29 @@ const deskEl = document.getElementById('atlas-desk');
 const overlayEl = document.getElementById('atlas-overlays');
 const titleEl = document.getElementById('atlas-title');
 const statusEl = document.getElementById('atlas-status');
+// The top bar's status rests on what the desk shows (how many designs, or
+// how many a search found); a passing message (copied, exported, a hint)
+// goes back to it after a few seconds, or on Esc.
+const FLASH_MS = 4000;
+let restingStatus = '';
+let flashTimer = 0;
+function restStatus(text) {
+  restingStatus = text;
+  clearTimeout(flashTimer);
+  flashTimer = 0;
+  statusEl.textContent = text;
+}
+/** A passing message; `stay` keeps one (work under way) until the next. */
+function flashStatus(text, { stay = false } = {}) {
+  clearTimeout(flashTimer);
+  statusEl.textContent = text;
+  flashTimer = stay ? 0 : setTimeout(endFlash, FLASH_MS);
+}
+function endFlash() {
+  clearTimeout(flashTimer);
+  flashTimer = 0;
+  statusEl.textContent = restingStatus;
+}
 const backEl = document.getElementById('atlas-close');
 const hintEl = document.getElementById('atlas-hint');
 const searchEl = document.getElementById('atlas-search');
@@ -356,7 +379,7 @@ function loadDrawings() {
   state.entries = new Map(entries.map((entry) => [entry.id, entry]));
   state.tiles = tiles;
   state.bounds = bounds;
-  statusEl.textContent = `${entries.length} built-in drawings`;
+  restStatus(`${entries.length} built-in drawings`);
   return true;
 }
 
@@ -372,12 +395,12 @@ function loadSymbols() {
   state.entries = new Map([[entry.id, entry]]);
   state.tiles = [{ id: entry.id, x: box.x, y: box.y, w: box.w, h: box.h }];
   state.bounds = { ...box };
-  statusEl.textContent = `${sheet.components.size} symbols`;
+  restStatus(`${sheet.components.size} symbols`);
   return true;
 }
 
 async function loadWorkspace(generation) {
-  statusEl.textContent = 'Reading the workspace…';
+  restStatus('Reading the workspace…');
   const workspace = await persistence.workspace();
   if (!state || state.generation !== generation) return false;
   const folder = workspace.workspace || '';
@@ -405,7 +428,7 @@ async function loadWorkspace(generation) {
     }
     if (!state || state.generation !== generation) return false;
     if (index % 4 === 3) {
-      statusEl.textContent = `Drawing ${index + 1} of ${documents.length}…`;
+      restStatus(`Drawing ${index + 1} of ${documents.length}…`);
       await new Promise((resolve) => setTimeout(resolve));
     }
   }
@@ -1690,7 +1713,7 @@ function applySearch(query, { arrange = 'soon' } = {}) {
   const designs = `${total} design${total === 1 ? '' : 's'}`;
   if (!text) {
     state.matches = null;
-    statusEl.textContent = designs;
+    restStatus(designs);
   } else {
     state.matches = new Map();
     for (const entry of state.entries.values()) {
@@ -1698,7 +1721,7 @@ function applySearch(query, { arrange = 'soon' } = {}) {
       if (found) state.matches.set(entry.id, found);
     }
     const count = state.matches.size;
-    statusEl.textContent = count ? `${count} of ${designs} · Enter steps through them` : 'No design matches';
+    restStatus(count ? `${count} of ${designs} · Enter steps through them` : 'No design matches');
   }
   for (const [id, el] of state.overlays) el.style.opacity = !state.matches || state.matches.has(id) ? '' : '0.18';
   // One design left is the one being looked for: pick it, so Enter opens it. Packing the desk around it brings it into view.
@@ -1801,7 +1824,7 @@ function exportDesk() {
   if (!state) return;
   arrangePending();
   if (state.matches && !state.matches.size) {
-    statusEl.textContent = 'No design matches the search: nothing to export';
+    flashStatus('No design matches the search: nothing to export');
     return;
   }
   const symbols = state.source === 'symbols';
@@ -1810,7 +1833,7 @@ function exportDesk() {
     return { ...tile, svg: entry.svg, box: entry.box, caption: symbols ? '' : sheetCaption(entry.name, entry.index?.tags || []) };
   });
   if (!items.length) {
-    statusEl.textContent = 'No designs to export';
+    flashStatus('No designs to export');
     return;
   }
   const count = items.length;
@@ -1825,7 +1848,7 @@ function exportDesk() {
     summary,
     build: ({ grid }) => ({ ...atlasSheetSvg(items, { grid }), count }),
     onStatus: (text) => {
-      if (state?.generation === generation) statusEl.textContent = text;
+      if (state?.generation === generation) flashStatus(text);
     },
   });
 }
@@ -1846,7 +1869,7 @@ async function copyPickedAsImage() {
   if (!state || state.source !== 'workspace') return;
   const ids = pickedIds();
   if (!ids.length) {
-    statusEl.textContent = 'Pick a design (Ctrl- or Shift-click for several), then Ctrl+Shift+C copies them';
+    flashStatus('Pick a design (Ctrl- or Shift-click for several), then Ctrl+Shift+C copies them');
     return;
   }
   const tiles = ids.map((id) => state.tiles.find((tile) => tile.id === id));
@@ -1864,12 +1887,12 @@ async function copyPickedAsImage() {
   const wanted = exportPngScale(dpi);
   const scale = Math.min(wanted, 6000 / Math.max(w, h, 1));
   const got = Math.round(dpi * scale / wanted);
-  statusEl.textContent = `Copying ${ids.length} design${ids.length === 1 ? '' : 's'}…`;
+  flashStatus(`Copying ${ids.length} design${ids.length === 1 ? '' : 's'}…`, { stay: true });
   try {
     await writeDrawingToClipboard(svg, { scale, dpi: got });
-    statusEl.textContent = `Copied ${ids.length} design${ids.length === 1 ? '' : 's'} at ${got} dpi`;
+    flashStatus(`Copied ${ids.length} design${ids.length === 1 ? '' : 's'} at ${got} dpi`);
   } catch (err) {
-    statusEl.textContent = `Could not copy the image: ${err.message}`;
+    flashStatus(`Could not copy the image: ${err.message}`);
   }
 }
 
@@ -2854,7 +2877,7 @@ function showEmptyDesk() {
     back.append(button(`Back to ${editor.currentCircuitName ? `“${editor.currentCircuitName}”` : 'the unsaved drawing'}`, 'Back to the editor (Shift+Backspace)', () => closeAtlas()));
     box.append(back);
   }
-  statusEl.textContent = '';
+  restStatus('');
   rootEl.append(box);
 }
 
@@ -3368,6 +3391,8 @@ export function onAtlasKey(ev) {
   const key = ev.key;
   const arrows = { ArrowLeft: { x: -1, y: 0 }, ArrowRight: { x: 1, y: 0 }, ArrowUp: { x: 0, y: -1 }, ArrowDown: { x: 0, y: 1 } };
   const selected = state.selected && tileById(state.selected);
+  // Esc also lets go of a passing message, whatever else it does.
+  if (key === 'Escape' && flashTimer) endFlash();
   if ((ev.ctrlKey || ev.metaKey) && ev.shiftKey && key.toLowerCase() === 'c') void copyPickedAsImage();
   // Esc takes things back one at a time and never leaves: the pick of
   // several, then a search, then the pick (and its link arrows) itself.
@@ -3557,7 +3582,7 @@ function onPointerUp(ev) {
       state.selected = hit.id;
     }
     const count = pickedIds().length;
-    statusEl.textContent = `${count} design${count === 1 ? '' : 's'} picked · Ctrl+Shift+C copies ${count === 1 ? 'it' : 'them'} as an image`;
+    flashStatus(`${count} design${count === 1 ? '' : 's'} picked · Ctrl+Shift+C copies ${count === 1 ? 'it' : 'them'} as an image`);
   } else {
     state.picked = null;
     state.selected = hit?.id || null;

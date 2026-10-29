@@ -194,6 +194,13 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
     await h.until(`/^Copied/.test(document.getElementById('atlas-status').textContent)`);
     assert.equal(await h.evaluate(`document.getElementById('atlas-status').textContent`), 'Copied 1 design at 300 dpi');
     assert.equal(await h.evaluate(`window.__copied`), 1);
+    // A passing message: Esc brings back the count, and so does waiting.
+    await atlasKey('Escape');
+    assert.match(await h.evaluate(`document.getElementById('atlas-status').textContent`), /^\d+ designs$/);
+    assert.ok(await pick('beta'));
+    await atlasKey('C', { ctrlKey: true, shiftKey: true });
+    await h.until(`/^Copied/.test(document.getElementById('atlas-status').textContent)`);
+    await h.until(`/^\\d+ designs$/.test(document.getElementById('atlas-status').textContent)`, 8000);
     await atlasKey('Escape');
   });
 
