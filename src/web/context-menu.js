@@ -862,6 +862,26 @@ function closeStrayContextSubmenus(button) {
   }
 }
 
+/** The highlight follows the pointer at once, as in a native menu: only
+ *  the hovered row and the triggers of the submenus it sits in stay lit,
+ *  while a submenu being left stays open for the hover delay. */
+function relightContextTriggers(button) {
+  for (const trigger of componentContextMenuEl.querySelectorAll('button.context-item-open')) {
+    if (trigger !== button && !trigger.nextElementSibling?.contains(button)) trigger.classList.remove('context-item-open');
+  }
+  for (let submenu = button.closest('.context-submenu'); submenu; submenu = submenu.parentElement?.closest('.context-submenu')) {
+    if (submenu.classList.contains('open')) submenu.previousElementSibling?.classList.add('context-item-open');
+  }
+}
+
+/** Off the rows, a plain row lets go of the highlight; the trigger of an
+ *  open submenu keeps it. */
+function releaseContextHover() {
+  contextHoverButton = null;
+  const active = document.activeElement;
+  if (componentContextMenuEl.contains(active) && !active.classList.contains('context-item-open')) active.blur();
+}
+
 /** Up and down step through the menu's items (those of the open submenu
  *  while focus is in it), wrapping; Home and End jump to either end. */
 function moveMenuFocus(key) {
@@ -900,16 +920,19 @@ export function installContextMenu() {
   });
   componentContextMenuEl?.addEventListener('mouseover', (ev) => {
     const button = ev.target.closest?.('button');
-    if (!button || button === contextHoverButton) return;
+    if (!button) { releaseContextHover(); return; }
+    if (button === contextHoverButton) return;
     contextHoverButton = button;
+    relightContextTriggers(button);
     // The keyboard's place follows the pointer, as in a native menu: an
     // item left focused by the arrows would stay lit beside the hovered one.
     if (!button.disabled && document.activeElement !== button && componentContextMenuEl.contains(document.activeElement)) {
       button.focus({ preventScroll: true });
     }
     window.clearTimeout(contextHoverTimer);
-    contextHoverTimer = window.setTimeout(() => closeStrayContextSubmenus(contextHoverButton), 150);
+    contextHoverTimer = window.setTimeout(() => closeStrayContextSubmenus(button), 150);
   });
+  componentContextMenuEl?.addEventListener('mouseleave', releaseContextHover);
   window.addEventListener('keydown', (ev) => {
     if (componentContextMenuEl?.hidden) return;
     if (ev.key === 'Escape') {

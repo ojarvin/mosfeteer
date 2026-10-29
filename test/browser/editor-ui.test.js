@@ -183,6 +183,32 @@ describe('editor chrome', { skip: browserSkip() }, () => {
     await h.key('Escape');
   });
 
+  test('the menu highlight follows the pointer: a left trigger goes dark at once, a plain row once the pointer leaves', async () => {
+    await h.open('amplifier');
+    await rightClick(-20, 0); // M1
+    const lit = () => h.evaluate(`[...document.querySelectorAll('.component-context-menu button')].filter((b) => b.getClientRects().length && (b.matches(':hover, :focus-visible') || b.classList.contains('context-item-open'))).map((b) => (b.firstChild?.textContent || "").trim())`);
+    const move = async (text) => {
+      const c = await h.evaluate(`(() => { const r = [...document.querySelectorAll('.component-context-menu button')].find((b) => (b.firstChild?.textContent || "").trim() === ${JSON.stringify(text)} && b.getClientRects().length).getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+      await h.mouse('mouseMoved', c.x, c.y, { button: 'none', buttons: 0 });
+    };
+    await move('Small-signal attributes');
+    await h.until(`document.querySelectorAll('.component-context-menu .context-submenu.open').length === 1`);
+    await move('Rotate');
+    // Before the hover delay closes the submenu, only the hovered row is lit.
+    assert.deepEqual(await lit(), ['Rotate']);
+    await move('Small-signal attributes');
+    await move('Device model');
+    assert.deepEqual(await lit(), ['Small-signal attributes', 'Device model']);
+    // Off the menu, an open submenu's triggers stay lit.
+    await h.mouse('mouseMoved', 5, 5, { button: 'none', buttons: 0 });
+    assert.deepEqual(await lit(), ['Small-signal attributes', 'Device model']);
+    await move('Rotate');
+    await h.until(`document.querySelectorAll('.component-context-menu .context-submenu.open').length === 0`);
+    await h.mouse('mouseMoved', 5, 5, { button: 'none', buttons: 0 });
+    assert.deepEqual(await lit(), []);
+    await h.key('Escape');
+  });
+
   test("the symbol sheet's category labels keep their placed boxes when the page measures labels", async () => {
     await h.evaluate(`${h.module('../core/symbol-sheet.js')}.then((m) => window.__load(m.symbolSheet().toJSON()))`);
     await h.evaluate(`${h.module('main.js')}.then((m) => m.render())`);
