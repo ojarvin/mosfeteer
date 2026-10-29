@@ -59542,6 +59542,9 @@ function persistDraft() {
   editor.draftTimer = setTimeout(flushDraft, 150);
 }
 
+// A failed draft write is reported once, until a write succeeds again.
+let draftFailureShown = false;
+
 function flushDraft() {
   if (editor.draftTimer) { clearTimeout(editor.draftTimer); editor.draftTimer = null; }
   if (!editor.draftReady) return;
@@ -59549,16 +59552,24 @@ function flushDraft() {
     // A tab can close during a pointer gesture. Persist only the committed
     // document, never the disposable preview clone.
     const committed = editor.previewTransaction?.baseCircuit || editor.circuit;
+    const state = committed.toJSON();
+    // A draft that matches its saved file stores the drawing once.
+    const clean = JSON.stringify(state) === editor.lastSavedSnapshot;
     windowSession.writeDraft({
       name: editor.currentCircuitName,
       path: editor.currentDocumentPath,
       dir: editor.currentDocumentDir,
       pendingName: circuitNameEl.value,
-      state: committed.toJSON(),
-      savedSnapshot: editor.lastSavedSnapshot,
+      state,
+      ...(clean ? { clean: true } : { savedSnapshot: editor.lastSavedSnapshot }),
       view: { x: editor.view.x, y: editor.view.y, w: editor.view.w, h: editor.view.h },
     });
-  } catch (err) { logLine(`Could not preserve local draft: ${err.message}`, 'error'); }
+    draftFailureShown = false;
+  } catch (err) {
+    if (draftFailureShown) return;
+    draftFailureShown = true;
+    logLine(`Could not preserve local draft: ${err.message}`, 'error');
+  }
 }
 
 function restoreDraft() {
@@ -59578,7 +59589,7 @@ function restoreDraft() {
     if (savedView && [savedView.x, savedView.y, savedView.w, savedView.h].every(Number.isFinite) && savedView.w > 0 && savedView.h > 0) {
       editor.view = { x: savedView.x, y: savedView.y, w: savedView.w, h: savedView.h };
     }
-    editor.lastSavedSnapshot = draft.savedSnapshot || snapshot();
+    editor.lastSavedSnapshot = (!draft.clean && draft.savedSnapshot) || snapshot();
     editor.restoredDraftPath = editor.currentDocumentPath;
     editor.activeSyncSuspended = !editor.currentDocumentPath;
   } catch (err) {
@@ -88778,7 +88789,8 @@ const WINDOW_ID_KEY = 'mosfeteer:window-id';
 // Background tabs run timers about once a minute, so a window that has not
 // checked in for this long without saying it closed has crashed or been killed.
 const WINDOW_STALE_MS = 3 * 60_000;
-// A draft no window has touched for this long is dropped at startup.
+// A closed window's draft is dropped at startup once nobody has touched it for
+// this long, or at once when it holds no unsaved changes (`clean`).
 const ORPHAN_DRAFT_MS = 30 * 24 * 60 * 60_000;
 // An unchanged status is rewritten at most this often.
 const TOUCH_MS = 10_000;
@@ -88869,7 +88881,7 @@ function createWindowSession({ local, session, now = () => Date.now(), randomId 
     return best.text;
   }
 
-  /** Forget closed windows' records, and drafts nobody has touched in a long time. */
+  /** Forget closed windows' records, their clean drafts, and drafts nobody has touched in a long time. */
   function pruneOrphans() {
     const at = now();
     for (const key of keys(local)) {
@@ -88880,12 +88892,21 @@ function createWindowSession({ local, session, now = () => Date.now(), randomId 
       } else if (key.startsWith(DRAFT_PREFIX) && key !== draftKey) {
         const owner = key.slice(DRAFT_PREFIX.length);
         if (alive(statusOf(owner), at)) continue;
-        const savedAt = parse(read(local, key))?.savedAt || 0;
-        if (at - savedAt > ORPHAN_DRAFT_MS) {
+        const draft = parse(read(local, key));
+        if (!draft || draft.clean || at - (draft.savedAt || 0) > ORPHAN_DRAFT_MS) {
           remove(local, key);
           remove(local, STATUS_PREFIX + owner);
         }
       }
+    }
+  }
+
+  /** Drop every draft whose window is gone, to make room for this one's. */
+  function dropOrphanDrafts() {
+    const at = now();
+    for (const key of keys(local)) {
+      if (key === LEGACY_DRAFT_KEY) remove(local, key);
+      else if (key.startsWith(DRAFT_PREFIX) && key !== draftKey && !alive(statusOf(key.slice(DRAFT_PREFIX.length)), at)) remove(local, key);
     }
   }
 
@@ -88912,9 +88933,15 @@ function createWindowSession({ local, session, now = () => Date.now(), randomId 
     id,
     draft,
     readDraft: () => read(local, draftKey),
-    /** Store this window's draft; `state` gains a `savedAt` so orphans can be ranked. */
+    /**
+     * Store this window's draft; `state` gains a `savedAt` so orphans can be
+     * ranked. A full storage first gives up closed windows' drafts.
+     */
     writeDraft(state) {
-      if (!write(local, draftKey, JSON.stringify({ ...state, savedAt: now() }))) {
+      const text = JSON.stringify({ ...state, savedAt: now() });
+      if (write(local, draftKey, text)) return;
+      dropOrphanDrafts();
+      if (!write(local, draftKey, text)) {
         throw new Error('browser storage is unavailable or full');
       }
     },

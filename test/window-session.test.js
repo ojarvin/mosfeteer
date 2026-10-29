@@ -140,3 +140,40 @@ test('storage failures never throw at startup', () => {
   w.touch({ path: '/x', focused: true });
   assert.equal(w.leadsActiveSync(), true);
 });
+
+test("a closed window's clean draft is dropped at startup; one with unsaved changes stays", () => {
+  const h = harness();
+  const a = h.open();
+  const b = h.open();
+  const c = h.open();
+  a.window.writeDraft({ name: 'clean', clean: true });
+  b.window.writeDraft({ name: 'edited' });
+  h.advance(10);
+  c.window.writeDraft({ name: 'newest', clean: true });
+  a.window.close();
+  b.window.close();
+  c.window.close();
+  // The new window adopts the newest; of the rest only the unsaved one stays.
+  const d = h.open();
+  assert.equal(JSON.parse(d.window.draft).name, 'newest');
+  assert.equal(h.local.getItem(`mosfeteer:draft:${a.window.id}`), null);
+  assert.equal(JSON.parse(h.local.getItem(`mosfeteer:draft:${b.window.id}`)).name, 'edited');
+});
+
+test("a full storage gives up closed windows' drafts before this window's", () => {
+  const h = harness();
+  const a = h.open();
+  const b = h.open();
+  a.window.writeDraft({ name: 'old' });
+  a.window.close();
+  // Room for one draft.
+  const setItem = h.local.setItem.bind(h.local);
+  h.local.setItem = (key, value) => {
+    const drafts = [...h.local.map.keys()].filter((k) => k.startsWith('mosfeteer:draft:') && k !== key).length;
+    if (key.startsWith('mosfeteer:draft:') && drafts >= 1) throw new Error('QuotaExceededError');
+    setItem(key, value);
+  };
+  b.window.writeDraft({ name: 'current' });
+  assert.equal(h.local.getItem(`mosfeteer:draft:${a.window.id}`), null);
+  assert.equal(JSON.parse(b.window.readDraft()).name, 'current');
+});

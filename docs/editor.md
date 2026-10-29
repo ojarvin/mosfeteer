@@ -14,7 +14,9 @@ browser synchronizes the active document by revision/ETag and pauses polling
 while hidden. Save invalidates stale sync responses. `src/server/documents.js`
 and `src/web/persistence.js` are the persistence boundary; `data/` is not a
 fixture directory. Each browser window keeps its own local draft
-(`src/web/window-session.js`); when the CLI switches the active document, only
+(`src/web/window-session.js`). A closed window's draft is dropped once a
+new window starts, unless it holds unsaved changes; a full storage gives up
+closed windows' drafts first, and a failed draft write is reported once. When the CLI switches the active document, only
 the most recently focused window follows, and none does while another window
 already shows it.
 

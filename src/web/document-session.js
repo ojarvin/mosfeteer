@@ -81,6 +81,9 @@ export function persistDraft() {
   editor.draftTimer = setTimeout(flushDraft, 150);
 }
 
+// A failed draft write is reported once, until a write succeeds again.
+let draftFailureShown = false;
+
 export function flushDraft() {
   if (editor.draftTimer) { clearTimeout(editor.draftTimer); editor.draftTimer = null; }
   if (!editor.draftReady) return;
@@ -88,16 +91,24 @@ export function flushDraft() {
     // A tab can close during a pointer gesture. Persist only the committed
     // document, never the disposable preview clone.
     const committed = editor.previewTransaction?.baseCircuit || editor.circuit;
+    const state = committed.toJSON();
+    // A draft that matches its saved file stores the drawing once.
+    const clean = JSON.stringify(state) === editor.lastSavedSnapshot;
     windowSession.writeDraft({
       name: editor.currentCircuitName,
       path: editor.currentDocumentPath,
       dir: editor.currentDocumentDir,
       pendingName: circuitNameEl.value,
-      state: committed.toJSON(),
-      savedSnapshot: editor.lastSavedSnapshot,
+      state,
+      ...(clean ? { clean: true } : { savedSnapshot: editor.lastSavedSnapshot }),
       view: { x: editor.view.x, y: editor.view.y, w: editor.view.w, h: editor.view.h },
     });
-  } catch (err) { logLine(`Could not preserve local draft: ${err.message}`, 'error'); }
+    draftFailureShown = false;
+  } catch (err) {
+    if (draftFailureShown) return;
+    draftFailureShown = true;
+    logLine(`Could not preserve local draft: ${err.message}`, 'error');
+  }
 }
 
 export function restoreDraft() {
@@ -117,7 +128,7 @@ export function restoreDraft() {
     if (savedView && [savedView.x, savedView.y, savedView.w, savedView.h].every(Number.isFinite) && savedView.w > 0 && savedView.h > 0) {
       editor.view = { x: savedView.x, y: savedView.y, w: savedView.w, h: savedView.h };
     }
-    editor.lastSavedSnapshot = draft.savedSnapshot || snapshot();
+    editor.lastSavedSnapshot = (!draft.clean && draft.savedSnapshot) || snapshot();
     editor.restoredDraftPath = editor.currentDocumentPath;
     editor.activeSyncSuspended = !editor.currentDocumentPath;
   } catch (err) {

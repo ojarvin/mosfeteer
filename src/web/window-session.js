@@ -20,7 +20,8 @@ const WINDOW_ID_KEY = 'mosfeteer:window-id';
 // Background tabs run timers about once a minute, so a window that has not
 // checked in for this long without saying it closed has crashed or been killed.
 export const WINDOW_STALE_MS = 3 * 60_000;
-// A draft no window has touched for this long is dropped at startup.
+// A closed window's draft is dropped at startup once nobody has touched it for
+// this long, or at once when it holds no unsaved changes (`clean`).
 export const ORPHAN_DRAFT_MS = 30 * 24 * 60 * 60_000;
 // An unchanged status is rewritten at most this often.
 const TOUCH_MS = 10_000;
@@ -111,7 +112,7 @@ export function createWindowSession({ local, session, now = () => Date.now(), ra
     return best.text;
   }
 
-  /** Forget closed windows' records, and drafts nobody has touched in a long time. */
+  /** Forget closed windows' records, their clean drafts, and drafts nobody has touched in a long time. */
   function pruneOrphans() {
     const at = now();
     for (const key of keys(local)) {
@@ -122,12 +123,21 @@ export function createWindowSession({ local, session, now = () => Date.now(), ra
       } else if (key.startsWith(DRAFT_PREFIX) && key !== draftKey) {
         const owner = key.slice(DRAFT_PREFIX.length);
         if (alive(statusOf(owner), at)) continue;
-        const savedAt = parse(read(local, key))?.savedAt || 0;
-        if (at - savedAt > ORPHAN_DRAFT_MS) {
+        const draft = parse(read(local, key));
+        if (!draft || draft.clean || at - (draft.savedAt || 0) > ORPHAN_DRAFT_MS) {
           remove(local, key);
           remove(local, STATUS_PREFIX + owner);
         }
       }
+    }
+  }
+
+  /** Drop every draft whose window is gone, to make room for this one's. */
+  function dropOrphanDrafts() {
+    const at = now();
+    for (const key of keys(local)) {
+      if (key === LEGACY_DRAFT_KEY) remove(local, key);
+      else if (key.startsWith(DRAFT_PREFIX) && key !== draftKey && !alive(statusOf(key.slice(DRAFT_PREFIX.length)), at)) remove(local, key);
     }
   }
 
@@ -154,9 +164,15 @@ export function createWindowSession({ local, session, now = () => Date.now(), ra
     id,
     draft,
     readDraft: () => read(local, draftKey),
-    /** Store this window's draft; `state` gains a `savedAt` so orphans can be ranked. */
+    /**
+     * Store this window's draft; `state` gains a `savedAt` so orphans can be
+     * ranked. A full storage first gives up closed windows' drafts.
+     */
     writeDraft(state) {
-      if (!write(local, draftKey, JSON.stringify({ ...state, savedAt: now() }))) {
+      const text = JSON.stringify({ ...state, savedAt: now() });
+      if (write(local, draftKey, text)) return;
+      dropOrphanDrafts();
+      if (!write(local, draftKey, text)) {
         throw new Error('browser storage is unavailable or full');
       }
     },
