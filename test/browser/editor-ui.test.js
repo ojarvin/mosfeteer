@@ -165,6 +165,15 @@ describe('editor chrome', { skip: browserSkip() }, () => {
     await h.key('Escape');
   });
 
+  test('Copy as image says the resolution it copied at', async () => {
+    await h.open('amplifier');
+    await h.evaluate(`(() => { window.__copied = []; Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { write: async (items) => { for (const item of items) window.__copied.push(await item.getType('image/png')); } } }); })()`);
+    await h.evaluate(`${h.module('export-ui.js')}.then((m) => m.copyAsImage())`);
+    await h.until(`${h.module('editor-state.js')}.then((m) => /^Copied image/.test(m.editor.clipboardNotice || ''))`);
+    assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.clipboardNotice)`), 'Copied image at 300 dpi');
+    assert.equal(await h.evaluate(`window.__copied.length`), 1);
+  });
+
   test('hovering another menu row closes the submenus it is not part of', async () => {
     await h.open('amplifier');
     await rightClick(-20, 0); // M1

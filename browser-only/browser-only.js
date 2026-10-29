@@ -61952,7 +61952,7 @@ async function copyAsImage() {
     const write = writeDrawingToClipboard(svg, { dpi, scale: exportPngScale(dpi) });
     reportImageCopy('Copying image…');
     await write;
-    reportImageCopy('Copied image — paste into another app.');
+    reportImageCopy(`Copied image at ${dpi} dpi`);
   } catch (err) {
     reportImageCopy(`Could not copy image: ${err.message}`, true);
   } finally {
