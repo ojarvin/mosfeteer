@@ -187,7 +187,7 @@ puts it under the drawing at its left edge, as a plot annotation
 (`plot.kind: 'response'`, `responseFigure` in `bode-figure.js`) with the
 traces' names as math labels in their colors against its right edge, children of its
 box, lined up once the browser has measured them (main.js
-`alignLabelColumn`); **Annotate… → Coefficients** puts the coefficients' numbers on the drawing as a table of their own, styled as the parts and noise tables (Coefficient and Value headings over a rule, a row per coefficient, a linked one's value the number it follows, the dither's gains too), right of the circuit under the equations; **Annotate… → Equations** puts the equations on the drawing as the mode's table, a row per input, right of the circuit and rewritten in place when annotated again ([`figures.md`](figures.md)).
+`alignLabelColumn`); **Annotate… → Coefficients** puts the coefficients' numbers on the drawing as a table of their own, styled as the parts and noise tables (Coefficient and Value headings over a rule, a row per coefficient, a linked one's value the number it follows, the dither's gains too), right of the circuit under the equations; **Annotate… → Equations** puts the equations on the drawing as the mode's table, a row per input with its transfer function alone (the ratio names the input), right of the circuit and rewritten in place when annotated again ([`figures.md`](figures.md)).
 
 ## Sampled loops
 

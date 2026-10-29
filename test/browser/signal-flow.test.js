@@ -49,6 +49,17 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     await h.evaluate(`${h.module('context-menu.js')}.then((m) => m.closeComponentContextMenu())`);
   });
 
+  test('the annotated equations are a row per input, each its ratio and transfer function', async () => {
+    await annotate('Equations');
+    const table = () => h.evaluate(`window.__circuit().labels.find((l) => l.figure?.kind === 'equations' && l.figure.source === 'signal-flow')`);
+    await h.until(`!!window.__circuit().labels.find((l) => l.figure?.kind === 'equations')`);
+    const label = await table();
+    assert.equal(label.columns, 'l');
+    const rows = label.text.split('\n');
+    assert.ok(rows.length >= 2);
+    for (const row of rows) assert.match(row, /^\\frac\{V\}\{.+?\} = /);
+  });
+
   test('Derive opens the Plots window with every view a loop with a quantizer offers', async () => {
     await h.until(`!document.querySelector('.plots-window').hidden`);
     assert.deepEqual(await tabs(), ['Magnitude*', 'Phase', 'Step', 'Locus', 'Swing', 'Loop', 'Time']);

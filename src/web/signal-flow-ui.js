@@ -1502,16 +1502,13 @@ function derive() {
 }
 
 /** The equations on the drawing as the signal-flow table
- *  (figure-annotate.js): a row per input, its name then its transfer
- *  function. Annotating again rewrites the table there. */
+ *  (figure-annotate.js): a row per input, its transfer function, whose
+ *  ratio names the input. Annotating again rewrites the table there. */
 function annotate() {
   if (!latest?.ok) return;
-  const rows = latest.entries.map((entry) => {
-    // A sampled result is written at the numbers it is shown with.
-    const equation = entry.sampled ? sampledEquation(entry, valuesFor(entry.value, latest.variable)).equation : entry.equation;
-    return `\\text{From } ${entry.inputName || entry.input} & ${equation}`;
-  });
-  const { updated } = annotateMathFigure({ kind: 'equations', source: 'signal-flow', text: rows.join('\n'), columns: 'll' });
+  // A sampled result is written at the numbers it is shown with.
+  const rows = latest.entries.map((entry) => (entry.sampled ? sampledEquation(entry, valuesFor(entry.value, latest.variable)).equation : entry.equation));
+  const { updated } = annotateMathFigure({ kind: 'equations', source: 'signal-flow', text: rows.join('\n'), columns: 'l' });
   logLine(updated ? 'updated the equation table' : 'annotated the equation table');
 }
 
