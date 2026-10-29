@@ -74,8 +74,9 @@ function freePort() {
 }
 
 /** Start a server on `docs` ({ name: state }) and a browser on the editor;
- *  `folder` names the workspace folder (its name shows in the Atlas). */
-export async function start({ docs = {}, width = 1400, height = 900, folder = 'ws' } = {}) {
+ *  `folder` names the workspace folder (its name shows in the Atlas);
+ *  `scale` is the display's device pixels per CSS pixel. */
+export async function start({ docs = {}, width = 1400, height = 900, folder = 'ws', scale = 1 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'mosfeteer-browser-'));
   const workspace = join(root, folder);
   await mkdir(workspace, { recursive: true });
@@ -173,7 +174,7 @@ export async function start({ docs = {}, width = 1400, height = 900, folder = 'w
   // THROTTLE=8 slows the page's CPU that many times, as a busy CI runner's
   // headless Chromium is: a way to try a test against a slow machine.
   if (process.env.THROTTLE) await send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.THROTTLE) });
-  await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+  await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: scale, mobile: false });
   // Motion reduced: animations and view transitions finish at once.
   await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
   await send('Page.addScriptToEvaluateOnNewDocument', { source: TIMER_GATE });

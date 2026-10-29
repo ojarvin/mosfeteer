@@ -964,3 +964,26 @@ describe('Atlas hierarchy chain', { skip: browserSkip() }, () => {
     await h.until(`${lifts}.then((t) => t.mid.lift > 0.2 && t.deep.lift > 0)`);
   });
 });
+
+describe('a desk of more designs than large images comes to rest', { skip: browserSkip() }, () => {
+  // At this display scale every design on the fitted desk wants its large
+  // image, more than are kept at once.
+  const design = (i) => {
+    const circuit = new Circuit();
+    for (let k = 0; k < 3 + (i % 3); k++) runCommand(circuit, `add resistor R${k} --at ${k * 160} 0 --rot 90`);
+    return circuit.toJSON();
+  };
+  let h;
+  before(async () => {
+    h = await start({ docs: Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`d${i}`, design(i)])), width: 1400, height: 900, scale: 3 });
+  });
+  after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
+
+  test('the images baked stop changing: none evicts another still on screen', async () => {
+    await h.click('#app-mark');
+    await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !!s && !s.busy && s.tiles.length === 40; })`, 20000);
+    const desk = await stillDesk(h);
+    await sleep(800);
+    assert.equal((await stillDesk(h)).baked, desk.baked);
+  });
+});

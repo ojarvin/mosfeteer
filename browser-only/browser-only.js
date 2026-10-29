@@ -49801,6 +49801,7 @@ function atlasSnapshot() {
     view: { ...state.view },
     flight: state.flight ? { id: state.flight.id, depth: state.flight.depth } : null,
     beams: state.beams || [],
+    baked: state.baked || 0,
     accent: state.colors?.accent || null,
     tiles: state.tiles.map((tile) => {
       const entry = state.entries.get(tile.id);
@@ -50190,6 +50191,7 @@ async function pump() {
       try {
         const bitmap = await bake(entry, level);
         if (!state || state.generation !== generation) return;
+        state.baked = (state.baked || 0) + 1;
         state.bitmaps.set(key, bitmap);
         // An image that arrives once the desk shows fades in (see draw); the
         // open design is on it from the start, as the editor showed it.
@@ -50205,12 +50207,17 @@ async function pump() {
   }
 }
 
+/** Past MAX_LARGE_BITMAPS, drop the oldest large images the screen does
+ *  not use, never `keep` or one it does. */
 function evictLargeBitmaps(keep) {
   const large = [...state.bitmaps.keys()].filter((key) => key.endsWith('\nlarge'));
-  for (const key of large.slice(0, Math.max(0, large.length - MAX_LARGE_BITMAPS))) {
-    if (key === keep) continue;
+  let excess = large.length - MAX_LARGE_BITMAPS;
+  for (const key of large) {
+    if (excess <= 0) break;
+    if (key === keep || state.largeInUse?.has(key)) continue;
     state.bitmaps.get(key)?.close?.();
     state.bitmaps.delete(key);
+    excess -= 1;
   }
 }
 
@@ -50406,7 +50413,7 @@ function draw() {
     // would drop frames, and the view does not rest here anyway.
     for (const need of level === 'large' && !moving ? ['small', 'large'] : ['small']) {
       const key = bitmapKey(entry, need);
-      if (!state.bitmaps.has(key)) wanted.push({ entry, level: need, key, distance });
+      wanted.push({ entry, level: need, key, distance });
     }
     ctx.globalAlpha = alpha * Math.min(1, reveal * 1.6) * (1 - DIMMED * dim);
     if (!flying) drawCaption(ctx, tile, entry, placedRect, palette);
@@ -50418,7 +50425,12 @@ function draw() {
   drawZoomBox(ctx, palette);
   // Every small image first (the whole desk becomes recognizable), then large.
   wanted.sort((a, b) => (a.level === b.level ? a.distance - b.distance : a.level === 'small' ? -1 : 1));
-  state.wanted = wanted;
+  // Only as many large images as are kept: the nearest the middle. Asking
+  // for more would have each new one evict another still on screen, which
+  // is asked for again, round and round.
+  // In motion none is asked for; those in use stay so.
+  if (!moving) state.largeInUse = new Set(wanted.filter((need) => need.level === 'large').slice(0, MAX_LARGE_BITMAPS).map((need) => need.key));
+  state.wanted = wanted.filter((need) => (need.level === 'small' || state.largeInUse?.has(need.key)) && !state.bitmaps.has(need.key));
   void pump();
   syncVectorOverlays(vector, moving);
 }
