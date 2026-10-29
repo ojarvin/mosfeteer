@@ -173,6 +173,13 @@ label placement. A passive's or source's Value menu has **Copy value** and
 **Paste value**, which pastes onto the selected parts whose value is in
 the same unit (Ω, F, H, A, V). Neither has a key.
 
+A part's options with a few fixed choices sit in one group of its canvas
+menu, after the actions: a sum's or multiplier's **Input polarity** (each
+input Positive or Negative), a dither's **Dither shape**, a switch's
+**Phase**, a voltage source's **Waveform**, and a supply's **Join supply
+bars**. A choice applies to the selected parts of that kind (input polarity to the one part); free-form
+values (a quantizer's levels, a gain) are edited as values.
+
 The side panel's Selection shows one selected part's properties to edit in
 place (`detailProperties`, `src/web/side-panel.js`): a transistor's Size
 (`2u/180n x4`, as the sizing window reads it), a passive's or source's

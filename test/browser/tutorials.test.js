@@ -77,7 +77,8 @@ describe('the switched-cap and delta-sigma tutorials', { skip: browserSkip() }, 
     await h.tap(sum.x, sum.y, { button: 'right' });
     await h.until(`!document.querySelector('.component-context-menu').hidden`);
     await h.evaluate(`[...document.querySelectorAll('.component-context-menu button')].find((b) => b.textContent.startsWith('Input polarity')).click()`);
-    await h.evaluate(`[...document.querySelectorAll('.context-submenu[aria-label="Input polarity"] button')].find((b) => b.textContent.trim() === 's input: positive').click()`);
+    await h.evaluate(`[...document.querySelectorAll('.context-submenu[aria-label="Input polarity"] button')].find((b) => b.textContent.startsWith('s input')).click()`);
+    await h.evaluate(`[...document.querySelectorAll('.context-submenu[aria-label="s input"] button')].find((b) => b.textContent.trim() === 'Negative').click()`);
     await h.until(`document.querySelector('#tutorial-step h3')?.textContent === 'Find the STF and the NTF'`);
     if (await h.evaluate(`document.getElementById('analysis-dialog').hidden`)) await h.key('S');
     await h.until(`!document.getElementById('analysis-dialog').hidden && !document.getElementById('analysis-signal-flow').hidden`);

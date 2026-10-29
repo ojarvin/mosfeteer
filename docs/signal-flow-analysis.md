@@ -32,7 +32,8 @@ Each wire is one signal. The parts are:
   triangle the signal crosses horizontally and to the right of a vertical
   one, kept so through rotations (`gainFitsInside`).
 - **Sum junctions** `signal_sum`: `e = ± n ± s ± w` over the connected
-  inputs, the signs from the junction's negative inputs.
+  inputs, the signs from the junction's negative inputs (right-click →
+  **Input polarity → w input → Positive/Negative**).
 - **Multiply junctions** `signal_multiply`: a gain. All inputs but one must
   be constants (a source set to *zero* or *constant*, wired straight to the
   junction); two signals multiplied have no transfer function and are
@@ -352,7 +353,8 @@ SNDR and ENOB beside the predicted SQNR.
 uniform over (-A, A) and `tri` triangular over (-A, A), the textbook
 continuous dithers, or `bin` two levels, +-A (one LFSR bit through a DAC,
 as dither is made in a circuit) and `tern` three, -A, 0, +A at 1/4, 1/2,
-1/4 (two such bits added). A gain after it
+1/4 (two such bits added); right-click → **Dither shape** picks the
+shape and keeps A. A gain after it
 sets how much reaches the loop where it is wired (into the quantizer's
 sum, say): with the default +-FS the gain reads as the dither in full
 scale. It is a coefficient like any other, so the fractions treat it as

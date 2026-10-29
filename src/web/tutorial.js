@@ -286,7 +286,7 @@ const SDM_STEPS = Object.freeze([
   {
     id: 'feedback',
     title: 'Close the loop, negatively',
-    text: 'Wire the output back into the sum\'s south (lower) input. A sum adds its inputs, so the feedback must be made negative: right-click the sum, **Input polarity → s input: positive** flips it, and a − appears beside it.',
+    text: 'Wire the output back into the sum\'s south (lower) input. A sum adds its inputs, so the feedback must be made negative: right-click the sum, **Input polarity → s input → Negative** makes it so, and a − appears beside it.',
     done: (circuit) => {
       const quantizer = circuit.components.get('QZ1');
       const sum = circuit.components.get('S1');

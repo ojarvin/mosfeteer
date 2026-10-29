@@ -18,6 +18,7 @@ import { PART_VALUE_ROLE, VALUE_TYPES, valueText, valueUnit } from '../core/part
 import { setPartValue } from '../core/part-moves.js';
 import { editInSizing } from './sizing-window.js';
 import { WAVEFORM_TYPES } from '../core/components/current.js';
+import { ditherValueText, parseDither } from '../core/transfer-function.js';
 import { joinSelectedLines, selectedLines } from './annotation-tools.js';
 import { appendLinkContextItems, linkBubbleAt, openLinkBubbleMenu } from './hierarchy.js';
 import { appendBeatContextItems, plainMarkup } from './beats-ui.js';
@@ -440,22 +441,56 @@ function appendValueMenu(menu, target) {
   });
 }
 
+/** A sum's or a multiplier's input signs: each input positive or
+ *  negative, a choice of its own. */
 function appendSignalFlowPolarityMenu(menu, target) {
   const component = target.kind === 'component' ? target.value : null;
-  const inputs = component?.terminalDefs?.filter((terminal) => terminal.signalRole === 'input') || [];
-  if (!inputs.length) return;
-  appendContextSubmenu(menu, 'Input polarity', (submenu) => {
-    for (const terminal of inputs) {
-      const routed = !!editor.circuit.netOfTerminal({ comp: component.refdes, term: terminal.name });
-      const negative = component.negativeInputs?.has(terminal.name) || false;
-      const label = routed
-        ? `${terminal.name} input: ${negative ? 'negative' : 'positive'}`
-        : `${terminal.name} input (not routed)`;
+  if (component?.type !== 'signal_sum' && component?.type !== 'signal_multiply') return;
+  const inputs = component.terminalDefs.filter((terminal) => terminal.signalRole === 'input');
+  const appendSigns = (submenu, terminal) => {
+    // A sign shows beside a wired input only.
+    const routed = !!editor.circuit.netOfTerminal({ comp: component.refdes, term: terminal.name });
+    const negative = component.negativeInputs?.has(terminal.name) || false;
+    for (const [label, sign] of [['Positive', false], ['Negative', true]]) {
       appendContextItem(submenu, label, () => {
-        commit(() => editor.circuit.setSignalInputNegative(component.refdes, terminal.name, !negative));
-      }, { disabled: !routed, active: negative });
+        if (sign !== negative) commit(() => editor.circuit.setSignalInputNegative(component.refdes, terminal.name, sign));
+      }, { disabled: !routed, active: routed && sign === negative });
+    }
+  };
+  appendContextSubmenu(menu, 'Input polarity', (submenu) => {
+    for (const terminal of inputs) appendContextSubmenu(submenu, `${terminal.name} input`, (signs) => appendSigns(signs, terminal));
+  });
+}
+
+/** A dither source's shape, for every selected dither; its amplitude stays. */
+function appendDitherShapeMenu(menu, target) {
+  const component = target.kind === 'component' ? target.value : null;
+  if (component?.type !== 'dither') return;
+  const dithers = selectedComps().filter((c) => c.type === 'dither');
+  const scope = dithers.length ? dithers : [component];
+  const read = (c) => { try { return parseDither(c.value); } catch { return { shape: null, amplitude: 1 }; } };
+  appendContextSubmenu(menu, 'Dither shape', (submenu) => {
+    for (const [label, shape] of [['Rectangular', 'rect'], ['Triangular', 'tri'], ['Binary', 'bin'], ['Ternary', 'tern']]) {
+      appendContextItem(submenu, label, () => {
+        commit(() => { for (const c of scope) editor.circuit.setValue(c.refdes, ditherValueText({ ...read(c), shape })); });
+        logLine(`${scope.map((c) => c.refdes).join(', ')} ${label.toLowerCase()}`);
+      }, { active: scope.every((c) => read(c).shape === shape) });
     }
   });
+}
+
+/** The part's own options, each a choice among a few: a group of its own
+ *  after the actions. */
+function appendComponentOptions(menu, target) {
+  if (target.kind !== 'component') return;
+  const group = document.createElement('div');
+  group.className = 'context-menu-group';
+  appendSignalFlowPolarityMenu(group, target);
+  appendDitherShapeMenu(group, target);
+  appendSwitchPhaseMenu(group, target);
+  appendWaveformMenu(group, target);
+  if (target.value.type === 'supply') appendSupplyBarItem(group, target.value);
+  if (group.childElementCount) menu.appendChild(group);
 }
 
 function appendContextSmallSignalMenu(menu, target) {
@@ -673,12 +708,10 @@ export function openComponentContextMenu(target, x, y) {
   menu.appendChild(heading);
   appendContextStyleStrip(menu);
   appendContextActions(menu, target);
+  appendComponentOptions(menu, target);
   appendContextSelectionMenu(menu, target);
-  appendSignalFlowPolarityMenu(menu, target);
-  appendSwitchPhaseMenu(menu, target);
   appendSizingMenu(menu, target);
   appendValueMenu(menu, target);
-  appendWaveformMenu(menu, target);
   appendContextSmallSignalMenu(menu, target);
   // No Close item: Escape or a click elsewhere closes the menu, as menus do.
   appendContextDelete(menu);
@@ -764,7 +797,6 @@ function appendContextActions(menu, target) {
     if (selectedComps().length > 1 && selectedComps().includes(comp)) {
       appendContextItem(group, 'Arrange like…', later(() => void openArrangePicker()), { shortcut: 'Shift+Q' });
     }
-    if (comp.type === 'supply') appendSupplyBarItem(group, comp);
     appendLinkContextItems(group, comp);
     appendDrawingOnlyItem(group, comp);
     appendBeatContextItems(group, target);
