@@ -123,8 +123,9 @@ refills it). Click a slot to flip it, or move a cursor with the arrows and
 type `1` or `0` (or an analog value, below); a key that moves the cursor
 scrolls the grid to keep it in view; the empty cell after the last slot adds one. `+` repeats
 the slot at the cursor in every row -- a state held one slot longer -- `*` (**Repeat period**) copies
-every wave once after itself, a second period to edit, and Delete removes
-a slot. The slot width is in cells, and **Gaps** lists
+every wave once after itself, a second period to edit, Shift+Delete (or
+the − button) removes a slot, and Delete or Backspace clears the cell at
+the cursor (low, or an analog slot unset). The slot width is in cells, and **Gaps** lists
 every pair of phases to keep apart (**Auto** returns to the default).
 A row's edges can also move off the slot boundaries by whole cells: `[` and
 `]` move the cursor row's falling edges a cell earlier or later, `{` and `}`
@@ -153,7 +154,7 @@ row with no value below zero runs from 0 at the bottom to 1 at the top;
 one reaching below is drawn about a dashed zero line through its middle.
 In the editor `.` or `-` begins a value (`.35`, `-.5`), digits go on, and
 Enter, Tab, Space or an arrow sets it; F2 begins from the slot's own value,
-and erased it leaves the slot unset (shown dashed). A value between the
+and erased it leaves the slot unset (shown dashed), as Delete does. A value between the
 levels makes a signal analog -- a signal low throughout (a new one) with
 only that slot set, else its levels as values -- and **Analog** turns it
 back (each value rounding to the nearer level, an unset one low);

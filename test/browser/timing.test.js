@@ -61,7 +61,7 @@ describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () =
     await h.click('.timing-annotate');
     await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.modelRevision !== ${before})`);
   };
-  const gridKey = (key) => h.evaluate(`(() => { const g = document.querySelector('.timing-grid'); g.focus(); g.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true, cancelable: true })); })()`);
+  const gridKey = (key, { shiftKey = false } = {}) => h.evaluate(`(() => { const g = document.querySelector('.timing-grid'); g.focus(); g.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, shiftKey: ${shiftKey}, bubbles: true, cancelable: true })); })()`);
   // A real click on the edge at the left of slot `slot` (0-based; the
   // empty cell after the last is the edge after it) in row `row`.
   const clickEdge = async (row, slot) => {
@@ -127,6 +127,12 @@ describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () =
     await h.until(specIs(`(t) => t.rows[0].bits === '10'`));
     await h.until(`window.__circuit().labels.some((l) => l.kind === 'label' && l.timing?.bits === '10')`);
     assert.deepEqual(await h.evaluate(`window.__circuit().labels.find((l) => l.kind === 'label' && l.timing).anchor`), at);
+    // Delete clears a slot to low and keeps it; Shift+Delete removes it.
+    await gridKey('Home');
+    await gridKey('Delete');
+    await h.until(specIs(`(t) => t.rows[0].bits === '00'`));
+    await gridKey('Delete', { shiftKey: true });
+    await h.until(specIs(`(t) => t.rows[0].bits === '0'`));
     await h.key('K', { shiftKey: true });
   });
 
@@ -315,6 +321,10 @@ describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () =
     for (const key of ['ArrowLeft', 'F2', 'Backspace', 'Backspace', 'Backspace', 'Backspace', 'Enter']) await gridKey(key);
     await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.timing.rows.find((r) => r.phase === 'V')?.values?.[3] === null)`);
     assert.deepEqual(await values(), [null, 0.5, null, null]);
+    // Delete clears a set slot; the slots stay.
+    for (const key of ['Home', 'ArrowRight', 'Delete']) await gridKey(key);
+    await h.until(`${h.module('editor-state.js')}.then((m) => !m.editor.circuit.timing.rows.find((r) => r.phase === 'V')?.values?.[1])`);
+    assert.equal(await h.evaluate(`document.querySelectorAll('.timing-grid-line')[2].querySelectorAll('.timing-cell:not(.new)').length`), 4);
     await h.key('K', { shiftKey: true });
   });
 
@@ -356,7 +366,7 @@ describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () =
     await gridKey('+');
     assert.deepEqual(await breaks(), [{ at: 2 }]);
     await gridKey('ArrowRight');
-    await gridKey('Delete');
+    await gridKey('Delete', { shiftKey: true });
     assert.deepEqual(await breaks(), []);
     await h.until(`document.querySelectorAll('#canvas .timing-break').length === 0`);
     assert.equal(await drawn(), 0);

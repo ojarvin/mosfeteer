@@ -54709,8 +54709,11 @@ function openTimingDialog() {
       repeatSequence();
     } else if (['a', 'm', 's', 'b'].includes(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey) {
       noteAt({ a: 'arrow', m: 'mark', s: 'span', b: 'break' }[event.key]);
-    } else if (event.key === 'Delete' || event.key === 'Backspace') {
+    } else if (event.key === 'Delete' && event.shiftKey) {
       removeSlot();
+    } else if (event.key === 'Delete' || event.key === 'Backspace') {
+      // Clears the cell: an analog value unset, a slot low.
+      if (slot < length()) setCell(rows[row]?.analog ? '' : '0');
     } else return;
     event.preventDefault();
   });
@@ -54836,12 +54839,12 @@ function openTimingDialog() {
       grid,
       element('details', { class: 'timing-keys' }, [
         element('summary', { text: 'Keyboard' }),
-        element('p', { text: 'Arrows move the cursor; 1 and 0 set a slot and step on; Space flips it. + repeats the slot at the cursor in all rows (a state held one slot longer), Delete removes it, * repeats the whole sequence. Ctrl+Z undoes. In a signal\'s row . or - begins an analog value (.35, -.5) and the next key sets it; F2 edits the slot\'s value, and erased leaves it unset: the line runs straight across unset slots. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. The edge at the cursor is the one at the left of its slot: a begins an arrow there and a again at another edge ends it, s does the same for a span, m marks it (or unmarks it); Esc cancels. b breaks the cursor\'s slot through all rows, again through each row, again not at all.' }),
+        element('p', { text: 'Arrows move the cursor; 1 and 0 set a slot and step on; Space flips it. + repeats the slot at the cursor in all rows (a state held one slot longer), Shift+Delete removes it, * repeats the whole sequence. Delete clears the cell: an analog value unset, a slot low. Ctrl+Z undoes. In a signal\'s row . or - begins an analog value (.35, -.5) and the next key sets it; F2 edits the slot\'s value, and erased leaves it unset: the line runs straight across unset slots. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. The edge at the cursor is the one at the left of its slot: a begins an arrow there and a again at another edge ends it, s does the same for a span, m marks it (or unmarks it); Esc cancels. b breaks the cursor\'s slot through all rows, again through each row, again not at all.' }),
       ]),
       section('Slots', [
         segmented('Slots', [
           button('Add a slot', 'Add a slot (+)', repeatSlot, { icon: 'add' }),
-          button('Remove the slot', 'Remove the slot (Delete)', removeSlot, { icon: 'minus' }),
+          button('Remove the slot', 'Remove the slot (Shift+Delete)', removeSlot, { icon: 'minus' }),
           button('Repeat the sequence', 'Repeat the sequence (*)', repeatSequence, { icon: 'repeat' }),
         ]),
         element('label', { class: 'timing-width', title: 'Slot width in grid cells' }, [slotInput, element('span', { text: 'cells each' })]),
