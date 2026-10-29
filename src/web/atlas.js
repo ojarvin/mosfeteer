@@ -1751,8 +1751,8 @@ function arrangeDesk({ animate = true } = {}) {
   void animateView(clampView(fitAllView()), ARRANGE_MS);
 }
 
-/** Shift+T: tidy the whole desk. Every design keeps its place among its
- *  neighbors, and all slide in to close the gaps. */
+/** Shift+T: rearrange the whole desk by kinship, moving it no more than
+ *  that takes (tidyAtlas). */
 function tidyDesk() {
   if (!state) return;
   if (state.matches) clearSearch();
@@ -1765,7 +1765,7 @@ function tidyDesk() {
   state.layouts.set(key, layout);
   state.arranged = null;
   arrangeDesk({ animate: true });
-  logLine('Atlas: tidied the desk');
+  logLine('Atlas: rearranged the desk by kinship');
 }
 
 /** Search keys that act on what was found pack the desk first. */

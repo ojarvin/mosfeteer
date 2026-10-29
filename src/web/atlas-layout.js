@@ -65,8 +65,7 @@ export function reshapedPlaces(previous, aspect) {
  * the desk steady: a design stays where it was while its slot there is still
  * free. A design that changed size yields to those that did not: it keeps its
  * top-left, else its center, else moves to the free spot nearest its old one.
- * Only new designs and those are placed again. `tidy` closes the gaps too
- * (tidyAtlas).
+ * Only new designs and those are placed again.
  *
  * `related(a, b)` (0..1, core/design-related.js; by default a shared tag)
  * groups designs into neighborhoods: related designs are placed one after
@@ -75,11 +74,11 @@ export function reshapedPlaces(previous, aspect) {
  * Returns { tiles: [{ id, x, y, w, h }] (the designs' rectangles, captions
  * excluded), slots: Map id -> { x, y, w, h }, bounds }.
  */
-export function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = ATLAS_CAPTION, previous = null, keep = true, tidy = false, related = null } = {}) {
+export function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = ATLAS_CAPTION, previous = null, keep = true, related = null } = {}) {
   if (!items.length) return { tiles: [], slots: new Map(), bounds: { x: 0, y: 0, w: 0, h: 0 } };
   const tagsOf = new Map(items.map((item) => [item.id, new Set(item.tags || [])]));
   const affinity = related || ((a, b) => ([...tagsOf.get(a)].some((tag) => tagsOf.get(b).has(tag)) ? 1 : 0));
-  const order = neighborhoodOrder(items, affinity);
+  const order = neighborhoods(items, affinity).flat();
   const stretch = Math.sqrt(aspect);
   const placed = []; // slots: design plus caption band
   const distance2 = (x, y, w, h, to) => ((x + w / 2 - to.x) / stretch) ** 2 + ((y + h / 2 - to.y) * stretch) ** 2;
@@ -159,8 +158,7 @@ export function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = AT
   // up. A settled desk does not move: only a gap moves anything.
   // Tidying, a design far out moves into a hole much nearer the middle
   // first, and the desk then settles until nothing moves.
-  if (tidy) tuck(placed, gap, stretch);
-  settle(placed, gap, tidy ? Infinity : 4);
+  settle(placed, gap);
   const byId = new Map(placed.map((slot) => [slot.id, slot]));
   const tiles = items.map(({ id, h }) => {
     const slot = byId.get(id);
@@ -176,13 +174,13 @@ export function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = AT
 
 /** Slide slots toward the middle of the desk (the origin, where packing
  *  starts), a grid cell at a time along each axis, while the way is free. */
-function settle(placed, gap, passes = 4) {
+function settle(placed, gap) {
   if (placed.length < 2) return;
   const middle = { x: 0, y: 0 };
   const free = (slot, x, y) => placed.every((p) => p === slot ||
     x >= p.x + p.w + gap || p.x >= x + slot.w + gap || y >= p.y + p.h + gap || p.y >= y + slot.h + gap);
   const away = (slot) => Math.hypot(slot.x + slot.w / 2 - middle.x, slot.y + slot.h / 2 - middle.y);
-  for (let pass = 0; pass < passes; pass += 1) {
+  for (let pass = 0; pass < 4; pass += 1) {
     let moved = false;
     for (const slot of [...placed].sort((a, b) => away(a) - away(b) || a.id.localeCompare(b.id))) {
       for (const axis of ['x', 'y']) {
@@ -202,7 +200,7 @@ function settle(placed, gap, passes = 4) {
 
 /** The remembered places of `items`, moved so the middle of their desk
  *  (the median of their centers, which a design far out does not pull)
- *  is the origin, where packing starts and settling pulls. */
+ *  is the origin, where the forces pull toward. */
 function centeredPlaces(previous, items) {
   const slots = items.map((item) => previous.get(item.id)).filter((slot) => slot?.w !== undefined);
   if (!slots.length) return previous;
@@ -217,49 +215,15 @@ function centeredPlaces(previous, items) {
   return out;
 }
 
-/**
- * Move designs far out into free spots much nearer the middle (distances
- * stretched to the desk's shape), the farthest first, until none has such
- * a spot. A spot touches another design, lined up with its edge or middle.
- */
-function tuck(placed, gap, stretch) {
-  const away = (slot, x = slot.x, y = slot.y) => Math.hypot((x + slot.w / 2) / stretch, (y + slot.h / 2) * stretch);
-  for (let moves = 0; moves < placed.length; moves += 1) {
-    let moved = false;
-    for (const slot of [...placed].sort((a, b) => away(b) - away(a) || a.id.localeCompare(b.id))) {
-      const others = placed.filter((p) => p !== slot);
-      const free = (x, y) => others.every((p) => x >= p.x + p.w + gap || p.x >= x + slot.w + gap || y >= p.y + p.h + gap || p.y >= y + slot.h + gap);
-      const { w, h } = slot;
-      const spots = [];
-      for (const p of others) {
-        for (const y of [p.y, p.y + p.h - h, snap(p.y + p.h / 2 - h / 2)]) spots.push([p.x - gap - w, y], [p.x + p.w + gap, y]);
-        for (const x of [p.x, p.x + p.w - w, snap(p.x + p.w / 2 - w / 2)]) spots.push([x, p.y - gap - h], [x, p.y + p.h + gap]);
-      }
-      const limit = TUCK * away(slot);
-      const best = spots.filter(([x, y]) => away(slot, x, y) < limit)
-        .sort((a, b) => away(slot, ...a) - away(slot, ...b) || a[0] - b[0] || a[1] - b[1])
-        .find(([x, y]) => free(x, y));
-      if (!best) continue;
-      [slot.x, slot.y] = best;
-      moved = true;
-      break;
-    }
-    if (!moved) return;
-  }
-}
-
-/** A design tucks in only for a spot this much nearer the middle. */
-const TUCK = 0.7;
-
 /** Relatedness below this is no kinship at all. */
 const RELATED = 0.3;
 
 /**
- * Designs in packing order: neighborhoods (designs joined by relatedness of
+ * Designs in packing order, by neighborhood: neighborhoods (designs joined by relatedness of
  * at least RELATED), the largest neighborhood first; inside one, the largest
  * design first, then whichever is most related to those already placed.
  */
-function neighborhoodOrder(items, affinity) {
+function neighborhoods(items, affinity) {
   const bySize = [...items].sort((a, b) => b.w * b.h - a.w * a.h || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const parent = new Map(bySize.map((item) => [item.id, item.id]));
   const find = (id) => { while (parent.get(id) !== id) id = parent.get(id); return id; };
@@ -288,9 +252,34 @@ function neighborhoodOrder(items, affinity) {
       });
       done.push(...rest.splice(best, 1));
     }
-    order.push(...done);
+    order.push(done);
   }
   return order;
+}
+
+/** The pieces a neighborhood (`group`) lies in on a desk (`slots`), the
+ *  largest first: a design within a few grid cells of a related one is in
+ *  its piece. */
+function piecesIn(slots, group) {
+  const near = (a, b) => Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w), b.y - (a.y + a.h), a.y - (b.y + b.h)) <= 3 * GRID;
+  const left = new Map(group.map((item) => [item.id, slots.get(item.id)]));
+  const pieces = [];
+  while (left.size) {
+    const [first] = left.keys();
+    const piece = [first];
+    left.delete(first);
+    for (let k = 0; k < piece.length; k += 1) {
+      for (const [id, slot] of [...left]) if (near(slots.get(piece[k]), slot)) { left.delete(id); piece.push(id); }
+    }
+    pieces.push(piece);
+  }
+  const area = (piece) => piece.reduce((sum, id) => sum + slots.get(id).w * slots.get(id).h, 0);
+  return pieces.sort((a, b) => area(b) - area(a) || (a[0] < b[0] ? -1 : 1));
+}
+
+/** How many pieces past one the neighborhoods (`groups`) lie in. */
+function piecesOf(slots, groups) {
+  return groups.reduce((sum, group) => sum + piecesIn(slots, group).length - 1, 0);
 }
 
 /** Longest side, in device pixels, of the two baked renderings. */
@@ -437,24 +426,178 @@ export function layoutAtlasShaped(items, options = {}) {
 }
 
 /**
- * Shift+T: tidy a desk packed before (`options.previous`), keeping its
- * arrangement: centered on the middle, the designs far out move into holes
- * much nearer it, then all slide in until none can. Tidying a tidy desk
- * moves nothing.
+ * Where each design would settle (Map id -> { x, y }, centers) if related
+ * designs pulled together like springs, each design pulled weakly back to
+ * its old place (`previous`) and the whole desk toward the middle, and
+ * designs pushed each other apart where they overlap -- a force layout, run
+ * a fixed number of steps from the old places, so the same desk always
+ * relaxes the same way. A new design starts in the middle of its kin, and
+ * so does one in `starts` (id -> center): it pushes the others aside. Early
+ * on designs pass through each other, so a design whose kin are across the
+ * desk can reach them; the pushing grows to full strength, the others
+ * making way. Overlaps that are left go to layoutAtlas.
+ */
+function relaxedPlaces(items, { aspect, gap, caption, previous, affinity, starts = new Map() }) {
+  const stretch = Math.sqrt(aspect);
+  // Each design with its caption band and the gap around it.
+  const bodies = items.map((item) => ({ w: item.w + gap, h: item.h + caption + gap }));
+  const kin = items.map(() => []);
+  for (let i = 0; i < items.length; i++) {
+    for (let j = i + 1; j < items.length; j++) {
+      const a = affinity(items[i].id, items[j].id);
+      if (a >= RELATED) { kin[i].push([j, a]); kin[j].push([i, a]); }
+    }
+  }
+  const was = items.map((item) => previous.get(item.id));
+  const centerOf = (slot) => ({ x: slot.x + slot.w / 2, y: slot.y + slot.h / 2 });
+  // A new design starts amid its kin that have places, else in the middle,
+  // a little apart from others starting there.
+  const at = items.map((item, i) => {
+    if (starts.has(item.id)) return { ...starts.get(item.id) };
+    if (was[i]) return centerOf(was[i]);
+    const known = kin[i].filter(([j]) => was[j]);
+    const total = known.reduce((sum, [, a]) => sum + a, 0);
+    if (!total) return { x: i, y: i };
+    return {
+      x: known.reduce((sum, [j, a]) => sum + a * centerOf(was[j]).x, 0) / total + i,
+      y: known.reduce((sum, [j, a]) => sum + a * centerOf(was[j]).y, 0) / total + i,
+    };
+  });
+  const anchor = at.map((p, i) => (was[i] || starts.has(items[i].id) ? { ...p } : null));
+  // Overlapping designs push apart the shorter way out, the smaller going
+  // further. Swept left to right: only designs whose spans across overlap
+  // are compared.
+  const separate = () => {
+    const left = (i) => at[i].x - bodies[i].w / 2;
+    const order = at.map((p, i) => i).sort((i, j) => left(i) - left(j) || i - j);
+    for (let m = 0; m < order.length; m++) {
+      for (let n = m + 1; n < order.length; n++) {
+        let i = order[m];
+        let j = order[n];
+        if (left(j) >= at[i].x + bodies[i].w / 2) break;
+        if (i > j) [i, j] = [j, i];
+        const a = bodies[i];
+        const b = bodies[j];
+        const dx = at[j].x - at[i].x;
+        const dy = at[j].y - at[i].y;
+        const ox = (a.w + b.w) / 2 - Math.abs(dx);
+        const oy = (a.h + b.h) / 2 - Math.abs(dy);
+        if (ox <= 0 || oy <= 0) continue;
+        const across = ox / stretch < oy * stretch;
+        const sign = (across ? dx : dy) >= 0 ? 1 : -1;
+        const overlap = across ? ox : oy;
+        const axis = across ? 'x' : 'y';
+        const share = (a.w * a.h) / (a.w * a.h + b.w * b.h);
+        at[i][axis] -= sign * overlap * (1 - share);
+        at[j][axis] += sign * overlap * share;
+      }
+    }
+  };
+  for (let step = 0; step < RELAX_STEPS; step += 1) {
+    const moved = at.map((p, i) => {
+      let fx = 0;
+      let fy = 0;
+      const total = kin[i].reduce((sum, [, a]) => sum + a, 0);
+      if (total) {
+        fx += RELAX.kin * (kin[i].reduce((sum, [j, a]) => sum + a * at[j].x, 0) / total - p.x);
+        fy += RELAX.kin * (kin[i].reduce((sum, [j, a]) => sum + a * at[j].y, 0) / total - p.y);
+      }
+      if (anchor[i]) { fx += RELAX.anchor * (anchor[i].x - p.x); fy += RELAX.anchor * (anchor[i].y - p.y); }
+      // Toward the middle, harder across the desk's short side.
+      fx -= RELAX.middle * p.x / stretch;
+      fy -= RELAX.middle * p.y * stretch;
+      return { x: p.x + fx, y: p.y + fy };
+    });
+    moved.forEach((p, i) => { at[i] = p; });
+    separate();
+  }
+  // The last overlaps the pull kept up, pushed out.
+  for (let pass = 0; pass < 30; pass += 1) separate();
+  // Onto the grid, from the middle out: each design where it came to rest
+  // if that is clear of those already down, else the nearest clear spot.
+  const placed = [];
+  const free = (x, y, w, h) => placed.every((p) => x >= p.x + p.w + gap || p.x >= x + w + gap || y >= p.y + p.h + gap || p.y >= y + h + gap);
+  const out = new Map();
+  const away = (i) => Math.hypot(at[i].x / stretch, at[i].y * stretch);
+  for (const i of items.map((item, k) => k).sort((a, b) => away(a) - away(b) || a - b)) {
+    const w = items[i].w;
+    const h = items[i].h + caption;
+    const x = snap(at[i].x - w / 2);
+    const y = snap(at[i].y - h / 2);
+    const [dx, dy] = nearCells(stretch).find(([u, v]) => free(x + u * GRID, y + v * GRID, w, h)) || [0, 0];
+    const slot = { x: x + dx * GRID, y: y + dy * GRID, w, h };
+    placed.push(slot);
+    out.set(items[i].id, slot);
+  }
+  return out;
+}
+
+/** Grid offsets nearest first (stretched to the desk's shape), out to as
+ *  far as a design may have to step aside. */
+const nearCellsCache = new Map();
+function nearCells(stretch) {
+  if (!nearCellsCache.has(stretch)) {
+    const cells = [];
+    for (let u = -NEAR_CELLS; u <= NEAR_CELLS; u++) for (let v = -NEAR_CELLS; v <= NEAR_CELLS; v++) cells.push([u, v]);
+    const d = ([u, v]) => (u / stretch) ** 2 + (v * stretch) ** 2;
+    nearCellsCache.set(stretch, cells.sort((a, b) => d(a) - d(b) || a[0] - b[0] || a[1] - b[1]));
+  }
+  return nearCellsCache.get(stretch);
+}
+const NEAR_CELLS = 60;
+
+/** The forces, as shares of the way to go a step: toward a design's kin
+ *  (their middle, weighted by kinship), back to its old place, and toward
+ *  the middle of the desk. Kinship outweighs the old place. */
+const RELAX = { kin: 0.12, anchor: 0.01, middle: 0.01 };
+const RELAX_STEPS = 300;
+
+/**
+ * Shift+T: rearrange a desk packed before (`options.previous`) by kinship,
+ * moving it no more than that takes. Related designs pull together, each
+ * design pulls weakly back to its place, and overlapping designs push each
+ * other aside (relaxedPlaces); a design whose neighborhood lies elsewhere
+ * starts amid it, so a retagged design joins its new kin and the others
+ * make way. A desk already gathered stays as it is.
  */
 export function tidyAtlas(items, options = {}) {
   if (!options.previous?.size) return layoutAtlasShaped(items, options);
-  // Centering moves the middle the designs close in on: again until a
-  // round moves nothing, so the result is a tidy desk.
-  let previous = options.previous;
-  let layout = null;
-  for (let round = 0; round < 8; round += 1) {
-    const centered = centeredPlaces(previous, items);
-    layout = layoutAtlas(items, { ...options, previous: centered, tidy: true });
-    if ([...layout.slots].every(([id, slot]) => centered.get(id)?.x === slot.x && centered.get(id)?.y === slot.y && centered.get(id)?.w === slot.w)) break;
-    previous = layout.slots;
+  const { aspect = 1.6, gap = ATLAS_GAP, caption = ATLAS_CAPTION } = options;
+  const tagsOf = new Map(items.map((item) => [item.id, new Set(item.tags || [])]));
+  const related = options.related || ((a, b) => ([...tagsOf.get(a)].some((tag) => tagsOf.get(b).has(tag)) ? 1 : 0));
+  // Each pair's kinship is worked out once for every round.
+  const known = new Map();
+  const affinity = (a, b) => {
+    const key = a < b ? `${a}\n${b}` : `${b}\n${a}`;
+    if (!known.has(key)) known.set(key, related(a, b));
+    return known.get(key);
+  };
+  const groups = neighborhoods(items, affinity);
+  const span = (layout) => Math.max(layout.bounds.w / aspect, layout.bounds.h);
+  // A round is taken only when it gathers the neighborhoods into fewer
+  // pieces, or as many on a clearly smaller desk; rounds go on while they
+  // are, so a second Shift+T finds the desk in order and leaves it.
+  let current = layoutAtlas(items, { ...options, related: affinity });
+  for (let round = 0; round < 6; round += 1) {
+    // A design in a stray piece of its neighborhood starts amid the
+    // largest piece, pushing its way in; the forces close the desk up.
+    const previous = centeredPlaces(current.slots, items);
+    const starts = new Map();
+    for (const group of groups) {
+      const [main, ...strays] = piecesIn(previous, group);
+      const middle = {
+        x: main.reduce((sum, id) => sum + previous.get(id).x + previous.get(id).w / 2, 0) / main.length,
+        y: main.reduce((sum, id) => sum + previous.get(id).y + previous.get(id).h / 2, 0) / main.length,
+      };
+      strays.flat().forEach((id, k) => starts.set(id, { x: middle.x + k * GRID, y: middle.y + k * GRID }));
+    }
+    const places = relaxedPlaces(items, { aspect, gap, caption, previous, affinity, starts });
+    const relaxed = layoutAtlas(items, { ...options, related: affinity, previous: places });
+    const [now, then] = [piecesOf(current.slots, groups), piecesOf(relaxed.slots, groups)];
+    if (!(then < now || (then === now && span(relaxed) < 0.9 * span(current)))) break;
+    current = relaxed;
   }
-  return layout;
+  return current;
 }
 
 /**
