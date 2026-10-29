@@ -255,7 +255,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Shift+G', 'toggle the spacing and alignment guides'],
     ['Shift+D', 'toggle dark mode'],
     ['Shift+P', 'show or hide the components, nets, and selection panel'],
-    ['Shift+S', 'show or hide the analysis window: circuit, signal flow, switched-cap'],
+    ['Shift+S', 'show or hide the analysis window: circuit, signal flow, switched-cap, logic'],
     ['Shift+V', 'show or hide reference windows: another design beside this one'],
     ['Shift+W', 'show or hide the plots; drag pans, right-drag zooms, double-click fits'],
     ['Shift+E', 'show or hide the calculator; Up/Down recall'],

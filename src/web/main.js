@@ -12,6 +12,7 @@
 
 import { installSignalFlowUi, signalFlowSettingsRestored } from './signal-flow-ui.js';
 import { installSwitchedCapUi } from './switched-cap-ui.js';
+import { installLogicUi } from './logic-ui.js';
 import { bodeSettingsRestored } from './bode-ui.js';
 import { captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, netsTouching as netsTouchingIn, rerouteTouchedNets as rerouteTouchedNetsIn } from '../core/part-moves.js';
 import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, netTerminalPositionKey, transformComponentWorld, transformNetLabelPlacement, transformWorldPoints } from '../core/model.js';
@@ -249,6 +250,7 @@ let shownGeneration = -1;
 installAnalysisUi();
 installSignalFlowUi();
 installSwitchedCapUi();
+installLogicUi();
 
 installIcons();
 // The first-drawing tutorial while it runs: { startedAt, skipped, cheered, finishedAt }.

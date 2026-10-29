@@ -1,4 +1,5 @@
 import { analyzeSignalFlow, complexText } from './analysis/signal-flow.js';
+import { analyzeLogic } from './analysis/logic.js';
 import { Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld } from './model.js';
 import { captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets, setPartValue } from './part-moves.js';
 import { TRANSFER_FUNCTION_ROLE, isTransferFunction } from './transfer-function.js';
@@ -548,6 +549,8 @@ export function commandHelp() {
     '  analyze model NET [options]    - place the small-signal model, its output at NET, below the drawing as drawing-only parts',
     '  analyze loop-gain AT [options] - the loop gain broken at AT: an opamp (U1), a terminal (M2.g), the net that closes',
     '                                   the loop (V_{out}), or "V_{fb} to V_{inn}" when the loop is not drawn closed',
+    '  analyze logic                  - the truth table of the gates, muxes, tri-states, flip-flops, and latches (a state table',
+    '                                   with them), and each output (and next state) as a minimized sum of products',
     '  analyze signal-flow --output NET --input PORT,... [--zero PORT,...] [--const PORT=VALUE,...]',
     '                                 - transfer functions of a block diagram (tf_s/tf_z blocks, sum and multiply junctions):',
     '                                   one per input port to the output; the other sources are zero or constant',
@@ -693,6 +696,23 @@ function dispatch(circuit, cmd, pos, flags, io) {
       ...(entry.poles?.length ? [`  poles: ${entry.poles.map(complexText).join(', ')}`] : []),
     ]);
     return result(lines.join('\n'), { variable: report.variable, output: report.output, entries: report.entries.map(({ value, ...entry }) => entry) });
+  }
+  if ((cmd === 'analyze' || cmd === 'analysis') && pos[0] === 'logic') {
+    if (pos.length > 1) throw new Error('usage: analyze logic');
+    const report = analyzeLogic(circuit);
+    if (!report.ok) throw new Error(report.error);
+    // The table as text: inputs (state first) | next state, outputs.
+    const left = [...report.states.map((st) => st.name), ...report.inputs.map((input) => input.name)];
+    const right = [...report.states.map((st) => `${st.name}+`), ...report.outputs.map((output) => output.name)];
+    const widths = [...left, ...right].map((name) => Math.max(1, name.length));
+    const cells = (values, offset) => values.map((v, i) => String(v).padEnd(widths[offset + i])).join(' ');
+    const lines = [
+      `${cells(left, 0)} | ${cells(right, left.length)}`,
+      ...report.rows.map((row) => `${cells([...row.states, ...row.inputs], 0)} | ${cells([...row.next, ...row.outputs], left.length)}`),
+      ...(report.clock ? [`clocked by ${report.clock.name} (${report.clock.falling ? 'falling' : 'rising'} edge)`] : []),
+      ...report.expressions.map((expression) => `${expression.name} = ${expression.tex ?? '(Z or X in places)'}`),
+    ];
+    return result(lines.join('\n'), { sequential: report.sequential, inputs: report.inputs, outputs: report.outputs, states: report.states, clock: report.clock, rows: report.rows, expressions: report.expressions });
   }
   if (cmd === 'analyze' || cmd === 'analysis') {
     const subject = pos.shift();

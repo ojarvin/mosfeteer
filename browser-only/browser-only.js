@@ -5149,6 +5149,409 @@ function locusPlot(locus, { parameter, label, color = COLOR_PALETTE.cobalt } = {
 
 };
 
+__modules["src/core/analysis/logic.js"] = function (__require, __exports) {
+__exports.logicNameTex = logicNameTex;
+__exports.analyzeLogic = analyzeLogic;
+__exports.sumOfProducts = sumOfProducts;
+let analyzedCircuit, canonicalNetName; __bind(() => { ({ analyzedCircuit, canonicalNetName } = __require("src/core/model.js")); });
+/**
+ * Logic analysis: a drawing of gates, multiplexers, tri-state buffers,
+ * flip-flops, and latches as its truth table, and each output as a
+ * minimized sum of products.
+ *
+ * Inputs are the input ports and the logic pins nothing drives; outputs the
+ * output ports and the logic outputs that drive nothing. A pin wired to
+ * nothing is a signal of its own, named by the pin (`U1.a`); ground and a
+ * supply are 0 and 1. Signals are 0 and 1, `Z` where every tri-state driver
+ * is off, and `X` where drivers disagree or an input is unknown.
+ *
+ * Flip-flops and latches make it sequential: a state transition table, its
+ * present state (each element's Q) and inputs on the left, the next state
+ * (Q⁺) and outputs on the right, with each next state as an equation. The
+ * flip-flops share one clock, an input of its own that takes no column; a
+ * latch's next state is what it holds once its enable has been and gone
+ * (Q⁺ = EN·L + EN̄·Q). A reset forces the state to 0.
+ *
+ * It refuses rather than guesses: a loop through gates with no flip-flop or
+ * latch in it, two drivers on one signal (unless tri-state), a part that is
+ * not logic on a logic signal, flip-flops on more than one clock or edge, a
+ * clock that also feeds logic or comes from it.
+ */
+
+
+
+const GATES = {
+  inverter: ([a]) => not(a),
+  buffer: ([a]) => known(a),
+  and2_gate: and, and3_gate: and,
+  nand2_gate: (v) => not(and(v)), nand3_gate: (v) => not(and(v)),
+  or2_gate: or, or3_gate: or,
+  nor2_gate: (v) => not(or(v)), nor3_gate: (v) => not(or(v)),
+  xor2_gate: xor, xor3_gate: xor,
+  xnor2_gate: (v) => not(xor(v)), xnor3_gate: (v) => not(xor(v)),
+};
+const TRISTATE = { tristate_buffer: (a) => known(a), tristate_inverter: (a) => not(a) };
+const PORTS = new Set(['input', 'output', 'inputoutput', 'port']);
+// Parts that only join wires, or name them.
+const PASSIVE = new Set(['solder']);
+
+/** At most this many inputs and states together: 2^12 rows. */
+const LOGIC_MAX_VARIABLES = 12;
+
+function known(v) { return v === 0 || v === 1 ? v : 'X'; }
+function not(v) { return v === 0 ? 1 : v === 1 ? 0 : 'X'; }
+function and(values) {
+  if (values.some((v) => v === 0)) return 0;
+  return values.every((v) => v === 1) ? 1 : 'X';
+}
+function or(values) {
+  if (values.some((v) => v === 1)) return 1;
+  return values.every((v) => v === 0) ? 0 : 'X';
+}
+function xor(values) {
+  if (values.some((v) => v !== 0 && v !== 1)) return 'X';
+  return values.reduce((a, b) => a ^ b, 0);
+}
+
+const natural = (a, b) => a.localeCompare(b, undefined, { numeric: true });
+
+/** A sequential part's pins: data, clock or enable, reset, and whether
+ *  each acts inverted. */
+function sequentialPins(component) {
+  const names = new Set(component.terminalDefs.map((t) => t.name));
+  if (names.has('D')) {
+    return { latch: false, data: 'D', clock: names.has('CLKB') ? 'CLKB' : 'CLK', falling: names.has('CLKB'), reset: names.has('RSTB') ? 'RSTB' : names.has('RST') ? 'RST' : null, resetLow: names.has('RSTB') };
+  }
+  if (names.has('L')) {
+    return { latch: true, data: 'L', clock: names.has('ENB') ? 'ENB' : 'EN', falling: names.has('ENB'), reset: names.has('RSTB') ? 'RSTB' : names.has('RST') ? 'RST' : null, resetLow: names.has('RSTB') };
+  }
+  return null;
+}
+
+/** A signal's name as TeX: markup kept, `$…$` unwrapped, a short name with
+ *  digits subscripted (Q0 → Q_{0}), a longer word upright, a pin as text. */
+function logicNameTex(name) {
+  const text = String(name);
+  const math = text.match(/^\$(.*)\$$/);
+  if (math) return math[1];
+  if (/[_^]\{/.test(text)) return text;
+  const word = text.match(/^([A-Za-z]+)(\d*)$/);
+  if (word) {
+    const [, letters, digits] = word;
+    const head = letters.length === 1 ? letters : `\\mathrm{${letters}}`;
+    return digits ? `${head}_{${digits}}` : head;
+  }
+  return `\\text{${text}}`;
+}
+
+/**
+ * Analyze the logic of `circuit`. Returns `{ ok: false, error }`, or
+ * `{ ok: true, sequential, inputs, outputs, states, clock, rows,
+ * expressions }`: `inputs`, `outputs`, `states` are `{ key, name }` (a
+ * state's `next` is its Q⁺ name), `rows` each `{ inputs, states, next,
+ * outputs }` of 0, 1, 'Z', 'X' in that order, and `expressions` one
+ * `{ name, tex, sop }` per next state and output (`tex` null for an output
+ * that can be Z or X).
+ */
+function analyzeLogic(source) {
+  const circuit = analyzedCircuit(source);
+  const signals = new Map(); // key -> { key, name, drivers: [], readers: [], ports: Set, constant }
+  const signalOf = (key, name) => {
+    if (!signals.has(key)) signals.set(key, { key, name, drivers: [], readers: [], ports: new Set(), constant: null, named: false });
+    return signals.get(key);
+  };
+  // A pin's signal: its net's (by name, so equal names join), else its own.
+  const netKey = (net) => `net:${canonicalNetName(net.name) || net.id}`;
+  const pinSignal = (component, term) => {
+    const net = circuit.netOfTerminal({ comp: component.refdes, term });
+    if (!net) return signalOf(`pin:${component.refdes}.${term}`, `${component.refdes}.${term}`);
+    const signal = signalOf(netKey(net), canonicalNetName(net.name) || null);
+    if (net.name) signal.named = true;
+    return signal;
+  };
+
+  const gates = [];
+  const sequential = [];
+  for (const component of [...circuit.components.values()].sort((a, b) => natural(a.refdes, b.refdes))) {
+    const type = component.type;
+    if (GATES[type] || TRISTATE[type] || type === 'mux2') {
+      const pin = (name) => pinSignal(component, name);
+      const inputs = component.terminalDefs.filter((t) => t.direction === 'input').map((t) => [t.name, pin(t.name)]);
+      const output = pin('y');
+      const gate = { component, type, inputs: new Map(inputs), output };
+      for (const [name, signal] of inputs) signal.readers.push({ component, pin: name });
+      output.drivers.push({ component, pin: 'y', tristate: !!TRISTATE[type] });
+      gates.push(gate);
+    } else if (sequentialPins(component)) {
+      const pins = sequentialPins(component);
+      const element = { component, ...pins, signals: {} };
+      for (const t of component.terminalDefs) {
+        const signal = pinSignal(component, t.name);
+        element.signals[t.name] = signal;
+        if (t.direction === 'output') signal.drivers.push({ component, pin: t.name });
+        else signal.readers.push({ component, pin: t.name, clock: t.name === pins.clock && !pins.latch });
+      }
+      sequential.push(element);
+    }
+  }
+  if (!gates.length && !sequential.length) return { ok: false, error: 'There is no logic to analyze: draw gates, multiplexers, flip-flops, or latches.' };
+
+  // What else touches the logic: ports name signals, rails are constants,
+  // anything else is not logic.
+  const logicKeys = new Set(signals.keys());
+  for (const component of circuit.components.values()) {
+    if (GATES[component.type] || TRISTATE[component.type] || component.type === 'mux2' || sequentialPins(component) || PASSIVE.has(component.type)) continue;
+    for (const t of component.terminalDefs || []) {
+      const net = circuit.netOfTerminal({ comp: component.refdes, term: t.name });
+      if (!net || !logicKeys.has(netKey(net))) continue;
+      const signal = signals.get(netKey(net));
+      if (PORTS.has(component.type)) signal.ports.add(component.type);
+      else if (component.type === 'ground') signal.constant = signal.constant === 1 ? 'both' : 0;
+      else if (component.type === 'supply') signal.constant = signal.constant === 0 ? 'both' : 1;
+      else return { ok: false, error: `${component.refdes} (${component.type}) is on the logic signal ${signal.name || component.refdes}: only logic parts, ports, ground, and supplies can be.` };
+    }
+  }
+  for (const signal of signals.values()) {
+    if (!signal.name) {
+      // An unnamed net is named by the pin that drives it, else one it feeds.
+      const pin = signal.drivers[0] || signal.readers[0];
+      signal.name = `${pin.component.refdes}.${pin.pin}`;
+    }
+    if (signal.constant === 'both') return { ok: false, error: `${signal.name} is tied to both ground and the supply.` };
+    if (signal.constant !== null && signal.drivers.length) return { ok: false, error: `${signal.name} is tied to ${signal.constant ? 'the supply' : 'ground'} and driven by ${signal.drivers[0].component.refdes}.${signal.drivers[0].pin}.` };
+    const plain = signal.drivers.filter((d) => !d.tristate);
+    if (signal.drivers.length > 1 && plain.length) {
+      return { ok: false, error: `${signal.name} is driven by ${signal.drivers.map((d) => `${d.component.refdes}.${d.pin}`).join(' and ')}: only tri-state outputs can share a signal.` };
+    }
+    if (signal.drivers.length && signal.ports.has('input')) return { ok: false, error: `${signal.name} is an input port and is driven by ${signal.drivers[0].component.refdes}.${signal.drivers[0].pin}.` };
+  }
+
+  // The clock: every flip-flop's, one input on one edge.
+  const flipFlops = sequential.filter((e) => !e.latch);
+  let clock = null;
+  if (flipFlops.length) {
+    const clocks = new Set(flipFlops.map((e) => e.signals[e.clock]));
+    if (clocks.size > 1) return { ok: false, error: `The flip-flops are on ${clocks.size} clocks (${[...clocks].map((s) => s.name).join(', ')}): the analysis takes one.` };
+    clock = [...clocks][0];
+    if (new Set(flipFlops.map((e) => e.falling)).size > 1) return { ok: false, error: `The flip-flops on ${clock.name} trigger on both edges: the analysis takes one.` };
+    if (clock.drivers.length || clock.constant !== null) return { ok: false, error: `The clock ${clock.name} comes from logic: clock the flip-flops from an input.` };
+    const other = clock.readers.find((r) => !r.clock);
+    if (other) return { ok: false, error: `The clock ${clock.name} also feeds ${other.component.refdes}.${other.pin}: the analysis takes a clock that only clocks.` };
+  }
+
+  // Inputs: what nothing drives (bar the clock and the rails); outputs: the
+  // output ports, and logic outputs that feed nothing.
+  const portIn = (s) => s.ports.has('input') || s.ports.has('inputoutput') || s.ports.has('port');
+  const portOut = (s) => s.ports.has('output') || s.ports.has('inputoutput') || s.ports.has('port');
+  const inputs = [...signals.values()].filter((s) => s !== clock && !s.drivers.length && s.constant === null && (s.readers.length || portIn(s)))
+    .sort((a, b) => natural(a.name, b.name));
+  // A flip-flop's or latch's Q is its state, shown as such, not an output
+  // too; its own pin wired to nothing is not one either.
+  const stateSignals = new Set(sequential.map((e) => e.signals.Q));
+  const unwiredState = (s) => s.key.startsWith('pin:') && s.drivers.some((d) => sequentialPins(d.component));
+  const outputs = [...signals.values()].filter((s) => s.drivers.length && !stateSignals.has(s) && (portOut(s) || (!s.readers.length && !unwiredState(s))))
+    .sort((a, b) => natural(a.name, b.name));
+  const states = sequential.map((e) => ({ element: e, name: e.signals.Q.named ? e.signals.Q.name : `${e.component.refdes}.Q` }));
+  if (inputs.length + states.length > LOGIC_MAX_VARIABLES) {
+    return { ok: false, error: `${inputs.length} inputs and ${states.length} states make ${2 ** (inputs.length + states.length)} rows: the analysis takes up to ${LOGIC_MAX_VARIABLES} together.` };
+  }
+
+  // The gates in order, each after what drives its inputs; a loop with no
+  // flip-flop or latch in it is not combinational logic.
+  const driverGate = new Map();
+  for (const gate of gates) driverGate.set(gate.output, [...(driverGate.get(gate.output) || []), gate]);
+  const order = [];
+  const mark = new Map();
+  const visit = (gate, path) => {
+    if (mark.get(gate) === 'done') return null;
+    if (mark.get(gate) === 'open') return [...path.slice(path.indexOf(gate)), gate];
+    mark.set(gate, 'open');
+    for (const signal of gate.inputs.values()) {
+      for (const before of driverGate.get(signal) || []) {
+        const loop = visit(before, [...path, gate]);
+        if (loop) return loop;
+      }
+    }
+    mark.set(gate, 'done');
+    order.push(gate);
+    return null;
+  };
+  for (const gate of gates) {
+    const loop = visit(gate, []);
+    if (loop) return { ok: false, error: `A loop runs through ${[...new Set(loop.map((g) => g.component.refdes))].join(', ')} with no flip-flop or latch: draw a latch as a latch part.` };
+  }
+
+  if (!outputs.length && !states.length) return { ok: false, error: 'The logic has no output: add an output port, or leave a gate\'s output unwired.' };
+
+  // Every signal's value for one row: inputs and states set, the rest
+  // worked out gate by gate.
+  const evaluate = (inputValues, stateValues) => {
+    const value = new Map();
+    for (const signal of signals.values()) if (signal.constant !== null) value.set(signal, signal.constant);
+    inputs.forEach((signal, i) => value.set(signal, inputValues[i]));
+    const resetOf = (e) => {
+      if (!e.reset) return 0;
+      const r = value.get(e.signals[e.reset]);
+      const v = r === undefined ? 0 : r;
+      return e.resetLow ? not(v) : known(v);
+    };
+    // A sequential part's outputs: its state, or 0 while reset (which can
+    // depend on logic, so settled after the gates below).
+    const setStates = () => states.forEach(({ element }, i) => {
+      const r = resetOf(element);
+      const q = r === 1 ? 0 : r === 0 ? stateValues[i] : 'X';
+      value.set(element.signals.Q, q);
+      if (element.signals.QB) value.set(element.signals.QB, not(q));
+    });
+    setStates();
+    const read = (signal) => (value.has(signal) ? value.get(signal) : 'X');
+    const resolve = (signal, driven) => {
+      // Tri-state drivers on one signal: the one driving, Z if none.
+      const all = [...(signal.drivenBy || []), driven].filter((v) => v !== 'Z');
+      signal.drivenBy = [...(signal.drivenBy || []), driven];
+      const settled = signal.drivenBy.length === signal.drivers.length;
+      if (!settled) return;
+      value.set(signal, !all.length ? 'Z' : all.every((v) => v === all[0]) ? all[0] : 'X');
+    };
+    for (const signal of signals.values()) delete signal.drivenBy;
+    for (const gate of order) {
+      const at = (pin) => { const v = read(gate.inputs.get(pin)); return v === 'Z' ? 'X' : v; };
+      let out;
+      if (GATES[gate.type]) out = GATES[gate.type]([...gate.inputs.keys()].map(at));
+      else if (TRISTATE[gate.type]) out = at('en') === 1 ? TRISTATE[gate.type](at('a')) : at('en') === 0 ? 'Z' : 'X';
+      else {
+        const s = at('s');
+        out = s === 0 ? at('a') : s === 1 ? at('b') : at('a') === at('b') ? at('a') : 'X';
+      }
+      resolve(gate.output, out);
+    }
+    for (const signal of signals.values()) delete signal.drivenBy;
+    setStates();
+    const next = states.map(({ element }, i) => {
+      const r = resetOf(element);
+      if (r === 1) return 0;
+      const d = read(element.signals[element.data]);
+      let q;
+      if (!element.latch) q = known(d);
+      else {
+        const en = read(element.signals[element.clock]);
+        const enabled = element.falling ? not(en) : known(en);
+        q = enabled === 1 ? known(d) : enabled === 0 ? stateValues[i] : (known(d) === stateValues[i] ? stateValues[i] : 'X');
+      }
+      return r === 0 ? q : (q === 0 ? 0 : 'X');
+    });
+    return { next, outputs: outputs.map((signal) => read(signal)) };
+  };
+
+  const width = states.length + inputs.length;
+  const rows = [];
+  for (let index = 0; index < 2 ** width; index += 1) {
+    const bits = Array.from({ length: width }, (_, k) => (index >> (width - 1 - k)) & 1);
+    const stateValues = bits.slice(0, states.length);
+    const inputValues = bits.slice(states.length);
+    const { next, outputs: out } = evaluate(inputValues, stateValues);
+    rows.push({ states: stateValues, inputs: inputValues, next, outputs: out });
+  }
+
+  const variables = [...states.map((s) => s.name), ...inputs.map((s) => s.name)];
+  const nextName = (name) => `${logicNameTex(name)}^{+}`;
+  const expressions = [
+    ...states.map((state, i) => ({ name: nextName(state.name), ...sumOfProducts(rows.map((row) => row.next[i]), variables) })),
+    ...outputs.map((signal, i) => ({ name: logicNameTex(signal.name), ...sumOfProducts(rows.map((row) => row.outputs[i]), variables) })),
+  ];
+  return {
+    ok: true,
+    sequential: states.length > 0,
+    inputs: inputs.map((s) => ({ key: s.key, name: s.name })),
+    outputs: outputs.map((s) => ({ key: s.key, name: s.name })),
+    states: states.map((s) => ({ ref: s.element.component.refdes, name: s.name, next: nextName(s.name), latch: s.element.latch })),
+    clock: clock ? { name: clock.name, falling: flipFlops[0].falling } : null,
+    rows,
+    expressions,
+  };
+}
+
+/**
+ * A column of values over every combination of `variables` (most
+ * significant first) as a minimized sum of products (Quine–McCluskey: the
+ * prime implicants, the essential ones, then the fewest more that cover the
+ * rest, the larger first). Returns `{ tex, sop }`: `sop` the products as
+ * [variable index, 0 or 1] lists, `tex` the sum in TeX -- null where a value
+ * is Z or X.
+ */
+function sumOfProducts(column, variables) {
+  if (column.some((v) => v !== 0 && v !== 1)) return { tex: null, sop: null };
+  const n = variables.length;
+  const ones = column.map((v, i) => (v === 1 ? i : -1)).filter((i) => i >= 0);
+  if (!ones.length) return { tex: '0', sop: [] };
+  if (ones.length === column.length) return { tex: '1', sop: [[]] };
+  // Implicants as [value, mask]: mask bits set where the variable is free.
+  let current = new Map(ones.map((m) => [`${m}/0`, { value: m, mask: 0, covers: [m] }]));
+  const primes = [];
+  while (current.size) {
+    const next = new Map();
+    const used = new Set();
+    const list = [...current.values()];
+    for (let i = 0; i < list.length; i++) {
+      for (let j = i + 1; j < list.length; j++) {
+        const a = list[i];
+        const b = list[j];
+        if (a.mask !== b.mask) continue;
+        const diff = a.value ^ b.value;
+        if (diff & (diff - 1)) continue;
+        const merged = { value: a.value & ~diff, mask: a.mask | diff, covers: [...new Set([...a.covers, ...b.covers])] };
+        next.set(`${merged.value}/${merged.mask}`, merged);
+        used.add(a);
+        used.add(b);
+      }
+    }
+    for (const implicant of list) if (!used.has(implicant)) primes.push(implicant);
+    current = next;
+  }
+  // Essential primes first, then the one covering the most still left.
+  const left = new Set(ones);
+  const chosen = [];
+  for (const m of ones) {
+    const covering = primes.filter((p) => p.covers.includes(m));
+    if (covering.length === 1 && !chosen.includes(covering[0])) chosen.push(covering[0]);
+  }
+  for (const p of chosen) for (const m of p.covers) left.delete(m);
+  while (left.size) {
+    const best = primes.filter((p) => !chosen.includes(p))
+      .map((p) => ({ p, gain: p.covers.filter((m) => left.has(m)).length }))
+      .sort((a, b) => b.gain - a.gain || popcount(b.p.mask) - popcount(a.p.mask) || a.p.value - b.p.value)[0];
+    chosen.push(best.p);
+    for (const m of best.p.covers) left.delete(m);
+  }
+  const sop = chosen.map((p) => {
+    const literals = [];
+    for (let k = 0; k < n; k++) {
+      const bit = 1 << (n - 1 - k);
+      if (!(p.mask & bit)) literals.push([k, p.value & bit ? 1 : 0]);
+    }
+    return literals;
+  }).sort((a, b) => a.length - b.length || compareProducts(a, b));
+  const literal = ([k, v]) => (v ? logicNameTex(variables[k]) : `\\overline{${logicNameTex(variables[k])}}`);
+  const tex = sop.map((product) => product.map(literal).join(' \\cdot ')).join(' + ');
+  return { tex, sop };
+}
+
+function popcount(x) { let c = 0; while (x) { c += x & 1; x >>= 1; } return c; }
+function compareProducts(a, b) {
+  for (let i = 0; i < Math.min(a.length, b.length); i++) {
+    if (a[i][0] !== b[i][0]) return a[i][0] - b[i][0];
+    if (a[i][1] !== b[i][1]) return b[i][1] - a[i][1];
+  }
+  return 0;
+}
+
+/** A table cell: 0, 1, Z, X. */
+const logicValueText = (v) => String(v);
+
+__exports.LOGIC_MAX_VARIABLES = LOGIC_MAX_VARIABLES;
+__exports.logicValueText = logicValueText;
+};
+
 __modules["src/core/analysis/loop-gain.js"] = function (__require, __exports) {
 __exports.returnRatio = returnRatio;
 __exports.feedbackParts = feedbackParts;
@@ -20996,6 +21399,7 @@ __exports.evaluate = evaluate;
 __exports.commandHelp = commandHelp;
 __exports.runCommand = runCommand;
 let analyzeSignalFlow, complexText; __bind(() => { ({ analyzeSignalFlow, complexText } = __require("src/core/analysis/signal-flow.js")); });
+let analyzeLogic; __bind(() => { ({ analyzeLogic } = __require("src/core/analysis/logic.js")); });
 let Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld; __bind(() => { ({ Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld } = __require("src/core/model.js")); });
 let captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets, setPartValue; __bind(() => { ({ captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets, setPartValue } = __require("src/core/part-moves.js")); });
 let TRANSFER_FUNCTION_ROLE, isTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_ROLE, isTransferFunction } = __require("src/core/transfer-function.js")); });
@@ -21028,6 +21432,7 @@ let parsePageGuide; __bind(() => { ({ parsePageGuide } = __require("src/core/pag
 let findInLabels, replaceInLabels; __bind(() => { ({ findInLabels, replaceInLabels } = __require("src/core/label-search.js")); });
 let normalizeNotes, notesMarkdown; __bind(() => { ({ normalizeNotes, notesMarkdown } = __require("src/core/notes.js")); });
 let checkpointHistory, historyEntries, historyEntryState, historyText, pinHistoryEntry, removeHistoryEntry, settledHistory, unpinHistoryEntry; __bind(() => { ({ checkpointHistory, historyEntries, historyEntryState, historyText, pinHistoryEntry, removeHistoryEntry, settledHistory, unpinHistoryEntry } = __require("src/core/save-history.js")); });
+
 
 
 
@@ -21578,6 +21983,8 @@ function commandHelp() {
     '  analyze model NET [options]    - place the small-signal model, its output at NET, below the drawing as drawing-only parts',
     '  analyze loop-gain AT [options] - the loop gain broken at AT: an opamp (U1), a terminal (M2.g), the net that closes',
     '                                   the loop (V_{out}), or "V_{fb} to V_{inn}" when the loop is not drawn closed',
+    '  analyze logic                  - the truth table of the gates, muxes, tri-states, flip-flops, and latches (a state table',
+    '                                   with them), and each output (and next state) as a minimized sum of products',
     '  analyze signal-flow --output NET --input PORT,... [--zero PORT,...] [--const PORT=VALUE,...]',
     '                                 - transfer functions of a block diagram (tf_s/tf_z blocks, sum and multiply junctions):',
     '                                   one per input port to the output; the other sources are zero or constant',
@@ -21723,6 +22130,23 @@ function dispatch(circuit, cmd, pos, flags, io) {
       ...(entry.poles?.length ? [`  poles: ${entry.poles.map(complexText).join(', ')}`] : []),
     ]);
     return result(lines.join('\n'), { variable: report.variable, output: report.output, entries: report.entries.map(({ value, ...entry }) => entry) });
+  }
+  if ((cmd === 'analyze' || cmd === 'analysis') && pos[0] === 'logic') {
+    if (pos.length > 1) throw new Error('usage: analyze logic');
+    const report = analyzeLogic(circuit);
+    if (!report.ok) throw new Error(report.error);
+    // The table as text: inputs (state first) | next state, outputs.
+    const left = [...report.states.map((st) => st.name), ...report.inputs.map((input) => input.name)];
+    const right = [...report.states.map((st) => `${st.name}+`), ...report.outputs.map((output) => output.name)];
+    const widths = [...left, ...right].map((name) => Math.max(1, name.length));
+    const cells = (values, offset) => values.map((v, i) => String(v).padEnd(widths[offset + i])).join(' ');
+    const lines = [
+      `${cells(left, 0)} | ${cells(right, left.length)}`,
+      ...report.rows.map((row) => `${cells([...row.states, ...row.inputs], 0)} | ${cells([...row.next, ...row.outputs], left.length)}`),
+      ...(report.clock ? [`clocked by ${report.clock.name} (${report.clock.falling ? 'falling' : 'rising'} edge)`] : []),
+      ...report.expressions.map((expression) => `${expression.name} = ${expression.tex ?? '(Z or X in places)'}`),
+    ];
+    return result(lines.join('\n'), { sequential: report.sequential, inputs: report.inputs, outputs: report.outputs, states: report.states, clock: report.clock, rows: report.rows, expressions: report.expressions });
   }
   if (cmd === 'analyze' || cmd === 'analysis') {
     const subject = pos.shift();
@@ -68059,6 +68483,207 @@ function layoutSuggestions(items, grid = GRID) {
 
 };
 
+__modules["src/web/logic-ui.js"] = function (__require, __exports) {
+__exports.installLogicUi = installLogicUi;
+let analyzeLogic, logicNameTex; __bind(() => { ({ analyzeLogic, logicNameTex } = __require("src/core/analysis/logic.js")); });
+let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
+let registerAnalysisMode; __bind(() => { ({ registerAnalysisMode } = __require("src/web/signal-flow-ui.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let onDocumentShown; __bind(() => { ({ onDocumentShown } = __require("src/web/main.js")); });
+let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
+let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
+let annotateMathFigure; __bind(() => { ({ annotateMathFigure } = __require("src/web/figure-annotate.js")); });
+let registerAnnotations; __bind(() => { ({ registerAnnotations } = __require("src/web/annotate-menu.js")); });
+/**
+ * The analysis window's logic mode: a drawing of gates, multiplexers,
+ * tri-states, flip-flops, and latches as its truth table -- a state
+ * transition table with flip-flops or latches -- and each output and next
+ * state as a minimized sum of products (core/analysis/logic.js). Nothing to
+ * set: the inputs and outputs are found in the drawing, listed before
+ * Derive. Annotate puts the table, or the equations, on the drawing.
+ */
+
+
+
+
+
+
+
+
+
+
+
+/** A table this many rows long, or shorter, goes on the drawing. */
+const ANNOTATED_ROWS = 64;
+/** Columns an annotated table holds (render.js), one of them the gap. */
+const ANNOTATED_COLUMNS = 16;
+
+const LOGIC_TYPES = /^(inverter|buffer|tristate_inverter|tristate_buffer|mux2|(and|nand|or|nor|xor|xnor)[23]_gate|dff.*|latch.*)$/;
+const ANALOG_TYPES = /^(nmos|pmos|nmosb|pmosb|npn|pnp|resistor|capacitor|inductor|current_source|voltage_source|vccs|vcvs|opamp.*|gm.*|diode|switch_.*|tf_.*|gain|signal_.*)$/;
+
+let section = null;
+let latest = null; // { revision, result }
+
+/** A drawing the mode suits: logic parts and nothing analog. */
+function suggested(circuit) {
+  const parts = [...circuit.components.values()];
+  return parts.some((c) => LOGIC_TYPES.test(c.type)) && !parts.some((c) => ANALOG_TYPES.test(c.type));
+}
+
+function math(tex, display = false) {
+  const span = el('span', { class: `logic-math${display ? ' display' : ''}` });
+  const markup = texToMathML(tex);
+  span.innerHTML = display ? markup : markup.replace('display="block"', 'display="inline"');
+  return span;
+}
+
+/** The table's columns: the state then the inputs, the next state then the outputs. */
+function columnsOf(result) {
+  return {
+    left: [...result.states.map((state) => logicNameTex(state.name)), ...result.inputs.map((input) => logicNameTex(input.name))],
+    right: [...result.states.map((state) => state.next), ...result.outputs.map((output) => logicNameTex(output.name))],
+  };
+}
+
+/** What the drawing gives: its inputs, outputs, state, and clock. */
+function renderSignals() {
+  const host = section.querySelector('.logic-signals');
+  const result = analyzeLogic(editor.circuit);
+  if (!result.ok) {
+    host.replaceChildren(el('p', { class: 'field-hint', text: result.error }));
+    return;
+  }
+  const list = (label, names) => el('div', { class: 'logic-signal-row' }, [
+    el('span', { class: 'signal-flow-source-name', text: label }),
+    el('span', { class: 'logic-signal-names' }, names.length ? names.flatMap((name, i) => [...(i ? [', '] : []), math(logicNameTex(name))]) : ['none']),
+  ]);
+  host.replaceChildren(
+    list('Inputs', result.inputs.map((input) => input.name)),
+    list('Outputs', result.outputs.map((output) => output.name)),
+    ...(result.states.length ? [list('State', result.states.map((state) => state.name))] : []),
+    ...(result.clock ? [list('Clock', [`${result.clock.name}`])] : []),
+    el('p', { class: 'field-hint', text: 'Input and output ports, and pins wired to nothing: an unwired input is an input, an unwired output an output.' }),
+  );
+}
+
+function derive() {
+  const result = analyzeLogic(editor.circuit);
+  latest = { revision: editor.modelRevision, result };
+  renderResult();
+  if (!result.ok) logLine(`Logic analysis: ${result.error}`, 'error');
+}
+
+function renderResult() {
+  if (!section) return;
+  const host = section.querySelector('.logic-results');
+  section.querySelector('.logic-stale').hidden = !latest || latest.revision === editor.modelRevision;
+  if (!latest) { host.replaceChildren(); return; }
+  const { result } = latest;
+  if (!result.ok) {
+    host.replaceChildren(el('div', { class: 'analysis-error', role: 'status', text: result.error }));
+    return;
+  }
+  const { left, right } = columnsOf(result);
+  const head = el('tr', {}, [
+    ...left.map((tex) => el('th', { scope: 'col' }, [math(tex)])),
+    ...right.map((tex, i) => el('th', { scope: 'col', class: i === 0 ? 'logic-first-out' : undefined }, [math(tex)])),
+  ]);
+  const body = result.rows.map((row) => el('tr', {}, [
+    ...[...row.states, ...row.inputs].map((v) => el('td', { text: String(v) })),
+    ...[...row.next, ...row.outputs].map((v, i) => el('td', { class: `${i === 0 ? 'logic-first-out' : ''} ${v === 1 ? 'logic-high' : ''}`.trim() || undefined, text: String(v) })),
+  ]));
+  const title = result.sequential ? 'State transition table' : 'Truth table';
+  const clock = result.clock ? `On each ${result.clock.falling ? 'falling' : 'rising'} edge of ${result.clock.name}; ` : '';
+  const latches = result.states.some((state) => state.latch) ? 'a latch\'s next state is what it holds once its enable has gone; ' : '';
+  host.replaceChildren(
+    el('h3', { class: 'logic-title', text: title }),
+    el('div', { class: 'analysis-noise-table logic-table' }, [el('div', { class: 'analysis-noise-table-scroll' }, [el('table', {}, [el('thead', {}, [head]), el('tbody', {}, body)])])]),
+    ...(result.sequential ? [el('p', { class: 'field-hint', text: `${clock}${latches}the state on the left, the next state (+) on the right.` })] : []),
+    el('h3', { class: 'logic-title', text: result.sequential ? 'Next state and outputs' : 'Outputs' }),
+    el('div', { class: 'logic-expressions' }, result.expressions.map((expression) => el('div', { class: 'logic-expression' }, expression.tex
+      ? [math(`${expression.name} = ${expression.tex}`, true)]
+      : [math(expression.name), el('span', { class: 'field-hint', text: ' is Z or X in places: no expression.' })]))),
+  );
+}
+
+/** Whether the table fits a table on the drawing. */
+function tableFits(result) {
+  const { left, right } = columnsOf(result);
+  return result.rows.length <= ANNOTATED_ROWS && left.length + right.length + 1 <= ANNOTATED_COLUMNS;
+}
+
+/** The table on the drawing: names over a rule, a row per combination,
+ *  a gap between what goes in and what comes out. */
+function annotateTable() {
+  const result = latest?.result;
+  if (!result?.ok || !tableFits(result)) return;
+  const { left, right } = columnsOf(result);
+  const rows = [
+    [...left, '', ...right].join(' & '),
+    '\\hline',
+    ...result.rows.map((row) => [...row.states, ...row.inputs, '', ...row.next, ...row.outputs].map(String).join(' & ')),
+  ];
+  const columns = 'c'.repeat(left.length + 1 + right.length);
+  const { updated } = annotateMathFigure({ kind: 'table', source: 'logic', text: rows.join('\n'), columns });
+  logLine(updated ? `updated the ${result.sequential ? 'state' : 'truth'} table` : `annotated the ${result.sequential ? 'state' : 'truth'} table`);
+}
+
+/** The equations on the drawing, each name then its sum of products. */
+function annotateEquations() {
+  const result = latest?.result;
+  if (!result?.ok) return;
+  const rows = result.expressions.filter((expression) => expression.tex).map((expression) => `${expression.name} & = ${expression.tex}`);
+  if (!rows.length) return;
+  const { updated } = annotateMathFigure({ kind: 'equations', source: 'logic', text: rows.join('\n'), columns: 'rl' });
+  logLine(updated ? 'updated the logic equations' : 'annotated the logic equations');
+}
+
+function installLogicUi() {
+  section = el('div', { id: 'analysis-logic', class: 'signal-flow-section logic-section', hidden: true }, [
+    el('p', { class: 'analysis-intro', text: 'Derive gives the truth table, a state table with flip-flops or latches, and each output as a minimized sum of products.' }),
+    el('fieldset', { class: 'analysis-approximations' }, [el('legend', { text: 'Signals' }), el('div', { class: 'logic-signals' })]),
+    el('p', { class: 'analysis-stale logic-stale', hidden: true, text: 'The circuit changed since this was derived.' }),
+    el('div', { class: 'logic-results', 'aria-live': 'polite' }),
+  ]);
+  registerAnnotations('logic', () => [
+    { label: 'Table', identity: { kind: 'table', source: 'logic' }, available: !!latest?.result.ok && tableFits(latest.result), run: annotateTable },
+    { label: 'Equations', identity: { kind: 'equations', source: 'logic' }, available: !!latest?.result.ok && latest.result.expressions.some((expression) => expression.tex), run: annotateEquations },
+  ]);
+  const actions = [
+    el('button', { type: 'button', class: 'primary-action logic-derive', 'data-icon': 'check', text: 'Derive', title: 'Derive (Enter)', onclick: derive }),
+  ];
+  section.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter' || ev.target.tagName === 'BUTTON') return;
+    ev.preventDefault();
+    derive();
+  });
+  // The drawing may have changed while the window was open.
+  let filled = -1;
+  section.addEventListener('pointerenter', () => {
+    if (filled === editor.modelRevision) return;
+    filled = editor.modelRevision;
+    renderSignals();
+    if (latest) section.querySelector('.logic-stale').hidden = latest.revision === editor.modelRevision;
+  });
+  registerAnalysisMode({
+    mode: 'logic',
+    label: 'Logic',
+    hint: 'Logic analysis',
+    title: 'Logic analysis',
+    section,
+    actions,
+    suggested,
+    shown: () => { renderSignals(); renderResult(); },
+  });
+  // Another design starts with none of this one's results.
+  onDocumentShown(() => {
+    latest = null;
+    if (!section.hidden) { renderSignals(); renderResult(); }
+  });
+}
+
+};
+
 __modules["src/web/main.js"] = function (__require, __exports) {
 __exports.deriveInteractionState = deriveInteractionState;
 __exports.markSettingsChanged = markSettingsChanged;
@@ -68164,6 +68789,7 @@ __exports.activateAlign = activateAlign;
 __exports.selectedTransform = selectedTransform;
 let installSignalFlowUi, signalFlowSettingsRestored; __bind(() => { ({ installSignalFlowUi, signalFlowSettingsRestored } = __require("src/web/signal-flow-ui.js")); });
 let installSwitchedCapUi; __bind(() => { ({ installSwitchedCapUi } = __require("src/web/switched-cap-ui.js")); });
+let installLogicUi; __bind(() => { ({ installLogicUi } = __require("src/web/logic-ui.js")); });
 let bodeSettingsRestored; __bind(() => { ({ bodeSettingsRestored } = __require("src/web/bode-ui.js")); });
 let captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, netsTouchingIn, rerouteTouchedNetsIn; __bind(() => { ({ captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, netsTouching: netsTouchingIn, rerouteTouchedNets: rerouteTouchedNetsIn } = __require("src/core/part-moves.js")); });
 let Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, netTerminalPositionKey, transformComponentWorld, transformNetLabelPlacement, transformWorldPoints; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, netTerminalPositionKey, transformComponentWorld, transformNetLabelPlacement, transformWorldPoints } = __require("src/core/model.js")); });
@@ -68255,6 +68881,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -68487,6 +69114,7 @@ let shownGeneration = -1;
 installAnalysisUi();
 installSignalFlowUi();
 installSwitchedCapUi();
+installLogicUi();
 
 installIcons();
 // The first-drawing tutorial while it runs: { startedAt, skipped, cheered, finishedAt }.
@@ -88539,7 +89167,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Shift+G', 'toggle the spacing and alignment guides'],
     ['Shift+D', 'toggle dark mode'],
     ['Shift+P', 'show or hide the components, nets, and selection panel'],
-    ['Shift+S', 'show or hide the analysis window: circuit, signal flow, switched-cap'],
+    ['Shift+S', 'show or hide the analysis window: circuit, signal flow, switched-cap, logic'],
     ['Shift+V', 'show or hide reference windows: another design beside this one'],
     ['Shift+W', 'show or hide the plots; drag pans, right-drag zooms, double-click fits'],
     ['Shift+E', 'show or hide the calculator; Up/Down recall'],

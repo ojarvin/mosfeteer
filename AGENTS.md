@@ -24,6 +24,7 @@ read the one for the area you change before changing it.
 | Small-signal analysis | [`docs/symbolic-analysis.md`](docs/symbolic-analysis.md) |
 | Signal-flow analysis, swing, optimizer | [`docs/signal-flow-analysis.md`](docs/signal-flow-analysis.md) |
 | Switched-capacitor analysis | [`docs/switched-cap-analysis.md`](docs/switched-cap-analysis.md) |
+| Logic analysis | [`docs/logic-analysis.md`](docs/logic-analysis.md) |
 | Wiring internals | [`docs/wiring-architecture.md`](docs/wiring-architecture.md) |
 | Beats, linked designs, Atlas | [`docs/beats.md`](docs/beats.md), [`docs/hierarchy.md`](docs/hierarchy.md), [`docs/atlas.md`](docs/atlas.md) |
 | Notes, reports, save history | [`docs/notes-and-history.md`](docs/notes-and-history.md) |
@@ -91,7 +92,7 @@ markers.
 **Analysis.** The small-signal GUI calls
 `adaptCombinedReport(analyzeSmallSignalV2(...))`; every transfer function
 and noise column comes from the one MNA solve; ambiguous selections return a
-diagnostic, never a guess. Signal-flow and switched-capacitor
+diagnostic, never a guess. Signal-flow, switched-capacitor, and logic
 analysis refuse rather than guess too. Every analysis reads
 `analyzedCircuit(circuit)`: a drawing-only part
 (`ComponentInstance#drawingOnly`, such as a placed small-signal model) is

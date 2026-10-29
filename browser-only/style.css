@@ -8744,3 +8744,45 @@ html.dark[data-accent] {
 .sc-stray-table td .sc-math.display {
   font-size: 1.25em;
 }
+
+/* The logic mode: its signals, the table, the equations. */
+.logic-signal-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 2px 0;
+}
+
+.logic-title {
+  margin: 12px 0 6px;
+  font: 700 var(--text-sm)/1.2 var(--font-ui);
+}
+
+.logic-table .analysis-noise-table-scroll {
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.logic-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-panel);
+}
+
+.logic-table td {
+  font-variant-numeric: tabular-nums;
+}
+
+.logic-table .logic-first-out {
+  border-left: 1px solid var(--border);
+}
+
+.logic-table td.logic-high {
+  font-weight: 700;
+}
+
+.logic-expression {
+  padding: 4px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}

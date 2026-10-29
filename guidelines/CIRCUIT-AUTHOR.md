@@ -238,6 +238,8 @@ eval                           quality report (connectivity, overlaps, routing, 
 analyze signal-flow --output NET --input PORT,... [--zero PORT,...] [--const PORT=VALUE,...]
                                transfer functions of a block diagram (tf_s/tf_z blocks, sum and
                                multiply junctions): one per input port to the output (docs/signal-flow-analysis.md)
+analyze logic                  truth table (a state table with flip-flops or latches) and each output's
+                               minimized sum of products (docs/logic-analysis.md)
 explain eval                   grouped diagnostics with plain-language repair hints
 explain connect REF.TERM REF.TERM
                                dry-run route with path, bends, and pin-escape details
