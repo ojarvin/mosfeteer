@@ -49830,7 +49830,7 @@ let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); 
 let commit, render, setLabelSelection, setSelection; __bind(() => { ({ commit, render, setLabelSelection, setSelection } = __require("src/web/main.js")); });
 let setDocumentTags; __bind(() => { ({ setDocumentTags } = __require("src/web/tags-ui.js")); });
 let revealStartup; __bind(() => { ({ revealStartup } = __require("src/web/startup.js")); });
-let exportAtlasSheet; __bind(() => { ({ exportAtlasSheet } = __require("src/web/export-ui.js")); });
+let exportAtlasSheet, exportPngDpi, exportPngScale; __bind(() => { ({ exportAtlasSheet, exportPngDpi, exportPngScale } = __require("src/web/export-ui.js")); });
 let atlasSheetSvg, sheetCaption; __bind(() => { ({ atlasSheetSvg, sheetCaption } = __require("src/web/atlas-sheet.js")); });
 let writeDrawingToClipboard; __bind(() => { ({ writeDrawingToClipboard } = __require("src/web/clipboard.js")); });
 let slideChrome; __bind(() => { ({ slideChrome } = __require("src/web/chrome-slide.js")); });
@@ -51694,14 +51694,18 @@ async function copyPickedAsImage() {
     return { ...tile, svg: entry.svg, box: entry.box, caption: sheetCaption(entry.name, entry.index?.tags || []) };
   });
   const { svg } = atlasSheetSvg(items);
-  // A few designs at real size can be a large picture: keep it within what
-  // a clipboard and a paste target handle.
+  // At the export's PNG resolution, as the editor copies; a few designs at
+  // real size can be a large picture, so kept within what a clipboard and
+  // a paste target handle, and the resolution said is the one it got.
   const { w, h } = packed.bounds;
-  const scale = Math.min(2, 6000 / Math.max(w, h, 1));
+  const dpi = exportPngDpi();
+  const wanted = exportPngScale(dpi);
+  const scale = Math.min(wanted, 6000 / Math.max(w, h, 1));
+  const got = Math.round(dpi * scale / wanted);
   statusEl.textContent = `Copying ${ids.length} design${ids.length === 1 ? '' : 's'}…`;
   try {
-    await writeDrawingToClipboard(svg, { scale });
-    statusEl.textContent = `Copied ${ids.length} design${ids.length === 1 ? '' : 's'} as an image — paste into another app`;
+    await writeDrawingToClipboard(svg, { scale, dpi: got });
+    statusEl.textContent = `Copied ${ids.length} design${ids.length === 1 ? '' : 's'} at ${got} dpi`;
   } catch (err) {
     statusEl.textContent = `Could not copy the image: ${err.message}`;
   }
@@ -61839,6 +61843,8 @@ __exports.REPORT_MODULATOR = REPORT_MODULATOR;
 };
 
 __modules["src/web/export-ui.js"] = function (__require, __exports) {
+__exports.exportPngDpi = exportPngDpi;
+__exports.exportPngScale = exportPngScale;
 __exports.copyAsImage = copyAsImage;
 __exports.exportCircuit = exportCircuit;
 __exports.exportAtlasSheet = exportAtlasSheet;

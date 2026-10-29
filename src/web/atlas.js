@@ -42,7 +42,7 @@ import { canvasEl } from './elements.js';
 import { commit, render, setLabelSelection, setSelection } from './main.js';
 import { setDocumentTags } from './tags-ui.js';
 import { revealStartup } from './startup.js';
-import { exportAtlasSheet } from './export-ui.js';
+import { exportAtlasSheet, exportPngDpi, exportPngScale } from './export-ui.js';
 import { atlasSheetSvg, sheetCaption } from './atlas-sheet.js';
 import { writeDrawingToClipboard } from './clipboard.js';
 import { slideChrome } from './chrome-slide.js';
@@ -1856,14 +1856,18 @@ async function copyPickedAsImage() {
     return { ...tile, svg: entry.svg, box: entry.box, caption: sheetCaption(entry.name, entry.index?.tags || []) };
   });
   const { svg } = atlasSheetSvg(items);
-  // A few designs at real size can be a large picture: keep it within what
-  // a clipboard and a paste target handle.
+  // At the export's PNG resolution, as the editor copies; a few designs at
+  // real size can be a large picture, so kept within what a clipboard and
+  // a paste target handle, and the resolution said is the one it got.
   const { w, h } = packed.bounds;
-  const scale = Math.min(2, 6000 / Math.max(w, h, 1));
+  const dpi = exportPngDpi();
+  const wanted = exportPngScale(dpi);
+  const scale = Math.min(wanted, 6000 / Math.max(w, h, 1));
+  const got = Math.round(dpi * scale / wanted);
   statusEl.textContent = `Copying ${ids.length} design${ids.length === 1 ? '' : 's'}…`;
   try {
-    await writeDrawingToClipboard(svg, { scale });
-    statusEl.textContent = `Copied ${ids.length} design${ids.length === 1 ? '' : 's'} as an image — paste into another app`;
+    await writeDrawingToClipboard(svg, { scale, dpi: got });
+    statusEl.textContent = `Copied ${ids.length} design${ids.length === 1 ? '' : 's'} at ${got} dpi`;
   } catch (err) {
     statusEl.textContent = `Could not copy the image: ${err.message}`;
   }

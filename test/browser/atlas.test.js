@@ -186,6 +186,17 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
     await atlasKey('Escape');
   });
 
+  test('Ctrl+Shift+C copies the picked design and says the resolution it copied at', async () => {
+    await openDesk();
+    assert.ok(await pick('beta'));
+    await h.evaluate(`(() => { window.__copied = 0; Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { write: async (items) => { for (const item of items) { await item.getType('image/png'); window.__copied += 1; } } } }); })()`);
+    await atlasKey('C', { ctrlKey: true, shiftKey: true });
+    await h.until(`/^Copied/.test(document.getElementById('atlas-status').textContent)`);
+    assert.equal(await h.evaluate(`document.getElementById('atlas-status').textContent`), 'Copied 1 design at 300 dpi');
+    assert.equal(await h.evaluate(`window.__copied`), 1);
+    await atlasKey('Escape');
+  });
+
   test('the designs lifted with the pick float clear of its card, are picked where they float, and settle back', async () => {
     await openDesk();
     assert.ok(await pick('top'));

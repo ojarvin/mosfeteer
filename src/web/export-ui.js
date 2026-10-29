@@ -55,12 +55,12 @@ let exportContent = 'drawing';
 let exportTarget = null;
 
 /** The remembered PNG resolution (export dialog), also used by copied images. */
-function exportPngDpi() {
+export function exportPngDpi() {
   try { return normalizePngDpi(JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null')?.pngDpi); } catch { return normalizePngDpi(null); }
 }
 
 /** PNG pixels per unit: label text at the page guide's size, else 10 pt, at `dpi`. */
-function exportPngScale(dpi) {
+export function exportPngScale(dpi) {
   return pngRasterScale(dpi, editor.pageGuide?.textPt ?? DEFAULT_EXPORT_TEXT_PT);
 }
 

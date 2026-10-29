@@ -202,7 +202,7 @@ folder on the Atlas does the same. Symbols view hides both buttons.
 | right-drag | zoom to the box |
 | click / arrows / Tab | pick a design |
 | Ctrl- or Shift-click | add a design to the pick, or take it out (Esc clears) |
-| Ctrl+Shift+C | copy the picked designs as one image, packed together with their captions |
+| Ctrl+Shift+C | copy the picked designs as one image, packed together with their captions, at the Export dialog's PNG resolution |
 | double-click / Enter | open it (after the unsaved-changes check); Enter with nothing picked goes back to the editor |
 | `/` or Ctrl/Cmd+F | search the designs |
 | `#` | edit the picked design's tags; with several picked, add tags to each |
