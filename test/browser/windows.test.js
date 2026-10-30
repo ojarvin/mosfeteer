@@ -299,7 +299,7 @@ describe('floating windows', { skip: browserSkip() }, () => {
     assert.equal(await h.evaluate(`document.activeElement?.id`), 'canvas');
   });
 
-  test('Escape on the drawing lets go of the selection and leaves the windows open', async () => {
+  test('Escape on the drawing lets go of the selection, then closes the beat strip; the other windows stay open', async () => {
     await h.open('beats');
     await closeAll();
     const open = () => h.evaluate(`[...document.querySelectorAll('.floating-window')].filter((w) => !w.hidden && w.offsetParent).map((w) => w.id || w.className.split(' ')[1])`);
@@ -310,9 +310,15 @@ describe('floating windows', { skip: browserSkip() }, () => {
     const ref = await h.evaluate(`window.__circuit().comps.find((c) => c.type !== 'solder').refdes`);
     await h.evaluate(`${h.module('main.js')}.then((m) => { m.setSelection([${JSON.stringify(ref)}]); m.render(); document.getElementById('canvas').focus(); })`);
     const windows = await open();
-    for (let i = 0; i < 4; i++) await h.key('Escape');
+    await h.key('Escape');
     assert.equal(await h.evaluate(`${h.module('main.js')}.then((m) => m.selectedComps().length)`), 0, 'the selection goes');
     assert.deepEqual(await open(), windows, 'the windows stay');
+    assert.equal(await h.evaluate(`${h.module('beats-ui.js')}.then((m) => m.activeBeatIndex())`), 0, 'the beat stays on screen');
+    await h.key('Escape');
+    await h.until(`document.getElementById('beat-strip').hidden`);
+    assert.equal(await h.evaluate(`${h.module('beats-ui.js')}.then((m) => m.activeBeatIndex())`), null, 'the whole drawing shows');
+    for (let i = 0; i < 3; i++) await h.key('Escape');
+    assert.deepEqual(await open(), windows.filter((id) => id !== 'beat-strip'), 'the other windows stay');
     await closeAll();
   });
 

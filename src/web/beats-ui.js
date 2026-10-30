@@ -107,6 +107,12 @@ export function toggleBeatStrip() {
   else render();
 }
 
+/** Close the beat strip and show the whole drawing. */
+export function closeBeatStrip() {
+  editor.beatStripOpen = false;
+  setActiveBeat(null);
+}
+
 /** Add a beat after the one on screen (or at the end) and show it. It starts
  * out looking like the beat before it. */
 export function addBeatHere() {
@@ -1525,10 +1531,6 @@ export function installBeatsUi() {
   document.getElementById('btn-present')?.addEventListener('click', () => openPresenter());
   document.getElementById('btn-phase-beats')?.addEventListener('click', addPhaseBeats);
   document.getElementById('btn-timing-diagram')?.addEventListener('click', toggleTimingDialog);
-  const closeBeatStrip = () => {
-    editor.beatStripOpen = false;
-    setActiveBeat(null);
-  };
   document.getElementById('beat-strip-close')?.addEventListener('click', closeBeatStrip);
   // Escape in the window closes it, as in the other windows -- once it has
   // let go of beats picked there, and not while a beat's name is typed.

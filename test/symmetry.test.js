@@ -110,3 +110,60 @@ test('about a horizontal axis, a part on it is its own twin: wires to one input 
   assert.deepEqual(circuit.netOfTerminal({ comp: 'OTA', term: 'im' }).terminals.map((t) => `${t.comp}.${t.term}`).sort(), ['CF2.a', 'CS2.b', 'OTA.im']);
   assert.deepEqual(circuit.netOfTerminal({ comp: 'OTA', term: 'op' }).terminals.map((t) => `${t.comp}.${t.term}`).sort(), ['CF2.b', 'OTA.op']);
 });
+
+/** A net's wire as grid steps, `x,y|x,y` with the ends sorted. */
+function steps(net, image = (p) => p) {
+  const out = new Set();
+  for (const path of net.paths()) {
+    for (let i = 1; i < path.length; i++) {
+      const a = path[i - 1];
+      const b = path[i];
+      const n = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y)) / 40;
+      for (let k = 0; k < n; k++) {
+        const p = image({ x: a.x + k * Math.sign(b.x - a.x) * 40, y: a.y + k * Math.sign(b.y - a.y) * 40 });
+        const q = image({ x: a.x + (k + 1) * Math.sign(b.x - a.x) * 40, y: a.y + (k + 1) * Math.sign(b.y - a.y) * 40 });
+        out.add([`${p.x},${p.y}`, `${q.x},${q.y}`].sort().join('|'));
+      }
+    }
+  }
+  return [...out].sort();
+}
+const net = (circuit, pin) => { const [comp, term] = pin.split('.'); return circuit.netOfTerminal({ comp, term }); };
+const mirrored = (circuit, pin, twinPin) => assert.deepEqual(steps(net(circuit, twinPin)), steps(net(circuit, pin), (p) => mirrorPoint(p, AXIS)));
+
+test('a part turned, mirrored, or moved: its twin\'s wires are the mirror image of its own', () => {
+  for (const line of ['rotate M1 270', 'mirror M1 x', 'move M1 -240 -40', 'rotate R1', 'move R1 -120 -200', 'rotate M3', 'move M3 -600 -80']) {
+    const circuit = new Circuit();
+    edit(circuit, 'add nmos M1 --at -200 0');
+    edit(circuit, 'add resistor R1 --at -160 -280 --rot 90');
+    edit(circuit, 'add nmos M3 --at -560 0');
+    edit(circuit, 'connect M1.d R1.b');
+    edit(circuit, 'connect M1.g M3.d');
+    edit(circuit, 'connect M1.s M3.s');
+    const done = edit(circuit, line);
+    assert.equal(done.moved.length, 1, line);
+    for (const [pin, twin] of [['M1.d', 'M2.d'], ['M1.g', 'M2.g'], ['M1.s', 'M2.s']]) mirrored(circuit, pin, twin);
+  }
+});
+
+test('a part moved on a net across the axis: the net is its edited side and that side\'s image', () => {
+  const circuit = new Circuit();
+  edit(circuit, 'add nmos M1 --at -200 0');
+  edit(circuit, 'add current_source I1 --at 0 280');
+  edit(circuit, 'connect M1.s I1.a');
+  edit(circuit, 'move M1 -280 -40');
+  assert.deepEqual(placed(circuit).filter(([type]) => type === 'nmos'), [['nmos', -280, -40, false], ['nmos', 280, -40, true]]);
+  const tail = net(circuit, 'I1.a');
+  assert.deepEqual(steps(tail), steps(tail, (p) => mirrorPoint(p, AXIS)));
+  assert.deepEqual(tail.terminals.map((t) => `${t.comp}.${t.term}`).sort(), ['I1.a', 'M1.s', 'M2.s']);
+});
+
+test('a part renamed keeps its twin, and the twin its name', () => {
+  const circuit = new Circuit();
+  edit(circuit, 'add input VI1 --at -400 0');
+  const twin = [...circuit.components.values()].find((c) => c.type === 'input' && c.refdes !== 'VI1').refdes;
+  edit(circuit, `rename ${twin} INN`);
+  const done = edit(circuit, 'rename VI1 INP');
+  assert.deepEqual([done.added, done.removed], [[], []]);
+  assert.deepEqual([...circuit.components.keys()].sort(), ['INN', 'INP']);
+});

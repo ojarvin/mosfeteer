@@ -66,7 +66,7 @@ import { paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxView
 import { syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock } from './analysis-ui.js';
 import { closeComponentContextMenu, openContextMenuAt, installContextMenu } from './context-menu.js';
 import { boxState, restoreBoxState, openComponentChildLabelEditor, inlineEditLabel } from './label-editor.js';
-import { activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, toggleTimingDialog, onPresenterKey, installBeatsUi, syncTimingEditor } from './beats-ui.js';
+import { activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, closeBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, toggleTimingDialog, onPresenterKey, installBeatsUi, syncTimingEditor } from './beats-ui.js';
 import { formatModifiedTime, revisionTime } from './modified-time.js';
 import { persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, openDocumentPath, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } from './document-session.js';
 import { copyAsImage, exportCircuit, installExportUi } from './export-ui.js';
@@ -7096,8 +7096,15 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
   if (key === 'Escape') {
-    // A tool or a pending key, then the selection; the windows stay open
-    // (Escape in a window closes that one).
+    // A tool or a pending key, then the selection; then the beat strip, so
+    // Alt+arrows step into the beats and Escape comes back to the drawing.
+    // The other windows stay open (Escape in a window closes that one).
+    const holding = pendingKey || moveMode || copyMode || deleteMode || movePending || copyPending || labelMode || annotationStart
+      || selected || multi.size || selLabels.size || selectedNets.size || selectedWire || selectedWires.size;
+    if (!holding && beatStripOpen) {
+      closeBeatStrip();
+      return;
+    }
     pendingKey = null;
     moveMode = null;
     copyMode = false;

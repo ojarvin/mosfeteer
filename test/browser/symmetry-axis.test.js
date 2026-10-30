@@ -47,6 +47,14 @@ describe('symmetry axis', { skip: browserSkip() }, () => {
     await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.get('M1').transform.x === -200)`);
     assert.equal(await ed(`c.components.get(${JSON.stringify(twin)}).transform.x`), 200, 'one undo puts both back');
 
+    // r turns M1; its twin turns the other way, its wire the mirror image.
+    await h.evaluate(`${h.module('main.js')}.then((m) => { m.setSelection(['M1']); m.render(); })`);
+    await h.key('r');
+    await h.settle();
+    const points = (ref, mirror) => ed(`[...new Set(c.netOfTerminal({ comp: ${JSON.stringify(ref)}, term: 's' }).paths().flat().map((p) => (${mirror} ? -p.x : p.x) + ',' + p.y))].sort()`);
+    assert.equal(await ed(`c.components.get('M1').transform.rotation`), 90);
+    assert.deepEqual(await points(twin, false), await points('M1', true), 'the twin\'s wire is the mirror image');
+
     await run('rm M1');
     assert.equal(await ed(`c.components.has(${JSON.stringify(twin)})`), false, 'the twin goes too');
   });

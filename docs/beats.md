@@ -267,7 +267,8 @@ renaming a part renames its references.
   `Shift+B` (or its toolbar button, or More → Beats) shows it, and `+` adds a
   beat after the one on screen. `Alt+→`/`Alt+←` or PageDown/PageUp step
   through them, stopping at either end; before the first is the whole
-  drawing. The beat on screen draws what it dims faint and what it hides
+  drawing. Escape on the drawing, with nothing selected, closes the window
+  and shows the whole drawing. The beat on screen draws what it dims faint and what it hides
   fainter still; both stay selectable. `h` hides the selection from this beat
   on (or shows it again), `Shift+H` dims it, `s` flips selected switches (from
   this beat on, or in the drawing when no beat is shown), and the highlight

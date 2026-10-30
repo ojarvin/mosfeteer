@@ -58,6 +58,8 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     const rows = label.text.split('\n');
     assert.ok(rows.length >= 2);
     for (const row of rows) assert.match(row, /^\\frac\{V\}\{.+?\} = /);
+    // Drawn as a table: each row a band, its fractions apart.
+    await h.until(`[...document.querySelectorAll('.schematic-math-table')].some((t) => t.querySelectorAll('.schematic-math-strut').length === ${rows.length})`);
   });
 
   test('Derive opens the Plots window with every view a loop with a quantizer offers', async () => {

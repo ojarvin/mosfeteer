@@ -175,6 +175,18 @@ test('a math label with & is drawn as a table: columns, rules, and lines across 
   assert.match(svg, /grid-column:1 \/ -1/);
 });
 
+test('a math label given columns is a table though no line has two cells: its fraction rows a band apart', () => {
+  const circuit = new Circuit();
+  const text = '\\frac{V}{U} = \\frac{1}{1 + z^{-1}}\n\\frac{V}{E} = \\frac{1 - z^{-1}}{1 + z^{-1}}';
+  const table = circuit.addLabel({ text, math: true, align: 'left', columns: 'l', x: 0, y: 0 });
+  const lines = circuit.addLabel({ text, math: true, align: 'left', x: 400, y: 0 });
+  const svg = svgString(circuit);
+  assert.equal((svg.match(/schematic-math-table/g) || []).length, 1);
+  assert.equal((svg.match(/schematic-math-strut/g) || []).length, 2, 'each row a band');
+  assert.ok(table.mathTableRows() && !lines.mathTableRows());
+  assert.ok(table.textHeight() >= lines.textHeight());
+});
+
 test('a tall table and a wide model are packed clear of each other, the model under the circuit', () => {
   const circuit = amplifier();
   const core = coreBounds(circuit);

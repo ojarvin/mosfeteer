@@ -7,8 +7,9 @@
  * (`mirrorEdit`):
  *
  * - a part added gets a twin, unless it sits on the axis or one is there;
- * - a part moved, turned, or mirrored has its twin follow, mirrored;
- * - a part removed takes its twin with it;
+ * - a part moved, turned, or mirrored has its twin follow, mirrored, and
+ *   the twin's wires are the mirror image of its own;
+ * - a part removed takes its twin with it; a part renamed is left alone;
  * - a part's value or size changed changes its twin's, and its own labels
  *   moved move its twin's;
  * - a wire drawn is drawn again, mirrored, from and to the twins of what it
@@ -22,8 +23,8 @@
 
 import { GRID } from './grid.js';
 import { applyTransform } from './geometry.js';
-import { transformComponentWorld } from './model.js';
-import { captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets, setPartValue } from './part-moves.js';
+import { netTerminalPositionKey, transformComponentWorld } from './model.js';
+import { captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, netsTouching, setPartValue } from './part-moves.js';
 
 const key = (p) => `${p.x},${p.y}`;
 
@@ -102,10 +103,15 @@ function wireSteps(circuit) {
 }
 
 /** The new wire, as polylines from end to end: the steps there now and not
- *  before, cut at every end, joint, and corner-free run between. */
+ *  before. */
 function drawnRuns(before, after, skipNets) {
   const old = wireSteps(before);
-  const added = [...wireSteps(after)].filter(([k, step]) => !old.has(k) && !skipNets.has(step.net)).map(([, step]) => step);
+  return runsOf([...wireSteps(after)].filter(([k, step]) => !old.has(k) && !skipNets.has(step.net)).map(([, step]) => step));
+}
+
+/** Grid steps joined into polylines, cut at every end, joint, and
+ *  corner-free run between. */
+function runsOf(added) {
   const next = new Map();
   const link = (p, q) => {
     if (!next.has(key(p))) next.set(key(p), { point: p, to: [] });
@@ -167,6 +173,33 @@ function twinName(circuit, refdes) {
   return circuit.components.has(next) || circuit.labels.has(next) ? circuit.nextRefdes(match[1]) : next;
 }
 
+/**
+ * A net's wires as the mirror image of its twin's (`twinOf`, before the
+ * edit): the wires of the net its pins' twins are on, mirrored; or, for a
+ * net across the axis, its wires on the side away from `followers` and
+ * their image. Null when its pins' twins are not one net.
+ */
+function mirroredWires(circuit, net, twinOf, axis, followers) {
+  const image = net.terminals.map((t) => ({ comp: twinOf.get(t.comp), term: t.term }));
+  if (!image.length || image.some((t) => !t.comp)) return null;
+  const source = circuit.netOfTerminal(image[0]);
+  if (!source || source.terminals.length !== image.length
+    || !image.every((t) => source.terminals.some((u) => u.comp === t.comp && u.term === t.term))) return null;
+  if (source !== net) return source.paths().map((path) => path.map((p) => mirrorPoint(p, axis)));
+  const sideOf = (p) => Math.sign(axis.operation === 'mirrorX' ? p.x - axis.pin.x : p.y - axis.pin.y);
+  const sides = new Set(net.terminals.filter((t) => followers.has(t.comp)).map((t) => sideOf(circuit.components.get(t.comp).transform)));
+  if (sides.size !== 1) return null;
+  const [far] = sides;
+  const steps = [];
+  for (const step of wireSteps({ nets: new Map([[net.id, net]]) }).values()) {
+    const side = sideOf({ x: (step.a.x + step.b.x) / 2, y: (step.a.y + step.b.y) / 2 });
+    if (side === far) continue;
+    steps.push(step);
+    if (side) steps.push({ a: mirrorPoint(step.a, axis), b: mirrorPoint(step.b, axis) });
+  }
+  return runsOf(steps).map(corners);
+}
+
 /** The pin at a point, as `REF.TERM`, or null. */
 function pinAt(circuit, p) {
   for (const c of circuit.components.values()) {
@@ -187,9 +220,19 @@ export function mirrorEdit(before, circuit, axis) {
   const done = { added: [], moved: [], removed: [], changed: [], wires: 0 };
   const was = twins(before, axis);
   const changed = new Set();
+  // A part renamed (gone, and one of its type in its place) is neither
+  // removed nor added: names are left to the hand.
+  const renamed = new Set();
+  const renamedTo = new Set();
+  for (const [ref, old] of before.components) {
+    if (circuit.components.has(ref) || old.type === 'solder') continue;
+    const now = [...circuit.components.values()].find((c) => !before.components.has(c.refdes) && !renamedTo.has(c.refdes)
+      && c.type === old.type && sameTransform(c.transform, old.transform));
+    if (now) { renamed.add(ref); renamedTo.add(now.refdes); }
+  }
   // Parts removed take their twins.
   for (const ref of before.components.keys()) {
-    if (circuit.components.has(ref) || before.components.get(ref).type === 'solder') continue;
+    if (circuit.components.has(ref) || renamed.has(ref) || before.components.get(ref).type === 'solder') continue;
     const twin = was.get(ref);
     if (!twin || twin === ref || !circuit.components.has(twin)) continue;
     circuit.removeComponent(twin);
@@ -213,10 +256,23 @@ export function mirrorEdit(before, circuit, axis) {
     const beforeComponents = captureComponentTerminalPositions(circuit, refs);
     const beforeTerminals = captureNetTerminalPositions(circuit, refs);
     const saved = new Map(refs.map((ref) => [ref, { ...circuit.components.get(ref).transform }]));
+    const topology = circuit._snapshotNetTopology();
     for (const [twin, t] of followers) circuit.components.get(twin).transform = t;
     circuit.invalidateRoutingCache();
-    if (rerouteTouchedNets(circuit, refs, null, { fresh: true, beforeTerminals, terminalMoves: componentTerminalMoves(circuit, refs, beforeComponents) }) !== null) {
+    // Their wires are the mirror image of the edited side's, else rerouted.
+    const moves = componentTerminalMoves(circuit, refs, beforeComponents);
+    const following = new Set(refs);
+    const followed = [...netsTouching(circuit, refs)].every((id) => {
+      const net = circuit.nets.get(id);
+      if (!net) return true;
+      const image = mirroredWires(circuit, net, was, axis, following);
+      if (image && circuit.installNetPaths(net, image)) return true;
+      const unchanged = beforeTerminals.get(id) === netTerminalPositionKey(circuit, net);
+      return circuit.rerouteNet(net, unchanged ? null : moves) !== false;
+    });
+    if (!followed) {
       // The twins cannot follow: they stay where they were.
+      circuit._restoreNetTopology(topology);
       for (const [ref, t] of saved) circuit.components.get(ref).transform = t;
       circuit.invalidateRoutingCache();
     } else {
@@ -255,7 +311,7 @@ export function mirrorEdit(before, circuit, axis) {
   }
   // Parts added get twins.
   const now = twins(circuit, axis);
-  const added = [...circuit.components.values()].filter((c) => c.type !== 'solder' && !before.components.has(c.refdes));
+  const added = [...circuit.components.values()].filter((c) => c.type !== 'solder' && !before.components.has(c.refdes) && !renamedTo.has(c.refdes));
   for (const c of added) {
     if (now.has(c.refdes)) continue;
     const t = mirrorTransform(c.transform, axis);
@@ -273,7 +329,7 @@ export function mirrorEdit(before, circuit, axis) {
   // Wires drawn are drawn again, mirrored. The wires of parts that moved
   // were rerouted, not drawn, and an edit that removed parts drew none
   // (what is left of their wires is laid again).
-  const removedAny = [...before.components.values()].some((c) => c.type !== 'solder' && !circuit.components.has(c.refdes));
+  const removedAny = [...before.components.values()].some((c) => c.type !== 'solder' && !circuit.components.has(c.refdes) && !renamed.has(c.refdes));
   const skip = new Set(removedAny ? circuit.nets.keys() : []);
   for (const ref of changed) {
     for (const net of circuit.nets.values()) if (net.terminals.some((t) => t.comp === ref)) skip.add(net.id);

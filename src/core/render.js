@@ -716,7 +716,8 @@ function mathLabelSvg(label, opacity = '', ink = null) {
   const style = `width:100%;height:100%;display:flex;flex-direction:column;align-items:stretch;justify-content:center;box-sizing:border-box;padding:${padding};overflow:visible;white-space:nowrap;color:${escapeSvg(colorCss)};font-family:${MATH_FONT_FAMILY};font-size:${fontSize}px;line-height:1.2;font-weight:normal;-webkit-text-stroke:${MATH_LABEL_STROKE} currentColor;pointer-events:none;`;
   const lineStyle = `display:flex;flex-shrink:0;align-items:center;justify-content:${justify};width:100%;min-height:1.2em;`;
   const rows = label.mathSource().split(/\r?\n/);
-  const lines = !hasInlineMath(label.text) && isMathTable(rows) ? mathTableHtml(rows, label.columns, justify)
+  // A table: lines with cells or a rule, or any lines given `columns`.
+  const lines = !hasInlineMath(label.text) && (label.columns || isMathTable(rows)) ? mathTableHtml(rows, label.columns, justify)
     : rows.map((line) => `<div class="schematic-math-line" style="${lineStyle}">${texToMathML(line)}</div>`).join('');
   return `<foreignObject x="${fmt(box.x)}" y="${fmt(box.y)}" width="${fmt(box.w)}" height="${fmt(box.h)}" pointer-events="none"${opacity}><div xmlns="http://www.w3.org/1999/xhtml" class="schematic-math-label" style="${style}" aria-label="${aria}">${lines}</div></foreignObject>`;
 }

@@ -70,7 +70,8 @@ design for Shift+V, and closes any other; with the keyboard in it, `f`
 fits it, Ctrl+C copies its picture, and Shift+V hides the windows. Its
 Clear, as the calculator's, empties it to pick a design or paste a picture.
 Escape on the drawing lets go of one thing a press: a tool's draft or a
-pending key, then the selection. It never closes a window. Inside a window,
+pending key, then the selection, then the beat strip (showing the whole
+drawing). It closes no other window. Inside a window,
 Escape is the window's own first (a field being typed, a pick). A value
 typed into a window's field (an analysis value, a calculator's number)
 applies on Enter or when the focus leaves the field changed, never while it

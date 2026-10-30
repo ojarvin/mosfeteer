@@ -13,7 +13,7 @@ import { balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCros
 import { collapseCollinear } from './wireedit.js';
 import { busGroupName, busGroupsWithin, busWidth, isBusName, netNameParts, netNameSpelling, netNamesConnect } from './bus.js';
 import { LABEL_FONT_SIZES, TABLE_RULE_ROOM_EM, labelFontSize, strokeWidth } from './style.js';
-import { cloneLiteralPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
+import { cloneLiteralPath, clonePath, crossNetOverlaps, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 import { curvedArrowGeometry, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue, timingBreakGeometry } from './line-style.js';
 import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } from './beats.js';
 import { TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, parseDither, parseGain, parseLevels, readTransferFunction, transferFunctionDisplay, transferFunctionLines } from './transfer-function.js';
@@ -1519,12 +1519,13 @@ export class LabelInstance {
   }
 
   /** A math table's rows (render.js mathTableHtml): each its cells, a rule
-   *  null; null when the label is no table. */
+   *  null; null when the label is no table (no `columns`, and no line with
+   *  two cells or a rule). */
   mathTableRows() {
     if (!this._math || hasInlineMath(this.text)) return null;
     const lines = stripMathDelimiters(this.text).split(/\r?\n/);
     const cells = (line) => line.split(/(?<!\\)&/);
-    if (!lines.some((line) => line.trim() === '\\hline' || cells(line).length > 1)) return null;
+    if (!this.columns && !lines.some((line) => line.trim() === '\\hline' || cells(line).length > 1)) return null;
     return lines.map((line) => (line.trim() === '\\hline' ? null : cells(line)));
   }
 
@@ -5705,6 +5706,33 @@ export class Circuit {
     net.junctions = [...this._netJunctions(net, branches), ...junctions.map((p) => snapPoint(p.x, p.y))]
       .filter((p, index, all) => all.findIndex((q) => q.x === p.x && q.y === p.y) === index)
       .filter((p) => branches.some((path) => pointOnPath(p, path)));
+  }
+
+  /** Lay `paths` as a net's wires when they go through no body, run along
+   *  no other net's wire, and join all its pins; otherwise change nothing
+   *  and return false. */
+  installNetPaths(net, paths) {
+    const env = this._netEnv(net.id);
+    const drills = (a, b) => (env.rects || []).some((rect) => !gateBodyCrossingAllowed(a, b, rect, env) && segThroughInterior(a, b, rect));
+    if (!paths.length || paths.some((path) => path.slice(1).some((b, i) => drills(path[i], b)))) return false;
+    const others = [...this.nets.values()].filter((other) => other !== net).map((other) => ({ id: other.id, paths: other.paths() }));
+    if (crossNetOverlaps([{ id: net.id, paths }, ...others]).some((overlap) => overlap.key.startsWith(`${net.id}:`))) return false;
+    const previousPaths = net.paths();
+    const saved = {
+      allowDiagonal: net.allowDiagonal,
+      route: net.route,
+      branches: net.branches,
+      junctions: net.junctions,
+    };
+    this._installLiteralPaths(net, paths);
+    if (!this._pathsConnectedToTerminals(net)) {
+      Object.assign(net, saved);
+      this.invalidateRoutingCache();
+      return false;
+    }
+    this._reanchorWireArrowheads(net, previousPaths, net.paths());
+    this._repairNetLabels(net);
+    return true;
   }
 
   /**
