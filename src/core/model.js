@@ -7208,16 +7208,27 @@ export class Circuit {
    * empty cells. */
   /** `labels` picks the labels that count (all by default). */
   inkBounds(margin = 0, { labels = null } = {}) {
+    const rects = this.inkRects({ labels });
+    if (rects.length === 0) return { x: 0, y: 0, w: 0, h: 0 };
+    const r = rectUnion(rects);
+    return { x: r.x - margin, y: r.y - margin, w: r.w + 2 * margin, h: r.h + 2 * margin };
+  }
+
+  /** The drawing's ink piece by piece: each part's drawn symbol, each
+   *  label's text, each wire segment. Their union is `inkBounds`; apart, they
+   *  say where the drawing is empty (fitting the view lets the tool rail
+   *  float over an empty corner). `labels` as for `inkBounds`. */
+  inkRects({ labels = null } = {}) {
     const rects = [];
     for (const c of this.components.values()) rects.push(c.inkRectWorld());
     for (const label of this.labels.values()) if (!labels || labels(label)) rects.push(label.inkRect());
     for (const net of this.nets.values()) {
-      const pts = net.pathPoints();
-      if (pts.length) rects.push(rectFromPoints(pts));
+      for (const path of net.paths()) {
+        if (path.length === 1) rects.push(rectFromPoints(path));
+        for (let i = 1; i < path.length; i++) rects.push(rectFromPoints([path[i - 1], path[i]]));
+      }
     }
-    if (rects.length === 0) return { x: 0, y: 0, w: 0, h: 0 };
-    const r = rectUnion(rects);
-    return { x: r.x - margin, y: r.y - margin, w: r.w + 2 * margin, h: r.h + 2 * margin };
+    return rects;
   }
 
   bounds(margin = 0) {

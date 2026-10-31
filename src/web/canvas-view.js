@@ -12,6 +12,7 @@ import { lerpView } from './gestures.js';
 import { editor } from './editor-state.js';
 import { render, selectedComps } from './main.js';
 import { reducedMotion } from './motion.js';
+import { fitPlacement } from './fit-area.js';
 
 // The pane's size, measured once and kept until the pane resizes. Reading
 // layout after the render has written the canvas forces the browser to lay
@@ -186,6 +187,8 @@ export function fitTarget() {
     x1 = Math.max(x1, x);
     y1 = Math.max(y1, y);
   };
+  // The ink piece by piece, so the rail may float over an empty corner.
+  const rects = editor.circuit.inkRects();
   const b = editor.circuit.inkBounds();
   if (b.w > 0 || b.h > 0) {
     add(b.x, b.y);
@@ -201,11 +204,13 @@ export function fitTarget() {
   for (const frame of linkBubbleFrames()) {
     add(frame.x, frame.y);
     add(frame.x + frame.w, frame.y + frame.h);
+    rects.push(frame);
   }
   for (const c of selectedComps()) {
     const r = c.bboxWorld();
     add(r.x, r.y);
     add(r.x + r.w, r.y + r.h);
+    rects.push(r);
   }
   if (!Number.isFinite(x0)) {
     // An empty canvas has no content to fit. Give it a wider default window so
@@ -215,42 +220,37 @@ export function fitTarget() {
     x1 = 600;
     y1 = 600;
   }
-  return Object.assign(target, fittedView({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }));
+  return Object.assign(target, fittedView({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, rects));
 }
 
-/** The editor view that fits world rectangle `bounds` beside the tool rail,
- *  as F does. Pure: the Atlas uses it to aim at where a design will land. */
-export function fittedView({ x: x0, y: y0, w: bw, h: bh }) {
-  const x1 = x0 + bw;
-  const y1 = y0 + bh;
-  const pane = document.querySelector('.canvas-pane');
-  const rail = document.querySelector('.mode-toolbar');
-  const paneRect = pane?.getBoundingClientRect();
-  const railRect = rail?.getBoundingClientRect();
+/** What floats over the canvas and would cover a fitted drawing: the tool
+ *  rail and the open floating windows, as rectangles in pane pixels. */
+function paneObstacles(paneRect) {
+  const floating = [document.querySelector('.mode-toolbar'), ...document.querySelectorAll('.canvas-pane .floating-window')];
+  const obstacles = [];
+  for (const el of floating) {
+    if (!el || el.closest('[hidden]')) continue;
+    const r = el.getBoundingClientRect();
+    const x0 = Math.max(0, r.left - paneRect.left);
+    const y0 = Math.max(0, r.top - paneRect.top);
+    const x1 = Math.min(paneRect.width, r.right - paneRect.left);
+    const y1 = Math.min(paneRect.height, r.bottom - paneRect.top);
+    if (x1 - x0 >= 1 && y1 - y0 >= 1) obstacles.push({ x0, y0, x1, y1 });
+  }
+  return obstacles;
+}
+
+/** The editor view that fits world rectangle `bounds` as F does: as large as
+ *  it can be with its ink (`rects`, piece by piece; the whole rectangle when
+ *  none are given) clear of the tool rail and the open windows, and at that
+ *  size as near the pane's middle as it can be (`fitPlacement`). The Atlas
+ *  uses it to aim at where a design will land. */
+export function fittedView(bounds, rects = []) {
+  const paneRect = document.querySelector('.canvas-pane')?.getBoundingClientRect();
   const paneW = paneRect?.width || 1;
   const paneH = paneRect?.height || 1;
-  // The rail floats over the canvas, so the drawing is fitted beside it. It is
-  // a vertical column at the left on a wide window but a horizontal strip
-  // across the top on a narrow one, so reserve the axis it is thin along:
-  // reserving width for a full-width strip leaves no usable pane at all and
-  // fits the drawing into a 1 px box, which reads as F having stopped working.
-  const railIsColumn = railRect ? railRect.width <= railRect.height : false;
-  const leftPx = railRect && railIsColumn
-    ? Math.max(0, Math.min(paneW - 1, railRect.right - (paneRect?.left || 0)))
-    : 0;
-  const topPx = railRect && !railIsColumn
-    ? Math.max(0, Math.min(paneH - 1, railRect.bottom - (paneRect?.top || 0)))
-    : 0;
-  const usableW = Math.max(1, paneW - leftPx);
-  const usableH = Math.max(1, paneH - topPx);
-  const usableCenterPx = leftPx + usableW / 2;
-  const usableCenterPy = topPx + usableH / 2;
-  const marginPx = 16;
-  const fitW = Math.max(1, usableW - marginPx * 2);
-  const fitH = Math.max(1, usableH - marginPx * 2);
-  const rangeW = Math.max(1, x1 - x0);
-  const rangeH = Math.max(1, y1 - y0);
-  const scale = Math.min(fitW / rangeW, fitH / rangeH);
+  const box = { x: bounds.x, y: bounds.y, w: Math.max(1, bounds.w), h: Math.max(1, bounds.h) };
+  const { scale, cx, cy } = fitPlacement(paneW, paneH, paneRect ? paneObstacles(paneRect) : [], box, rects, 16);
   const aspect = paneW / paneH;
   let tw = paneW / scale;
   let th = paneH / scale;
@@ -264,8 +264,8 @@ export function fittedView({ x: x0, y: y0, w: bw, h: bh }) {
     th = tw / aspect;
   }
   return {
-    x: (x0 + x1) / 2 - tw * usableCenterPx / paneW,
-    y: (y0 + y1) / 2 - th * usableCenterPy / paneH,
+    x: box.x + box.w / 2 - tw * cx / paneW,
+    y: box.y + box.h / 2 - th * cy / paneH,
     w: tw,
     h: th,
   };

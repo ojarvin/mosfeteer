@@ -3539,3 +3539,23 @@ test('a restyled label keeps its last measured box as the edge to hold, not the 
   assert.equal(label._restyled, false);
 });
 
+
+test('inkRects is the ink piece by piece: one per part, label, and wire segment, and their union is inkBounds', async () => {
+  const { runCommand } = await import('../src/core/commands.js');
+  const c = new Circuit();
+  runCommand(c, 'add resistor R1 --at 0 0 --rot 90');
+  runCommand(c, 'add resistor R2 --at 800 400 --rot 90');
+  runCommand(c, 'wire R1.b R2.a');
+  const rects = c.inkRects();
+  const segments = [...c.nets.values()].reduce((n, net) => n + net.paths().reduce((m, p) => m + Math.max(0, p.length - 1), 0), 0);
+  assert.ok(segments >= 2);
+  assert.equal(rects.length, c.components.size + c.labels.size + segments);
+  const x0 = Math.min(...rects.map((r) => r.x));
+  const y0 = Math.min(...rects.map((r) => r.y));
+  const x1 = Math.max(...rects.map((r) => r.x + r.w));
+  const y1 = Math.max(...rects.map((r) => r.y + r.h));
+  assert.deepEqual(c.inkBounds(), { x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+  // The empty corner between the two parts is in the bounds but in no piece.
+  const corner = { x: 600, y: -40 };
+  assert.ok(rects.every((r) => !(corner.x >= r.x && corner.x <= r.x + r.w && corner.y >= r.y && corner.y <= r.y + r.h)));
+});
