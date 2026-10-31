@@ -59,6 +59,28 @@ describe('editor chrome', { skip: browserSkip() }, () => {
     await h.untilDiscarding(`${h.module('editor-state.js')}.then((m) => m.editor.currentDocumentPath?.endsWith('modulator.json'))`);
   });
 
+  test('an on/off menu item ends in a switch that slides on and off; a one-of-several choice keeps its check mark', async () => {
+    const knob = (selector) => h.evaluate(`(() => { const s = getComputedStyle(document.querySelector(${JSON.stringify(selector)}), '::after'); return { at: s.backgroundPosition, fill: s.backgroundColor, width: s.width, mark: s.content }; })()`);
+    const was = await h.evaluate(`document.getElementById('btn-grid').getAttribute('aria-checked')`);
+    const before = await knob('#btn-grid');
+    await h.click('#btn-grid');
+    const after = await knob('#btn-grid');
+    await h.click('#btn-grid');
+    const [on, off] = was === 'true' ? [before, after] : [after, before];
+    assert.equal(on.at, '100% 50%');
+    assert.equal(off.at, '0% 50%');
+    assert.notEqual(on.fill, off.fill);
+    assert.equal(on.width, '26px');
+    // Items without a key hint end in the same switch.
+    assert.equal((await knob('#btn-reduce-motion')).width, '26px');
+    // The page guide is a choice among several: a check mark, not a switch.
+    await h.click('#btn-settings');
+    await h.until(`!document.getElementById('settings-menu').hidden`);
+    assert.equal(await h.evaluate(`getComputedStyle(document.querySelector('#settings-menu [data-page-guide][aria-checked="true"]'), '::after').content`), '"✓"');
+    await h.key('Escape');
+    await h.until(`document.getElementById('settings-menu').hidden`);
+  });
+
   test('the theme is a setting: its menu item switches the drawing dark and back', async () => {
     assert.ok(await h.evaluate(`!!document.querySelector('#settings-menu #btn-theme[role="menuitemcheckbox"]')`));
     const dark = () => h.evaluate(`document.documentElement.classList.contains('dark')`);
