@@ -78,8 +78,90 @@ Each output, and each next state, is a sum of products minimized by
 Quine–McCluskey (the prime implicants, the essential ones, then the fewest
 more, the larger first), written with `\overline` for a complement and
 `\cdot` between literals; names follow `logicNameTex` (`Q0` → Q₀, `SEL`
-upright, `U1.a` as text). **Annotate… → Table** puts the table on the drawing
+upright, `U1.a` as text, a bus bit `\mathrm{D}[3]`). **Annotate… → Table** puts the table on the drawing
 (names over a rule, a blank column between what goes in and what comes out;
-up to 64 rows and 16 columns), **Annotate… → Equations** the equations, each
-one figure (`figure` kind `table` and `equations`, source `logic`) updated in
+up to 64 rows and 16 columns), **Annotate… → Equations** the equations, each whole
+in one column, each one figure (`figure` kind `table` and `equations`, source `logic`) updated in
 place when annotated again.
+
+## Synthesis
+
+The analysis window's **Synthesis** mode (`src/web/logic-synthesis-ui.js`)
+and `synthesize logic` go the other way (`src/core/analysis/logic-synthesis.js`):
+named inputs and outputs, and each output's value in every row of the truth
+table, as minimized gates drawn with their ports.
+
+- **The table**: up to 8 inputs (the first the most significant, the rows
+  counting up in binary) and 8 outputs, named separated by spaces (or
+  commas). A bus range, `D[3:0]` or `D<3:0>`, is its bits, first to last,
+  each a port and a column of its own; the field shows a run of bits as
+  the range again (`signalNames`, `compactNames`). A value is 0 (the default), 1, Z
+  (not driven), or – (either; `x` reads as –). A cell steps through them on
+  a click, or takes a typed 0, 1, Z, -, or X and moves down. Inputs added or
+  removed keep the table: a row takes the row with the same inputs, an input
+  new to it counted 0. The table, the style, and the gates are saved with
+  the design (`analysisValues.synthesis`).
+- **Equations**: each output minimized by the same Quine–McCluskey, the –
+  rows free. An output that is Z in some rows is a tri-state buffer: its
+  enable is 1 in the rows that are not Z, its data free in those that are.
+- **Style**: AND–OR (sum of products), NAND–NAND, OR–AND (product of sums,
+  the complement's sum of products), or NOR–NOR. NAND–NAND and NOR–NOR use
+  that gate alone, inverters if allowed.
+- **Gates**: the allowed gates (inverter, AND, NAND, OR, NOR) and the most
+  inputs a gate has (2 or 3). A gate not allowed is made from the others
+  (AND as NOT NAND, as NOR of the complements, ...); a complement with no
+  inverter is a NAND or NOR with its inputs tied; more inputs than a gate
+  has fold into the fewest gates. Products shared by outputs are built once.
+  An output that is an input, its complement, a constant (a ground or a
+  supply on the pin), or another output's signal is a buffer, so each
+  output port has a net of its own.
+- **Check**: the gates are simulated over every row against the table
+  before anything is drawn; the logic mode reads a drawing back as the
+  table that drew it.
+- **Draw** puts the checked equations' gates on the drawing, right of what is
+  there, as one undo step, in columns by depth and rows shared by every
+  column. A gate of the first column starts a row; a later gate stands in
+  the row of what it reads from the nearest column, level with it by any of
+  its pins, so that wire runs straight (of equal sources, one leaving it
+  clear of the gates already in its column, nearest the others). Back the
+  other way, a gate fed by rails alone moves level with a pin of a gate
+  that reads it, one no other gate feeds straight. A gate's pins are given
+  out in the order that turns the fewest wires, then crosses the fewest,
+  then rails first. A gap between rows that a
+  wire runs along is two cells taller in every column. Between columns, a
+  track for each wire that turns on its way in, each turn from the middle
+  of its channel out (or on a turn its net already makes); gates in a
+  column six cells apart at least (a whole row when joined by name, their
+  inputs' names above and below them). The output ports are a column of their
+  own just past the gates, level with their gates where three cells apart
+  (the gates furthest right first); the rest take the nearest level, above
+  or below, that passes the gates right of theirs a cell from each and
+  from its name.
+  - Up to 4 inputs, each input and its complement is a rail that the first
+    column taps. With no complement gates, the input ports stand beside the
+    rails, two cells apart from the highest tapped row down, each on a row no rail left of
+    its own is tapped on; with them, the ports and complement gates are a
+    header above the gates. Past 4 inputs, a stub named for the input on
+    each gate input.
+  - The wires are drawn, not routed: from a rail along a free row; from a
+    gate's output straight when level, else turning once in a free channel
+    before the pin's column, else down a channel after the gate to a free
+    row and along it. A row and a channel are free when the wire keeps a
+    cell from every part, clear of the labels, and neither runs along
+    another net's wire nor ends on one. A tri-state's enable, and a wire
+    with no free way, goes to the router; one the router cannot make is
+    joined by name (a stub each end, `n1`, `n2`, ... or the output's name);
+    where even that finds no room, the inputs are joined by name, then every
+    connection.
+  - A part or net already named as an input or output is refused, the
+    drawing left as it was.
+- **Names** in the table and equations: a bus bit upright with its bit in
+  square brackets (`\mathrm{D}[3]`), any other as the logic mode writes it.
+- **The command**: `synthesize logic D[1:0] T[2:0]=0001,0011,0111`: the
+  inputs by name, each output `NAME=VALUES`, a bus output a value string
+  per bit separated by commas.
+- **Annotate… → Table** puts the truth table on the drawing as the logic
+  mode does (Z as Z, – as a dash; up to 64 rows and 16 columns), **Annotate…
+  → Equations** the checked equations, each whole in one column as the
+  other tools' equations are (`figure` kind `table` and `equations`, source
+  `synthesis`).

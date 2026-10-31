@@ -18,6 +18,7 @@ import { joinLineAnnotations } from './line-join.js';
 import { addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } from './beats.js';
 import { addTimingDiagram, existingTimingDiagram, timingBeatBands, timingPhaseNamed, timingPhases, timingStates } from './timing-diagram.js';
 import { addTerminalStubs } from './stubs.js';
+import { SYNTHESIS_GATES, SYNTHESIS_STYLES, drawSynthesis, gateSummary, signalNames, synthesizeLogic } from './analysis/logic-synthesis.js';
 import { addBoxAround } from './wrap-box.js';
 import { addPartsTable, partsTableParts } from './parts-table.js';
 import { RENUMBER_ORDERS, renumberParts } from './renumber.js';
@@ -116,7 +117,13 @@ const FLAG_ARITY = {
   list: 0,
   pick: 1,
   guide: 1,
+  style: 1,
+  gates: 1,
+  'max-inputs': 1,
+  print: 0,
 };
+
+const SYNTHESIZE_USAGE = 'usage: synthesize logic IN ... OUT=VALUES ... [--style and-or|nand|or-and|nor] [--gates inverter,and,nand,or,nor] [--max-inputs 2|3] [--at X Y] [--print]';
 
 /** Split a command line into array honoring double-quoted strings. */
 export function splitArgs(line) {
@@ -553,6 +560,13 @@ export function commandHelp() {
     '  analyze logic [--clock NET]    - the truth table of the gates, muxes, tri-states, flip-flops, and latches (a state table',
     '                                   with them), and each output (and next state) as a minimized sum of products;',
     '                                   --clock picks the clock input where the drawing leaves it open (a gated clock)',
+    '  synthesize logic IN ... OUT=VALUES ... [--style S] [--gates G,...] [--max-inputs 2|3] [--at X Y] [--print]',
+    '                                 - gates for a truth table: the inputs by name (A B, or a bus D[3:0], a port per bit); VALUES is',
+    '                                   one of 0, 1, Z (not driven), - (either) per row, the rows counting up in binary, the first',
+    '                                   input the most significant (A B Y=0110 is A XOR B); a bus output Q[1:0]=V1,V0; each output',
+    '                                   minimized, drawn with input and output ports right of the drawing (inputs as wired rails, past',
+    '                                   four joined by name); --style and-or (default), nand, or-and, nor; --gates the allowed gates;',
+    '                                   --max-inputs the most inputs a gate has (default 3); --print gives the equations, drawing nothing',
     '  analyze signal-flow --output NET --input PORT,... [--zero PORT,...] [--const PORT=VALUE,...]',
     '                                 - transfer functions of a block diagram (tf_s/tf_z blocks, sum and multiply junctions):',
     '                                   one per input port to the output; the other sources are zero or constant',
@@ -715,6 +729,44 @@ function dispatch(circuit, cmd, pos, flags, io) {
       ...report.expressions.map((expression) => `${expression.name} = ${expression.tex ?? '(Z or X in places)'}`),
     ];
     return result(lines.join('\n'), { sequential: report.sequential, inputs: report.inputs, outputs: report.outputs, states: report.states, clock: report.clock, rows: report.rows, expressions: report.expressions });
+  }
+  if (cmd === 'synthesize' || cmd === 'synthesise' || cmd === 'synth') {
+    if (pos[0] !== 'logic' || pos.length < 3) throw new Error(SYNTHESIZE_USAGE);
+    // Inputs are the names, outputs NAME=VALUES; a bus output (Q[1:0])
+    // takes a value string per bit, separated by commas.
+    const words = pos.slice(1);
+    const inputs = signalNames(words.filter((word) => !word.includes('=')).join(' '));
+    const outputs = words.filter((word) => word.includes('=')).flatMap((entry) => {
+      const [, name, values] = entry.match(/^([^=]*)=(.*)$/);
+      const bits = signalNames(name);
+      const strings = values.split(',');
+      if (!name || !bits.length) throw new Error(`${entry}: an output is NAME=VALUES (one of 0, 1, Z, - per row)\n${SYNTHESIZE_USAGE}`);
+      if (strings.length !== bits.length) throw new Error(`${entry}: ${bits.length} bits take ${bits.length} value strings, separated by commas`);
+      return bits.map((bit, i) => ({ name: bit, values: strings[i] }));
+    });
+    if (!outputs.length) throw new Error(`no output: an output is NAME=VALUES (one of 0, 1, Z, - per row)\n${SYNTHESIZE_USAGE}`);
+    const spec = { inputs, outputs };
+    const options = {
+      style: flags.style?.[0] ?? 'and-or',
+      ...(flags.gates ? { gates: flags.gates[0].split(',').map((gate) => gate.trim().toLowerCase()) } : {}),
+      ...(flags['max-inputs'] ? { maxInputs: Number(flags['max-inputs'][0]) } : {}),
+    };
+    if (!SYNTHESIS_STYLES.includes(options.style)) throw new Error(`--style is ${SYNTHESIS_STYLES.join(', ')}`);
+    const unknown = (options.gates || []).find((gate) => !SYNTHESIS_GATES.includes(gate));
+    if (unknown) throw new Error(`--gates: "${unknown}" is not one of ${SYNTHESIS_GATES.join(', ')}`);
+    if (flags['max-inputs'] && ![2, 3].includes(options.maxInputs)) throw new Error('--max-inputs is 2 or 3');
+    const synthesized = synthesizeLogic(spec, options);
+    if (!synthesized.ok) throw new Error(synthesized.error);
+    // The bar over a bus bit's name, its bit left bare: D̅[0].
+    const plain = (tex) => plainTexText(tex.replace(/\\cdot/g, '·').replace(/\\overline\{((?:\\mathrm\{[^{}]*\}|[^{}])*)\[(\d+)\]\}/g, '\\overline{$1}[$2]'));
+    const lines = synthesized.outputs.map((output) => `${output.name} = ${output.tex ? plain(output.tex) : 'Z'}${output.enableTex ? `, driven when ${plain(output.enableTex)}` : ''}`);
+    const summary = gateSummary(synthesized);
+    const listing = { outputs: synthesized.outputs.map(({ name, tex, enableTex }) => ({ name, tex, enableTex })), gates: synthesized.gateCount };
+    if (flags.print) return result([...lines, summary].join('\n'), listing);
+    const at = flags.at ? { x: Number(flags.at[0]), y: Number(flags.at[1]) } : null;
+    if (at && !(Number.isFinite(at.x) && Number.isFinite(at.y))) throw new Error('--at takes X Y');
+    const { refs } = drawSynthesis(circuit, synthesized, { at });
+    return result([...lines, `drew ${summary}`].join('\n'), { ...listing, refs }, true);
   }
   if (cmd === 'analyze' || cmd === 'analysis') {
     const subject = pos.shift();

@@ -13,6 +13,7 @@
 import { installSignalFlowUi, signalFlowSettingsRestored } from './signal-flow-ui.js';
 import { installSwitchedCapUi } from './switched-cap-ui.js';
 import { installLogicUi } from './logic-ui.js';
+import { installLogicSynthesisUi } from './logic-synthesis-ui.js';
 import { bodeSettingsRestored } from './bode-ui.js';
 import { captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, netsTouching as netsTouchingIn, rerouteTouchedNets as rerouteTouchedNetsIn } from '../core/part-moves.js';
 import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, netTerminalPositionKey, transformComponentWorld, transformNetLabelPlacement, transformWorldPoints } from '../core/model.js';
@@ -82,6 +83,7 @@ import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQ
 import { noteSelectionForTips, openArrangePicker } from './arrange-ui.js';
 import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } from './toolbar-ui.js';
 import { installNetBeams, mountNetBeams, syncNetBeams } from './net-beams.js';
+import { installPictureTheme } from './picture-theme.js';
 import { axisPlacement, cycleSymmetryAxis, mirrorRecordedEdit, mountSymmetryAxis, syncSymmetryAxis } from './symmetry-axis.js';
 import { acceptArrangeSuggestion, dismissArrangeSuggestion, installArrangeSuggestions, mountArrangeSuggestion, noteDrawingEdit, noteDrawingReplaced, syncArrangeSuggestion } from './arrange-suggest.js';
 import { shortNetsAtPlacedSolder, askNameForNewNetNameConflict } from './net-names.js';
@@ -251,6 +253,7 @@ installAnalysisUi();
 installSignalFlowUi();
 installSwitchedCapUi();
 installLogicUi();
+installLogicSynthesisUi();
 
 installIcons();
 // The first-drawing tutorial while it runs: { startedAt, skipped, cheered, finishedAt }.
@@ -7500,6 +7503,7 @@ clearCheckButtonEl?.addEventListener('click', () => {
 // above has been declared.
 installToolbarUi();
 installNetBeams();
+installPictureTheme();
 installArrangeSuggestions();
 
 // ----- narrow-window folding --------------------------------------------------

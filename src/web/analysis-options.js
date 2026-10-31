@@ -1,5 +1,7 @@
 /** Canonical small-signal form options and the form as saved with a design. */
 
+import { nameList } from '../core/bus.js';
+
 export const ANALYSIS_OPTION_DEFAULTS = Object.freeze({
   // Model simplifications: they change the small-signal model itself.
   neglectBodyEffect: true,
@@ -105,7 +107,7 @@ function parseEntries(value) {
     }).filter(Boolean);
   }
   if (value && typeof value === 'object') return Object.entries(value);
-  return String(value || '').split(',').map((entry) => {
+  return nameList(String(value || '').replace(/\s*([:=])\s*/g, '$1')).map((entry) => {
     const match = String(entry).trim().match(/^([^:=\s]+)\s*[:=]\s*(\S+)$/);
     return match ? [match[1], match[2]] : null;
   }).filter(Boolean);
@@ -135,8 +137,8 @@ function normalizeDeviceRegions(value) {
 }
 
 function normalizedList(value) {
-  const values = Array.isArray(value) || value instanceof Set ? [...value] : String(value || '').split(',');
-  return [...new Set(values.map((item) => String(item).trim()).filter(Boolean))].join(', ');
+  const values = Array.isArray(value) || value instanceof Set ? [...value] : nameList(value);
+  return [...new Set(values.map((item) => String(item).trim()).filter(Boolean))].join(' ');
 }
 
 /** Distinct non-empty strings from a stored list; anything else is empty. */

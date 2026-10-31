@@ -59,6 +59,7 @@ export const ICON_PATHS = {
   detach: '<rect x="8" y="6.5" width="8" height="11" rx="1.8" fill="currentColor" fill-opacity=".16"/><path d="M2.5 12H5M19 12h2.5"/><path d="m5.5 9-1 6M19.5 9l-1 6"/>',
   copy: '<rect x="3.5" y="3.5" width="11" height="11" rx="2"/><rect x="9.5" y="9.5" width="11" height="11" rx="2" fill="currentColor" fill-opacity=".16"/>',
   fit: '<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/><rect x="8.5" y="8.5" width="7" height="7" rx="1" fill="currentColor" fill-opacity=".16"/>',
+  picture: '<rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/><circle cx="9" cy="9.5" r="1.6"/><path d="M3.5 17l5.5-5 4 3.5 3-2.5 4.5 4" fill="currentColor" fill-opacity=".16"/>',
   reference: '<rect x="3.5" y="5.5" width="11" height="13" rx="1.5"/><rect x="9.5" y="3.5" width="11" height="13" rx="1.5" fill="currentColor" fill-opacity=".16"/><path d="M12.5 8.5h5M12.5 11.5h5M12.5 14.5h3"/>',
   hierarchy: '<rect x="9" y="3.5" width="6" height="5" rx="1"/><rect x="3.5" y="15.5" width="6" height="5" rx="1"/><rect x="14.5" y="15.5" width="6" height="5" rx="1"/><path d="M12 8.5V12M6.5 15.5V12h11v3.5"/>',
   tag: '<path d="M3.5 4.5v7l9 9 8-8-9-9h-7z" fill="currentColor" fill-opacity=".16"/><circle cx="8" cy="8.5" r="1.6" fill="currentColor" stroke="none"/>',

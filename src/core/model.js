@@ -1188,7 +1188,33 @@ function normalizeAnalysisValues(value) {
   }
   // The logic mode's settings: the clock input, where the drawing leaves it open.
   const logic = value?.logic && typeof value.logic === 'object' && text(value.logic.clock) ? { clock: text(value.logic.clock) } : null;
-  return { coefficients, bode, links, ...(Object.keys(fractions).length ? { fractions } : {}), ...(sAxis ? { sAxis } : {}), ...(band ? { band } : {}), ...(flow ? { flow } : {}), ...(sc ? { sc } : {}), ...(logic ? { logic } : {}) };
+  const synthesis = normalizeSynthesisValues(value?.synthesis);
+  return { coefficients, bode, links, ...(Object.keys(fractions).length ? { fractions } : {}), ...(sAxis ? { sAxis } : {}), ...(band ? { band } : {}), ...(flow ? { flow } : {}), ...(sc ? { sc } : {}), ...(logic ? { logic } : {}), ...(synthesis ? { synthesis } : {}) };
+}
+
+/** The synthesis mode's table (logic-synthesis.js): input and output
+ *  names, each output's values (0, 1, Z, -, one per row), the style, the
+ *  allowed gates, and the most inputs a gate has. */
+function normalizeSynthesisValues(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const name = (v) => (typeof v === 'string' && v.trim() && v.length <= 32 ? v.trim() : null);
+  const inputs = (Array.isArray(raw.inputs) ? raw.inputs : []).map(name).filter(Boolean).slice(0, 8);
+  const outputs = (Array.isArray(raw.outputs) ? raw.outputs : []).slice(0, 8).flatMap((output) => {
+    const named = name(output?.name);
+    if (!named) return [];
+    const values = typeof output.values === 'string' ? output.values.toUpperCase().replace(/[^01Z-]/g, '').slice(0, 256) : '';
+    return [{ name: named, values }];
+  });
+  if (!inputs.length && !outputs.length) return null;
+  const styles = ['and-or', 'nand', 'or-and', 'nor'];
+  const gates = ['inverter', 'and', 'nand', 'or', 'nor'];
+  return {
+    inputs,
+    outputs,
+    style: styles.includes(raw.style) ? raw.style : 'and-or',
+    gates: Array.isArray(raw.gates) ? gates.filter((gate) => raw.gates.includes(gate)) : gates,
+    maxInputs: raw.maxInputs === 2 ? 2 : 3,
+  };
 }
 
 /** Names as notes' mentions compare them (notes.js). */
@@ -1207,7 +1233,8 @@ function analysisValuesJSON(values) {
   const flow = values?.flow && (values.flow.output || Object.keys(values.flow.sources || {}).length || values.flow.swingInput || values.flow.swingFrequency || values.flow.graphView || values.flow.spectrum || values.flow.optimize) ? values.flow : null;
   const sc = values?.sc && (values.sc.input || values.sc.output || values.sc.readout || Object.keys(values.sc.values || {}).length || values.sc.noise || values.sc.calc) ? values.sc : null;
   const logic = values?.logic?.clock ? { clock: values.logic.clock } : null;
-  if (!Object.keys(coefficients).length && !hasBode && !sAxis && !Object.keys(links).length && !band && !flow && !sc && !logic) return {};
+  const synthesis = normalizeSynthesisValues(values?.synthesis);
+  if (!Object.keys(coefficients).length && !hasBode && !sAxis && !Object.keys(links).length && !band && !flow && !sc && !logic && !synthesis) return {};
   const fractionList = Object.entries(fractions).filter(([name, text]) => Number.isFinite(coefficients[name]) && typeof text === 'string');
   return { analysisValues: {
     ...(Object.keys(coefficients).length ? { coefficients: { ...coefficients } } : {}),
@@ -1219,6 +1246,7 @@ function analysisValuesJSON(values) {
     ...(hasBode ? { bode: { ...bode, multipliers: { ...bode.multipliers } } } : {}),
     ...(sAxis ? { sAxis: 'normalized' } : {}),
     ...(logic ? { logic } : {}),
+    ...(synthesis ? { synthesis } : {}),
   } };
 }
 

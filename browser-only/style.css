@@ -1206,6 +1206,13 @@ button:disabled {
   text-decoration: underline;
 }
 
+/* Settings → Pictures follow the theme (picture-theme.js): a picture on a
+   light background is inverted in the dark theme, its hues kept: white
+   goes to the dark paper, black to its ink. */
+html.dark.invert-pictures .light-picture {
+  filter: invert(0.91) hue-rotate(180deg);
+}
+
 /* A picture pasted into the notes: as wide as it is, at most the window. */
 .notes-view .note-picture {
   max-width: 100%;
@@ -8773,6 +8780,11 @@ html.dark[data-accent] {
   font-variant-numeric: tabular-nums;
 }
 
+/* Every column of a truth table is centered, the first one too. */
+.logic-table thead th:first-child {
+  text-align: center;
+}
+
 .logic-table .logic-first-out {
   border-left: 1px solid var(--border);
 }
@@ -8785,4 +8797,57 @@ html.dark[data-accent] {
   padding: 4px 0;
   overflow-x: auto;
   overflow-y: hidden;
+}
+
+/* The synthesis mode: a cell to set per output and row, the allowed
+   gates, and an equation per output with its box to draw it. */
+.synthesis-cell {
+  min-width: 2.2em;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  background: none;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.synthesis-cell:hover {
+  border-color: var(--border);
+}
+
+.synthesis-cell[data-value="1"] {
+  font-weight: 700;
+}
+
+.synthesis-cell[data-value="Z"],
+.synthesis-cell[data-value="-"] {
+  color: var(--text-dim);
+}
+
+/* "Allowed" names a group, not one field: drawn as the field names are. */
+.synthesis-section span.signal-flow-source-name {
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+
+.synthesis-allowed {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+/* The window's labels stack a field under its name: an equation sits
+   beside its box instead, in the text's color. */
+.synthesis-results label.synthesis-expression {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: inherit;
+}
+
+.synthesis-results label.synthesis-expression input[type="checkbox"] {
+  width: auto;
+  flex: none;
 }

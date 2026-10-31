@@ -121,7 +121,7 @@ test('a saved form reads back normalized, its canonical fields only', () => {
   assert.deepEqual(state, {
     input: 'N1',
     output: 'N2',
-    acGrounds: 'VBN, VCASCN',
+    acGrounds: 'VBN VCASCN',
     deviceRegions: { M1: { region: 'triode' } },
     options: {
       neglectBodyEffect: false,

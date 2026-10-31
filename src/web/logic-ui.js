@@ -159,9 +159,10 @@ function annotateTable() {
 function annotateEquations() {
   const result = latest?.result;
   if (!result?.ok) return;
-  const rows = result.expressions.filter((expression) => expression.tex).map((expression) => `${expression.name} & = ${expression.tex}`);
+  const rows = result.expressions.filter((expression) => expression.tex).map((expression) => `${expression.name} = ${expression.tex}`);
   if (!rows.length) return;
-  const { updated } = annotateMathFigure({ kind: 'equations', source: 'logic', text: rows.join('\n'), columns: 'rl' });
+  // Each equation whole, as the other tools' equations are drawn.
+  const { updated } = annotateMathFigure({ kind: 'equations', source: 'logic', text: rows.join('\n'), columns: 'l' });
   logLine(updated ? 'updated the logic equations' : 'annotated the logic equations');
 }
 

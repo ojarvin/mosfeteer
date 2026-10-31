@@ -42,7 +42,7 @@ Use this options hint:
 
 Use **AC-ground nets** with the hint:
 
-> Comma-separated net names or terminal references.
+> Net names or terminal references, separated by spaces or commas.
 
 Use **Device region** for structured triode selection.
 

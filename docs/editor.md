@@ -47,6 +47,9 @@ menu, or their keys. Docked (the button, or a drag to the pane's right
 edge), a window becomes a section of the side panel that its title bar
 folds and its top edge resizes; dragging the title bar out floats it
 again. No window covers the tool rail itself (the paper below it is free).
+A field that takes several names (AC grounds, triode devices, the
+synthesis inputs and outputs) takes them separated by spaces, commas, or
+both, and shows them separated by spaces (`nameList`, `src/core/bus.js`).
 Each window has a default place (its `place` option, `PLACE` in
 `floating-window.js`): beats bottom center, the optimizer's run top center,
 history and reference windows top left (each further reference window a
@@ -101,7 +104,11 @@ each theme, never part of a design or its exports.
 
 Settings → Display holds the view toggles: Grid (`#`), Placement guides
 (`Shift+G`), Crosshair (`Shift+C`), Dark theme, Theme follows the system (on until a theme is
-chosen here; it then follows the system's light or dark as it changes), Net beams
+chosen here; it then follows the system's light or dark as it changes), Pictures
+follow the theme (`invert-pictures`; in the dark theme, a pasted picture whose
+edge is near white, or whose edge is transparent and ink dark, is shown
+inverted with its hues kept, on the drawing, in the notes, and in a reference
+window; the stored picture and exports are unchanged), Net beams
 (`net-beams` on the command line), and Arrange suggestions (off by default;
 [`docs/arrange.md`](arrange.md)). Every Settings choice is a browser
 preference, kept between visits (`localStorage`). With net

@@ -11,6 +11,7 @@ import { editor } from './editor-state.js';
 import { applyLogDrawerEvent, hintLine, logCommand, logLine } from './status-bar-ui.js';
 import { toggleTheme, setGrid, setCrosshair, setGuides } from './toolbar-ui.js';
 import { netBeamsShown, setNetBeams } from './net-beams.js';
+import { picturesFollowTheme, setPicturesFollowTheme } from './picture-theme.js';
 import { arrangeSuggestionsOn, setArrangeSuggestions } from './arrange-suggest.js';
 import { setSymmetryAxis, symmetryAxis } from './symmetry-axis.js';
 import { setSidePanelVisible, sidePanelVisible } from './side-panel.js';
@@ -73,6 +74,7 @@ export const ACTIONS = {
   tips: (state) => toggleTo(state, checked(tipsButton), () => tipsButton?.click()),
   'reduce-motion': (state) => toggleTo(state, checked(reduceMotionButton), () => reduceMotionButton?.click()),
   'net-beams': (state) => setNetBeams(state ?? !netBeamsShown()),
+  'invert-pictures': (state) => setPicturesFollowTheme(state ?? !picturesFollowTheme()),
   'arrange-suggestions': (state) => setArrangeSuggestions(state ?? !arrangeSuggestionsOn()),
   trackpad: (state) => toggleTo(state, checked(scrollSchemeButton), () => scrollSchemeButton?.click()),
   'page-guide': (state) => (state

@@ -84,6 +84,10 @@ export function logicNameTex(name) {
   const math = text.match(/^\$(.*)\$$/);
   if (math) return math[1];
   if (/[_^]\{/.test(text)) return text;
+  // A bus bit: its name upright, then the bit in square brackets (D[3],
+  // D<3>), an italic letter not leaning into its bracket.
+  const bit = text.match(/^([A-Za-z][A-Za-z0-9_]*)[[<](\d+)[\]>]$/);
+  if (bit) return `\\mathrm{${bit[1]}}[${bit[2]}]`;
   const word = text.match(/^([A-Za-z]+)(\d*)$/);
   if (word) {
     const [, letters, digits] = word;
@@ -468,8 +472,23 @@ export function sumOfProducts(column, variables) {
   const ones = column.map((v, i) => (v === 1 ? i : -1)).filter((i) => i >= 0);
   if (!ones.length) return { tex: '0', sop: [] };
   if (ones.length === column.length) return { tex: '1', sop: [[]] };
+  const sop = minimalCover(ones, [], n);
+  const literal = ([k, v]) => (v ? logicNameTex(variables[k]) : `\\overline{${logicNameTex(variables[k])}}`);
+  const tex = sop.map((product) => product.map(literal).join(' \\cdot ')).join(' + ');
+  return { tex, sop };
+}
+
+/**
+ * The fewest products, by Quine–McCluskey, that cover the rows `ones` of
+ * `n` variables, free to cover the rows `dontCares` too: the prime
+ * implicants of both, the essential ones, then the fewest more that cover
+ * the rest, the larger first. Each product is a list of [variable index,
+ * 0 or 1], the products sorted shortest first.
+ */
+export function minimalCover(ones, dontCares, n) {
+  if (!ones.length) return [];
   // Implicants as [value, mask]: mask bits set where the variable is free.
-  let current = new Map(ones.map((m) => [`${m}/0`, { value: m, mask: 0, covers: [m] }]));
+  let current = new Map([...ones, ...dontCares].map((m) => [`${m}/0`, { value: m, mask: 0, covers: [m] }]));
   const primes = [];
   while (current.size) {
     const next = new Map();
@@ -494,19 +513,20 @@ export function sumOfProducts(column, variables) {
   // Essential primes first, then the one covering the most still left.
   const left = new Set(ones);
   const chosen = [];
+  const useful = primes.filter((p) => p.covers.some((m) => left.has(m)));
   for (const m of ones) {
-    const covering = primes.filter((p) => p.covers.includes(m));
+    const covering = useful.filter((p) => p.covers.includes(m));
     if (covering.length === 1 && !chosen.includes(covering[0])) chosen.push(covering[0]);
   }
   for (const p of chosen) for (const m of p.covers) left.delete(m);
   while (left.size) {
-    const best = primes.filter((p) => !chosen.includes(p))
+    const best = useful.filter((p) => !chosen.includes(p))
       .map((p) => ({ p, gain: p.covers.filter((m) => left.has(m)).length }))
       .sort((a, b) => b.gain - a.gain || popcount(b.p.mask) - popcount(a.p.mask) || a.p.value - b.p.value)[0];
     chosen.push(best.p);
     for (const m of best.p.covers) left.delete(m);
   }
-  const sop = chosen.map((p) => {
+  return chosen.map((p) => {
     const literals = [];
     for (let k = 0; k < n; k++) {
       const bit = 1 << (n - 1 - k);
@@ -514,9 +534,6 @@ export function sumOfProducts(column, variables) {
     }
     return literals;
   }).sort((a, b) => a.length - b.length || compareProducts(a, b));
-  const literal = ([k, v]) => (v ? logicNameTex(variables[k]) : `\\overline{${logicNameTex(variables[k])}}`);
-  const tex = sop.map((product) => product.map(literal).join(' \\cdot ')).join(' + ');
-  return { tex, sop };
 }
 
 function popcount(x) { let c = 0; while (x) { c += x & 1; x >>= 1; } return c; }

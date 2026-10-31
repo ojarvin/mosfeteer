@@ -72,6 +72,24 @@ export function netNameParts(name) {
   return parts;
 }
 
+/** Names typed as a list: separated by spaces, commas, or both (`A B`,
+ *  `A, B`); a comma or space inside braces belongs to the name (`V_{a,b}`). */
+export function nameList(text) {
+  const names = [];
+  let depth = 0;
+  let current = '';
+  for (const ch of String(text ?? '')) {
+    if (ch === '{') depth += 1;
+    if (ch === '}') depth = Math.max(0, depth - 1);
+    if (!depth && (ch === ',' || /\s/.test(ch))) {
+      if (current) names.push(current);
+      current = '';
+    } else current += ch;
+  }
+  if (current) names.push(current);
+  return names;
+}
+
 /** The one spelling of a name: a list's commas without the spaces around
  *  them (`A, B` -> `A,B`); any other name trimmed. */
 export function netNameSpelling(name) {

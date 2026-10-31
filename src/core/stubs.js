@@ -114,9 +114,12 @@ export function stubLabelPlacement(circuit, ref, end = null) {
  * `refdes`. A stub leaves its terminal along the terminal's outward direction,
  * STUB_CELLS long, with its label at stubLabelPlacement. A stub that would
  * join anything else is skipped. `terms` ("R1.a", ...) limits it to those
- * terminals. Returns { stubs: [{ ref, netId, name, labelId }], skipped: [ref] }.
+ * terminals; `names` ({ "R1.a": "OUT" }) names a stub instead of a fresh name;
+ * `sides` ({ "U1.b": "end" }) puts a horizontal stub's label past its far
+ * end, in line with it, or below it ("below") instead of above; `cells` is
+ * a stub's length. Returns { stubs: [{ ref, netId, name, labelId }], skipped: [ref] }.
  */
-export function addTerminalStubs(circuit, refdes, { terms = null } = {}) {
+export function addTerminalStubs(circuit, refdes, { terms = null, names = null, sides = null, cells = STUB_CELLS } = {}) {
   const stubs = [];
   const skipped = [];
   const taken = takenNames(circuit);
@@ -131,18 +134,22 @@ export function addTerminalStubs(circuit, refdes, { terms = null } = {}) {
       const from = component.terminalWorld(def.name);
       const dir = circuit._pinDir(component, def, from.x, from.y);
       const points = [];
-      for (let i = 0; i <= STUB_CELLS; i += 1) points.push({ x: from.x + dir.x * GRID * i, y: from.y + dir.y * GRID * i });
+      for (let i = 0; i <= cells; i += 1) points.push({ x: from.x + dir.x * GRID * i, y: from.y + dir.y * GRID * i });
       if (stubShorts(circuit, component, def.name, points)) {
         skipped.push(termRef);
         continue;
       }
       const path = [points[0], points.at(-1)];
-      const name = freshNetName(taken);
+      const name = names?.[termRef] ?? freshNetName(taken);
       taken.add(name.toLowerCase());
       const net = circuit.createWireNet({ branches: [path], route: path });
       circuit.connectTo(net.id, termRef);
       circuit.renameNet(net, name);
-      const label = circuit.addNetLabel(net, stubLabelPlacement(circuit, { comp: component.refdes, term: def.name }));
+      const placement = stubLabelPlacement(circuit, { comp: component.refdes, term: def.name });
+      const side = dir.y === 0 ? sides?.[termRef] : null;
+      if (side === 'end') Object.assign(placement, { anchor: points.at(-1), netSide: dir.x < 0 ? 'left' : 'right' });
+      else if (side === 'below') placement.netSide = 'below';
+      const label = circuit.addNetLabel(net, placement);
       stubs.push({ ref: termRef, netId: net.id, name, labelId: label.id });
     }
   }

@@ -7,6 +7,7 @@
  */
 
 import { parseLabelRuns } from '../core/model.js';
+import { nameList } from '../core/bus.js';
 
 /** Native <option> text cannot render sub/superscripts, so node choices show
  * the net name without `_{…}`/`^{…}` markup, followed by its physical id. */
@@ -37,7 +38,7 @@ export function analysisFormStorageKey(documentName = '') {
 function splitAnalysisValues(value) {
   if (Array.isArray(value)) return value.flatMap((item) => splitAnalysisValues(item));
   if (value === undefined || value === null) return [];
-  return String(value).split(',').map((item) => item.trim()).filter(Boolean);
+  return nameList(String(value).replace(/\s*([:=])\s*/g, '$1'));
 }
 
 /** Return the names that resolveAcGrounds can accept for the visible nets. */
@@ -56,7 +57,7 @@ function analysisNetAliases(nets = []) {
 
 export function pruneAnalysisNetValues(value, nets = []) {
   const aliases = analysisNetAliases(nets);
-  return splitAnalysisValues(value).filter((token) => aliases.has(token)).join(', ');
+  return splitAnalysisValues(value).filter((token) => aliases.has(token)).join(' ');
 }
 
 export function pruneAnalysisDeviceRegions(value, refdes = []) {
@@ -81,7 +82,7 @@ export function pruneAnalysisDeviceRegions(value, refdes = []) {
 }
 
 export function formatAnalysisDeviceRegions(value = {}) {
-  return Object.keys(value).sort().map((refdes) => `${refdes}=triode`).join(', ');
+  return Object.keys(value).sort().map((refdes) => `${refdes}=triode`).join(' ');
 }
 
 function firstMatching(nets, predicate, excludedId = '') {

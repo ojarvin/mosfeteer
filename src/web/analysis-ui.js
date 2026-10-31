@@ -6,6 +6,7 @@
  */
 
 import { Circuit, INTERFACE_PIN_TYPES, canonicalNetName, parseLabelRuns } from '../core/model.js';
+import { nameList } from '../core/bus.js';
 import { analyzeSmallSignalV2, numericLoopGain, numericSmallSignal } from '../core/analysis/engine.js';
 import { LOOP_ELEMENT_TYPES } from '../core/analysis/loop-gain.js';
 import { EQUATION_GROUPS, adaptCombinedReport } from '../core/analysis/report-adapter.js';
@@ -146,7 +147,7 @@ function fillLoopElements() {
 }
 
 function parseAnalysisList(value) {
-  return String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
+  return nameList(value);
 }
 
 let latestAnalysisReport = null;
@@ -361,7 +362,7 @@ function followGroundMarks() {
   let tokens = parseAnalysisList(analysisAcGrounds.value);
   for (const name of current) if (!reflectedMarks.has(name) && !tokens.includes(name)) tokens.push(name);
   tokens = tokens.filter((token) => !(reflectedMarks.has(token) && !current.has(token)));
-  analysisAcGrounds.value = tokens.join(', ');
+  analysisAcGrounds.value = tokens.join(' ');
   reflectedMarks = current;
 }
 
@@ -370,7 +371,7 @@ function prefillAnalysisAttributes() {
   reflectedMarks = new Set(markedGrounds);
   const groundValues = parseAnalysisList(analysisAcGrounds?.value);
   for (const value of markedGrounds) if (!groundValues.includes(value)) groundValues.push(value);
-  if (analysisAcGrounds && groundValues.length) analysisAcGrounds.value = groundValues.join(', ');
+  if (analysisAcGrounds && groundValues.length) analysisAcGrounds.value = groundValues.join(' ');
   const regions = analysisFormOptions().deviceRegions || {};
   for (const component of sortedComps()) {
     if (component.analysis?.model === 'triode') regions[component.refdes] = { region: 'triode' };
@@ -919,7 +920,7 @@ function groundUnusedInputPorts(previousInput, nextInput) {
     ? (inputPorts.has(previousInput) ? [nameOf(previousInput)] : [])
     : [...inputPorts].filter((id) => id !== nextInput).map(nameOf);
   for (const value of additions) if (value && !values.includes(value)) values.push(value);
-  analysisAcGrounds.value = values.join(', ');
+  analysisAcGrounds.value = values.join(' ');
 }
 
 function isAnalysisDockOpen() {
@@ -990,7 +991,7 @@ export function completeAnalysisPick(world) {
     // A list field (the AC grounds) gains the net, once, by name if it has one.
     const token = optionNet.name || optionNet.id;
     const tokens = parseAnalysisList(select.value);
-    if (!tokens.includes(token)) select.value = [...tokens, token].join(', ');
+    if (!tokens.includes(token)) select.value = [...tokens, token].join(' ');
   }
   select.dispatchEvent(new Event('change', { bubbles: true }));
   logLine(`${select.labels?.[0]?.textContent || 'Analysis node'}: ${optionNet.name || optionNet.id}`, 'status');
