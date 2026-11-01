@@ -256,6 +256,31 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     assert.equal(await h.evaluate(`${rest}.hidden`), false);
   });
 
+  test('an annotated graph is drawn in black with its legend past the line samples; its menu\'s Colored traces brings the colors back', async () => {
+    await openAnalysis('modulator');
+    await derive();
+    await h.evaluate(`${h.module('editor-state.js')}.then((m) => { const c = m.editor.circuit; for (const l of [...c.labels.values()]) if (l.plot) c.removeLabel(l.id); })`);
+    await annotate('Graph');
+    const plot = `${h.module('editor-state.js')}.then((m) => { const c = m.editor.circuit; const box = [...c.labels.values()].find((l) => l.plot); return box && { id: box.id, black: !!box.style.blackTraces, right: box.bbox().x + box.bbox().w, legend: c.plotLegend(box).map((l) => l.bbox().x) }; })`;
+    await h.until(`${plot}.then((p) => !!p && p.legend.length > 0)`);
+    const placed = await h.evaluate(plot);
+    assert.equal(placed.black, true, 'a new graph is in black');
+    assert.ok(placed.legend.every((x) => x >= placed.right + 3 * 40 - 1), `legend past the samples' room: ${JSON.stringify(placed)}`);
+    if (placed.legend.length > 1) await h.until(`document.querySelectorAll('#canvas .plot-legend-sample').length === ${placed.legend.length}`);
+    // Its context menu, on the plot.
+    await h.evaluate(`Promise.all([${h.module('editor-state.js')}, ${h.module('canvas-view.js')}, ${h.module('context-menu.js')}]).then(([s, v, menu]) => {
+      const b = s.editor.circuit.labels.get(${JSON.stringify(placed.id)}).bbox();
+      const p = v.worldToClient(b.x + b.w / 2, b.y + 2);
+      menu.openContextMenuAt(p.x, p.y);
+    })`);
+    await h.until(`[...document.querySelectorAll('.component-context-menu:not([hidden]) button')].some((b) => b.textContent.startsWith('Colored traces'))`);
+    await h.evaluate(`[...document.querySelectorAll('.component-context-menu:not([hidden]) button')].find((b) => b.textContent.startsWith('Colored traces')).click()`);
+    await h.until(`${plot}.then((p) => !p.black)`);
+    const colored = await h.evaluate(plot);
+    assert.deepEqual(colored.legend, placed.legend.map((x) => x - 3 * 40), 'the legend back against the box');
+    await h.until(`!document.querySelector('#canvas .plot-legend-sample')`);
+  });
+
   test('the coefficients are a table of their own, the plot legend only its traces; Update all plots moves an older plot\'s numbers to the table', async () => {
     await openAnalysis('modulator');
     await derive();

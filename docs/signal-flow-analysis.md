@@ -307,6 +307,20 @@ limits (`plot.view`, `{ x, y }` in its data's units; the small-signal and
 switched-cap graphs too), its curves cut at the frame; fitted, all of it.
 Update all plots keeps each plot's limits.
 
+A new plot is drawn in black (`style.blackTraces`): its traces in its ink,
+told apart by dash (solid, dashed, dash-dot, dotted, then around again),
+its legend in its ink with each curve's line before it (a lone curve's
+too), in the room (`PLOT_LEGEND_SAMPLE_ROOM`) left between the box and the
+legend. Legend entries past the curves (`plotCurveCount`) are notes (the
+simulated SNDR): no line, starting where the lines do. A plot from before
+has no flag and keeps its colors. **Colored traces** in a plot's context
+menu (`annotation plotcolors PLOT on|off`) switches it, moving the curves'
+entries by that room; the notes stay. Every annotated plot titles its axes
+outside the frame -- the x axis's under its numbers, the y axis's turned up
+beside them -- as a quantity and its unit in parentheses (`Frequency
+(f/f_{s})`, `Magnitude |H| (dB)`); the plots window keeps its compact
+in-frame titles.
+
 **Loop** (`loopGain`, `loopMargins`): the loop broken at a picked signal (a
 quantizer's output first): 1 injected into what reads it, every source at
 zero, and T = -(what its driver returns) -- the negative-feedback loop gain,

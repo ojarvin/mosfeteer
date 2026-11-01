@@ -15,6 +15,19 @@ import { axisTicks, logMinorGrid } from './plot-scale.js';
 
 const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
 
+/** Room left of a plot's frame and under it, in em: the axis numbers,
+ *  then the axis title outside them. */
+const AXIS_LEFT_EM = 4.9;
+const AXIS_BOTTOM_EM = 3.4;
+
+/** Axis titles as a journal figure sets them: the x axis's centered under
+ *  its numbers, the y axis's turned up along the left edge, each the
+ *  quantity and its unit in parentheses. */
+function axisTitles(items, pane, em, { x, y }) {
+  items.push({ type: 'text', x: pane.x + pane.w / 2, y: pane.y + pane.h + 2.9 * em, text: x, anchor: 'middle', role: 'label' });
+  items.push({ type: 'text', x: 1.05 * em, y: pane.y + pane.h / 2, text: y, anchor: 'middle', role: 'label', rotate: -90 });
+}
+
 function niceRange(values, step, pad) {
   const finite = values.filter(Number.isFinite);
   if (!finite.length) return [-step, step];
@@ -258,10 +271,10 @@ export function responseFigure(plot, { width = 480, height = 260, fontSize = 11 
   // A zoomed plot keeps the limits it was annotated at (`view`).
   const view = plot.view || {};
   const [low, high] = view.x ? view.x.map(Math.log10) : [plot.range.low, plot.range.high];
-  const left = 3.6 * em;
+  const left = AXIS_LEFT_EM * em;
   const right = 0.9 * em;
   const top = 0.9 * em;
-  const bottom = 2 * em;
+  const bottom = AXIS_BOTTOM_EM * em;
   const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
   const x = (f) => pane.x + ((Math.log10(f) - low) / (high - low)) * pane.w;
   // The axis fits every curve, in whole 20 dB steps; its ticks spread out on
@@ -271,8 +284,6 @@ export function responseFigure(plot, { width = 480, height = 260, fontSize = 11 
   // A background trace (a simulated spectrum) does not set the axis.
   const values = plot.traces.filter((trace) => !trace.background).flatMap((trace) => trace.points.map((p) => p.db)).filter((db) => db > -1000 && Number.isFinite(db));
   let [dbLow, dbHigh] = view.y || niceRange(values, phase ? 45 : 20, 0);
-  // In dBFS, room above full scale for the axis title.
-  if (plot.units === 'dBFS' && !view.y) dbHigh = Math.max(dbHigh, 20);
   const span = dbHigh - dbLow;
   const step = phase ? (span > 720 ? 180 : span > 360 ? 90 : 45) : span > 400 ? 100 : span > 200 ? 50 : span > 100 ? 40 : 20;
   const y = (db) => pane.y + ((dbHigh - clamp(db, dbLow, dbHigh)) / (dbHigh - dbLow)) * pane.h;
@@ -317,7 +328,7 @@ export function responseFigure(plot, { width = 480, height = 260, fontSize = 11 
       const right = x(marker.f) > pane.x + pane.w / 2;
       row = previous !== null && x(marker.f) - previous < 3 * em ? row + 1 : 0;
       previous = x(marker.f);
-      items.push({ type: 'text', x: x(marker.f) + (right ? -0.35 : 0.35) * em, y: pane.y + (2.1 + 1.2 * row) * em, text: marker.label, anchor: right ? 'end' : 'start', role: 'marker' });
+      items.push({ type: 'text', x: x(marker.f) + (right ? -0.35 : 0.35) * em, y: pane.y + (1.2 + 1.2 * row) * em, text: marker.label, anchor: right ? 'end' : 'start', role: 'marker' });
     }
   }
   // The signal band's edges.
@@ -325,11 +336,11 @@ export function responseFigure(plot, { width = 480, height = 260, fontSize = 11 
     if (Math.log10(f) <= low || Math.log10(f) >= high) continue;
     items.push({ type: 'line', x1: x(f), y1: pane.y, x2: x(f), y2: pane.y + pane.h, role: 'band' });
   }
-  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: (() => {
-    const name = plot.role === 'loop' ? 'T' : 'H';
-    return phase ? `∠${name} (°)` : plot.units === 'dBFS' ? 'dBFS' : `|${name}| (dB)`;
-  })(), anchor: 'start', role: 'label' });
-  items.push({ type: 'text', x: pane.x + pane.w, y: pane.y + pane.h - 0.45 * em, text: plot.axis === 'normalized' ? 'f/f_{s}' : 'ω', anchor: 'end', role: 'label' });
+  const name = plot.role === 'loop' ? 'T' : 'H';
+  axisTitles(items, pane, em, {
+    x: plot.axis === 'normalized' ? 'Frequency (f/f_{s})' : 'Angular frequency (rad/s)',
+    y: phase ? `Phase ∠${name} (°)` : plot.units === 'dBFS' ? 'Magnitude (dBFS)' : `Magnitude |${name}| (dB)`,
+  });
   return { width, height, items: plot.view ? clipToPane(items, pane) : items, pane, ranges: { db: [dbLow, dbHigh] } };
 }
 
@@ -341,10 +352,10 @@ export function responseFigure(plot, { width = 480, height = 260, fontSize = 11 
 export function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const items = [];
   const em = fontSize;
-  const left = 3.6 * em;
+  const left = AXIS_LEFT_EM * em;
   const right = 0.9 * em;
   const top = 0.9 * em;
-  const bottom = 2 * em;
+  const bottom = AXIS_BOTTOM_EM * em;
   const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
   const view = plot.view || {};
   const [low, high] = view.x || [plot.range.low, plot.range.high];
@@ -386,8 +397,10 @@ export function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = 
     });
     if (points.length > 1) items.push({ type: 'path', points, role: 'curve', color: trace.color, trace: index });
   });
-  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: plot.kind === 'wave' ? 'value' : 'step response', anchor: 'start', role: 'label' });
-  items.push({ type: 'text', x: pane.x + pane.w, y: pane.y + pane.h - 0.45 * em, text: plot.unit === 'n' ? 'n (t/T_{s})' : 't', anchor: 'end', role: 'label' });
+  axisTitles(items, pane, em, {
+    x: plot.unit === 'n' ? 'Sample n (t/T_{s})' : 'Time (s)',
+    y: plot.kind === 'wave' ? 'Value (arb. units)' : 'Step response (arb. units)',
+  });
   return { width, height, items: plot.view ? clipToPane(items, pane) : items, pane, ranges: { y: [yLow, yHigh] } };
 }
 
@@ -409,10 +422,10 @@ export function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } =
   const em = fontSize;
   const view = plot.view || {};
   const [low, high] = view.x || [plot.range.low, plot.range.high];
-  const left = 3.6 * em;
+  const left = AXIS_LEFT_EM * em;
   const right = 0.9 * em;
   const top = 0.9 * em;
-  const bottom = 2 * em;
+  const bottom = AXIS_BOTTOM_EM * em;
   const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
   const x = (a) => pane.x + ((a - low) / (high - low)) * pane.w;
   // The peaks fit in whole 10 dB steps; a loop blowing up runs off the top.
@@ -453,14 +466,13 @@ export function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } =
     const text = limit.kind === 'full-scale'
       ? `${limit.label ? `${plainTex(limit.label)} ` : ''}full scale ${Number(limit.a.toFixed(1))} dBFS`
       : `runaway ${Number(limit.a.toFixed(2))} dBFS`;
-    items.push({ type: 'text', x: x(limit.a) + (right ? -0.35 : 0.35) * em, y: pane.y + 2.1 * em, text, anchor: right ? 'end' : 'start', role: 'marker' });
+    items.push({ type: 'text', x: x(limit.a) + (right ? -0.35 : 0.35) * em, y: pane.y + 1.2 * em, text, anchor: right ? 'end' : 'start', role: 'marker' });
   }
   plot.traces.forEach((trace, index) => {
     const samples = trace.points.map((p) => ({ f: p.a, value: Number.isFinite(p.db) ? p.db : dbHigh + 100 }));
     for (const path of clippedPaths(samples, (s) => x(s.f), y, dbLow, dbHigh, 'curve')) items.push({ ...path, color: trace.color, trace: index });
   });
-  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: 'peak (dBFS)', anchor: 'start', role: 'label' });
-  items.push({ type: 'text', x: pane.x + pane.w, y: pane.y + pane.h - 0.45 * em, text: 'input (dBFS)', anchor: 'end', role: 'label' });
+  axisTitles(items, pane, em, { x: 'Input amplitude (dBFS)', y: 'Peak swing (dBFS)' });
   return { width, height, items: plot.view ? clipToPane(items, pane) : items, pane, ranges: { db: [dbLow, dbHigh] } };
 }
 
@@ -562,10 +574,10 @@ export function swingLimit(traces) {
 export function locusFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const items = [];
   const em = fontSize;
-  const left = 3.6 * em;
+  const left = AXIS_LEFT_EM * em;
   const right = 0.9 * em;
   const top = 0.9 * em;
-  const bottom = 2 * em;
+  const bottom = AXIS_BOTTOM_EM * em;
   const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
   const z = plot.variable === 'z';
   // In z the view stays near the unit circle: a pole far outside is
@@ -613,6 +625,6 @@ export function locusFigure(plot, { width = 480, height = 260, fontSize = 11 } =
       : stableFrom ? `stable from ${plot.parameter} = ${number(stableFrom.k)}` : `unstable from ${plot.parameter} = ${number(unstableAt.k)}`;
     items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 2.1 * em, text, anchor: 'start', role: 'marker' });
   }
-  items.push({ type: 'text', x: pane.x + pane.w, y: pane.y + pane.h - 0.45 * em, text: z ? 'Re z' : 'Re s', anchor: 'end', role: 'label' });
+  axisTitles(items, pane, em, { x: z ? 'Real part (Re z)' : 'Real part (Re s)', y: z ? 'Imaginary part (Im z)' : 'Imaginary part (Im s)' });
   return { width, height, items, pane };
 }

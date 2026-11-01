@@ -1,5 +1,6 @@
 /** How the editor feels in a browser: the marquee box under the pointer
- *  in the same event, and the accent color picked under Settings. */
+ *  in the same event, the chrome stepping back while a part is dragged,
+ *  and the accent color picked under Settings. */
 
 import { describe, before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -32,6 +33,34 @@ describe('editor feel', { skip: browserSkip() }, () => {
     assert.ok(box.w1 > 0 && box.shown, JSON.stringify(box));
     assert.ok(Math.abs(box.w2 - 2 * box.w1) / box.w1 < 0.1, `twice as far, twice as wide: ${JSON.stringify(box)}`);
     await h.until(`document.querySelector('#canvas .rubber-box')?.getAttribute('display') === 'none'`);
+  });
+
+  test('while a part is dragged the chrome steps back; a selection box leaves it; letting go brings it back', async () => {
+    await h.open('two');
+    const quiet = `document.documentElement.hasAttribute('data-chrome-quiet')`;
+    const railOpacity = `Number(getComputedStyle(document.querySelector('.mode-toolbar')).opacity)`;
+    // R1's body: between its two pins.
+    const p = await h.evaluate(`Promise.all([${h.module('editor-state.js')}, ${h.module('canvas-view.js')}]).then(([s, v]) => {
+      const [a, b] = s.editor.circuit.components.get('R1').worldTerminals();
+      return v.worldToClient((a.x + b.x) / 2, (a.y + b.y) / 2);
+    })`);
+    await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
+    await h.mouse('mousePressed', p.x, p.y);
+    assert.equal(await h.evaluate(quiet), false, 'a press alone is not a drag');
+    for (let i = 1; i <= 4; i++) await h.mouse('mouseMoved', p.x + 30 * i, p.y + 20 * i);
+    await h.until(quiet);
+    await h.until(`${railOpacity} < 0.5`);
+    await h.mouse('mouseReleased', p.x + 120, p.y + 80);
+    await h.until(`!${quiet} && ${railOpacity} === 1`);
+    // A selection box from empty paper looks around: the chrome stays.
+    const empty = await h.evaluate(`${h.module('canvas-view.js')}.then((v) => v.worldToClient(400, 800))`);
+    await h.mouse('mouseMoved', empty.x, empty.y, { button: 'none', buttons: 0 });
+    await h.mouse('mousePressed', empty.x, empty.y);
+    for (let i = 1; i <= 4; i++) await h.mouse('mouseMoved', empty.x + 30 * i, empty.y - 20 * i);
+    await h.settle();
+    assert.equal(await h.evaluate(quiet), false);
+    await h.mouse('mouseReleased', empty.x + 120, empty.y - 80);
+    await h.key('Escape');
   });
 
   test('Settings → Accent color changes the accent in both themes; Default brings the teal back', async () => {

@@ -21470,6 +21470,19 @@ let axisTicks, logMinorGrid; __bind(() => { ({ axisTicks, logMinorGrid } = __req
 
 const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
 
+/** Room left of a plot's frame and under it, in em: the axis numbers,
+ *  then the axis title outside them. */
+const AXIS_LEFT_EM = 4.9;
+const AXIS_BOTTOM_EM = 3.4;
+
+/** Axis titles as a journal figure sets them: the x axis's centered under
+ *  its numbers, the y axis's turned up along the left edge, each the
+ *  quantity and its unit in parentheses. */
+function axisTitles(items, pane, em, { x, y }) {
+  items.push({ type: 'text', x: pane.x + pane.w / 2, y: pane.y + pane.h + 2.9 * em, text: x, anchor: 'middle', role: 'label' });
+  items.push({ type: 'text', x: 1.05 * em, y: pane.y + pane.h / 2, text: y, anchor: 'middle', role: 'label', rotate: -90 });
+}
+
 function niceRange(values, step, pad) {
   const finite = values.filter(Number.isFinite);
   if (!finite.length) return [-step, step];
@@ -21713,10 +21726,10 @@ function responseFigure(plot, { width = 480, height = 260, fontSize = 11 } = {})
   // A zoomed plot keeps the limits it was annotated at (`view`).
   const view = plot.view || {};
   const [low, high] = view.x ? view.x.map(Math.log10) : [plot.range.low, plot.range.high];
-  const left = 3.6 * em;
+  const left = AXIS_LEFT_EM * em;
   const right = 0.9 * em;
   const top = 0.9 * em;
-  const bottom = 2 * em;
+  const bottom = AXIS_BOTTOM_EM * em;
   const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
   const x = (f) => pane.x + ((Math.log10(f) - low) / (high - low)) * pane.w;
   // The axis fits every curve, in whole 20 dB steps; its ticks spread out on
@@ -21726,8 +21739,6 @@ function responseFigure(plot, { width = 480, height = 260, fontSize = 11 } = {})
   // A background trace (a simulated spectrum) does not set the axis.
   const values = plot.traces.filter((trace) => !trace.background).flatMap((trace) => trace.points.map((p) => p.db)).filter((db) => db > -1000 && Number.isFinite(db));
   let [dbLow, dbHigh] = view.y || niceRange(values, phase ? 45 : 20, 0);
-  // In dBFS, room above full scale for the axis title.
-  if (plot.units === 'dBFS' && !view.y) dbHigh = Math.max(dbHigh, 20);
   const span = dbHigh - dbLow;
   const step = phase ? (span > 720 ? 180 : span > 360 ? 90 : 45) : span > 400 ? 100 : span > 200 ? 50 : span > 100 ? 40 : 20;
   const y = (db) => pane.y + ((dbHigh - clamp(db, dbLow, dbHigh)) / (dbHigh - dbLow)) * pane.h;
@@ -21772,7 +21783,7 @@ function responseFigure(plot, { width = 480, height = 260, fontSize = 11 } = {})
       const right = x(marker.f) > pane.x + pane.w / 2;
       row = previous !== null && x(marker.f) - previous < 3 * em ? row + 1 : 0;
       previous = x(marker.f);
-      items.push({ type: 'text', x: x(marker.f) + (right ? -0.35 : 0.35) * em, y: pane.y + (2.1 + 1.2 * row) * em, text: marker.label, anchor: right ? 'end' : 'start', role: 'marker' });
+      items.push({ type: 'text', x: x(marker.f) + (right ? -0.35 : 0.35) * em, y: pane.y + (1.2 + 1.2 * row) * em, text: marker.label, anchor: right ? 'end' : 'start', role: 'marker' });
     }
   }
   // The signal band's edges.
@@ -21780,11 +21791,11 @@ function responseFigure(plot, { width = 480, height = 260, fontSize = 11 } = {})
     if (Math.log10(f) <= low || Math.log10(f) >= high) continue;
     items.push({ type: 'line', x1: x(f), y1: pane.y, x2: x(f), y2: pane.y + pane.h, role: 'band' });
   }
-  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: (() => {
-    const name = plot.role === 'loop' ? 'T' : 'H';
-    return phase ? `∠${name} (°)` : plot.units === 'dBFS' ? 'dBFS' : `|${name}| (dB)`;
-  })(), anchor: 'start', role: 'label' });
-  items.push({ type: 'text', x: pane.x + pane.w, y: pane.y + pane.h - 0.45 * em, text: plot.axis === 'normalized' ? 'f/f_{s}' : 'ω', anchor: 'end', role: 'label' });
+  const name = plot.role === 'loop' ? 'T' : 'H';
+  axisTitles(items, pane, em, {
+    x: plot.axis === 'normalized' ? 'Frequency (f/f_{s})' : 'Angular frequency (rad/s)',
+    y: phase ? `Phase ∠${name} (°)` : plot.units === 'dBFS' ? 'Magnitude (dBFS)' : `Magnitude |${name}| (dB)`,
+  });
   return { width, height, items: plot.view ? clipToPane(items, pane) : items, pane, ranges: { db: [dbLow, dbHigh] } };
 }
 
@@ -21796,10 +21807,10 @@ function responseFigure(plot, { width = 480, height = 260, fontSize = 11 } = {})
 function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const items = [];
   const em = fontSize;
-  const left = 3.6 * em;
+  const left = AXIS_LEFT_EM * em;
   const right = 0.9 * em;
   const top = 0.9 * em;
-  const bottom = 2 * em;
+  const bottom = AXIS_BOTTOM_EM * em;
   const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
   const view = plot.view || {};
   const [low, high] = view.x || [plot.range.low, plot.range.high];
@@ -21841,8 +21852,10 @@ function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
     });
     if (points.length > 1) items.push({ type: 'path', points, role: 'curve', color: trace.color, trace: index });
   });
-  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: plot.kind === 'wave' ? 'value' : 'step response', anchor: 'start', role: 'label' });
-  items.push({ type: 'text', x: pane.x + pane.w, y: pane.y + pane.h - 0.45 * em, text: plot.unit === 'n' ? 'n (t/T_{s})' : 't', anchor: 'end', role: 'label' });
+  axisTitles(items, pane, em, {
+    x: plot.unit === 'n' ? 'Sample n (t/T_{s})' : 'Time (s)',
+    y: plot.kind === 'wave' ? 'Value (arb. units)' : 'Step response (arb. units)',
+  });
   return { width, height, items: plot.view ? clipToPane(items, pane) : items, pane, ranges: { y: [yLow, yHigh] } };
 }
 
@@ -21864,10 +21877,10 @@ function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const em = fontSize;
   const view = plot.view || {};
   const [low, high] = view.x || [plot.range.low, plot.range.high];
-  const left = 3.6 * em;
+  const left = AXIS_LEFT_EM * em;
   const right = 0.9 * em;
   const top = 0.9 * em;
-  const bottom = 2 * em;
+  const bottom = AXIS_BOTTOM_EM * em;
   const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
   const x = (a) => pane.x + ((a - low) / (high - low)) * pane.w;
   // The peaks fit in whole 10 dB steps; a loop blowing up runs off the top.
@@ -21908,14 +21921,13 @@ function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
     const text = limit.kind === 'full-scale'
       ? `${limit.label ? `${plainTex(limit.label)} ` : ''}full scale ${Number(limit.a.toFixed(1))} dBFS`
       : `runaway ${Number(limit.a.toFixed(2))} dBFS`;
-    items.push({ type: 'text', x: x(limit.a) + (right ? -0.35 : 0.35) * em, y: pane.y + 2.1 * em, text, anchor: right ? 'end' : 'start', role: 'marker' });
+    items.push({ type: 'text', x: x(limit.a) + (right ? -0.35 : 0.35) * em, y: pane.y + 1.2 * em, text, anchor: right ? 'end' : 'start', role: 'marker' });
   }
   plot.traces.forEach((trace, index) => {
     const samples = trace.points.map((p) => ({ f: p.a, value: Number.isFinite(p.db) ? p.db : dbHigh + 100 }));
     for (const path of clippedPaths(samples, (s) => x(s.f), y, dbLow, dbHigh, 'curve')) items.push({ ...path, color: trace.color, trace: index });
   });
-  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: 'peak (dBFS)', anchor: 'start', role: 'label' });
-  items.push({ type: 'text', x: pane.x + pane.w, y: pane.y + pane.h - 0.45 * em, text: 'input (dBFS)', anchor: 'end', role: 'label' });
+  axisTitles(items, pane, em, { x: 'Input amplitude (dBFS)', y: 'Peak swing (dBFS)' });
   return { width, height, items: plot.view ? clipToPane(items, pane) : items, pane, ranges: { db: [dbLow, dbHigh] } };
 }
 
@@ -22017,10 +22029,10 @@ function swingLimit(traces) {
 function locusFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const items = [];
   const em = fontSize;
-  const left = 3.6 * em;
+  const left = AXIS_LEFT_EM * em;
   const right = 0.9 * em;
   const top = 0.9 * em;
-  const bottom = 2 * em;
+  const bottom = AXIS_BOTTOM_EM * em;
   const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
   const z = plot.variable === 'z';
   // In z the view stays near the unit circle: a pole far outside is
@@ -22068,7 +22080,7 @@ function locusFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
       : stableFrom ? `stable from ${plot.parameter} = ${number(stableFrom.k)}` : `unstable from ${plot.parameter} = ${number(unstableAt.k)}`;
     items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 2.1 * em, text, anchor: 'start', role: 'marker' });
   }
-  items.push({ type: 'text', x: pane.x + pane.w, y: pane.y + pane.h - 0.45 * em, text: z ? 'Re z' : 'Re s', anchor: 'end', role: 'label' });
+  axisTitles(items, pane, em, { x: z ? 'Real part (Re z)' : 'Real part (Re s)', y: z ? 'Imaginary part (Im z)' : 'Imaginary part (Im s)' });
   return { width, height, items, pane };
 }
 
@@ -23264,6 +23276,7 @@ function commandHelp() {
     '  annotation rename|move|align|rm ... - edit/remove an annotation label',
     '  annotation join ID ID ...      - join line annotations that meet end to end or share a stretch into one line',
     '  annotation vertex-rm ID N      - remove vertex N (from 0) of a line or arrow',
+    '  annotation plotcolors PLOT on|off - a plot\'s traces in their colors, or in black told apart by dash (a new plot\'s)',
     '  list                           - list components',
     '  state                          - full JSON state',
     '  bounds                         - drawing extents',
@@ -24320,6 +24333,13 @@ function annotationCommand(circuit, pos, result, flags = {}) {
     circuit.removeLabel(label);
     return result(`removed annotation ${label.id}`, null, true);
   }
+  if (op === 'plotcolors') {
+    const box = circuit.labels.get(pos[1]);
+    const state = pos[2];
+    if (!box?.plot || !['on', 'off'].includes(state)) throw new Error('usage: annotation plotcolors PLOT on|off');
+    circuit.setPlotTraceColors(box, state === 'on');
+    return result(state === 'on' ? `${box.id}: traces in their colors` : `${box.id}: traces in black, told apart by dash`, box.toJSON(), true);
+  }
   if (op === 'vertex-rm') {
     const label = circuit.labels.get(pos[1]);
     if (!label || !['arrow', 'line'].includes(label.kind)) throw new Error(`unknown line or arrow "${pos[1]}"`);
@@ -24328,7 +24348,7 @@ function annotationCommand(circuit, pos, result, flags = {}) {
     if (!label.removeVertex(index)) throw new Error(`cannot remove vertex ${index} of ${label.id}: a line keeps two distinct points and an arrow two cells of length`);
     return result(`removed vertex ${index} of ${label.id}`, label.toJSON(), true);
   }
-  throw new Error('usage: annotation add|rename|move|align|rm|vertex-rm|list ...');
+  throw new Error('usage: annotation add|rename|move|align|rm|vertex-rm|plotcolors|list ...');
 }
 
 /** A 1-based beat number from a command, as a 0-based index. */
@@ -28457,6 +28477,7 @@ __exports.applyNetProbe = applyNetProbe;
 __exports.referenceMarkerNameConflicts = referenceMarkerNameConflicts;
 __exports.referenceMarkerIsLocal = referenceMarkerIsLocal;
 __exports.parseLabelRuns = parseLabelRuns;
+__exports.plotCurveCount = plotCurveCount;
 __exports.indentText = indentText;
 __exports.applyMarkup = applyMarkup;
 __exports.containedWireSegments = containedWireSegments;
@@ -28879,6 +28900,19 @@ const LABEL_ALIGN_INSET = GRID / 2;
 
 /** Padding a math label keeps on the sides its alignment does not set. */
 const MATH_LABEL_PAD = 6;
+
+/** A plot's legend labels: children of its box by this role. */
+const PLOT_LEGEND_ROLE = 'plot-legend';
+/** Room left of a black-and-white plot's legend for each trace's line
+ *  sample (render.js draws them there). */
+const PLOT_LEGEND_SAMPLE_ROOM = 3 * GRID;
+
+/** How many curves a plot draws, each named by a legend entry in order:
+ *  its traces less a spectrum behind them, or its one curve. Entries past
+ *  them are notes (a simulated SNDR). */
+function plotCurveCount(plot) {
+  return Array.isArray(plot?.traces) ? plot.traces.filter((trace) => !trace.background).length : 1;
+}
 /** How much wider than the metric estimate the browser draws math text
  *  (measured in Chromium): an unmeasured label's ink is taken so. */
 const MATH_WIDTH_DRAWN = 1.25;
@@ -29906,6 +29940,9 @@ class LabelInstance {
       italic: opts.style?.italic !== false,
       // Monospace text is the exception, saved only when on.
       ...(opts.style?.mono ? { mono: true } : {}),
+      // A plot drawn in black, its traces told apart by dash, as a new
+      // plot is; one without it (from before) draws them in their colors.
+      ...(opts.style?.blackTraces ? { blackTraces: true } : {}),
       ...(['arrow', 'line'].includes(this.kind)
         ? { arrowhead: normalizeArrowhead(opts.style?.arrowhead, defaultArrowhead(this.kind)) }
         : {}),
@@ -32945,6 +32982,26 @@ class Circuit {
     return removed;
   }
 
+  /** A plot box's legend labels, in trace order: ours by role (older
+   *  plots' unroled math children too). */
+  plotLegend(box) {
+    return [...this.labels.values()].filter((label) => label.parent === box.id && (label.role === PLOT_LEGEND_ROLE || (label.math && !label.role)));
+  }
+
+  /** Draw a plot's traces in their colors (`on`) or in black, told apart by
+   *  dash. Its legend moves aside by the room its line samples take in
+   *  black, and back; its notes stay. Returns whether anything changed. */
+  setPlotTraceColors(box, on) {
+    if (!box?.plot) throw new Error(`"${box?.id}" is not a plot`);
+    if (!box.style.blackTraces === !!on) return false;
+    if (on) delete box.style.blackTraces;
+    else box.style.blackTraces = true;
+    const shift = on ? -PLOT_LEGEND_SAMPLE_ROOM : PLOT_LEGEND_SAMPLE_ROOM;
+    for (const label of this.plotLegend(box).slice(0, plotCurveCount(box.plot))) label.moveTo(label.anchor.x + shift, label.anchor.y);
+    this.invalidateRoutingCache();
+    return true;
+  }
+
   /** Deleting a marker's owned label drops its local-rail identity: the value
    * must go with it (an orphaned value renders as legacy marker text), and the
    * net returns to the global rail name the label had taken it away from. */
@@ -35970,6 +36027,8 @@ __exports.NET_HIGHLIGHT_COLORS = NET_HIGHLIGHT_COLORS;
 __exports.LABEL_FONT_SIZE = LABEL_FONT_SIZE;
 __exports.LABEL_ALIGN_INSET = LABEL_ALIGN_INSET;
 __exports.MATH_LABEL_PAD = MATH_LABEL_PAD;
+__exports.PLOT_LEGEND_ROLE = PLOT_LEGEND_ROLE;
+__exports.PLOT_LEGEND_SAMPLE_ROOM = PLOT_LEGEND_SAMPLE_ROOM;
 __exports.MATH_WIDTH_DRAWN = MATH_WIDTH_DRAWN;
 __exports.INTERFACE_PIN_TYPES = INTERFACE_PIN_TYPES;
 __exports.MOS_ANALYSIS_TYPES = MOS_ANALYSIS_TYPES;
@@ -38437,7 +38496,7 @@ let applyTransform, fmt, transformRect, transformToSvg; __bind(() => { ({ applyT
 let ceilGrid, floorGrid, GRID; __bind(() => { ({ ceilGrid, floorGrid, GRID } = __require("src/core/grid.js")); });
 let autoRoute; __bind(() => { ({ autoRoute } = __require("src/core/router.js")); });
 let TABLE_RULE_ROOM_EM, escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg; __bind(() => { ({ TABLE_RULE_ROOM_EM, escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } = __require("src/core/style.js")); });
-let INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, hasInlineMath, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters; __bind(() => { ({ INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, hasInlineMath, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } = __require("src/core/model.js")); });
+let INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, hasInlineMath, plotCurveCount, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters; __bind(() => { ({ INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, hasInlineMath, plotCurveCount, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } = __require("src/core/model.js")); });
 let TIMING_ARROWHEAD, arrowheadEnds, curvedArrowGeometry, defaultArrowhead, polylineArrowheads; __bind(() => { ({ TIMING_ARROWHEAD, arrowheadEnds, curvedArrowGeometry, defaultArrowhead, polylineArrowheads } = __require("src/core/line-style.js")); });
 let hiddenSupplyBarLabels, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js")); });
 let VALUE_TYPES, replacedNameLabels; __bind(() => { ({ VALUE_TYPES, replacedNameLabels } = __require("src/core/part-value.js")); });
@@ -38664,11 +38723,13 @@ function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal',
       if (index < parts.length - 1) lineRuns.push([]);
     });
   }
+  // Script offsets follow the label's size: a subscript hangs just below
+  // the baseline, a superscript's top clears the capitals a little.
+  const size = labelFontSize(width);
   const renderRuns = (line) => line.map((r) => {
       if (!r.sub && !r.super) return escapeSvg(r.text);
-      const shift = r.sub ? 'baseline-shift="-6px"' : 'baseline-shift="6px"';
-      const size = r.sub || r.super ? ' font-size="0.62em"' : '';
-      return `<tspan ${shift}${size}>${escapeSvg(r.text)}</tspan>`;
+      const shift = fmt(size * (r.sub ? -LABEL_SUB_DROP_EM : LABEL_SUPER_RISE_EM));
+      return `<tspan baseline-shift="${shift}" font-size="${LABEL_SCRIPT_EM}em">${escapeSvg(r.text)}</tspan>`;
     }).join('');
   // An empty line draws nothing, and SVG drops the offset of a tspan with
   // no text: its height goes to the next line instead, so a blank line
@@ -38684,6 +38745,12 @@ function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal',
     }).join('');
   return `<text ${attrs}>${body}</text>`;
 }
+
+/** A label's sub- and superscripts: their size, and how far they drop or
+ *  rise, in em of the label's text. */
+const LABEL_SCRIPT_EM = 0.62;
+const LABEL_SUB_DROP_EM = 0.15;
+const LABEL_SUPER_RISE_EM = 0.38;
 
 /** A label's monospace face (style.mono): columns line up, for truth
  *  tables and pin lists. */
@@ -39237,6 +39304,22 @@ const PLOT_STROKES = {
   marker: { width: 3, dash: '18 9' },
 };
 
+/** A black-and-white plot's traces, told apart as a journal figure's are:
+ *  solid, dashed, dash-dot, dotted, then around again. */
+const PLOT_TRACE_DASHES = ['', '28 14', '28 12 5 12', '5 12'];
+
+/** Whether a plot draws its traces in black, told apart by dash (as a new
+ *  plot does), rather than in their colors. */
+const plotInBlack = (box) => !!box?.plot && !!box.style?.blackTraces;
+
+/** Whether `label` is a legend entry of a plot drawn in black: it is drawn
+ *  in the plot's ink, whatever its own color. */
+function legendInBlack(label, circuit) {
+  if (!label?.parent) return false;
+  if (label.role !== PLOT_LEGEND_ROLE && !(label.math && !label.role)) return false;
+  return plotInBlack(circuit?.labels.get(label.parent));
+}
+
 /** A plot's text size (world units) in a box `height` tall: it scales with
  *  the box, within label sizes. */
 function plotFontSize(plot, height) {
@@ -39280,19 +39363,45 @@ function plotAnnotationSvg(label, opacity = '') {
     const runs = mathRuns(item.text).map((run) => (run.sub || run.super
       ? `<tspan baseline-shift="${run.sub ? '-' : ''}${fmt(fontSize * 0.25)}" font-size="${fmt(fontSize * 0.68)}">${escapeSvg(run.text)}</tspan>`
       : escapeSvg(run.text))).join('');
-    return `<text x="${fmt(item.x)}" y="${fmt(item.y)}" text-anchor="${item.anchor}" font-family="${escapeSvg(MATH_FONT_FAMILY)}" font-size="${fmt(fontSize)}" fill="${color}" stroke="${color}" stroke-width="${fmt(fontSize * 0.02)}">${runs}</text>`;
+    const turn = item.rotate ? ` transform="rotate(${item.rotate} ${fmt(item.x)} ${fmt(item.y)})"` : '';
+    return `<text x="${fmt(item.x)}" y="${fmt(item.y)}"${turn} text-anchor="${item.anchor}" font-family="${escapeSvg(MATH_FONT_FAMILY)}" font-size="${fmt(fontSize)}" fill="${color}" stroke="${color}" stroke-width="${fmt(fontSize * 0.02)}">${runs}</text>`;
+  };
+  // In black (the default), each curve takes the next dash; a simulated
+  // spectrum behind them goes gray.
+  const black = plotInBlack(label);
+  const rank = new Map();
+  (plot.traces || []).forEach((trace, index) => { if (!trace.background) rank.set(index, rank.size); });
+  const dashOf = (n) => PLOT_TRACE_DASHES[n % PLOT_TRACE_DASHES.length];
+  const curve = (item) => {
+    if (!black) return stroke(item.role, item.color ? escapeSvg(item.color) : color);
+    const attrs = stroke(item.role);
+    if (item.role === 'spectrum') return `${attrs} stroke-opacity="0.35"`;
+    const dash = item.role === 'curve' && rank.has(item.trace) ? dashOf(rank.get(item.trace)) : '';
+    return dash ? `${attrs} stroke-dasharray="${dash}"` : attrs;
   };
   const parts = figure.items.map((item) => {
     if (item.type === 'line') return `<line x1="${fmt(item.x1)}" y1="${fmt(item.y1)}" x2="${fmt(item.x2)}" y2="${fmt(item.y2)}" ${stroke(item.role)} stroke-linecap="butt"/>`;
-    if (item.type === 'path') return item.points.length > 1 ? `<path d="${polylineD(item.points)}" ${stroke(item.role, item.color ? escapeSvg(item.color) : color)} stroke-linejoin="round"/>` : '';
-    if (item.type === 'dot') return `<circle cx="${fmt(item.x)}" cy="${fmt(item.y)}" r="${fmt(item.r || 6)}" fill="${item.color ? escapeSvg(item.color) : color}"${item.opacity !== undefined ? ` fill-opacity="${fmt(item.opacity)}"` : ''} stroke="none"/>`;
+    if (item.type === 'path') return item.points.length > 1 ? `<path d="${polylineD(item.points)}" ${curve(item)} stroke-linejoin="round"/>` : '';
+    if (item.type === 'dot') return `<circle cx="${fmt(item.x)}" cy="${fmt(item.y)}" r="${fmt(item.r || 6)}" fill="${item.color && !black ? escapeSvg(item.color) : color}"${item.opacity !== undefined ? ` fill-opacity="${fmt(item.opacity)}"` : ''} stroke="none"/>`;
     if (item.type === 'text') return text(item);
     return '';
   }).join('');
+  // In black, each curve's legend entry has its line before it, in the
+  // room left for it there (a lone curve's too); notes after them none.
+  const samples = black && label.circuit
+    ? label.circuit.plotLegend(label).slice(0, plotCurveCount(plot)).map((entry, n) => {
+      const b = entry.bbox();
+      const cy = b.y + b.h / 2 - y;
+      const x1 = b.x - PLOT_LEGEND_SAMPLE_ROOM + 10 - x;
+      const x2 = b.x - 6 - x;
+      const dash = dashOf(n);
+      return `<line class="plot-legend-sample" x1="${fmt(x1)}" y1="${fmt(cy)}" x2="${fmt(x2)}" y2="${fmt(cy)}" ${stroke('curve')}${dash ? ` stroke-dasharray="${dash}"` : ''} stroke-linecap="butt"/>`;
+    }).join('')
+    : '';
   // On its own paper (#fff takes the theme's paper), so the canvas grid
   // does not run through the plot's own.
   const paper = `<rect class="plot-paper" x="0" y="0" width="${fmt(w)}" height="${fmt(h)}" fill="#fff" stroke="none"/>`;
-  return `<g class="plot-annotation" transform="translate(${fmt(x)} ${fmt(y)})"${opacity}>${paper}${parts}</g>`;
+  return `<g class="plot-annotation" transform="translate(${fmt(x)} ${fmt(y)})"${opacity}>${paper}${parts}${samples}</g>`;
 }
 
 /**
@@ -39611,9 +39720,11 @@ function svgString(circuit, opts = {}) {
       if (child.id === o.editingLabel) continue;
       const childOpacity = ghostLabels.has(label.id) ? GHOST : shapeOpacity(child.id);
       const t = child.textPos();
+      // A black-and-white plot's legend takes the plot's ink.
+      const ink = legendInBlack(child, circuit) ? resolveColor(label.style?.color || '#111') : null;
       const childVisual = child.math
-        ? mathLabelSvg(child)
-        : labelTextEl(t.x, t.y, child.runs(), t.anchor, 'label', resolveColor(child.style?.color || '#111'), child.style?.width, child.style);
+        ? mathLabelSvg(child, '', ink)
+        : labelTextEl(t.x, t.y, child.runs(), t.anchor, 'label', ink || resolveColor(child.style?.color || '#111'), child.style?.width, child.style);
       parts.push(`<g${childOpacity} data-label-id="${escapeSvg(child.id)}" role="button" tabindex="0" aria-label="${escapeSvg(`Annotation label ${child.text}`)}">${childVisual}</g>`);
     }
   }
@@ -40483,6 +40594,7 @@ __exports.BEAT_DIM_INK = BEAT_DIM_INK;
 __exports.BEAT_FADE_INK = BEAT_FADE_INK;
 __exports.mathCells = mathCells;
 __exports.isMathTable = isMathTable;
+__exports.plotInBlack = plotInBlack;
 };
 
 __modules["src/core/renumber.js"] = function (__require, __exports) {
@@ -58323,6 +58435,33 @@ function zoomToWorldRect(r) {
 
 };
 
+__modules["src/web/chrome-quiet.js"] = function (__require, __exports) {
+__exports.chromeQuiet = chromeQuiet;
+__exports.syncChromeQuiet = syncChromeQuiet;
+/**
+ * The chrome steps back while the hand is on the drawing: while a part, a
+ * label, or a wire is being moved, or a wire is being drawn, the root
+ * element carries `data-chrome-quiet` and the stylesheet dims the toolbar,
+ * the tool rail, and the floating windows. Panning, zooming, and a
+ * selection box leave them as they are.
+ */
+
+/** Drags that look around or pick rather than change the drawing. */
+const LOOKING = new Set(['pan', 'zoom', 'marquee', 'deletemarquee', 'radialpending', 'wirepick']);
+
+/** Whether the chrome steps back for this drag and wire in progress. */
+function chromeQuiet(drag, wire) {
+  if (wire?.source || wire?.points?.length) return true;
+  return !!drag?.moved && !LOOKING.has(drag.mode);
+}
+
+/** Mark the root by the editor's drag and wire; render() calls it. */
+function syncChromeQuiet(drag, wire) {
+  globalThis.document?.documentElement?.toggleAttribute('data-chrome-quiet', chromeQuiet(drag, wire));
+}
+
+};
+
 __modules["src/web/chrome-slide.js"] = function (__require, __exports) {
 __exports.slideChrome = slideChrome;
 let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion.js")); });
@@ -59105,9 +59244,11 @@ __exports.DOCUMENT_COMMANDS = DOCUMENT_COMMANDS;
 __modules["src/web/commit-feedback.js"] = function (__require, __exports) {
 __exports.commitFeedbackDiff = commitFeedbackDiff;
 __exports.isEmptyFeedback = isEmptyFeedback;
+__exports.pieceRuns = pieceRuns;
 __exports.commitFeedbackSvg = commitFeedbackSvg;
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let componentShapeSvg, labelShapeSvg; __bind(() => { ({ componentShapeSvg, labelShapeSvg } = __require("src/core/render.js")); });
+let SOLDER_DOT_RADIUS; __bind(() => { ({ SOLDER_DOT_RADIUS } = __require("src/core/components/solder.js")); });
 /**
  * Commit feedback: what visibly "landed" between two committed documents.
  *
@@ -59116,6 +59257,7 @@ let componentShapeSvg, labelShapeSvg; __bind(() => { ({ componentShapeSvg, label
  * label edits, and console commands all get the same feedback without each
  * tool describing its own result. Undo/redo never call this.
  */
+
 
 
 
@@ -59206,7 +59348,7 @@ function commitFeedbackDiff(before, after) {
     const old = beforeComps.get(c.refdes);
     beforeComps.delete(c.refdes);
     if (c.type === 'solder') {
-      if (!old || old.transform.x !== c.transform.x || old.transform.y !== c.transform.y) points.set(pointKey(c.transform), { x: c.transform.x, y: c.transform.y });
+      if (!old || old.transform.x !== c.transform.x || old.transform.y !== c.transform.y) points.set(pointKey(c.transform), { x: c.transform.x, y: c.transform.y, solder: true });
       continue;
     }
     if (old && componentKey(old.toJSON()) === componentKey(c.toJSON())) continue;
@@ -59261,7 +59403,7 @@ function commitFeedbackDiff(before, after) {
       const id = `${c.refdes}.${t.name}`;
       if (!isConnected.has(id)) continue;
       const key = pointKey(t);
-      if (!wasConnected.has(id) || pieceEnds.get(key) === 1) points.set(key, { x: t.x, y: t.y });
+      if ((!wasConnected.has(id) || pieceEnds.get(key) === 1) && !points.has(key)) points.set(key, { x: t.x, y: t.y });
     }
   }
 
@@ -59282,6 +59424,52 @@ function isEmptyFeedback(diff) {
 
 const f = (v) => (Number.isInteger(v) ? String(v) : v.toFixed(2));
 
+/** The new wire pieces joined end to end into runs, each a list of points
+ *  from one free end (or a branch) to the next, so a run's glow can sweep
+ *  along it. A closed loop starts anywhere on it. */
+function pieceRuns(pieces) {
+  const ends = new Map();
+  pieces.forEach((piece, index) => {
+    for (const p of [piece.a, piece.b]) {
+      const key = pointKey(p);
+      if (!ends.has(key)) ends.set(key, []);
+      ends.get(key).push(index);
+    }
+  });
+  const used = new Set();
+  const runs = [];
+  const walk = (index, from) => {
+    const run = [from];
+    let at = from;
+    while (index !== undefined && !used.has(index)) {
+      used.add(index);
+      const piece = pieces[index];
+      const next = pointKey(piece.a) === pointKey(at) ? piece.b : piece.a;
+      // Straight on through a point two pieces share; a bend stays a point.
+      const last = run.at(-1);
+      const prev = run.at(-2);
+      if (prev && (prev.x - last.x) * (next.y - last.y) === (prev.y - last.y) * (next.x - last.x)) run.pop();
+      run.push(next);
+      at = next;
+      const onward = ends.get(pointKey(next));
+      index = onward.length === 2 ? onward.find((i) => !used.has(i)) : undefined;
+    }
+    return run;
+  };
+  // From the free ends and branch points first, then whatever loops remain.
+  const starts = [...ends].filter(([, list]) => list.length !== 2);
+  for (const [, list] of starts) {
+    for (const index of list) {
+      if (used.has(index)) continue;
+      const piece = pieces[index];
+      const from = ends.get(pointKey(piece.a)) === list ? piece.a : piece.b;
+      runs.push(walk(index, from));
+    }
+  }
+  pieces.forEach((piece, index) => { if (!used.has(index)) runs.push(walk(index, piece.a)); });
+  return runs;
+}
+
 /** One label's traced shape; a math label (HTML) falls back to a soft box. */
 function labelTrace(label, boxClass) {
   const shape = labelShapeSvg(label);
@@ -59295,8 +59483,9 @@ function labelTrace(label, boxClass) {
 }
 
 /** SVG markup for one feedback burst: `under` glows behind the drawing (the
- * objects' own shapes, restyled by CSS), `over` sits on top (connection
- * ripples, and the trailing red halo of deleted objects). */
+ * objects' own shapes, restyled by CSS), `over` sits on top (the sweep along
+ * new wires, connection ripples, and the trailing red halo of deleted
+ * objects). */
 function commitFeedbackSvg(diff) {
   const piecePath = (list) => list.map(({ a, b }) => `M ${f(a.x)} ${f(a.y)} L ${f(b.x)} ${f(b.y)}`).join(' ');
   const under = [];
@@ -59306,10 +59495,18 @@ function commitFeedbackSvg(diff) {
     ...diff.labels.map((label) => labelTrace(label, 'landing-box')),
   ].join('');
   if (glow) under.push(`<g class="landing-glow">${glow}</g>`);
-  if (diff.pieces.length) under.push(`<path class="landing-wire" d="${piecePath(diff.pieces)}"/>`);
+  // Each run of new wire sweeps from one end to the other, then fades: on
+  // top, since a wire just drawn is selected and its selection glow would
+  // hide anything under it.
+  for (const run of pieceRuns(diff.pieces)) {
+    over.push(`<path class="landing-wire" pathLength="1" d="${run.map((p, i) => `${i ? 'L' : 'M'} ${f(p.x)} ${f(p.y)}`).join(' ')}"/>`);
+  }
   for (const p of diff.points) {
     over.push(`<circle class="landing-ripple" cx="${f(p.x)}" cy="${f(p.y)}" r="18"/>`);
-    over.push(`<circle class="landing-dot" cx="${f(p.x)}" cy="${f(p.y)}" r="6"/>`);
+    // A new solder dot pops in at its own size; a pin gets a small dot.
+    over.push(p.solder
+      ? `<circle class="landing-pop" cx="${f(p.x)}" cy="${f(p.y)}" r="${SOLDER_DOT_RADIUS}"/>`
+      : `<circle class="landing-dot" cx="${f(p.x)}" cy="${f(p.y)}" r="6"/>`);
   }
   const removed = [
     ...diff.removedComponents.map((c) => componentShapeSvg(c)),
@@ -60263,6 +60460,7 @@ function appendContextActions(menu, target) {
     if (target.value.kind === 'label') appendContextItem(group, 'Edit text…', later(() => inlineEditLabel(target.value)), { shortcut: 't' });
     const lines = selectedLines();
     if (target.value.kind === 'line' && lines.length > 1) appendContextItem(group, `Join ${lines.length} lines`, joinSelectedLines);
+    if (target.value.plot) appendPlotColorsItem(group, target.value);
     appendBeatContextItems(group, target);
   } else if (target.kind === 'net' || target.kind === 'wire') {
     const net = contextNet(target);
@@ -60298,6 +60496,16 @@ function appendDrawingOnlyItem(group, comp) {
     const names = parts.length === 1 ? parts[0].refdes : `${parts.length} parts`;
     logLine(next ? `${names}: drawing only, no analysis reads ${parts.length === 1 ? 'it' : 'them'}` : `${names}: analyzed again`, 'status');
   }, { active: on === parts.length, mixed: on > 0 && on < parts.length });
+}
+
+/** Colored traces: a plot's traces in their colors, or in black told
+ *  apart by dash. */
+function appendPlotColorsItem(group, box) {
+  const colored = !box.style.blackTraces;
+  appendContextItem(group, 'Colored traces', () => {
+    commit(() => editor.circuit.setPlotTraceColors(box, !colored));
+    logLine(colored ? 'the plot\'s traces in black, told apart by dash' : 'the plot\'s traces in their colors', 'status');
+  }, { active: colored });
 }
 
 /** Delete, the destructive action, last and in a group of its own. */
@@ -70937,6 +71145,7 @@ let installAccent; __bind(() => { ({ installAccent } = __require("src/web/accent
 let installSizing, renderSizingWindow, sizingDocumentShown, toggleSizing; __bind(() => { ({ installSizing, renderSizingWindow, sizingDocumentShown, toggleSizing } = __require("src/web/sizing-window.js")); });
 let togglePlots; __bind(() => { ({ togglePlots } = __require("src/web/plots-window.js")); });
 let paddedLineBounds; __bind(() => { ({ paddedLineBounds } = __require("src/web/label-measure.js")); });
+let syncChromeQuiet; __bind(() => { ({ syncChromeQuiet } = __require("src/web/chrome-quiet.js")); });
 let captureNetGeometry, captureRouteGeometry, captureRunNetGeometry, cloneWireStyles, translateNetGeometry; __bind(() => { ({ captureNetGeometry, captureRouteGeometry, captureRunNetGeometry, cloneWireStyles, translateNetGeometry } = __require("src/web/net-geometry.js")); });
 let copyHoveredReference, fitHoveredReference, installReferenceWindows, toggleReferenceWindows; __bind(() => { ({ copyHoveredReference, fitHoveredReference, installReferenceWindows, toggleReferenceWindows } = __require("src/web/reference-window.js")); });
 let enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, linkBubbleFrame, moveLinkBubble, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles; __bind(() => { ({ enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, linkBubbleFrame, moveLinkBubble, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles } = __require("src/web/hierarchy.js")); });
@@ -70955,6 +71164,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -73462,6 +73672,7 @@ function render() {
   syncEmptyState();
   syncTutorial();
   syncViewToPane();
+  syncChromeQuiet(drag, wire);
   // An open inline editor sits over its text at the current zoom and pan.
   inlineInput?.relayout?.();
   // A context menu is independent of canvas repainting. Closing it here made
@@ -73641,8 +73852,8 @@ let labelColumns = [];
 /** Line up `ids` (math labels) at `left`, stacking down from `top`, once
  *  measured -- or where `place(labels)` says then ({ x, y }: a figure
  *  packed again at its measured size). */
-function alignLabelColumn(ids, { left, top, gap = 0, place = null, settled = null }) {
-  labelColumns.push({ ids: [...ids], left, top, gap, place, settled });
+function alignLabelColumn(ids, { left, top, gap = 0, place = null, settled = null, shift = {} }) {
+  labelColumns.push({ ids: [...ids], left, top, gap, place, settled, shift });
 }
 
 function reflowLabelColumns() {
@@ -73658,7 +73869,8 @@ function reflowLabelColumns() {
     let top = corner.y;
     for (const label of labels) {
       const box = label.bbox();
-      const x = snap(corner.x + box.w / 2);
+      // `shift`: a label set off from the column's edge (a plot's note).
+      const x = snap(corner.x + (column.shift[label.id] || 0) + box.w / 2);
       const y = snap(top + box.h / 2);
       const anchor = label.anchorWorld();
       if (anchor.x !== x || anchor.y !== y) {
@@ -77288,6 +77500,10 @@ window.addEventListener('pointercancel', (ev) => {
   cancelDrag();
   if (ev.pointerId !== undefined) canvasEl.releasePointerCapture?.(ev.pointerId);
 });
+// The chrome comes back however a drag or a wire ends, repainted or not.
+for (const type of ['pointerup', 'pointercancel', 'keyup', 'blur']) {
+  window.addEventListener(type, () => requestAnimationFrame(() => syncChromeQuiet(drag, wire)));
+}
 // Replacing the SVG during a repaint can move the pointer off the old target
 // before the bubbling event reaches the canvas. Feed that event through the
 // same cursor/preview path used by both document kinds.
@@ -82481,6 +82697,8 @@ let axisTicks, fitRange, logMinorGrid, fromU, thinSeries, toU, valueAt, zoomAbou
 
 const NS = 'http://www.w3.org/2000/svg';
 const MARGIN = { left: 46, right: 12, top: 10, bottom: 24 };
+/** The plot pane's corner radius: a card's (--radius-md). */
+const PANE_RADIUS = 8;
 let clipCount = 0;
 
 function svg(name, attrs = {}) {
@@ -82628,10 +82846,12 @@ function createPlotView({ height = 230, fill = false, aspect = null, maxHeight =
     root.setAttribute('aria-label', spec.title || 'Plot');
     const p = pane();
     const clip = svg('clipPath', { id: clipId });
-    clip.append(svg('rect', { x: p.x, y: p.y, width: p.w, height: p.h }));
+    clip.append(svg('rect', { x: p.x, y: p.y, width: p.w, height: p.h, rx: PANE_RADIUS }));
     const defs = svg('defs');
     defs.append(clip);
     root.append(defs);
+    // The pane is a card on the window: a faint fill under the grid.
+    root.append(svg('rect', { x: p.x, y: p.y, width: p.w, height: p.h, rx: PANE_RADIUS, class: 'plot-paper' }));
 
     const grid = svg('g', { class: 'plot-grid' });
     const xTicks = axisTicks(scaleX(), view.x[0], view.x[1], { target: Math.max(2, Math.round(p.w / 80)) });
@@ -82689,7 +82909,7 @@ function createPlotView({ height = 230, fill = false, aspect = null, maxHeight =
       body.append(svg('path', { d: `M ${cx - 4} ${cy - 4} L ${cx + 4} ${cy + 4} M ${cx - 4} ${cy + 4} L ${cx + 4} ${cy - 4}`, class: 'role-marker cross' }));
     }
     root.append(body);
-    root.append(svg('rect', { x: p.x, y: p.y, width: p.w, height: p.h, class: 'plot-frame' }));
+    root.append(svg('rect', { x: p.x, y: p.y, width: p.w, height: p.h, rx: PANE_RADIUS, class: 'plot-frame' }));
     // Marked lines' names at the top, inside, clear of the edge.
     for (const mark of marks) {
       const right = mark.at > p.x + p.w / 2;
@@ -85252,7 +85472,7 @@ let stepPlot; __bind(() => { ({ stepPlot } = __require("src/core/analysis/step.j
 let locusPlot, locusSteps, rootLocus; __bind(() => { ({ locusPlot, locusSteps, rootLocus } = __require("src/core/analysis/locus.js")); });
 let dbfsOffset, dbfsSpectrum, inBand, outputSpectrum, plotSpectrum; __bind(() => { ({ dbfsOffset, dbfsSpectrum, inBand, outputSpectrum, plotSpectrum } = __require("src/core/analysis/spectrum.js")); });
 let prepareSimulation, sweepAmplitudes; __bind(() => { ({ prepareSimulation, sweepAmplitudes } = __require("src/core/analysis/simulate.js")); });
-let normalizePlot, parseLabelRuns; __bind(() => { ({ normalizePlot, parseLabelRuns } = __require("src/core/model.js")); });
+let PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, parseLabelRuns, plotCurveCount; __bind(() => { ({ PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, parseLabelRuns, plotCurveCount } = __require("src/core/model.js")); });
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
 let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
 let chooseFigure, newFigureId, placeFigure, plotKey, settlePlaced; __bind(() => { ({ chooseFigure, newFigureId, placeFigure, plotKey, settlePlaced } = __require("src/core/figures.js")); });
@@ -86445,8 +86665,6 @@ function annotateGraph() {
   placePlot(plot, note ? [...shown, note] : shown, { view });
 }
 
-const PLOT_LEGEND_ROLE = 'plot-legend';
-
 /** A response plot (signal-flow.js `responsePlot`'s shape) on the drawing,
  *  as Annotate graph puts this graph there: `shown` names its traces
  *  ({ label, color }). The small-signal Bode graph's annotation. */
@@ -86478,7 +86696,7 @@ function placePlot(plot, shown, { source = 'signal-flow', view = null } = {}) {
   if (!written?.box) return;
   // Their sizes are estimates until the browser measures them: stack them
   // then, edge to edge (each box is rounded to the grid already).
-  alignLabelColumn(written.ids, { left: written.left, top: written.top, gap: 0 });
+  alignLabelColumn(written.ids, { left: written.left, top: written.top, gap: 0, shift: written.shift });
   setSelection([]);
   setLabelSelection([written.box.id]);
   logLine(target ? 'updated the plot on the drawing in place' : 'placed the graph on the drawing; drag to move it, its corners to resize');
@@ -86486,7 +86704,7 @@ function placePlot(plot, shown, { source = 'signal-flow', view = null } = {}) {
 }
 
 /** A plot box's legend labels: ours by role (older plots' math children too). */
-const legendOf = (box) => [...editor.circuit.labels.values()].filter((label) => label.parent === box.id && (label.role === PLOT_LEGEND_ROLE || (label.math && !label.role)));
+const legendOf = (box) => editor.circuit.plotLegend(box);
 
 /**
  * Write a plot into `target` (its data and legend swapped, its place, size,
@@ -86499,7 +86717,10 @@ function writePlot(target, plot, shown, { identity = null } = {}) {
   let left;
   let top;
   if (target) {
-    const old = legendOf(target).map((label) => label.bbox());
+    // The column is where its curves' entries are (notes may sit apart).
+    const entries = legendOf(target);
+    const named = entries.slice(0, plotCurveCount(target.plot));
+    const old = (named.length ? named : entries).map((label) => label.bbox());
     const frame = target.bbox();
     left = old.length ? Math.min(...old.map((r) => r.x)) : frame.x + frame.w;
     top = old.length ? Math.min(...old.map((r) => r.y)) : frame.y;
@@ -86507,8 +86728,9 @@ function writePlot(target, plot, shown, { identity = null } = {}) {
     // Packed clear of what is there (figures.js): the box, and its legend
     // beside it about as wide as a third of the box.
     const spot = placeFigure(circuit, 'plot', { size: { w: 24 * GRID, h: 11 * GRID } });
-    // The legend against the box: its labels keep their own inset.
-    left = spot.x + 18 * GRID;
+    // The legend beside the box, past the room its line samples take (a
+    // new plot draws in black): its labels keep their own inset.
+    left = spot.x + 18 * GRID + PLOT_LEGEND_SAMPLE_ROOM;
     top = spot.y;
   }
   const ids = [];
@@ -86519,20 +86741,26 @@ function writePlot(target, plot, shown, { identity = null } = {}) {
     if (figure && !target.figure) target.figure = figure;
     for (const label of legendOf(target)) circuit.removeLabel(label.id);
   } else {
-    const x = left - 18 * GRID;
-    box = circuit.addAnnotation('box', { x, y: top, end: { x: x + 18 * GRID, y: top + 11 * GRID }, plot, style: { lineStyle: 'solid' }, ...(figure ? { figure } : {}) });
+    const x = left - 18 * GRID - PLOT_LEGEND_SAMPLE_ROOM;
+    box = circuit.addAnnotation('box', { x, y: top, end: { x: x + 18 * GRID, y: top + 11 * GRID }, plot, style: { lineStyle: 'solid', blackTraces: true }, ...(figure ? { figure } : {}) });
     if (figure) settlePlaced(circuit, figure.id);
   }
+  // In black, a note after the curves' entries (a simulated SNDR) starts
+  // where their line samples do.
+  const curves = plotCurveCount(box.plot);
+  const noteShift = box.style.blackTraces ? -PLOT_LEGEND_SAMPLE_ROOM : 0;
+  const shift = {};
   let y = top;
-  const add = (text, style) => {
+  const add = (text, style, dx) => {
     const label = circuit.addLabel({ text, math: true, parent: box.id, role: PLOT_LEGEND_ROLE, align: 'left', x: 0, y: 0, ...(style ? { style } : {}) });
     const size = label.bbox();
-    label.moveTo(snap(left + size.w / 2), snap(y + size.h / 2));
+    label.moveTo(snap(left + dx + size.w / 2), snap(y + size.h / 2));
     y = label.bbox().y + label.bbox().h;
     ids.push(label.id);
+    if (dx) shift[label.id] = dx;
   };
-  for (const trace of shown) add(`$${trace.label}$`, { color: trace.color });
-  return { box, ids, left, top };
+  shown.forEach((trace, index) => add(`$${trace.label}$`, { color: trace.color }, index < curves ? 0 : noteShift));
+  return { box, ids, left, top, shift };
 }
 
 /** Every coefficient a plot or simulation is drawn at, sorted by name
@@ -86612,7 +86840,7 @@ async function updatePlots() {
     const rows = coefficientRows();
     if (rows.length) table = writeMathFigure({ ...COEFFICIENTS, text: rows.join('\n'), create: hadValues });
   });
-  for (const item of written) alignLabelColumn(item.ids, { left: item.left, top: item.top, gap: 0 });
+  for (const item of written) alignLabelColumn(item.ids, { left: item.left, top: item.top, gap: 0, shift: item.shift });
   table?.settle();
   render();
   const kinds = (list) => list.map((box) => (box.plot.role === 'loop' ? 'loop' : box.plot.kind === 'response' ? (box.plot.quantity === 'phase' ? 'phase' : 'magnitude') : box.plot.kind));

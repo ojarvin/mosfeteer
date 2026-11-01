@@ -30,7 +30,7 @@ import { stepPlot } from '../core/analysis/step.js';
 import { locusPlot, locusSteps, rootLocus } from '../core/analysis/locus.js';
 import { dbfsOffset, dbfsSpectrum, inBand, outputSpectrum, plotSpectrum } from '../core/analysis/spectrum.js';
 import { prepareSimulation, sweepAmplitudes } from '../core/analysis/simulate.js';
-import { normalizePlot, parseLabelRuns } from '../core/model.js';
+import { PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, parseLabelRuns, plotCurveCount } from '../core/model.js';
 import { texToMathML } from '../core/render.js';
 import { GRID, snap } from '../core/grid.js';
 import { chooseFigure, newFigureId, placeFigure, plotKey, settlePlaced } from '../core/figures.js';
@@ -1174,8 +1174,6 @@ function annotateGraph() {
   placePlot(plot, note ? [...shown, note] : shown, { view });
 }
 
-const PLOT_LEGEND_ROLE = 'plot-legend';
-
 /** A response plot (signal-flow.js `responsePlot`'s shape) on the drawing,
  *  as Annotate graph puts this graph there: `shown` names its traces
  *  ({ label, color }). The small-signal Bode graph's annotation. */
@@ -1207,7 +1205,7 @@ function placePlot(plot, shown, { source = 'signal-flow', view = null } = {}) {
   if (!written?.box) return;
   // Their sizes are estimates until the browser measures them: stack them
   // then, edge to edge (each box is rounded to the grid already).
-  alignLabelColumn(written.ids, { left: written.left, top: written.top, gap: 0 });
+  alignLabelColumn(written.ids, { left: written.left, top: written.top, gap: 0, shift: written.shift });
   setSelection([]);
   setLabelSelection([written.box.id]);
   logLine(target ? 'updated the plot on the drawing in place' : 'placed the graph on the drawing; drag to move it, its corners to resize');
@@ -1215,7 +1213,7 @@ function placePlot(plot, shown, { source = 'signal-flow', view = null } = {}) {
 }
 
 /** A plot box's legend labels: ours by role (older plots' math children too). */
-const legendOf = (box) => [...editor.circuit.labels.values()].filter((label) => label.parent === box.id && (label.role === PLOT_LEGEND_ROLE || (label.math && !label.role)));
+const legendOf = (box) => editor.circuit.plotLegend(box);
 
 /**
  * Write a plot into `target` (its data and legend swapped, its place, size,
@@ -1228,7 +1226,10 @@ function writePlot(target, plot, shown, { identity = null } = {}) {
   let left;
   let top;
   if (target) {
-    const old = legendOf(target).map((label) => label.bbox());
+    // The column is where its curves' entries are (notes may sit apart).
+    const entries = legendOf(target);
+    const named = entries.slice(0, plotCurveCount(target.plot));
+    const old = (named.length ? named : entries).map((label) => label.bbox());
     const frame = target.bbox();
     left = old.length ? Math.min(...old.map((r) => r.x)) : frame.x + frame.w;
     top = old.length ? Math.min(...old.map((r) => r.y)) : frame.y;
@@ -1236,8 +1237,9 @@ function writePlot(target, plot, shown, { identity = null } = {}) {
     // Packed clear of what is there (figures.js): the box, and its legend
     // beside it about as wide as a third of the box.
     const spot = placeFigure(circuit, 'plot', { size: { w: 24 * GRID, h: 11 * GRID } });
-    // The legend against the box: its labels keep their own inset.
-    left = spot.x + 18 * GRID;
+    // The legend beside the box, past the room its line samples take (a
+    // new plot draws in black): its labels keep their own inset.
+    left = spot.x + 18 * GRID + PLOT_LEGEND_SAMPLE_ROOM;
     top = spot.y;
   }
   const ids = [];
@@ -1248,20 +1250,26 @@ function writePlot(target, plot, shown, { identity = null } = {}) {
     if (figure && !target.figure) target.figure = figure;
     for (const label of legendOf(target)) circuit.removeLabel(label.id);
   } else {
-    const x = left - 18 * GRID;
-    box = circuit.addAnnotation('box', { x, y: top, end: { x: x + 18 * GRID, y: top + 11 * GRID }, plot, style: { lineStyle: 'solid' }, ...(figure ? { figure } : {}) });
+    const x = left - 18 * GRID - PLOT_LEGEND_SAMPLE_ROOM;
+    box = circuit.addAnnotation('box', { x, y: top, end: { x: x + 18 * GRID, y: top + 11 * GRID }, plot, style: { lineStyle: 'solid', blackTraces: true }, ...(figure ? { figure } : {}) });
     if (figure) settlePlaced(circuit, figure.id);
   }
+  // In black, a note after the curves' entries (a simulated SNDR) starts
+  // where their line samples do.
+  const curves = plotCurveCount(box.plot);
+  const noteShift = box.style.blackTraces ? -PLOT_LEGEND_SAMPLE_ROOM : 0;
+  const shift = {};
   let y = top;
-  const add = (text, style) => {
+  const add = (text, style, dx) => {
     const label = circuit.addLabel({ text, math: true, parent: box.id, role: PLOT_LEGEND_ROLE, align: 'left', x: 0, y: 0, ...(style ? { style } : {}) });
     const size = label.bbox();
-    label.moveTo(snap(left + size.w / 2), snap(y + size.h / 2));
+    label.moveTo(snap(left + dx + size.w / 2), snap(y + size.h / 2));
     y = label.bbox().y + label.bbox().h;
     ids.push(label.id);
+    if (dx) shift[label.id] = dx;
   };
-  for (const trace of shown) add(`$${trace.label}$`, { color: trace.color });
-  return { box, ids, left, top };
+  shown.forEach((trace, index) => add(`$${trace.label}$`, { color: trace.color }, index < curves ? 0 : noteShift));
+  return { box, ids, left, top, shift };
 }
 
 /** Every coefficient a plot or simulation is drawn at, sorted by name
@@ -1341,7 +1349,7 @@ async function updatePlots() {
     const rows = coefficientRows();
     if (rows.length) table = writeMathFigure({ ...COEFFICIENTS, text: rows.join('\n'), create: hadValues });
   });
-  for (const item of written) alignLabelColumn(item.ids, { left: item.left, top: item.top, gap: 0 });
+  for (const item of written) alignLabelColumn(item.ids, { left: item.left, top: item.top, gap: 0, shift: item.shift });
   table?.settle();
   render();
   const kinds = (list) => list.map((box) => (box.plot.role === 'loop' ? 'loop' : box.plot.kind === 'response' ? (box.plot.quantity === 'phase' ? 'phase' : 'magnitude') : box.plot.kind));

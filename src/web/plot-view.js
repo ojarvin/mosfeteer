@@ -24,6 +24,8 @@ import { axisTicks, fitRange, logMinorGrid, fromU, thinSeries, toU, valueAt, zoo
 
 const NS = 'http://www.w3.org/2000/svg';
 const MARGIN = { left: 46, right: 12, top: 10, bottom: 24 };
+/** The plot pane's corner radius: a card's (--radius-md). */
+const PANE_RADIUS = 8;
 let clipCount = 0;
 
 function svg(name, attrs = {}) {
@@ -171,10 +173,12 @@ export function createPlotView({ height = 230, fill = false, aspect = null, maxH
     root.setAttribute('aria-label', spec.title || 'Plot');
     const p = pane();
     const clip = svg('clipPath', { id: clipId });
-    clip.append(svg('rect', { x: p.x, y: p.y, width: p.w, height: p.h }));
+    clip.append(svg('rect', { x: p.x, y: p.y, width: p.w, height: p.h, rx: PANE_RADIUS }));
     const defs = svg('defs');
     defs.append(clip);
     root.append(defs);
+    // The pane is a card on the window: a faint fill under the grid.
+    root.append(svg('rect', { x: p.x, y: p.y, width: p.w, height: p.h, rx: PANE_RADIUS, class: 'plot-paper' }));
 
     const grid = svg('g', { class: 'plot-grid' });
     const xTicks = axisTicks(scaleX(), view.x[0], view.x[1], { target: Math.max(2, Math.round(p.w / 80)) });
@@ -232,7 +236,7 @@ export function createPlotView({ height = 230, fill = false, aspect = null, maxH
       body.append(svg('path', { d: `M ${cx - 4} ${cy - 4} L ${cx + 4} ${cy + 4} M ${cx - 4} ${cy + 4} L ${cx + 4} ${cy - 4}`, class: 'role-marker cross' }));
     }
     root.append(body);
-    root.append(svg('rect', { x: p.x, y: p.y, width: p.w, height: p.h, class: 'plot-frame' }));
+    root.append(svg('rect', { x: p.x, y: p.y, width: p.w, height: p.h, rx: PANE_RADIUS, class: 'plot-frame' }));
     // Marked lines' names at the top, inside, clear of the edge.
     for (const mark of marks) {
       const right = mark.at > p.x + p.w / 2;

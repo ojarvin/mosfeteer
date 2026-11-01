@@ -5,6 +5,7 @@ import { svgString } from '../src/core/render.js';
 import { loadDocument } from '../src/core/document.js';
 import { bodeSketch } from '../src/core/analysis/bode.js';
 import { copyableLabelPayload } from '../src/web/selection.js';
+import { runCommand } from '../src/core/commands.js';
 
 function plotData() {
   const sketch = bodeSketch([100], [1, 100]);
@@ -98,4 +99,73 @@ test('an annotated response plot lines each decade faintly under its numbered li
   const circuit = new Circuit();
   circuit.addAnnotation('box', { x: 0, y: 0, end: { x: 900, y: 500 }, plot });
   assert.match(svgString(circuit), /stroke-opacity="0.3"/);
+});
+
+/** A two-trace response plot on the drawing, with its legend as the
+ *  editor places it: in black, the legend past its samples' room. */
+function twoTracePlot({ black = true } = {}) {
+  const c = new Circuit();
+  const points = (db) => [{ f: 0.01, db }, { f: 1, db: db - 20 }, { f: 10, db: db - 40 }];
+  const plot = { kind: 'response', range: { low: -2, high: 1 }, traces: [{ label: 'A', color: '#3b74e0', points: points(0) }, { label: 'B', color: '#df4d59', points: points(-10) }] };
+  const box = c.addAnnotation('box', { x: 0, y: 0, end: { x: 720, y: 440 }, plot, style: { lineStyle: 'solid', ...(black ? { blackTraces: true } : {}) } });
+  const legend = ['A', 'B'].map((name, i) => c.addLabel({ text: `$${name}$`, math: true, parent: box.id, role: 'plot-legend', align: 'left', x: 880, y: 40 + 80 * i, style: { color: plot.traces[i].color } }));
+  return { c, box, legend };
+}
+
+test('a plot in black draws its traces in its ink, each with its own dash, and its legend in ink with a line sample each', () => {
+  const { c } = twoTracePlot();
+  const svg = svgString(c);
+  const plotSvg = svg.match(/<g class="plot-annotation"[^]*?<\/g>/)[0];
+  assert.doesNotMatch(plotSvg, /#3b74e0|#df4d59/, 'no trace colors');
+  const curves = [...plotSvg.matchAll(/<path d="[^"]*" stroke="#111" stroke-width="6"([^/]*)\/>/g)].map((m) => m[1]);
+  assert.ok(curves.some((attrs) => !/dasharray/.test(attrs)), 'the first trace solid');
+  assert.ok(curves.some((attrs) => /stroke-dasharray="28 14"/.test(attrs)), 'the second dashed');
+  const samples = [...plotSvg.matchAll(/class="plot-legend-sample"([^/]*)/g)].map((m) => m[1]);
+  assert.equal(samples.length, 2);
+  assert.doesNotMatch(samples[0], /dasharray/);
+  assert.match(samples[1], /stroke-dasharray="28 14"/);
+  assert.doesNotMatch(svg, /color:#df4d59/, 'the legend in ink, not its own color');
+});
+
+test('a plot from before keeps its colors; plotcolors switches it, moving the legend by the samples\' room, as one command', () => {
+  const { c, box, legend } = twoTracePlot({ black: false });
+  assert.match(svgString(c), /#df4d59/);
+  assert.doesNotMatch(svgString(c), /plot-legend-sample/);
+  const before = legend.map((label) => label.anchor.x);
+  runCommand(c, `annotation plotcolors ${box.id} off`);
+  assert.equal(c.labels.get(box.id).style.blackTraces, true);
+  assert.deepEqual(legend.map((label) => label.anchor.x), before.map((x) => x + 120));
+  assert.match(svgString(c), /plot-legend-sample/);
+  assert.equal(c.labels.get(box.id).toJSON().style.blackTraces, true, 'saved with the plot');
+  runCommand(c, `annotation plotcolors ${box.id} on`);
+  assert.deepEqual(legend.map((label) => label.anchor.x), before);
+  assert.equal('blackTraces' in c.labels.get(box.id).style, false);
+  assert.throws(() => runCommand(c, `annotation plotcolors ${legend[0].id} on`), /usage: annotation plotcolors PLOT on\|off/, 'a legend is not a plot');
+});
+
+test('a plot\'s axis titles are outside its frame, the x under its numbers and the y turned up beside them, each naming its unit', () => {
+  const plot = normalizePlot({ kind: 'response', axis: 'normalized', range: { low: -3, high: 0 }, traces: [{ label: 'H', color: '#3b74e0', points: [{ f: 0.001, db: 0 }, { f: 1, db: -40 }] }] });
+  const { items, pane } = responseFigure(plot, { width: 720, height: 440, fontSize: 30 });
+  const x = items.find((item) => item.text === 'Frequency (f/f_{s})');
+  const y = items.find((item) => item.text === 'Magnitude |H| (dB)');
+  assert.ok(x && x.y > pane.y + pane.h && x.anchor === 'middle', JSON.stringify(x));
+  assert.ok(y && y.x < pane.x && y.rotate === -90, JSON.stringify(y));
+  const numbers = items.filter((item) => item.role === 'number');
+  assert.ok(numbers.every((n) => (n.y > pane.y + pane.h ? n.y < x.y : n.x > y.x)), 'titles outside the numbers');
+  const c = new Circuit();
+  c.addAnnotation('box', { x: 0, y: 0, end: { x: 720, y: 440 }, plot });
+  assert.match(svgString(c), /transform="rotate\(-90 [\d.]+ [\d.]+\)"[^>]*>Magnitude \|/);
+});
+
+test('a lone curve has its line sample too; a note after the curves (an SNDR) has none and stays when colors are switched', () => {
+  const c = new Circuit();
+  const plot = { kind: 'response', range: { low: -2, high: 1 }, traces: [{ label: 'A', color: '#3b74e0', points: [{ f: 0.01, db: 0 }, { f: 10, db: -40 }] }] };
+  const box = c.addAnnotation('box', { x: 0, y: 0, end: { x: 720, y: 440 }, plot, style: { lineStyle: 'solid', blackTraces: true } });
+  const name = c.addLabel({ text: '$A$', math: true, parent: box.id, role: 'plot-legend', align: 'left', x: 880, y: 40 });
+  const note = c.addLabel({ text: '$\\text{SNDR 80 dB}$', math: true, parent: box.id, role: 'plot-legend', align: 'left', x: 760, y: 160 });
+  assert.equal((svgString(c).match(/class="plot-legend-sample"/g) || []).length, 1, 'one sample, for the curve');
+  const at = { name: name.anchor.x, note: note.anchor.x };
+  runCommand(c, `annotation plotcolors ${box.id} on`);
+  assert.equal(name.anchor.x, at.name - 120);
+  assert.equal(note.anchor.x, at.note, 'the note stays');
 });

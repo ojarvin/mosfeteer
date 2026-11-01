@@ -61,7 +61,11 @@ drawing opens docked instead, until there is room to float it (a window
 floated by hand stays floating). A window stays where it
 is dragged (per window, in this browser); double-clicking its title bar
 puts it back in its default place, keeping its size. The window with the
-keyboard focus in it has its border and title bar in the accent. Pressing
+keyboard focus in it has an accent border and ring and its title at full
+strength; the other windows' titles are dim. While a part, label, or wire is
+moved, or a wire is drawn, the toolbar, tool rail, and floating windows dim
+until it is let go (`src/web/chrome-quiet.js`); panning, zooming, and a
+selection box leave them. Pressing
 a window gives it the focus (the control pressed, else the window itself),
 and keys go to it rather than the drawing until the drawing is pressed;
 Escape on a window holding the focus itself closes it, and so does the

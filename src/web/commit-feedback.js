@@ -9,6 +9,7 @@
 
 import { GRID } from '../core/grid.js';
 import { componentShapeSvg, labelShapeSvg } from '../core/render.js';
+import { SOLDER_DOT_RADIUS } from '../core/components/solder.js';
 
 // A huge edit (select-all move, loading a template through a command) should
 // still acknowledge the commit without building thousands of SVG nodes.
@@ -96,7 +97,7 @@ export function commitFeedbackDiff(before, after) {
     const old = beforeComps.get(c.refdes);
     beforeComps.delete(c.refdes);
     if (c.type === 'solder') {
-      if (!old || old.transform.x !== c.transform.x || old.transform.y !== c.transform.y) points.set(pointKey(c.transform), { x: c.transform.x, y: c.transform.y });
+      if (!old || old.transform.x !== c.transform.x || old.transform.y !== c.transform.y) points.set(pointKey(c.transform), { x: c.transform.x, y: c.transform.y, solder: true });
       continue;
     }
     if (old && componentKey(old.toJSON()) === componentKey(c.toJSON())) continue;
@@ -151,7 +152,7 @@ export function commitFeedbackDiff(before, after) {
       const id = `${c.refdes}.${t.name}`;
       if (!isConnected.has(id)) continue;
       const key = pointKey(t);
-      if (!wasConnected.has(id) || pieceEnds.get(key) === 1) points.set(key, { x: t.x, y: t.y });
+      if ((!wasConnected.has(id) || pieceEnds.get(key) === 1) && !points.has(key)) points.set(key, { x: t.x, y: t.y });
     }
   }
 
@@ -172,6 +173,52 @@ export function isEmptyFeedback(diff) {
 
 const f = (v) => (Number.isInteger(v) ? String(v) : v.toFixed(2));
 
+/** The new wire pieces joined end to end into runs, each a list of points
+ *  from one free end (or a branch) to the next, so a run's glow can sweep
+ *  along it. A closed loop starts anywhere on it. */
+export function pieceRuns(pieces) {
+  const ends = new Map();
+  pieces.forEach((piece, index) => {
+    for (const p of [piece.a, piece.b]) {
+      const key = pointKey(p);
+      if (!ends.has(key)) ends.set(key, []);
+      ends.get(key).push(index);
+    }
+  });
+  const used = new Set();
+  const runs = [];
+  const walk = (index, from) => {
+    const run = [from];
+    let at = from;
+    while (index !== undefined && !used.has(index)) {
+      used.add(index);
+      const piece = pieces[index];
+      const next = pointKey(piece.a) === pointKey(at) ? piece.b : piece.a;
+      // Straight on through a point two pieces share; a bend stays a point.
+      const last = run.at(-1);
+      const prev = run.at(-2);
+      if (prev && (prev.x - last.x) * (next.y - last.y) === (prev.y - last.y) * (next.x - last.x)) run.pop();
+      run.push(next);
+      at = next;
+      const onward = ends.get(pointKey(next));
+      index = onward.length === 2 ? onward.find((i) => !used.has(i)) : undefined;
+    }
+    return run;
+  };
+  // From the free ends and branch points first, then whatever loops remain.
+  const starts = [...ends].filter(([, list]) => list.length !== 2);
+  for (const [, list] of starts) {
+    for (const index of list) {
+      if (used.has(index)) continue;
+      const piece = pieces[index];
+      const from = ends.get(pointKey(piece.a)) === list ? piece.a : piece.b;
+      runs.push(walk(index, from));
+    }
+  }
+  pieces.forEach((piece, index) => { if (!used.has(index)) runs.push(walk(index, piece.a)); });
+  return runs;
+}
+
 /** One label's traced shape; a math label (HTML) falls back to a soft box. */
 function labelTrace(label, boxClass) {
   const shape = labelShapeSvg(label);
@@ -185,8 +232,9 @@ function labelTrace(label, boxClass) {
 }
 
 /** SVG markup for one feedback burst: `under` glows behind the drawing (the
- * objects' own shapes, restyled by CSS), `over` sits on top (connection
- * ripples, and the trailing red halo of deleted objects). */
+ * objects' own shapes, restyled by CSS), `over` sits on top (the sweep along
+ * new wires, connection ripples, and the trailing red halo of deleted
+ * objects). */
 export function commitFeedbackSvg(diff) {
   const piecePath = (list) => list.map(({ a, b }) => `M ${f(a.x)} ${f(a.y)} L ${f(b.x)} ${f(b.y)}`).join(' ');
   const under = [];
@@ -196,10 +244,18 @@ export function commitFeedbackSvg(diff) {
     ...diff.labels.map((label) => labelTrace(label, 'landing-box')),
   ].join('');
   if (glow) under.push(`<g class="landing-glow">${glow}</g>`);
-  if (diff.pieces.length) under.push(`<path class="landing-wire" d="${piecePath(diff.pieces)}"/>`);
+  // Each run of new wire sweeps from one end to the other, then fades: on
+  // top, since a wire just drawn is selected and its selection glow would
+  // hide anything under it.
+  for (const run of pieceRuns(diff.pieces)) {
+    over.push(`<path class="landing-wire" pathLength="1" d="${run.map((p, i) => `${i ? 'L' : 'M'} ${f(p.x)} ${f(p.y)}`).join(' ')}"/>`);
+  }
   for (const p of diff.points) {
     over.push(`<circle class="landing-ripple" cx="${f(p.x)}" cy="${f(p.y)}" r="18"/>`);
-    over.push(`<circle class="landing-dot" cx="${f(p.x)}" cy="${f(p.y)}" r="6"/>`);
+    // A new solder dot pops in at its own size; a pin gets a small dot.
+    over.push(p.solder
+      ? `<circle class="landing-pop" cx="${f(p.x)}" cy="${f(p.y)}" r="${SOLDER_DOT_RADIUS}"/>`
+      : `<circle class="landing-dot" cx="${f(p.x)}" cy="${f(p.y)}" r="6"/>`);
   }
   const removed = [
     ...diff.removedComponents.map((c) => componentShapeSvg(c)),

@@ -804,6 +804,7 @@ function appendContextActions(menu, target) {
     if (target.value.kind === 'label') appendContextItem(group, 'Edit text…', later(() => inlineEditLabel(target.value)), { shortcut: 't' });
     const lines = selectedLines();
     if (target.value.kind === 'line' && lines.length > 1) appendContextItem(group, `Join ${lines.length} lines`, joinSelectedLines);
+    if (target.value.plot) appendPlotColorsItem(group, target.value);
     appendBeatContextItems(group, target);
   } else if (target.kind === 'net' || target.kind === 'wire') {
     const net = contextNet(target);
@@ -839,6 +840,16 @@ function appendDrawingOnlyItem(group, comp) {
     const names = parts.length === 1 ? parts[0].refdes : `${parts.length} parts`;
     logLine(next ? `${names}: drawing only, no analysis reads ${parts.length === 1 ? 'it' : 'them'}` : `${names}: analyzed again`, 'status');
   }, { active: on === parts.length, mixed: on > 0 && on < parts.length });
+}
+
+/** Colored traces: a plot's traces in their colors, or in black told
+ *  apart by dash. */
+function appendPlotColorsItem(group, box) {
+  const colored = !box.style.blackTraces;
+  appendContextItem(group, 'Colored traces', () => {
+    commit(() => editor.circuit.setPlotTraceColors(box, !colored));
+    logLine(colored ? 'the plot\'s traces in black, told apart by dash' : 'the plot\'s traces in their colors', 'status');
+  }, { active: colored });
 }
 
 /** Delete, the destructive action, last and in a group of its own. */

@@ -375,6 +375,19 @@ export const LABEL_ALIGN_INSET = GRID / 2;
 
 /** Padding a math label keeps on the sides its alignment does not set. */
 export const MATH_LABEL_PAD = 6;
+
+/** A plot's legend labels: children of its box by this role. */
+export const PLOT_LEGEND_ROLE = 'plot-legend';
+/** Room left of a black-and-white plot's legend for each trace's line
+ *  sample (render.js draws them there). */
+export const PLOT_LEGEND_SAMPLE_ROOM = 3 * GRID;
+
+/** How many curves a plot draws, each named by a legend entry in order:
+ *  its traces less a spectrum behind them, or its one curve. Entries past
+ *  them are notes (a simulated SNDR). */
+export function plotCurveCount(plot) {
+  return Array.isArray(plot?.traces) ? plot.traces.filter((trace) => !trace.background).length : 1;
+}
 /** How much wider than the metric estimate the browser draws math text
  *  (measured in Chromium): an unmeasured label's ink is taken so. */
 export const MATH_WIDTH_DRAWN = 1.25;
@@ -1402,6 +1415,9 @@ export class LabelInstance {
       italic: opts.style?.italic !== false,
       // Monospace text is the exception, saved only when on.
       ...(opts.style?.mono ? { mono: true } : {}),
+      // A plot drawn in black, its traces told apart by dash, as a new
+      // plot is; one without it (from before) draws them in their colors.
+      ...(opts.style?.blackTraces ? { blackTraces: true } : {}),
       ...(['arrow', 'line'].includes(this.kind)
         ? { arrowhead: normalizeArrowhead(opts.style?.arrowhead, defaultArrowhead(this.kind)) }
         : {}),
@@ -4439,6 +4455,26 @@ export class Circuit {
       if (removedLabel.role === PART_VALUE_ROLE && signalComponent) signalComponent.valueLabel = null;
     }
     return removed;
+  }
+
+  /** A plot box's legend labels, in trace order: ours by role (older
+   *  plots' unroled math children too). */
+  plotLegend(box) {
+    return [...this.labels.values()].filter((label) => label.parent === box.id && (label.role === PLOT_LEGEND_ROLE || (label.math && !label.role)));
+  }
+
+  /** Draw a plot's traces in their colors (`on`) or in black, told apart by
+   *  dash. Its legend moves aside by the room its line samples take in
+   *  black, and back; its notes stay. Returns whether anything changed. */
+  setPlotTraceColors(box, on) {
+    if (!box?.plot) throw new Error(`"${box?.id}" is not a plot`);
+    if (!box.style.blackTraces === !!on) return false;
+    if (on) delete box.style.blackTraces;
+    else box.style.blackTraces = true;
+    const shift = on ? -PLOT_LEGEND_SAMPLE_ROOM : PLOT_LEGEND_SAMPLE_ROOM;
+    for (const label of this.plotLegend(box).slice(0, plotCurveCount(box.plot))) label.moveTo(label.anchor.x + shift, label.anchor.y);
+    this.invalidateRoutingCache();
+    return true;
   }
 
   /** Deleting a marker's owned label drops its local-rail identity: the value

@@ -549,6 +549,7 @@ export function commandHelp() {
     '  annotation rename|move|align|rm ... - edit/remove an annotation label',
     '  annotation join ID ID ...      - join line annotations that meet end to end or share a stretch into one line',
     '  annotation vertex-rm ID N      - remove vertex N (from 0) of a line or arrow',
+    '  annotation plotcolors PLOT on|off - a plot\'s traces in their colors, or in black told apart by dash (a new plot\'s)',
     '  list                           - list components',
     '  state                          - full JSON state',
     '  bounds                         - drawing extents',
@@ -1605,6 +1606,13 @@ function annotationCommand(circuit, pos, result, flags = {}) {
     circuit.removeLabel(label);
     return result(`removed annotation ${label.id}`, null, true);
   }
+  if (op === 'plotcolors') {
+    const box = circuit.labels.get(pos[1]);
+    const state = pos[2];
+    if (!box?.plot || !['on', 'off'].includes(state)) throw new Error('usage: annotation plotcolors PLOT on|off');
+    circuit.setPlotTraceColors(box, state === 'on');
+    return result(state === 'on' ? `${box.id}: traces in their colors` : `${box.id}: traces in black, told apart by dash`, box.toJSON(), true);
+  }
   if (op === 'vertex-rm') {
     const label = circuit.labels.get(pos[1]);
     if (!label || !['arrow', 'line'].includes(label.kind)) throw new Error(`unknown line or arrow "${pos[1]}"`);
@@ -1613,7 +1621,7 @@ function annotationCommand(circuit, pos, result, flags = {}) {
     if (!label.removeVertex(index)) throw new Error(`cannot remove vertex ${index} of ${label.id}: a line keeps two distinct points and an arrow two cells of length`);
     return result(`removed vertex ${index} of ${label.id}`, label.toJSON(), true);
   }
-  throw new Error('usage: annotation add|rename|move|align|rm|vertex-rm|list ...');
+  throw new Error('usage: annotation add|rename|move|align|rm|vertex-rm|plotcolors|list ...');
 }
 
 /** A 1-based beat number from a command, as a 0-based index. */

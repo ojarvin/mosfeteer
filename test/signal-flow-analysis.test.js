@@ -947,7 +947,7 @@ test('the loop gain at a broken signal: T with NTF = 1/(1 + T), its crossover an
   assert.equal(again.role, 'loop');
   assert.deepEqual(again.markers, [{ f: 0.283, label: 'PM 24°' }]);
   assert.ok(responseFigure(again).items.some((item) => item.text === 'PM 24°'));
-  assert.ok(responseFigure(again).items.some((item) => item.text === '|T| (dB)'));
+  assert.ok(responseFigure(again).items.some((item) => item.text === 'Magnitude |T| (dB)'));
 });
 
 test('a sampled loop breaks only at a sampled signal, a quantizer\'s output offered first', () => {

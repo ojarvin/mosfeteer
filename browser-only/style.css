@@ -2088,7 +2088,7 @@ html.dark.invert-pictures .light-picture {
   border-radius: var(--radius-lg);
   overflow: hidden;
   box-shadow: var(--shadow-window);
-  transition: border-color var(--motion) var(--ease-out), box-shadow var(--motion) var(--ease-out);
+  transition: border-color var(--motion) var(--ease-out), box-shadow var(--motion) var(--ease-out), opacity var(--motion) var(--ease-out);
 }
 
 .floating-window[hidden] {
@@ -2195,6 +2195,25 @@ html.dark.invert-pictures .light-picture {
 .floating-window-close:focus-visible {
   color: var(--text);
   background: var(--bg-hover);
+}
+
+/* ----- the chrome steps back (chrome-quiet.js) -------------------------
+   While a part, label, or wire moves, or a wire is drawn, the chrome dims
+   so the drawing has the eye; it comes back quicker than it went. */
+:is(.toolbar, .mode-toolbar) {
+  transition: opacity var(--motion) var(--ease-out);
+}
+
+/* The status bar stays: it says what the tool in hand does next. What the
+   pointer is over comes back. */
+:root[data-chrome-quiet] :is(.toolbar, .mode-toolbar, .floating-window:not(.docked)):not(:hover) {
+  opacity: 0.4;
+  transition-duration: var(--motion-slow);
+  transition-delay: 60ms;
+}
+
+:root[data-reduce-motion] :is(.toolbar, .mode-toolbar, .floating-window) {
+  transition: none;
 }
 
 /* The analysis window is tall and resizable from its corner. */
@@ -2430,8 +2449,8 @@ html.dark.invert-pictures .light-picture {
   padding: 10px;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--bg) 80%, var(--accent));
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
   color: var(--text);
   display: flex;
   flex-direction: column;
@@ -2795,6 +2814,10 @@ html.dark.invert-pictures .light-picture {
   /* The tool cursor (select arrow + tool badge) is built in main.js. */
   cursor: var(--tool-cursor, default);
   touch-action: none;
+  /* Labels scale as outlines: no hinting snaps their widths or baselines
+     from one zoom to the next, and pairs keep the font's kerning. */
+  text-rendering: geometricPrecision;
+  font-kerning: normal;
 }
 
 .canvas svg,
@@ -4750,10 +4773,11 @@ button.off {
 }
 
 /* ----- commit feedback ------------------------------------------------
-   A short flash where an undoable edit landed (commit-feedback.js). Nothing
-   moves. The committed objects' own shapes are repainted as a thick green
-   outline behind the drawing, new wires glow along their route, and each new
-   connection gets a small ripple. Deleted objects vanish at once and leave a
+   A short flash where an undoable edit landed (commit-feedback.js). The
+   drawing itself never moves. The committed objects' own shapes are
+   repainted as a thick green outline behind the drawing, a glow sweeps along
+   each new wire from end to end, each new connection gets a small ripple,
+   and a new solder dot pops in. Deleted objects vanish at once and leave a
    brief red halo of their shape. */
 
 .commit-feedback,
@@ -4802,7 +4826,17 @@ button.off {
   stroke-width: 20;
   stroke-linecap: round;
   stroke-linejoin: round;
-  animation: landing-flash 450ms var(--ease-out);
+  /* pathLength="1": one dash as long as the run, drawn in from its start. */
+  stroke-dasharray: 1 1;
+  animation: landing-draw 470ms linear;
+}
+
+/* A new solder dot swells over the drawn one and settles back. */
+.landing-pop {
+  fill: currentColor;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: landing-pop 300ms var(--ease-spring);
 }
 
 .landing-dot {
@@ -4863,13 +4897,27 @@ button.off {
   100% { opacity: 0; }
 }
 
+/* Most of the time drawing in, at an even pace, then a quick fade. */
+@keyframes landing-draw {
+  0% { stroke-dashoffset: 1; opacity: 1; animation-timing-function: cubic-bezier(0.3, 0, 0.2, 1); }
+  65% { stroke-dashoffset: 0; opacity: 1; animation-timing-function: ease-in; }
+  100% { stroke-dashoffset: 0; opacity: 0; }
+}
+
+@keyframes landing-pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.6); }
+  100% { transform: scale(1); opacity: 0; }
+}
+
 @keyframes landing-out {
   0% { opacity: 0.9; }
   100% { opacity: 0; }
 }
 
 /* Reduced motion: the system preference or Settings (motion.js). */
-:root[data-reduce-motion] .landing-ripple { animation-name: landing-out; }
+:root[data-reduce-motion] :is(.landing-ripple, .landing-pop) { animation-name: landing-out; }
+:root[data-reduce-motion] .landing-wire { stroke-dasharray: none; animation-name: landing-flash; }
 
 /* ----- equation to schematic highlight --------------------------------
    Hovering or locking a sub-expression in the Analyze dock retraces the
@@ -7719,16 +7767,21 @@ body.chrome-away [data-editor-edge="right"] {
   vector-effect: non-scaling-stroke;
 }
 
+.plot-view-svg .plot-paper {
+  fill: var(--card-bg);
+  stroke: none;
+}
+
 .plot-view-svg .role-grid {
-  stroke: color-mix(in srgb, var(--border) 80%, transparent);
+  stroke: var(--glass-rule);
 }
 
 .plot-view-svg .role-grid.minor {
-  stroke-opacity: 0.55;
+  stroke-opacity: 0.5;
 }
 
 .plot-view-svg .role-grid.faint {
-  stroke-opacity: 0.25;
+  stroke-opacity: 0.22;
 }
 
 .plot-view-svg .role-zero {
@@ -7753,6 +7806,7 @@ body.chrome-away [data-editor-edge="right"] {
 .plot-view-svg .role-curve {
   stroke: var(--accent);
   stroke-width: 2;
+  stroke-linecap: round;
   stroke-linejoin: round;
 }
 
@@ -7774,7 +7828,7 @@ body.chrome-away [data-editor-edge="right"] {
 
 .plot-view-svg .plot-frame {
   fill: none;
-  stroke: var(--border);
+  stroke: var(--glass-border);
 }
 
 .plot-view-svg .plot-cursor {
@@ -7823,6 +7877,9 @@ body.chrome-away [data-editor-edge="right"] {
   border-radius: var(--radius-sm);
   color: var(--text);
   background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
+  box-shadow: var(--shadow-sm);
   font: var(--text-xs)/1.4 var(--font-mono);
   pointer-events: none;
   white-space: nowrap;

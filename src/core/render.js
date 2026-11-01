@@ -2,7 +2,7 @@ import { applyTransform, fmt, transformRect, transformToSvg } from './geometry.j
 import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute } from './router.js';
 import { TABLE_RULE_ROOM_EM, escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } from './style.js';
-import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, hasInlineMath, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } from './model.js';
+import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, hasInlineMath, plotCurveCount, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } from './model.js';
 import { TIMING_ARROWHEAD, arrowheadEnds, curvedArrowGeometry, defaultArrowhead, polylineArrowheads } from './line-style.js';
 import { hiddenSupplyBarLabels, supplyBars } from './supply-bars.js';
 import { VALUE_TYPES, replacedNameLabels } from './part-value.js';
@@ -214,11 +214,13 @@ function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal',
       if (index < parts.length - 1) lineRuns.push([]);
     });
   }
+  // Script offsets follow the label's size: a subscript hangs just below
+  // the baseline, a superscript's top clears the capitals a little.
+  const size = labelFontSize(width);
   const renderRuns = (line) => line.map((r) => {
       if (!r.sub && !r.super) return escapeSvg(r.text);
-      const shift = r.sub ? 'baseline-shift="-6px"' : 'baseline-shift="6px"';
-      const size = r.sub || r.super ? ' font-size="0.62em"' : '';
-      return `<tspan ${shift}${size}>${escapeSvg(r.text)}</tspan>`;
+      const shift = fmt(size * (r.sub ? -LABEL_SUB_DROP_EM : LABEL_SUPER_RISE_EM));
+      return `<tspan baseline-shift="${shift}" font-size="${LABEL_SCRIPT_EM}em">${escapeSvg(r.text)}</tspan>`;
     }).join('');
   // An empty line draws nothing, and SVG drops the offset of a tspan with
   // no text: its height goes to the next line instead, so a blank line
@@ -234,6 +236,12 @@ function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal',
     }).join('');
   return `<text ${attrs}>${body}</text>`;
 }
+
+/** A label's sub- and superscripts: their size, and how far they drop or
+ *  rise, in em of the label's text. */
+const LABEL_SCRIPT_EM = 0.62;
+const LABEL_SUB_DROP_EM = 0.15;
+const LABEL_SUPER_RISE_EM = 0.38;
 
 /** A label's monospace face (style.mono): columns line up, for truth
  *  tables and pin lists. */
@@ -787,6 +795,22 @@ const PLOT_STROKES = {
   marker: { width: 3, dash: '18 9' },
 };
 
+/** A black-and-white plot's traces, told apart as a journal figure's are:
+ *  solid, dashed, dash-dot, dotted, then around again. */
+const PLOT_TRACE_DASHES = ['', '28 14', '28 12 5 12', '5 12'];
+
+/** Whether a plot draws its traces in black, told apart by dash (as a new
+ *  plot does), rather than in their colors. */
+export const plotInBlack = (box) => !!box?.plot && !!box.style?.blackTraces;
+
+/** Whether `label` is a legend entry of a plot drawn in black: it is drawn
+ *  in the plot's ink, whatever its own color. */
+function legendInBlack(label, circuit) {
+  if (!label?.parent) return false;
+  if (label.role !== PLOT_LEGEND_ROLE && !(label.math && !label.role)) return false;
+  return plotInBlack(circuit?.labels.get(label.parent));
+}
+
 /** A plot's text size (world units) in a box `height` tall: it scales with
  *  the box, within label sizes. */
 export function plotFontSize(plot, height) {
@@ -830,19 +854,45 @@ function plotAnnotationSvg(label, opacity = '') {
     const runs = mathRuns(item.text).map((run) => (run.sub || run.super
       ? `<tspan baseline-shift="${run.sub ? '-' : ''}${fmt(fontSize * 0.25)}" font-size="${fmt(fontSize * 0.68)}">${escapeSvg(run.text)}</tspan>`
       : escapeSvg(run.text))).join('');
-    return `<text x="${fmt(item.x)}" y="${fmt(item.y)}" text-anchor="${item.anchor}" font-family="${escapeSvg(MATH_FONT_FAMILY)}" font-size="${fmt(fontSize)}" fill="${color}" stroke="${color}" stroke-width="${fmt(fontSize * 0.02)}">${runs}</text>`;
+    const turn = item.rotate ? ` transform="rotate(${item.rotate} ${fmt(item.x)} ${fmt(item.y)})"` : '';
+    return `<text x="${fmt(item.x)}" y="${fmt(item.y)}"${turn} text-anchor="${item.anchor}" font-family="${escapeSvg(MATH_FONT_FAMILY)}" font-size="${fmt(fontSize)}" fill="${color}" stroke="${color}" stroke-width="${fmt(fontSize * 0.02)}">${runs}</text>`;
+  };
+  // In black (the default), each curve takes the next dash; a simulated
+  // spectrum behind them goes gray.
+  const black = plotInBlack(label);
+  const rank = new Map();
+  (plot.traces || []).forEach((trace, index) => { if (!trace.background) rank.set(index, rank.size); });
+  const dashOf = (n) => PLOT_TRACE_DASHES[n % PLOT_TRACE_DASHES.length];
+  const curve = (item) => {
+    if (!black) return stroke(item.role, item.color ? escapeSvg(item.color) : color);
+    const attrs = stroke(item.role);
+    if (item.role === 'spectrum') return `${attrs} stroke-opacity="0.35"`;
+    const dash = item.role === 'curve' && rank.has(item.trace) ? dashOf(rank.get(item.trace)) : '';
+    return dash ? `${attrs} stroke-dasharray="${dash}"` : attrs;
   };
   const parts = figure.items.map((item) => {
     if (item.type === 'line') return `<line x1="${fmt(item.x1)}" y1="${fmt(item.y1)}" x2="${fmt(item.x2)}" y2="${fmt(item.y2)}" ${stroke(item.role)} stroke-linecap="butt"/>`;
-    if (item.type === 'path') return item.points.length > 1 ? `<path d="${polylineD(item.points)}" ${stroke(item.role, item.color ? escapeSvg(item.color) : color)} stroke-linejoin="round"/>` : '';
-    if (item.type === 'dot') return `<circle cx="${fmt(item.x)}" cy="${fmt(item.y)}" r="${fmt(item.r || 6)}" fill="${item.color ? escapeSvg(item.color) : color}"${item.opacity !== undefined ? ` fill-opacity="${fmt(item.opacity)}"` : ''} stroke="none"/>`;
+    if (item.type === 'path') return item.points.length > 1 ? `<path d="${polylineD(item.points)}" ${curve(item)} stroke-linejoin="round"/>` : '';
+    if (item.type === 'dot') return `<circle cx="${fmt(item.x)}" cy="${fmt(item.y)}" r="${fmt(item.r || 6)}" fill="${item.color && !black ? escapeSvg(item.color) : color}"${item.opacity !== undefined ? ` fill-opacity="${fmt(item.opacity)}"` : ''} stroke="none"/>`;
     if (item.type === 'text') return text(item);
     return '';
   }).join('');
+  // In black, each curve's legend entry has its line before it, in the
+  // room left for it there (a lone curve's too); notes after them none.
+  const samples = black && label.circuit
+    ? label.circuit.plotLegend(label).slice(0, plotCurveCount(plot)).map((entry, n) => {
+      const b = entry.bbox();
+      const cy = b.y + b.h / 2 - y;
+      const x1 = b.x - PLOT_LEGEND_SAMPLE_ROOM + 10 - x;
+      const x2 = b.x - 6 - x;
+      const dash = dashOf(n);
+      return `<line class="plot-legend-sample" x1="${fmt(x1)}" y1="${fmt(cy)}" x2="${fmt(x2)}" y2="${fmt(cy)}" ${stroke('curve')}${dash ? ` stroke-dasharray="${dash}"` : ''} stroke-linecap="butt"/>`;
+    }).join('')
+    : '';
   // On its own paper (#fff takes the theme's paper), so the canvas grid
   // does not run through the plot's own.
   const paper = `<rect class="plot-paper" x="0" y="0" width="${fmt(w)}" height="${fmt(h)}" fill="#fff" stroke="none"/>`;
-  return `<g class="plot-annotation" transform="translate(${fmt(x)} ${fmt(y)})"${opacity}>${paper}${parts}</g>`;
+  return `<g class="plot-annotation" transform="translate(${fmt(x)} ${fmt(y)})"${opacity}>${paper}${parts}${samples}</g>`;
 }
 
 /**
@@ -1161,9 +1211,11 @@ export function svgString(circuit, opts = {}) {
       if (child.id === o.editingLabel) continue;
       const childOpacity = ghostLabels.has(label.id) ? GHOST : shapeOpacity(child.id);
       const t = child.textPos();
+      // A black-and-white plot's legend takes the plot's ink.
+      const ink = legendInBlack(child, circuit) ? resolveColor(label.style?.color || '#111') : null;
       const childVisual = child.math
-        ? mathLabelSvg(child)
-        : labelTextEl(t.x, t.y, child.runs(), t.anchor, 'label', resolveColor(child.style?.color || '#111'), child.style?.width, child.style);
+        ? mathLabelSvg(child, '', ink)
+        : labelTextEl(t.x, t.y, child.runs(), t.anchor, 'label', ink || resolveColor(child.style?.color || '#111'), child.style?.width, child.style);
       parts.push(`<g${childOpacity} data-label-id="${escapeSvg(child.id)}" role="button" tabindex="0" aria-label="${escapeSvg(`Annotation label ${child.text}`)}">${childVisual}</g>`);
     }
   }

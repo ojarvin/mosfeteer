@@ -96,6 +96,7 @@ import { installAccent } from './accent.js';
 import { installSizing, renderSizingWindow, sizingDocumentShown, toggleSizing } from './sizing-window.js';
 import { togglePlots } from './plots-window.js';
 import { paddedLineBounds } from './label-measure.js';
+import { syncChromeQuiet } from './chrome-quiet.js';
 import { captureNetGeometry, captureRouteGeometry, captureRunNetGeometry, cloneWireStyles, translateNetGeometry } from './net-geometry.js';
 import { copyHoveredReference, fitHoveredReference, installReferenceWindows, toggleReferenceWindows } from './reference-window.js';
 import { enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, linkBubbleFrame, moveLinkBubble, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles } from './hierarchy.js';
@@ -2524,6 +2525,7 @@ export function render() {
   syncEmptyState();
   syncTutorial();
   syncViewToPane();
+  syncChromeQuiet(drag, wire);
   // An open inline editor sits over its text at the current zoom and pan.
   inlineInput?.relayout?.();
   // A context menu is independent of canvas repainting. Closing it here made
@@ -2703,8 +2705,8 @@ let labelColumns = [];
 /** Line up `ids` (math labels) at `left`, stacking down from `top`, once
  *  measured -- or where `place(labels)` says then ({ x, y }: a figure
  *  packed again at its measured size). */
-export function alignLabelColumn(ids, { left, top, gap = 0, place = null, settled = null }) {
-  labelColumns.push({ ids: [...ids], left, top, gap, place, settled });
+export function alignLabelColumn(ids, { left, top, gap = 0, place = null, settled = null, shift = {} }) {
+  labelColumns.push({ ids: [...ids], left, top, gap, place, settled, shift });
 }
 
 function reflowLabelColumns() {
@@ -2720,7 +2722,8 @@ function reflowLabelColumns() {
     let top = corner.y;
     for (const label of labels) {
       const box = label.bbox();
-      const x = snap(corner.x + box.w / 2);
+      // `shift`: a label set off from the column's edge (a plot's note).
+      const x = snap(corner.x + (column.shift[label.id] || 0) + box.w / 2);
       const y = snap(top + box.h / 2);
       const anchor = label.anchorWorld();
       if (anchor.x !== x || anchor.y !== y) {
@@ -6350,6 +6353,10 @@ window.addEventListener('pointercancel', (ev) => {
   cancelDrag();
   if (ev.pointerId !== undefined) canvasEl.releasePointerCapture?.(ev.pointerId);
 });
+// The chrome comes back however a drag or a wire ends, repainted or not.
+for (const type of ['pointerup', 'pointercancel', 'keyup', 'blur']) {
+  window.addEventListener(type, () => requestAnimationFrame(() => syncChromeQuiet(drag, wire)));
+}
 // Replacing the SVG during a repaint can move the pointer off the old target
 // before the bubbling event reaches the canvas. Feed that event through the
 // same cursor/preview path used by both document kinds.

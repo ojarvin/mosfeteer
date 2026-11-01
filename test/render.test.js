@@ -7,6 +7,7 @@ import { getSymbol } from '../src/core/components/index.js';
 import { GRID } from '../src/core/grid.js';
 
 import { strokeAttrs, setColorToken, resolveColor } from '../src/core/style.js';
+import { runCommand } from '../src/core/commands.js';
 
 test('the shared analysis MathML renderer renders fractions and escapes literal input', () => {
   const markup = texToMathML('A_v = -\\frac{g_m}{1 + g_m R_S} \\left(r_o \\parallel R_D\\right)');
@@ -273,7 +274,18 @@ test('svgString includes each refdes as a label with subscript numeral', () => {
   assert.ok(svg.includes('>R<tspan'), 'resistor id label present');
   assert.ok(svg.includes('>C<tspan'), 'capacitor id label present');
   assert.ok(svg.includes('>D<tspan'), 'diode id label present');
-  assert.equal((svg.match(/baseline-shift="-6px"/g) || []).length, 3, 'three subscript numerals');
+  assert.equal((svg.match(/baseline-shift="-6.90"/g) || []).length, 3, 'three subscript numerals');
+});
+
+test('a label\'s scripts drop and rise in proportion to its size; a superscript clears the capitals', () => {
+  const c = new Circuit();
+  runCommand(c, 'annotation add t1 x^{2}_{a} 400 120');
+  runCommand(c, 'annotation add t2 x^{2}_{a} 400 360');
+  c.labels.get('t2').style = { ...c.labels.get('t2').style, width: 'thick' };
+  const svg = svgString(c);
+  const shifts = [...svg.matchAll(/baseline-shift="([-\d.]+)" font-size="0.62em"/g)].map((m) => Number(m[1]));
+  // Normal (46): 0.38 em up, 0.15 em down; thick (52) in the same proportion.
+  assert.deepEqual(shifts, [17.48, -6.9, 19.76, -7.8]);
 });
 
 test('svgString includes refdes only for components with refPrefix/refPos', () => {
