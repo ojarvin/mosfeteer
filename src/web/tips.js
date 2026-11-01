@@ -42,6 +42,13 @@ export const TIPS = Object.freeze([
     text: 'In Delete, Shift-drag a stroke to remove the wires and parts it crosses.',
   },
   {
+    id: 'wire-stroke',
+    trigger: 'wire-commit',
+    after: 3,
+    retiredBy: 'wire-stroke',
+    text: 'In Wire, Alt-drag through pins to wire them in one stroke. Let go of Alt to lift the pen.',
+  },
+  {
     id: 'net-highlight',
     trigger: 'wire-commit',
     after: 6,

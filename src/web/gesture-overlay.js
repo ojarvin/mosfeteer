@@ -154,6 +154,23 @@ export function withGestureOverlay(svg, ghost) {
     }
     parts.push(`<polyline class="gesture-knife" points="${stroke.map((p) => `${p.x},${p.y}`).join(' ')}" vector-effect="non-scaling-stroke"/>`);
   }
+  if (editor.drag?.mode === 'wirestroke' && editor.drag.moved) {
+    const { stroke } = editor.drag;
+    const plan = stroke.plan();
+    for (const link of plan.links) {
+      if (!link.ok || link.same) continue;
+      parts.push(`<line class="gesture-stroke-link" x1="${link.from.x}" y1="${link.from.y}" x2="${link.to.x}" y2="${link.to.y}" vector-effect="non-scaling-stroke"/>`);
+    }
+    for (const link of plan.links.filter((l) => l.reason === 'short')) {
+      parts.push(`<circle class="gesture-stroke-short" cx="${link.to.x}" cy="${link.to.y}" r="12" vector-effect="non-scaling-stroke"/>`);
+    }
+    for (const visit of stroke.visits) {
+      parts.push(`<circle class="gesture-stroke-pin" cx="${visit.x}" cy="${visit.y}" r="10" vector-effect="non-scaling-stroke"/>`);
+    }
+    for (const run of stroke.runs) {
+      if (run.length > 1) parts.push(`<polyline class="gesture-stroke" points="${run.map((p) => `${p.x},${p.y}`).join(' ')}" vector-effect="non-scaling-stroke"/>`);
+    }
+  }
   const splice = splicePreviewTarget(ghost);
   if (splice) {
     parts.push(`<line class="gesture-splice" x1="${splice.a.x}" y1="${splice.a.y}" x2="${splice.b.x}" y2="${splice.b.y}" vector-effect="non-scaling-stroke"/>`);

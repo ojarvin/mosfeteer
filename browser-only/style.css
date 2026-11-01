@@ -5390,6 +5390,38 @@ button.off {
   stroke-linejoin: round;
 }
 
+/* The Wire tool's Alt stroke: the path, the pins it picked up, the joins
+   it will wire, and a pin it would short. */
+.gesture-stroke {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-opacity: 0.55;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.gesture-stroke-link {
+  stroke: var(--accent);
+  stroke-width: 3;
+  stroke-dasharray: 6 4;
+  stroke-linecap: round;
+}
+
+.gesture-stroke-pin {
+  fill: var(--accent);
+  fill-opacity: 0.18;
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+
+.gesture-stroke-short {
+  fill: none;
+  stroke: var(--danger);
+  stroke-width: 2.5;
+  stroke-dasharray: 4 3;
+}
+
 .gesture-cut {
   stroke: var(--danger);
   stroke-width: 8;

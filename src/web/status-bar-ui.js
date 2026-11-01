@@ -124,7 +124,7 @@ export function renderStatus() {
           : editor.wire.source.refdes
             ? `WIRE ${editor.wire.source.refdes}.${editor.wire.source.term} → terminal click commits · other clicks guide · Enter commits`
             : `WIRE (${editor.wire.source.x},${editor.wire.source.y}) → terminal click commits · other clicks guide · Enter commits`
-        : `WIRE (${editor.wire.routeStyle || editor.routeMode}): click a terminal or point to start`),
+        : `WIRE (${editor.wire.routeStyle || editor.routeMode}): click a terminal or point to start${editor.terminalSnap ? ' · drag to wire the pins passed' : ''}`),
     );
   }
   if (editor.selectedNets.size) parts.push(`nets ${editor.selectedNets.size}`);

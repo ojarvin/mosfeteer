@@ -43026,6 +43026,220 @@ function setSharedLabel(circuit, refdes, text) {
 
 };
 
+__modules["src/core/stroke-wiring.js"] = function (__require, __exports) {
+__exports.planStroke = planStroke;
+__exports.applyStrokePlan = applyStrokePlan;
+let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
+/**
+ * Stroke wiring: one dragged path wires the terminals it passes.
+ *
+ * The stroke is a list of runs (the pen is lifted between runs). Each run
+ * visits the terminals its cursor passes within `radius`, in order; two
+ * visits in a row are linked into one net, except:
+ *
+ * - two terminals of one part never link (the stroke goes through the part);
+ * - two terminals already on different nets never link (no shorts);
+ * - a terminal of a net this stroke already left does not link a net of two
+ *   or more terminals to it: the stroke returns to that net instead.
+ *
+ * A run's first link is deliberate: it may also be a diode connection (MOS
+ * drain–gate, BJT collector–base) or join two wired nets whose names do not
+ * conflict. A visit that does not link starts the next net from that
+ * terminal. `planStroke` decides the links; `applyStrokePlan` wires them as
+ * clicks from pin to pin would.
+ */
+
+
+
+const DIODE_PAIRS = [['drain', 'gate'], ['collector', 'base']];
+
+function refOf(visit) {
+  return `${visit.comp}.${visit.term}`;
+}
+
+function diodePair(a, b) {
+  return DIODE_PAIRS.some(([p, q]) => (a.direction === p && b.direction === q) || (a.direction === q && b.direction === p));
+}
+
+/** Every component terminal in world space, with its direction. */
+function strokeTerminals(circuit) {
+  const out = [];
+  for (const comp of circuit.components.values()) {
+    for (const def of comp.terminalDefs || []) {
+      const at = comp.terminalWorld(def.name);
+      out.push({ comp: comp.refdes, term: def.name, direction: def.direction || '', x: at.x, y: at.y });
+    }
+  }
+  return out;
+}
+
+/**
+ * Collects terminal visits as the stroke grows. `add(point)` extends the
+ * current run, `lift()` ends it (the next `add` starts a new run).
+ */
+class StrokeWiring {
+  constructor(circuit, { radius = GRID * 1.75 } = {}) {
+    this.circuit = circuit;
+    this.radius = radius;
+    this.terminals = strokeTerminals(circuit);
+    this.runs = [];
+    this.visits = [];
+    this.lifted = true;
+  }
+
+  /** The terminal nearest `point` within the capture radius, or null. */
+  terminalNear(point) {
+    let best = null;
+    let bestD = this.radius;
+    for (const t of this.terminals) {
+      const d = Math.hypot(t.x - point.x, t.y - point.y);
+      if (d <= bestD) {
+        best = t;
+        bestD = d;
+      }
+    }
+    return best;
+  }
+
+  add(point) {
+    const p = { x: point.x, y: point.y };
+    if (this.lifted) {
+      this.runs.push([p]);
+      this.lifted = false;
+      this._capture(p, true);
+      return;
+    }
+    const run = this.runs.at(-1);
+    const last = run.at(-1);
+    // Sample the segment densely enough that no terminal is jumped over.
+    const steps = Math.max(1, Math.ceil(Math.hypot(p.x - last.x, p.y - last.y) / (this.radius / 3)));
+    for (let i = 1; i <= steps; i++) {
+      this._capture({ x: last.x + (p.x - last.x) * i / steps, y: last.y + (p.y - last.y) * i / steps }, false);
+    }
+    run.push(p);
+  }
+
+  lift() {
+    this.lifted = true;
+  }
+
+  _capture(point, start) {
+    const hit = this.terminalNear(point);
+    if (!hit) return;
+    const run = this.runs.length - 1;
+    const previous = this.visits.at(-1);
+    if (!start && previous && previous.run === run && previous.comp === hit.comp && previous.term === hit.term) return;
+    if (start && previous && previous.run === run) return;
+    this.visits.push({ ...hit, run });
+  }
+
+  plan() {
+    return planStroke(this.circuit, this.visits);
+  }
+}
+
+/**
+ * The wires a list of visits makes. Returns `{ links, wires }`: `links` are
+ * the consecutive visit pairs, `ok` or with a `reason` (`part`, `short`,
+ * `return`), and `same` when already one net; `wires` are the links to
+ * wire, `{ from, to }` visits in stroke order.
+ */
+function planStroke(circuit, visits) {
+  const existing = new Map(); // terminal ref -> net id
+  for (const net of circuit.nets.values()) {
+    for (const t of net.terminals) existing.set(`${t.comp}.${t.term}`, net.id);
+  }
+  // Groups are union-find records over terminals; a terminal on an existing
+  // net starts in that net's group.
+  const parent = new Map();
+  const info = new Map(); // root key -> { nets: Set, size, visited }
+  const keyOf = (ref) => existing.get(ref) || ref;
+  const find = (key) => {
+    if (!parent.has(key)) {
+      parent.set(key, key);
+      const netId = circuit.nets.has(key) ? key : null;
+      const size = netId ? circuit.nets.get(netId).terminals.length : 1;
+      info.set(key, { nets: new Set(netId ? [netId] : []), size, visited: false });
+    }
+    let root = key;
+    while (parent.get(root) !== root) root = parent.get(root);
+    parent.set(key, root);
+    return root;
+  };
+  const union = (a, b) => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra === rb) return ra;
+    parent.set(rb, ra);
+    const ia = info.get(ra);
+    const ib = info.get(rb);
+    for (const id of ib.nets) ia.nets.add(id);
+    ia.size += ib.size;
+    ia.visited = ia.visited || ib.visited;
+    info.delete(rb);
+    return ra;
+  };
+  const namesConflict = (a, b) => circuit._namedNetNames([...a.nets, ...b.nets].map((id) => circuit.nets.get(id))).length > 1;
+
+  const links = [];
+  let current = null;
+  let previous = null;
+  let first = false; // the next link is the run's first: deliberate
+  for (const visit of visits) {
+    const group = find(keyOf(refOf(visit)));
+    const enter = () => {
+      current = group;
+      info.get(group).visited = true;
+      previous = visit;
+    };
+    if (!previous || previous.run !== visit.run) {
+      enter();
+      first = true;
+      continue;
+    }
+    const deliberate = first;
+    first = false;
+    const link = { from: previous, to: visit, ok: false };
+    links.push(link);
+    if (find(current) === group) {
+      // Already one net: nothing to wire, but the pair was passed in order.
+      link.ok = true;
+      link.same = true;
+      enter();
+      continue;
+    }
+    const here = info.get(find(current));
+    const there = info.get(group);
+    if (previous.comp === visit.comp && !(deliberate && diodePair(previous, visit))) link.reason = 'part';
+    else if (here.nets.size && there.nets.size && (!deliberate || namesConflict(here, there))) link.reason = 'short';
+    else if (there.visited && here.size >= 2) link.reason = 'return';
+    else {
+      link.ok = true;
+      current = union(current, group);
+      info.get(current).visited = true;
+      previous = visit;
+      continue;
+    }
+    enter();
+  }
+  return { links, wires: links.filter((link) => link.ok && !link.same).map(({ from, to }) => ({ from, to })) };
+}
+
+/**
+ * Wire a plan's links in stroke order, each from its first pin to its
+ * second, as a click on one pin and then the other would. `wireLink(from,
+ * to)` does one; by default `Circuit#wireTo` routes it. Returns the nets.
+ */
+function applyStrokePlan(circuit, plan, wireLink = (from, to) => circuit.wireTo(refOf(from), { x: to.x, y: to.y })) {
+  const nets = new Set();
+  for (const { from, to } of plan.wires) wireLink(from, to);
+  for (const { from } of plan.wires) nets.add(circuit.netOfTerminal(refOf(from)));
+  return [...nets];
+}
+
+__exports.StrokeWiring = StrokeWiring;
+};
+
 __modules["src/core/stubs.js"] = function (__require, __exports) {
 __exports.stubLabelPlacement = stubLabelPlacement;
 __exports.addTerminalStubs = addTerminalStubs;
@@ -66199,6 +66413,23 @@ function withGestureOverlay(svg, ghost) {
     }
     parts.push(`<polyline class="gesture-knife" points="${stroke.map((p) => `${p.x},${p.y}`).join(' ')}" vector-effect="non-scaling-stroke"/>`);
   }
+  if (editor.drag?.mode === 'wirestroke' && editor.drag.moved) {
+    const { stroke } = editor.drag;
+    const plan = stroke.plan();
+    for (const link of plan.links) {
+      if (!link.ok || link.same) continue;
+      parts.push(`<line class="gesture-stroke-link" x1="${link.from.x}" y1="${link.from.y}" x2="${link.to.x}" y2="${link.to.y}" vector-effect="non-scaling-stroke"/>`);
+    }
+    for (const link of plan.links.filter((l) => l.reason === 'short')) {
+      parts.push(`<circle class="gesture-stroke-short" cx="${link.to.x}" cy="${link.to.y}" r="12" vector-effect="non-scaling-stroke"/>`);
+    }
+    for (const visit of stroke.visits) {
+      parts.push(`<circle class="gesture-stroke-pin" cx="${visit.x}" cy="${visit.y}" r="10" vector-effect="non-scaling-stroke"/>`);
+    }
+    for (const run of stroke.runs) {
+      if (run.length > 1) parts.push(`<polyline class="gesture-stroke" points="${run.map((p) => `${p.x},${p.y}`).join(' ')}" vector-effect="non-scaling-stroke"/>`);
+    }
+  }
   const splice = splicePreviewTarget(ghost);
   if (splice) {
     parts.push(`<line class="gesture-splice" x1="${splice.a.x}" y1="${splice.a.y}" x2="${splice.b.x}" y2="${splice.b.y}" vector-effect="non-scaling-stroke"/>`);
@@ -71215,6 +71446,7 @@ let TRANSFER_FUNCTION_TYPES; __bind(() => { ({ TRANSFER_FUNCTION_TYPES } = __req
 let smartRoute; __bind(() => { ({ smartRoute } = __require("src/core/router.js")); });
 let moveJunctionEndpoint, wireRunAt, moveWireRun; __bind(() => { ({ moveJunctionEndpoint, wireRunAt, moveWireRun } = __require("src/core/wireedit.js")); });
 let crossNetOverlaps, pointOnPath; __bind(() => { ({ crossNetOverlaps, pointOnPath } = __require("src/core/wiring.js")); });
+let StrokeWiring, applyStrokePlan; __bind(() => { ({ StrokeWiring, applyStrokePlan } = __require("src/core/stroke-wiring.js")); });
 let selectedSetMoveSource, selectedCompleteNetIds, chooseWireHitCandidate, labelsUnderPoint, nextStackedSelection, componentPressSelection; __bind(() => { ({ selectedSetMoveSource, completeSelectedNetIds: selectedCompleteNetIds, chooseWireHitCandidate, labelsUnderPoint, nextStackedSelection, componentPressSelection } = __require("src/web/selection.js")); });
 let buildWireHitIndex, queryWireHitIndex; __bind(() => { ({ buildWireHitIndex, queryWireHitIndex } = __require("src/web/wire-index.js")); });
 let layerActionForKey, layoutAlignKey, naturalCompare; __bind(() => { ({ layerActionForKey, layoutAlignKey, naturalCompare } = __require("src/web/toolbar.js")); });
@@ -71284,6 +71516,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -74348,7 +74581,7 @@ function renderCanvas(modelKey) {
     wirePreview: wire ? currentWirePreview() : null,
     wireMode: !!wire,
     wireSource: wire?.source ? { ...wire.source } : undefined,
-    terminalSnapTarget: terminalSnap ? nearestSnapTarget(cursor) : null,
+    terminalSnapTarget: terminalSnap && drag?.mode !== 'wirestroke' ? nearestSnapTarget(cursor) : null,
     ghost,
     cursorCrosshair: crosshairVisible && cursorInCanvas ? view : null,
   });
@@ -74969,6 +75202,38 @@ function connectTwo(src, dst, points, before = snapshot()) {
   setSelection([]);
   selectedNets = new Set();
   logLine(`net ${net.id}: ${net.terminals.map((t) => `${t.comp}.${t.term}`).join('  ')}; len=${net.length()}`);
+}
+
+/** Wire the nets a finished stroke planned, as one undo entry. */
+function finishWireStroke(stroke) {
+  const plan = stroke.plan();
+  const shorts = plan.links.filter((link) => link.reason === 'short');
+  if (!plan.wires.length) {
+    logLine(shorts.length ? 'stroke: no wires (they would short nets)' : 'stroke: no pins joined');
+    return;
+  }
+  const before = snapshot();
+  let nets;
+  try {
+    // Each link commits the route a click on one pin and then the other would.
+    nets = applyStrokePlan(circuit, plan, (from, to) => {
+      const end = { x: to.x, y: to.y };
+      const path = draftRoutePath({ ...newWireDraft(), source: { refdes: from.comp, term: from.term } }, end);
+      circuit.wireTo(`${from.comp}.${from.term}`, end, path?.length >= 2 ? path.slice(1, -1) : [], wireRouteOptions());
+    });
+  } catch (err) {
+    circuit = loadDocument(JSON.parse(before));
+    logLine(`stroke: ${err.message || err}`);
+    return;
+  }
+  markModelChanged();
+  recordHistoryEntry(before, false);
+  noteTip('wire-stroke');
+  wire = newWireDraft();
+  setSelection([]);
+  selectedNets = new Set();
+  for (const net of nets) logLine(`net ${net.id}: ${net.terminals.map((t) => `${t.comp}.${t.term}`).join('  ')}`);
+  for (const link of shorts) logLine(`stroke: skipped ${link.from.comp}.${link.from.term}–${link.to.comp}.${link.to.term} (would short nets)`);
 }
 
 /** World point of a wire source: a component terminal or a free point. */
@@ -75770,6 +76035,16 @@ function canvasMouseDown(ev) {
     return;
   }
 
+  if (wire && ev.altKey && !wire.source) {
+    // Alt-drag draws a stroke that wires the pins it passes (stroke-wiring.js);
+    // Alt-click without a drag stays the snapped click.
+    // Pins are caught as the Alt snap catches them, within 1.75 cells.
+    const pane = paneSize();
+    const stroke = new StrokeWiring(circuit, { radius: Math.max(1.75 * GRID, 40 * (pane ? view.w / pane.w : 1)) });
+    stroke.add(rawStartWorld);
+    drag = { mode: 'wirestroke', startClient, startWorld, rubber: null, terminalHit: nearestTerminal(startWorld), stroke, moved: false };
+    return;
+  }
   if (wire) {
     // In persistent wiring mode, terminal/empty-space clicks pick wire ends;
     // an interior wire click must remain available for segment dragging.
@@ -76904,6 +77179,13 @@ function canvasMouseMove(ev) {
     return;
   }
 
+  if (drag.mode === 'wirestroke') {
+    if (movedOut) drag.moved = true;
+    drag.last = w;
+    if (altHeld) drag.stroke.add(w);
+    scheduleInteractionRender();
+    return;
+  }
   if (drag.mode === 'deletemarquee' && drag.knife) {
     if (movedOut) drag.moved = true;
     const last = drag.knife.at(-1);
@@ -77195,6 +77477,15 @@ function finishCanvasMouseUp(ev) {
     const { fromEnd } = drag;
     drag = null;
     finishPinWire(releaseWorld, ev, { fromEnd });
+    return;
+  }
+  if (drag.mode === 'wirestroke') {
+    const stroke = drag;
+    drag = null;
+    if (altHeld) stroke.stroke.add(releaseWorld);
+    if (stroke.moved) finishWireStroke(stroke.stroke);
+    else doWireClick(snap(w.x), snap(w.y), stroke.terminalHit);
+    render();
     return;
   }
   if (drag.mode === 'bubblemove') {
@@ -77680,6 +77971,9 @@ window.addEventListener('keyup', (ev) => {
   }
   if (ev.key !== 'Alt') return;
   altHeld = false;
+  // Letting go of Alt mid-stroke lifts the pen: the stroke moves on without
+  // wiring until Alt is held again.
+  if (drag?.mode === 'wirestroke') drag.stroke.lift();
   setSymmetry(false);
   if (terminalSnap) {
     terminalSnap = false;
@@ -78943,6 +79237,11 @@ window.addEventListener('keydown', (ev) => {
   // while Alt is already down receives the same behavior.
   if (ev.key === 'Alt') {
     altHeld = true;
+    // Alt held again puts the stroke's pen down where the pointer is.
+    if (drag?.mode === 'wirestroke' && drag.last) {
+      drag.stroke.add(drag.last);
+      scheduleInteractionRender();
+    }
     if (wire) setTerminalSnap(true);
     else if ((mode === 'insert' && pendingPlace?.kind === 'component') || drag?.mode === 'copyghost') setSymmetry(true);
     ev.preventDefault();
@@ -88480,7 +88779,7 @@ function renderStatus() {
           : editor.wire.source.refdes
             ? `WIRE ${editor.wire.source.refdes}.${editor.wire.source.term} → terminal click commits · other clicks guide · Enter commits`
             : `WIRE (${editor.wire.source.x},${editor.wire.source.y}) → terminal click commits · other clicks guide · Enter commits`
-        : `WIRE (${editor.wire.routeStyle || editor.routeMode}): click a terminal or point to start`),
+        : `WIRE (${editor.wire.routeStyle || editor.routeMode}): click a terminal or point to start${editor.terminalSnap ? ' · drag to wire the pins passed' : ''}`),
     );
   }
   if (editor.selectedNets.size) parts.push(`nets ${editor.selectedNets.size}`);
@@ -90430,6 +90729,13 @@ const TIPS = Object.freeze([
     text: 'In Delete, Shift-drag a stroke to remove the wires and parts it crosses.',
   },
   {
+    id: 'wire-stroke',
+    trigger: 'wire-commit',
+    after: 3,
+    retiredBy: 'wire-stroke',
+    text: 'In Wire, Alt-drag through pins to wire them in one stroke. Let go of Alt to lift the pen.',
+  },
+  {
     id: 'net-highlight',
     trigger: 'wire-commit',
     after: 6,
@@ -91854,6 +92160,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Ctrl/Cmd+R', 'mirror the component ghost vertically'],
     ['hold Alt', 'symmetric placement/copy: pin a mirror axis, move off it, and place both halves'],
     ['hold Alt (wire)', 'snap the cursor to the nearest terminal or free wire end while wiring'],
+    ['Alt-drag (wire)', 'wire the pins the stroke passes; let go of Alt to lift the pen; a stroke from a drain to its gate makes a diode'],
     ['Backspace', 'edit the search string or drop the ghost'],
     ['Esc', 'drop the ghost or exit insert mode'],
   ]],

@@ -319,6 +319,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Ctrl/Cmd+R', 'mirror the component ghost vertically'],
     ['hold Alt', 'symmetric placement/copy: pin a mirror axis, move off it, and place both halves'],
     ['hold Alt (wire)', 'snap the cursor to the nearest terminal or free wire end while wiring'],
+    ['Alt-drag (wire)', 'wire the pins the stroke passes; let go of Alt to lift the pen; a stroke from a drain to its gate makes a diode'],
     ['Backspace', 'edit the search string or drop the ghost'],
     ['Esc', 'drop the ghost or exit insert mode'],
   ]],

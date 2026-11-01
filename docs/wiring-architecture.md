@@ -81,6 +81,25 @@ geometry.
 Existing hand-drawn branches are treated as fixed obstacles when another net
 is routed, and a fresh managed layout excludes other nets' wire spans.
 
+## Stroke wiring
+
+`src/core/stroke-wiring.js` turns one dragged path into wires. The stroke
+catches the terminal nearest its cursor within 1.75 cells (in the
+editor, at least 40 pixels), in order, and links consecutive visits into
+one net, except:
+
+- two terminals of one part never link (the stroke passes through it);
+- terminals already on two different nets never link (no shorts);
+- from a net of two or more terminals, a terminal of a net the stroke
+  already left is a return to that net, not a link.
+
+A run's first link is deliberate: it may also be a diode connection (MOS
+drain–gate, BJT collector–base) or join two wired nets whose names do not
+conflict. A visit that does not link starts the next net. A lifted pen
+(Alt let go) ends a run; the next run starts fresh. Each link is wired in
+stroke order as a click on its first pin and then its second would wire
+it, so the stroke decides connectivity and the router the geometry.
+
 ## Editing and selection
 
 Hit testing returns `{netId, branch, segment}`. A stationary managed-wire click

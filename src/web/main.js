@@ -38,6 +38,7 @@ import { TRANSFER_FUNCTION_TYPES } from '../core/transfer-function.js';
 import { smartRoute } from '../core/router.js';
 import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.js';
 import { crossNetOverlaps, pointOnPath } from '../core/wiring.js';
+import { StrokeWiring, applyStrokePlan } from '../core/stroke-wiring.js';
 import { selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate, labelsUnderPoint, nextStackedSelection, componentPressSelection } from './selection.js';
 import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
 import { layerActionForKey, layoutAlignKey, naturalCompare } from './toolbar.js';
@@ -3081,7 +3082,7 @@ export function renderCanvas(modelKey) {
     wirePreview: wire ? currentWirePreview() : null,
     wireMode: !!wire,
     wireSource: wire?.source ? { ...wire.source } : undefined,
-    terminalSnapTarget: terminalSnap ? nearestSnapTarget(cursor) : null,
+    terminalSnapTarget: terminalSnap && drag?.mode !== 'wirestroke' ? nearestSnapTarget(cursor) : null,
     ghost,
     cursorCrosshair: crosshairVisible && cursorInCanvas ? view : null,
   });
@@ -3702,6 +3703,38 @@ function connectTwo(src, dst, points, before = snapshot()) {
   setSelection([]);
   selectedNets = new Set();
   logLine(`net ${net.id}: ${net.terminals.map((t) => `${t.comp}.${t.term}`).join('  ')}; len=${net.length()}`);
+}
+
+/** Wire the nets a finished stroke planned, as one undo entry. */
+function finishWireStroke(stroke) {
+  const plan = stroke.plan();
+  const shorts = plan.links.filter((link) => link.reason === 'short');
+  if (!plan.wires.length) {
+    logLine(shorts.length ? 'stroke: no wires (they would short nets)' : 'stroke: no pins joined');
+    return;
+  }
+  const before = snapshot();
+  let nets;
+  try {
+    // Each link commits the route a click on one pin and then the other would.
+    nets = applyStrokePlan(circuit, plan, (from, to) => {
+      const end = { x: to.x, y: to.y };
+      const path = draftRoutePath({ ...newWireDraft(), source: { refdes: from.comp, term: from.term } }, end);
+      circuit.wireTo(`${from.comp}.${from.term}`, end, path?.length >= 2 ? path.slice(1, -1) : [], wireRouteOptions());
+    });
+  } catch (err) {
+    circuit = loadDocument(JSON.parse(before));
+    logLine(`stroke: ${err.message || err}`);
+    return;
+  }
+  markModelChanged();
+  recordHistoryEntry(before, false);
+  noteTip('wire-stroke');
+  wire = newWireDraft();
+  setSelection([]);
+  selectedNets = new Set();
+  for (const net of nets) logLine(`net ${net.id}: ${net.terminals.map((t) => `${t.comp}.${t.term}`).join('  ')}`);
+  for (const link of shorts) logLine(`stroke: skipped ${link.from.comp}.${link.from.term}–${link.to.comp}.${link.to.term} (would short nets)`);
 }
 
 /** World point of a wire source: a component terminal or a free point. */
@@ -4503,6 +4536,16 @@ function canvasMouseDown(ev) {
     return;
   }
 
+  if (wire && ev.altKey && !wire.source) {
+    // Alt-drag draws a stroke that wires the pins it passes (stroke-wiring.js);
+    // Alt-click without a drag stays the snapped click.
+    // Pins are caught as the Alt snap catches them, within 1.75 cells.
+    const pane = paneSize();
+    const stroke = new StrokeWiring(circuit, { radius: Math.max(1.75 * GRID, 40 * (pane ? view.w / pane.w : 1)) });
+    stroke.add(rawStartWorld);
+    drag = { mode: 'wirestroke', startClient, startWorld, rubber: null, terminalHit: nearestTerminal(startWorld), stroke, moved: false };
+    return;
+  }
   if (wire) {
     // In persistent wiring mode, terminal/empty-space clicks pick wire ends;
     // an interior wire click must remain available for segment dragging.
@@ -5637,6 +5680,13 @@ export function canvasMouseMove(ev) {
     return;
   }
 
+  if (drag.mode === 'wirestroke') {
+    if (movedOut) drag.moved = true;
+    drag.last = w;
+    if (altHeld) drag.stroke.add(w);
+    scheduleInteractionRender();
+    return;
+  }
   if (drag.mode === 'deletemarquee' && drag.knife) {
     if (movedOut) drag.moved = true;
     const last = drag.knife.at(-1);
@@ -5928,6 +5978,15 @@ function finishCanvasMouseUp(ev) {
     const { fromEnd } = drag;
     drag = null;
     finishPinWire(releaseWorld, ev, { fromEnd });
+    return;
+  }
+  if (drag.mode === 'wirestroke') {
+    const stroke = drag;
+    drag = null;
+    if (altHeld) stroke.stroke.add(releaseWorld);
+    if (stroke.moved) finishWireStroke(stroke.stroke);
+    else doWireClick(snap(w.x), snap(w.y), stroke.terminalHit);
+    render();
     return;
   }
   if (drag.mode === 'bubblemove') {
@@ -6413,6 +6472,9 @@ window.addEventListener('keyup', (ev) => {
   }
   if (ev.key !== 'Alt') return;
   altHeld = false;
+  // Letting go of Alt mid-stroke lifts the pen: the stroke moves on without
+  // wiring until Alt is held again.
+  if (drag?.mode === 'wirestroke') drag.stroke.lift();
   setSymmetry(false);
   if (terminalSnap) {
     terminalSnap = false;
@@ -7676,6 +7738,11 @@ window.addEventListener('keydown', (ev) => {
   // while Alt is already down receives the same behavior.
   if (ev.key === 'Alt') {
     altHeld = true;
+    // Alt held again puts the stroke's pen down where the pointer is.
+    if (drag?.mode === 'wirestroke' && drag.last) {
+      drag.stroke.add(drag.last);
+      scheduleInteractionRender();
+    }
     if (wire) setTerminalSnap(true);
     else if ((mode === 'insert' && pendingPlace?.kind === 'component') || drag?.mode === 'copyghost') setSymmetry(true);
     ev.preventDefault();

@@ -125,6 +125,74 @@ describe('wiring', { skip: browserSkip() }, () => {
     await h.key('Escape');
   });
 
+  const unwiredOta = async () => {
+    for (const line of ['clear', 'add nmos M5 --at 0 320', 'add nmos M1 --at -240 0', 'add nmos M2 --at 240 0 --mirrorX',
+      'add pmos M3 --at -240 -320 --mirrorX', 'add pmos M4 --at 240 -320']) await h.evaluate(`window.__run(${JSON.stringify(line)})`);
+    await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.fitView())`);
+  };
+  const strokeDrag = async (type, x, y) => { const p = await at(x, y); await h.mouse(type, p.x, p.y, { modifiers: 1 }); };
+
+  test('an Alt-drag wires what clicks on the same pins in turn would, the tail node too', async () => {
+    const drawn = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.nets.values()].map((n) => ({ terminals: n.terminals.map((t) => t.comp + '.' + t.term).sort(), paths: n.paths() })).sort((a, b) => a.terminals[0].localeCompare(b.terminals[0])))`);
+    await unwiredOta();
+    await h.key('w');
+    for (const [a, b] of [[[0, 240], [-240, 80]], [[-240, -80], [-240, -240]], [[-240, -400], [240, -400]], [[240, -240], [240, -80]], [[240, 80], [0, 240]]]) {
+      await clickAt(...a);
+      await clickAt(...b);
+    }
+    const clicked = await drawn();
+    await h.key('Escape');
+    await unwiredOta();
+    await h.key('w');
+    await h.key('Alt', { altKey: true });
+    try {
+      // Off the pins: the stroke catches them as the Alt snap would.
+      const loop = [[20, 220], [-210, 110], [-270, -110], [-215, -260], [-260, -380], [210, -420], [270, -220], [210, -100], [260, 110], [-20, 260]];
+      await strokeDrag('mouseMoved', ...loop[0]);
+      await strokeDrag('mousePressed', ...loop[0]);
+      for (const point of loop.slice(1)) await strokeDrag('mouseMoved', ...point);
+      await strokeDrag('mouseReleased', ...loop.at(-1));
+      await h.settle();
+    } finally {
+      await h.evaluate(`window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Alt', bubbles: true }))`);
+    }
+    assert.deepEqual(await drawn(), clicked);
+    await h.key('Escape');
+  });
+
+  test('an Alt-drag in the Wire tool wires the pins it passes, as one undo entry', async () => {
+    await unwiredOta();
+    await h.key('w');
+    await h.key('Alt', { altKey: true });
+    const drag = strokeDrag;
+    // The loop: tail drain, up through M1 and M3, across, down through M4 and M2, back.
+    const loop = [[4, 236], [-236, 84], [-244, -80], [-240, -244], [-238, -404], [242, -400], [240, -240], [236, -80], [240, 84], [2, 240]];
+    try {
+      await drag('mouseMoved', ...loop[0]);
+      await drag('mousePressed', ...loop[0]);
+      for (const point of loop.slice(1)) await drag('mouseMoved', ...point);
+      await h.settle();
+      const shown = await h.evaluate(`document.querySelectorAll('#overlay .gesture-stroke-link, .gesture-stroke-link').length`);
+      assert.equal(shown, 5, 'five joins are previewed');
+      // Alt let go lifts the pen: the way to M3's drain wires nothing.
+      await h.evaluate(`window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Alt', bubbles: true }))`);
+      await drag('mouseMoved', 0, 0);
+      await drag('mouseMoved', -240, -240);
+      await h.key('Alt', { altKey: true });
+      await drag('mouseMoved', -120, -320);
+      await drag('mouseMoved', 120, -320);
+      await drag('mouseReleased', 120, -320);
+      await h.settle();
+    } finally {
+      await h.evaluate(`window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Alt', bubbles: true }))`);
+    }
+    const nets = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.nets.values()].map((n) => n.terminals.map((t) => t.comp + '.' + t.term).sort().join(' ')).sort())`);
+    assert.deepEqual(await nets(), ['M1.d M3.d M3.g M4.g', 'M1.s M2.s M5.d', 'M2.d M4.d', 'M3.s M4.s']);
+    await h.key('Escape');
+    await h.key('u');
+    assert.deepEqual(await nets(), []);
+  });
+
   test('a part rotated keeps the wire at its other part as drawn: only its own leg moves', async () => {
     await h.evaluate(`window.__run('connect R1.b R2.a')`);
     await h.evaluate(`window.__run('add resistor R3 --at 0 800')`);

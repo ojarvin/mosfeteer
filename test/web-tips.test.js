@@ -67,6 +67,16 @@ test('every tip is short and names a trigger and a retiring action the editor re
   }
 });
 
+test('the third clicked wire offers the stroke; a stroke answers it', () => {
+  const book = new TipBook();
+  book.note('wire-commit', 0);
+  book.note('wire-commit', 0);
+  assert.equal(book.note('wire-commit', 0)?.id, 'wire-stroke');
+  const answered = new TipBook();
+  answered.note('wire-stroke', 0);
+  for (let i = 0; i < 3; i += 1) assert.notEqual(answered.note('wire-commit', 0)?.id, 'wire-stroke');
+});
+
 test('the tips of the newer features show the first time their situation comes up', () => {
   for (const [event, id] of [['mirrored-pair', 'symmetry-axis'], ['cell-selected', 'arrange-like'], ['arrange', 'arrange-suggestions'], ['arrange-built-in', 'built-in-drawings']]) {
     assert.equal(new TipBook().note(event, 0)?.id, id, `${id} on the first ${event}`);
