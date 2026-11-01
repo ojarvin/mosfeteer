@@ -7,10 +7,10 @@ import { runInNewContext } from 'node:vm';
 // entry point left unrun.
 async function bundleRequire() {
   const source = await readFile(new URL('../browser-only/browser-only.js', import.meta.url), 'utf8');
-  const entry = '  __require("src/web/main.js");';
+  const entry = '  __require(__entry);\n}';
   assert.ok(source.includes(entry), 'bundle entry point moved');
   const context = {};
-  runInNewContext(source.replace(entry, '  globalThis.__require = __require;'), context);
+  runInNewContext(source.replace(entry, '  globalThis.__require = __require;\n}').replace('__MOSFETEER_BUNDLE("src/web/main.js");', '__MOSFETEER_BUNDLE();'), context);
   return context.__require;
 }
 
@@ -53,14 +53,16 @@ test('browser-only bundle publishes every exported function, generators included
   assert.equal(typeof polishSearch({ free: [] }, { own: {}, snapped: { fractions: {}, groups: [] } }).next, 'function');
 });
 
-test('browser-only bundle carries the optimizer worker, which scores in a blob worker', async () => {
+test('browser-only bundle runs the optimizer worker from its own source, which scores in a blob worker', async () => {
   const source = await readFile(new URL('../browser-only/browser-only.js', import.meta.url), 'utf8');
   const html = await readFile(new URL('../browser-only/index.html', import.meta.url), 'utf8');
   assert.match(html, /worker-src blob:/);
   const context = {};
-  runInNewContext(source.replace('  __require("src/web/main.js");', ''), context);
-  const worker = context.__MOSFETEER_WORKER_SOURCE;
-  assert.equal(typeof worker, 'string');
+  runInNewContext(source.replace('__MOSFETEER_BUNDLE("src/web/main.js");', ''), context);
+  const bundle = context.__MOSFETEER_BUNDLE;
+  assert.equal(typeof bundle, 'function');
+  // The source optimize-ui.js starts its workers from.
+  const worker = `(${bundle})("src/web/optimize-worker.js");`;
   // Run it as a worker would: messages in, messages out.
   const sent = [];
   let listener = null;
@@ -75,4 +77,14 @@ test('browser-only bundle carries the optimizer worker, which scores in a blob w
   listener({ data: { type: 'evaluate', id: 7, batch: [{ k: 2 }] } });
   assert.equal(sent[1].id, 7);
   assert.ok(Math.abs(sent[1].scores[0].specs[0] - 20 * Math.log10(2)) < 1e-6);
+});
+
+test('browser-only build ships the math font once, inside the bundle', async () => {
+  const { access } = await import('node:fs/promises');
+  const source = await readFile(new URL('../browser-only/browser-only.js', import.meta.url), 'utf8');
+  const css = await readFile(new URL('../browser-only/style.css', import.meta.url), 'utf8');
+  assert.equal(source.match(/data:font\/woff2;base64,[A-Za-z0-9+/]{1000}/g).length, 1);
+  assert.match(source, /new FontFace\('Latin Modern Math'/);
+  assert.doesNotMatch(css, /latinmodern-math\.woff2/);
+  await assert.rejects(access(new URL('../browser-only/fonts/latinmodern-math.woff2', import.meta.url)));
 });

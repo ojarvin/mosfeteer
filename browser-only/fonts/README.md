@@ -1,5 +1,7 @@
 # Vendored math font
 
+In this build the font ships inside `browser-only.js`, as a data URL.
+
 `latinmodern-math.woff2` is Latin Modern Math (GUST e-foundry), the OpenType
 successor of Knuth's Computer Modern and the font LaTeX's `unicode-math`
 loads by default. It carries an OpenType `MATH` table, which is what lets

@@ -587,14 +587,15 @@ function fractionsTable(result) {
 // ----- the run --------------------------------------------------------------------------
 
 /** A worker thread: from its module beside the page, or -- opened from a
- *  file, where no worker script may load -- from the source the browser-only
- *  build carries (a blob). Null when neither can start. */
+ *  file, where no worker script may load -- from the browser-only bundle's
+ *  own source, run with the worker as its entry (a blob). Null when neither
+ *  can start. */
 let workerUrl = null;
 function startWorker() {
   if (location.protocol !== 'file:') return new Worker('optimize-worker.js', { type: 'module' });
-  const source = globalThis.__MOSFETEER_WORKER_SOURCE;
-  if (!source) return null;
-  workerUrl ||= URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+  const bundle = globalThis.__MOSFETEER_BUNDLE;
+  if (!bundle) return null;
+  workerUrl ||= URL.createObjectURL(new Blob([`(${bundle})("src/web/optimize-worker.js");`], { type: 'text/javascript' }));
   return new Worker(workerUrl);
 }
 
