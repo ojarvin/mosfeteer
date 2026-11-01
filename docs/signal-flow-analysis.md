@@ -368,7 +368,8 @@ free (a free one is driven down, or zeroed as one that barely matters).
 The transfer functions take it as a source, an input of its own; the
 simulations (swing, spectrum, time view, the optimizer's swing test)
 draw its numbers, the same sequence every run so runs compare like for
-like. It feeds the sampled side only. A loop with few levels and a small
+like. It feeds the sampled side only: into a sum after the sampler,
+not through a sampler of its own. A loop with few levels and a small
 input idles in limit cycles -- tones and a floor that strays from the
 NTF's prediction -- which dither of about a level step breaks up. A dither
 source starts as **Zero** among the sources (it is noise, not a signal);

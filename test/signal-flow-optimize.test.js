@@ -507,6 +507,21 @@ test('a dither source: a source in the transfer functions, random numbers in the
   assert.deepEqual(Array.from(dithered), Array.from(run(0.5)));
 });
 
+test('a continuous loop takes dither in a sum between its sampler and quantizer', () => {
+  // The sum added after the quantizer: its sampled domain reaches the
+  // quantizer's output before the DAC reading it could call that continuous.
+  const lines = ['add input U --at -1200 0', 'add signal_sum S1 --at -800 0', 'add tf_s H1 --at -400 0 --value "1/s"', 'add sampler SMP1 --at 0 0', 'add quantizer QZ1 --at 800 0',
+    'add signal_sum S2 --at 400 0', 'add output V --at 1200 0', 'add tf_s D1 --at 400 400 --rot 180 --value "(1 - exp(-s*T))/s"', 'add gain K1 --at -400 400 --rot 180 --value k_1',
+    'add dither DTH1 --at -400 -800 --value "tern 1"', 'add gain KD --at 0 -800 --value d_1',
+    'connect U.p S1.w', 'connect S1.e H1.in', 'connect H1.out SMP1.in', 'connect S2.e QZ1.in', 'connect QZ1.out V.p', 'connect V.p D1.in', 'connect D1.out K1.in', 'connect K1.out S1.s', 'connect DTH1.out KD.in'];
+  const options = { values: { k_1: 1, d_1: 0.1, T: 1 }, sources: {}, input: 'U', output: 'name:V', samples: 256 };
+  const summed = prepareSimulation(diagram([...lines, 'connect SMP1.out S2.w', 'connect KD.out S2.n'], [['S1', 's']]), options);
+  assert.ok(summed.ok, summed.error);
+  const sampled = prepareSimulation(diagram([...lines, 'add sampler SMP2 --at 400 -480 --rot 90', 'connect SMP1.out S2.w', 'connect KD.out SMP2.in', 'connect SMP2.out S2.n'], [['S1', 's']]), options);
+  assert.equal(sampled.ok, false);
+  assert.match(sampled.error, /into a sum after the sampler/);
+});
+
 test('a swing limit aimed at is a goal too: each dB a net stays under it is lost', () => {
   const circuit = modulator();
   const sim = prepareSimulation(circuit, { values: { k_1: 1, k_2: 2 }, input: 'U', output: 'name:V' });

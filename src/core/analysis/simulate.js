@@ -274,7 +274,7 @@ export function prepareSimulation(circuit, options = {}) {
     for (const [i, signal] of cont.entries()) {
       const source = sourceValue.get(signal.key);
       if (source) {
-        if (source.dither) throw new Error(`the dither on ${signal.display} feeds continuous signals: a dither source draws a number a sample, so it must feed the sampled side (after the sampler)`);
+        if (source.dither) throw new Error(`the dither on ${signal.display} feeds continuous signals: a dither source draws a number a sample, so wire it into a sum after the sampler, not through a sampler of its own`);
         if (source.driven) Hc[i][OSC_S] = 1;
         else Hc[i][ONE] = source.constant;
         continue;

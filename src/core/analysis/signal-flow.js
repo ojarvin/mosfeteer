@@ -568,6 +568,8 @@ export function signalDomains({ circuit, signals }) {
       set(out, known, origin.get(from.key));
       for (const signal of ins) set(signal, known, origin.get(from.key));
     }
+    // Through junctions first: a reader decides only what no driver reaches.
+    if (changed) continue;
     // A source read by a sampler or an H(s) block is continuous; by an H(z) block, sampled.
     for (const signal of signals.values()) {
       if (domain.has(signal.key)) continue;
