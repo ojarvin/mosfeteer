@@ -8,8 +8,8 @@
 <h1 align="center">Mosfeteer</h1>
 
 <p align="center">
-  <b>A drawing tool for analog circuit schematics.</b><br>
-  For figures in papers, slides, and documentation.
+  <b>A design notebook for analog circuits.</b><br>
+  Draw schematics and block diagrams fast, and keep the math, plots, and notes beside them.
 </p>
 
 <p align="center">
@@ -19,95 +19,68 @@
 </p>
 
 <p align="center">
-  <a href="#quick-start">Quick start</a> ·
-  <a href="#a-design">A design</a> ·
-  <a href="#analysis">Analysis</a> ·
-  <a href="#keys">Keys</a> ·
-  <a href="#more">More</a>
+  <img src="docs/images/atlas.webp" alt="The Atlas in the dark theme: a folder of 39 designs on one sheet. A folded-cascode OTA is picked, and lines run from it to the designs that use it.">
 </p>
 
-<br>
+Mosfeteer is a drawing tool for analog designers. Sketch a circuit or a
+block diagram, analyze it, and write down what you learn. The drawing is
+ready for a paper or a slide. Each design is one small `.json` file.
+
+## Draw
+
+Press `i` and type to place a part, and `w` to draw a wire. Move a part,
+and only the wires that must change are rerouted. Transistors, passives,
+op-amps, switches, logic gates, and block-diagram parts all share one
+grid and one look.
+
+## Analyze
+
+Press `Shift+S` and pick an input and an output. The analysis window has
+five modes:
+
+- **Circuit:** the gain, impedances, poles, zeros, and noise of a
+  transistor circuit, as equations you would write by hand.
+- **Signal flow:** the transfer functions of a block diagram, with step
+  response, root locus, swing, and a coefficient optimizer.
+- **Switched-cap:** the exact z-domain response of a switched-capacitor
+  circuit, with the kT/C noise of every switch.
+- **Logic:** the truth table of a gate-level drawing, and each output as a
+  minimized sum of products.
+- **Synthesis:** a truth table in, the minimized gates drawn out.
+
+Every symbol links back to the part it came from. Plot a result, then
+place the plot or the equations on the drawing with one click.
 
 <p align="center">
-  <img src="docs/images/editor.webp" alt="A two-stage Miller OTA in the editor. Beside the schematic, its notes give the target and the compensation reasoning with math, mentioning parts such as C_M and M5, and a to-do list; below them, the Plots window shows the voltage gain's magnitude over its phase.">
+  <img src="docs/images/editor.webp" alt="A two-stage Miller OTA in the editor, with its gain and phase plots placed under the schematic. On the right, the small-signal analysis window shows the input and output impedances and the voltage gain as equations.">
 </p>
 
-Mosfeteer is for drawing analog schematics as figures and documentation:
-quick to draw in, and the result is ready for a paper or slides. Each
-drawing can also carry what you worked out about the circuit, such as
-notes, derived equations, plots, a timing diagram, and its earlier saves.
-A design is one `.json` file in a folder.
+## Document
 
-## A design
-
-- **Schematic.** Press `i` and type to place a part, `w` to draw a wire.
-  Moving a part reroutes only the wires that have to change, so the layout
-  stays as you drew it.
-- **Notes** (`n`). Markdown with math. `@M1` points at a part or net and
-  lights it up on the drawing; `[[amp]]` links to another design.
-- **Analysis** (`Shift+S`). Symbolic small-signal results, block-diagram
-  transfer functions, and switched-capacitor z-domain responses, described
-  [below](#analysis). Equations and plots can be placed on the drawing.
-- **Timing and beats** (`Shift+K`, `Shift+B`). A timing diagram of the
-  clock phases, and beats that step through the circuit phase by phase,
-  with open switches drawn open and what they cut off dimmed. Useful for
-  checking a switched-capacitor circuit, and for presenting it.
-- **History.** Saves are kept inside the file. Pin the one that works
-  as a checkpoint and go back to it later.
-- **Links.** A part can stand for another design: an op-amp for its
-  transistor-level circuit. Peek at it, open it, or keep it beside you in a
-  reference window (`Shift+V`).
+Write notes beside the circuit, in Markdown with math. `@M1` points at a
+part on the drawing, and `[[amp]]` links to another design. Draw the clock
+in the timing diagram tool, then step through it phase by phase: each
+phase shows its switches open or closed, with the cut-off parts dimmed.
 
 <p align="center">
-  <img src="docs/images/beats.webp" alt="A switched-capacitor integrator stepped to its second beat: the switches open in that phase are drawn open and the parts they cut off are dimmed. In the timing diagram below, a shaded band marks the slots of the phase on screen, and the beats window lists the three phases. On the right, the timing diagram editor shows each phase's slots as a grid, the non-overlap pairs, and the arrows and spans drawn on the diagram.">
+  <img src="docs/images/beats.webp" alt="A switched-capacitor integrator in the dark theme, stepped to its second phase: open switches are drawn open and what they cut off is dimmed. A noise table, a timing diagram, and a frequency response sit beside it. On the right, the timing diagram tool shows each phase as a row of slots and which phases must not overlap.">
 </p>
 
-## The workspace
+Export SVG, PDF, or PNG cut to the drawing. Set the page to an IEEE
+column, and the text comes out at the right size. Your notes can become a
+report with numbered figures. Each design keeps its own save history.
 
-The **Atlas** (`Shift+Backspace`) lays out all designs in the folder on
-one sheet. Search it for parts, nets, text, or `#tags`. Pick a design and
-the ones it links to are drawn joined to it. Open one with a double-click.
+## Organize
 
-<p align="center">
-  <img src="docs/images/atlas.webp" alt="The Atlas: a workspace's designs on one dark sheet. The folded-cascode OTA is picked and lifted; lines run to it from the op-amps of the four designs that use it, and the rest are dimmed.">
-</p>
+The Atlas, shown at the top, lays out every design in a folder. Search it
+for a part, a net, or a `#tag`. Pick a design to see which others use it.
+A part can also stand for another design, such as an op-amp for its
+transistor-level circuit.
 
-## Analysis
+## Install
 
-The analysis window (`Shift+S`) picks its mode from what is drawn.
-
-**Small-signal.** Solves a transistor circuit exactly and writes the result
-as you would by hand: Z<sub>in</sub>, Z<sub>out</sub>, the gain, poles and
-zeros, and input-referred noise. Each symbol links back to the device it
-came from. Optional: the loop gain, broken at an op-amp, a terminal, a net,
-or between two nets when the loop is not drawn closed; an op-amp's closed
-loop split into its ideal gain and direct feedthrough; and the poles' time
-constants, one per capacitor. Pick the input and output on the drawing; an
-ambiguous pick gets an explanation, not a guess.
-
-**Signal flow.** For block diagrams: gains, sums, H(s) and H(z) blocks,
-samplers, and quantizers. The transfer function from each source to the output
-comes from one solve, so a delta-sigma modulator's STF and NTF come out
-together. Symbols like `a_1` stay symbolic in the equations and get sliders
-in the plots.
-
-**Switched-capacitor.** The exact z-domain transfer function of a switched-
-capacitor circuit, by charge conservation from phase to phase, with its kT/C
-noise. The clock comes from the timing diagram.
-
-The **Plots** window (`Shift+W`) shows magnitude over phase, the step
-response, root locus, loop gain with margins, signal swing against input
-amplitude, and a time-domain simulation. The **optimizer** searches free
-coefficients for the best result that meets your limits (in-band noise,
-peaking, pole Q, signal swing).
-
-Also at hand: a **calculator** (`Shift+E`) that reads `1/(2pi*10k*1n)`, and
-a **design check** (`x`) for unconnected pins, overlapping nets, and other
-slips.
-
-## Quick start
-
-You need [Node.js](https://nodejs.org/) 18 or newer.
+You need [Node.js](https://nodejs.org/) 18 or newer. There is nothing else
+to install.
 
 ```sh
 git clone https://github.com/ojarvin/mosfeteer.git
@@ -115,92 +88,31 @@ cd mosfeteer
 node launch.mjs
 ```
 
-The editor opens in its own window and quits when you close it.
+The editor opens in its own window. Press `?` there to see every key and
+the tutorials.
 
 - **Windows:** double-click `Mosfeteer.cmd`.
-- **Linux or macOS:** `node launch.mjs --install` adds Mosfeteer to the
-  application menu.
-- **No Node?** Open [`browser-only/index.html`](browser-only/index.html)
-  directly and pick a folder for your designs (**Open folder…**). Chrome and
-  Edge save straight into it. Firefox and Safari can read it but save by
-  downloading a copy.
+- **Linux or macOS:** run `node launch.mjs --install` to add Mosfeteer to
+  your app menu.
+- **No Node?** Open [`browser-only/index.html`](browser-only/index.html) in
+  your browser and pick a folder for your designs. Chrome and Edge save
+  into it. Firefox and Safari save by downloading a copy.
 
-## Keys
+New designs go to `~/Documents/Schematics` unless you pick another folder.
 
-| | | |
-| --- | --- | --- |
-| **Draw** | `i` | place a part |
-| | `w` | draw a wire |
-| | `l` | name a net |
-| | `k` | hold a symmetry axis: what is drawn on one side is drawn on the other |
-| **Tidy** | `Shift+Q` | arrange the selection like your other drawings of it |
-| | `Shift+T` | tidy the selection's wires and labels |
-| | `x` | design check |
-| **Analyze** | `Shift+S` | analysis |
-| | `Shift+W` | plots |
-| | `Shift+E` | calculator |
-| **Timing** | `Shift+K` | timing diagram |
-| | `Shift+B` | beats |
-| **Document** | `Shift+N` | notes |
-| | `Shift+V` | reference windows |
-| | `Shift+Backspace` | the Atlas: all designs in the workspace |
-| **Anywhere** | `Esc` | let go of the selection, then close windows one by one |
-| | `?` | all other keys, the tutorials, and the symbols |
-
-## More
-
-<details>
-<summary><b>Files</b></summary>
-
-<br>
-
-Each design is one `.json` file, so it is easy to keep in git or send to
-someone, and its notes and save history go with it. New designs go to the
-workspace folder, `~/Documents/Schematics` unless you pick another. A design
-with no unsaved changes reloads when its file changes on disk, after a
-`git pull` for example. **Export** (`Ctrl/Cmd+E`) writes SVG, PDF, or PNG
-cropped to the drawing; with a page guide (IEEE single or double column,
-A4, or a width and text size of your own, chosen in the Export dialog or
-Settings) the text comes out at the paper's figure size. Its **Report**
-writes the notes as a PDF or HTML document: each `![[circuit|caption]]`
-line in the notes places a numbered figure of the drawing (the circuit, a
-beat, a plot or table the tools drew), `[[#circuit]]` refers to it, and
-every figure is set at the page guide's width.
-
-</details>
-
-<details>
-<summary><b>Scripting</b></summary>
-
-<br>
-
-The editor, the CLI, and the HTTP API use one command language:
+## Development
 
 ```sh
-npm run cli -- amp "add nmos M1 --at 120 120"   # edits <workspace>/amp.json
-```
-
-</details>
-
-<details>
-<summary><b>Development</b></summary>
-
-<br>
-
-```sh
-npm run serve   # dev server with auto-restart at http://127.0.0.1:47280/
+npm run serve          # dev server at http://127.0.0.1:47280/
 npm test               # unit tests
-npm run test:browser   # the editor driven in headless Chromium
+npm run test:browser   # the editor, driven in headless Chromium
+npm run cli -- amp "add nmos M1 --at 120 120"   # script a design
 ```
 
-- [`docs/model.md`](docs/model.md) · [`docs/editor.md`](docs/editor.md): symbols, model rules, and editor behavior
-- [`docs/notes-and-history.md`](docs/notes-and-history.md): notes and save history
-- [`docs/atlas.md`](docs/atlas.md) · [`docs/hierarchy.md`](docs/hierarchy.md) · [`docs/beats.md`](docs/beats.md): the Atlas, linked designs, beats, and timing diagrams
-- [`docs/symbolic-analysis.md`](docs/symbolic-analysis.md) · [`docs/topological-small-signal.md`](docs/topological-small-signal.md): small-signal analysis
-- [`docs/signal-flow-analysis.md`](docs/signal-flow-analysis.md) · [`docs/switched-cap-analysis.md`](docs/switched-cap-analysis.md): signal-flow and switched-capacitor analysis, swing, and the optimizer
-
-</details>
+The editor, the CLI, and the HTTP API share one command language. The
+[`docs/`](docs/) folder describes the model, the editor, and each analysis.
 
 ## License
 
-[MIT](LICENSE). The bundled Latin Modern Math font in `src/web/fonts/` has its own [GUST Font License](src/web/fonts/GUST-FONT-LICENSE.txt).
+[MIT](LICENSE). The bundled Latin Modern Math font in `src/web/fonts/` has
+its own [GUST Font License](src/web/fonts/GUST-FONT-LICENSE.txt).
