@@ -9,7 +9,6 @@
 
 import { GRID } from '../core/grid.js';
 import { componentShapeSvg, labelShapeSvg } from '../core/render.js';
-import { SOLDER_DOT_RADIUS } from '../core/components/solder.js';
 
 // A huge edit (select-all move, loading a template through a command) should
 // still acknowledge the commit without building thousands of SVG nodes.
@@ -97,7 +96,7 @@ export function commitFeedbackDiff(before, after) {
     const old = beforeComps.get(c.refdes);
     beforeComps.delete(c.refdes);
     if (c.type === 'solder') {
-      if (!old || old.transform.x !== c.transform.x || old.transform.y !== c.transform.y) points.set(pointKey(c.transform), { x: c.transform.x, y: c.transform.y, solder: true });
+      if (!old || old.transform.x !== c.transform.x || old.transform.y !== c.transform.y) points.set(pointKey(c.transform), { x: c.transform.x, y: c.transform.y, solder: c.refdes });
       continue;
     }
     if (old && componentKey(old.toJSON()) === componentKey(c.toJSON())) continue;
@@ -174,9 +173,10 @@ export function isEmptyFeedback(diff) {
 const f = (v) => (Number.isInteger(v) ? String(v) : v.toFixed(2));
 
 /** The new wire pieces joined end to end into runs, each a list of points
- *  from one free end (or a branch) to the next, so a run's glow can sweep
- *  along it. A closed loop starts anywhere on it. */
-export function pieceRuns(pieces) {
+ *  from one free end (or a branch) to the next, so a run can be drawn in
+ *  along it. A run starts at `from` (where the wire was begun) when it ends
+ *  there; a closed loop starts anywhere on it. */
+export function pieceRuns(pieces, from = null) {
   const ends = new Map();
   pieces.forEach((piece, index) => {
     for (const p of [piece.a, piece.b]) {
@@ -205,8 +205,11 @@ export function pieceRuns(pieces) {
     }
     return run;
   };
-  // From the free ends and branch points first, then whatever loops remain.
-  const starts = [...ends].filter(([, list]) => list.length !== 2);
+  // From the free ends and branch points first (`from` before the rest),
+  // then whatever loops remain.
+  const first = from ? pointKey(from) : null;
+  const starts = [...ends].filter(([, list]) => list.length !== 2)
+    .sort(([a], [b]) => (b === first) - (a === first));
   for (const [, list] of starts) {
     for (const index of list) {
       if (used.has(index)) continue;
@@ -231,11 +234,52 @@ function labelTrace(label, boxClass) {
   }
 }
 
+/** How long a run takes to draw in, and its pace: the CSS animation of
+ *  `.landing-reveal` (set inline from here, so the two agree). */
+export const REVEAL_MS = 340;
+const REVEAL_EASE = [0.3, 0, 0.2, 1];
+
+/** The time (ms) the reveal reaches `share` (0..1) of a run's length: the
+ *  ease's cubic-bezier solved for that progress. */
+export function revealTime(share) {
+  const [x1, y1, x2, y2] = REVEAL_EASE;
+  const bezier = (a, b, t) => 3 * (1 - t) ** 2 * t * a + 3 * (1 - t) * t ** 2 * b + t ** 3;
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2;
+    if (bezier(y1, y2, mid) < share) lo = mid;
+    else hi = mid;
+  }
+  return Math.round(bezier(x1, x2, (lo + hi) / 2) * REVEAL_MS);
+}
+
+/** When each point of a run is reached, by its share of the run's length:
+ *  `pointKey -> ms`, the earliest over every run through it. */
+function arrivals(runs) {
+  const at = new Map();
+  for (const run of runs) {
+    const lengths = run.slice(1).map((p, i) => Math.hypot(p.x - run[i].x, p.y - run[i].y));
+    const total = lengths.reduce((sum, length) => sum + length, 0) || 1;
+    let along = 0;
+    run.forEach((p, i) => {
+      if (i) along += lengths[i - 1];
+      const ms = revealTime(along / total);
+      const key = pointKey(p);
+      if (!at.has(key) || ms < at.get(key)) at.set(key, ms);
+    });
+  }
+  return at;
+}
+
 /** SVG markup for one feedback burst: `under` glows behind the drawing (the
- * objects' own shapes, restyled by CSS), `over` sits on top (the sweep along
- * new wires, connection ripples, and the trailing red halo of deleted
- * objects). */
-export function commitFeedbackSvg(diff) {
+ * objects' own shapes, restyled by CSS), `over` sits on top (connection
+ * ripples, and the trailing red halo of deleted objects), and `reveal` is
+ * mask content that hides each run of new wire and uncovers it from one
+ * end to the other (from `from`, where the wire was begun), so the wire's
+ * own ink draws itself in. `solders` are the new junction dots and when
+ * the wire reaches each (`{ refdes, at }`, ms). */
+export function commitFeedbackSvg(diff, { from = null } = {}) {
   const piecePath = (list) => list.map(({ a, b }) => `M ${f(a.x)} ${f(a.y)} L ${f(b.x)} ${f(b.y)}`).join(' ');
   const under = [];
   const over = [];
@@ -244,18 +288,20 @@ export function commitFeedbackSvg(diff) {
     ...diff.labels.map((label) => labelTrace(label, 'landing-box')),
   ].join('');
   if (glow) under.push(`<g class="landing-glow">${glow}</g>`);
-  // Each run of new wire sweeps from one end to the other, then fades: on
-  // top, since a wire just drawn is selected and its selection glow would
-  // hide anything under it.
-  for (const run of pieceRuns(diff.pieces)) {
-    over.push(`<path class="landing-wire" pathLength="1" d="${run.map((p, i) => `${i ? 'L' : 'M'} ${f(p.x)} ${f(p.y)}`).join(' ')}"/>`);
-  }
+  const runs = pieceRuns(diff.pieces, from);
+  const reveal = runs
+    .map((run) => `<path class="landing-reveal" pathLength="1" style="animation-duration:${REVEAL_MS}ms" d="${run.map((p, i) => `${i ? 'L' : 'M'} ${f(p.x)} ${f(p.y)}`).join(' ')}"/>`)
+    .join('');
+  // A connection lands when the wire drawing in reaches it.
+  const reached = arrivals(runs);
+  const landsAt = (p) => reached.get(pointKey(p)) || 0;
+  const solders = diff.points.filter((p) => p.solder).map((p) => ({ refdes: p.solder, at: landsAt(p) }));
   for (const p of diff.points) {
-    over.push(`<circle class="landing-ripple" cx="${f(p.x)}" cy="${f(p.y)}" r="18"/>`);
-    // A new solder dot pops in at its own size; a pin gets a small dot.
-    over.push(p.solder
-      ? `<circle class="landing-pop" cx="${f(p.x)}" cy="${f(p.y)}" r="${SOLDER_DOT_RADIUS}"/>`
-      : `<circle class="landing-dot" cx="${f(p.x)}" cy="${f(p.y)}" r="6"/>`);
+    const at = landsAt(p) ? ` style="--landing-at:${landsAt(p)}ms"` : '';
+    over.push(`<circle class="landing-ripple" cx="${f(p.x)}" cy="${f(p.y)}" r="18"${at}/>`);
+    // A new solder dot is the drawing's own (`solders`), popping in when
+    // reached; a pin gets a small dot.
+    if (!p.solder) over.push(`<circle class="landing-dot" cx="${f(p.x)}" cy="${f(p.y)}" r="6"${at}/>`);
   }
   const removed = [
     ...diff.removedComponents.map((c) => componentShapeSvg(c)),
@@ -263,5 +309,5 @@ export function commitFeedbackSvg(diff) {
     diff.removedPieces.length ? `<path d="${piecePath(diff.removedPieces)}" fill="none"/>` : '',
   ].join('');
   if (removed) over.push(`<g class="landing-removed">${removed}</g>`);
-  return { under: under.join(''), over: over.join('') };
+  return { under: under.join(''), over: over.join(''), reveal, solders };
 }

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
-import { commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback, pieceRuns } from '../src/web/commit-feedback.js';
+import { REVEAL_MS, commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback, pieceRuns, revealTime } from '../src/web/commit-feedback.js';
 
 const clone = (circuit) => Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
 
@@ -52,7 +52,8 @@ test('a new wire glows only its new pieces and ripples at both connected pins', 
   assert.equal(diff.pieces.length, 6, 'a 240-unit wire is six grid pieces');
   assert.deepEqual(diff.points.map((p) => `${p.x},${p.y}`).sort(), ['320,0', '80,0']);
   const svg = commitFeedbackSvg(diff);
-  assert.match(svg.over, /class="landing-wire"/, 'over the drawing, where a selected wire\'s glow cannot hide it');
+  assert.match(svg.reveal, /class="landing-reveal"/, 'the wire\'s own ink uncovered, no glow over it');
+  assert.doesNotMatch(svg.over + svg.under, /landing-wire/);
   assert.match(svg.over, /class="landing-ripple"/);
 });
 
@@ -97,7 +98,7 @@ test('shortening a wire removes more than it adds but is not a deletion', () => 
   assert.equal(diff.removedPieces.length, 0, 'no red halo at the old position');
 });
 
-test('a new wire\'s glow is one run per stretch, from end to end, so it sweeps along it', () => {
+test('a new wire is uncovered one run per stretch, from end to end, so it draws itself along it', () => {
   const c = twoResistors();
   const before = clone(c);
   c.connect('R1.b', 'R2.a');
@@ -105,7 +106,7 @@ test('a new wire\'s glow is one run per stretch, from end to end, so it sweeps a
   const runs = pieceRuns(diff.pieces);
   assert.equal(runs.length, 1, 'six pieces in a row are one run');
   assert.deepEqual(runs[0].map((p) => `${p.x},${p.y}`).sort(), ['320,0', '80,0'], 'straight through: just its ends');
-  assert.equal((commitFeedbackSvg(diff).over.match(/class="landing-wire" pathLength="1"/g) || []).length, 1);
+  assert.equal((commitFeedbackSvg(diff).reveal.match(/class="landing-reveal" pathLength="1"/g) || []).length, 1);
 });
 
 test('wire runs keep their bends, part at a branch, and close a loop', () => {
@@ -126,11 +127,25 @@ test('wire runs keep their bends, part at a branch, and close a loop', () => {
   assert.deepEqual(loop[0][0], loop[0].at(-1));
 });
 
-test('a new solder dot pops at its own size; a newly wired pin gets the small dot', () => {
+test('a new solder dot is the drawing\'s own, named with when its wire reaches it; a pin gets its ripple then', () => {
   const svg = commitFeedbackSvg({
-    components: [], labels: [], pieces: [], removedComponents: [], removedLabels: [], removedPieces: [],
-    points: [{ x: 0, y: 0, solder: true }, { x: 80, y: 0 }],
-  });
-  assert.match(svg.over, /class="landing-pop" cx="0" cy="0" r="12"/);
-  assert.match(svg.over, /class="landing-dot" cx="80" cy="0" r="6"/);
+    components: [], labels: [], removedComponents: [], removedLabels: [], removedPieces: [],
+    pieces: [{ a: { x: 0, y: 0 }, b: { x: 40, y: 0 } }, { a: { x: 40, y: 0 }, b: { x: 80, y: 0 } }],
+    points: [{ x: 0, y: 0 }, { x: 80, y: 0, solder: 'J1' }],
+  }, { from: { x: 0, y: 0 } });
+  assert.deepEqual(svg.solders, [{ refdes: 'J1', at: REVEAL_MS }], 'the far end, reached last');
+  assert.doesNotMatch(svg.over, /landing-pop|cx="80" cy="0" r="6"/, 'no stand-in dot over it');
+  assert.match(svg.over, /class="landing-ripple" cx="80" cy="0" r="18" style="--landing-at:340ms"/);
+  assert.match(svg.over, /class="landing-ripple" cx="0" cy="0" r="18"\/>/, 'the start lands at once');
+  // Begun at the other end: the dot is there at once.
+  const back = commitFeedbackSvg({ components: [], labels: [], removedComponents: [], removedLabels: [], removedPieces: [], pieces: [{ a: { x: 0, y: 0 }, b: { x: 80, y: 0 } }], points: [{ x: 80, y: 0, solder: 'J1' }] }, { from: { x: 80, y: 0 } });
+  assert.deepEqual(back.solders, [{ refdes: 'J1', at: 0 }]);
+  assert.match(back.reveal, /d="M 80 0 L 0 0"/, 'drawn from where it was begun');
+});
+
+test('the reveal reaches a share of a run on its ease: none at once, all at its end, halfway early', () => {
+  assert.equal(revealTime(0), 0);
+  assert.equal(revealTime(1), REVEAL_MS);
+  const half = revealTime(0.5);
+  assert.ok(half > 0 && half < REVEAL_MS / 2, `the ease is quick, then settles: ${half}`);
 });

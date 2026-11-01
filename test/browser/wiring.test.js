@@ -45,6 +45,49 @@ describe('wiring', { skip: browserSkip() }, () => {
     assert.equal(net.paths[0][vertical].x, 400, JSON.stringify(net.paths[0]));
   });
 
+  test('a committed wire has its preview gone at once, is not selected, and draws its own ink in under a mask that then goes', async () => {
+    // With motion (the harness reduces it); put back after.
+    const motion = (value) => h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value }] });
+    await motion('no-preference');
+    // In the dark theme too, where a canvas `#fff` fill is repainted dark.
+    await h.evaluate(`document.documentElement.classList.add('dark')`);
+    try {
+      await drawAndCheck(true);
+    } finally {
+      await motion('reduce');
+      await h.evaluate(`document.documentElement.classList.remove('dark')`);
+    }
+    // Reduced, the wire is there at once: no mask.
+    await h.evaluate(`window.__load(${JSON.stringify(twoResistors())})`);
+    await h.key('Escape');
+    await drawAndCheck(false);
+  });
+
+  const drawAndCheck = async (moving) => {
+    await h.key('w');
+    await clickAt(80, 0); // R1.b
+    await move(720, 400);
+    assert.ok(await preview());
+    // The press that commits, and the state in the same moment.
+    const p = await at(720, 400);
+    await h.mouse('mousePressed', p.x, p.y);
+    await h.mouse('mouseReleased', p.x, p.y);
+    await h.settle();
+    const now = await h.evaluate(`${h.module('editor-state.js')}.then((m) => ({
+      draft: !!document.querySelector('#canvas path.wire-draft'),
+      selected: m.editor.selectedNets.size,
+      reveal: document.querySelectorAll('#landing-reveal-mask .landing-reveal').length,
+      masked: [...document.querySelectorAll('#canvas :is(.wire-ink, .editor-overlay)')].every((el) => el.getAttribute('mask') === 'url(#landing-reveal-mask)'),
+      glow: !!document.querySelector('#canvas .landing-wire'),
+      // Where nothing is being drawn in, the mask lets the ink through whole.
+      clear: (() => { const rect = document.querySelector('#landing-reveal-mask rect'); return !rect || getComputedStyle(rect).fill === 'rgb(255, 255, 255)'; })(),
+    }))`);
+    assert.deepEqual(now, { draft: false, selected: 0, reveal: moving ? 1 : 0, masked: moving, glow: false, clear: true });
+    await h.until(`!document.querySelector('#landing-reveal-mask') && !document.querySelector('#canvas [mask]')`);
+    assert.ok(await netOf('R2.a'), 'wired');
+    await h.key('Escape');
+  };
+
   test('a wire drawn to a free wire end meets it at its tip', async () => {
     // A stub from R2.b, ended in space with Enter.
     await h.key('w');

@@ -3099,6 +3099,8 @@ export function renderCanvas(modelKey) {
 }
 
 function currentWirePreview() {
+  // A wire just committed (or cancelled) has no preview, from this paint on.
+  if (!wire?.source) return (wirePreview = null);
   if (wirePreviewStale) {
     wirePreview = wire ? draftWirePreview(wire) : null;
     wirePreviewStale = false;
@@ -3695,10 +3697,10 @@ function connectTwo(src, dst, points, before = snapshot()) {
   recordHistoryEntry(before, false);
   // Stay in wiring mode so the next click can start another connection.
   wire = newWireDraft();
-  // Like every wire commit, highlight the net; the target pin's component is
-  // not selected.
+  // Like every wire commit, nothing is selected after it: the new wire
+  // draws itself in (commit-flash.js) with nothing over it.
   setSelection([]);
-  selectedNets = new Set([net.id]);
+  selectedNets = new Set();
   logLine(`net ${net.id}: ${net.terminals.map((t) => `${t.comp}.${t.term}`).join('  ')}; len=${net.length()}`);
 }
 
@@ -3904,7 +3906,7 @@ export function commitWireAtCursor() {
     markModelChanged();
     recordHistoryEntry(before, false);
     wire = newWireDraft();
-    if (net) selectedNets = new Set([net.id]);
+    selectedNets = new Set();
     logLine(`wire ${net.id}: open-ended route; len=${net.length()}`);
   } catch (err) {
     logLine(String(err.message || err));
@@ -3937,7 +3939,7 @@ export function connectWireToTerminal(dst, before = null) {
   markModelChanged(); // a draft spliced into the target net
   recordHistoryEntry(start, false);
   wire = newWireDraft();
-  selectedNets = new Set([net.id]);
+  selectedNets = new Set();
   logLine(`wired into net ${net.id} at ${dst.refdes}.${dst.term}; len=${net.length()}`);
 }
 
@@ -4000,7 +4002,7 @@ function joinWireToNet(wireHit, selectedTarget = null) {
   markModelChanged(); // a draft joined into an existing net
   recordHistoryEntry(before, false);
   wire = newWireDraft();
-  selectedNets = new Set([net.id]);
+  selectedNets = new Set();
   logLine(`joined into net ${net.id} at (${P.x},${P.y})`);
 }
 
