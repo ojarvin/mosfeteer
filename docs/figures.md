@@ -51,7 +51,10 @@ the circuit and two from every figure, never left of or above the circuit.
 Several orders are tried (every one for up to five figures), each figure
 taking the spot, among its kind's own place and the edges of what is there,
 that leaves the drawing smallest; the layout whose drawing is smallest
-wins, a little more costly for each figure away from its kind's place
+wins. A drawing's size is its area, scaled by its aspect ratio past 3:1
+(a 9:1 strip counts three times its area), so the figures of a wide, low
+circuit make a block under it rather than a strip beside it; a layout is a little more
+costly for each figure away from its kind's place
 (`anchorFor`): a table goes in the column right of the circuit, under the
 tables there; a model or plot continues that column while it still reaches
 beside the circuit (the space under the equations, beside a taller

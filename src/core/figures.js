@@ -185,11 +185,13 @@ function standOf(circuit, figure) {
   return cornerOf(circuit, figure);
 }
 
-/** Whether packing placed a figure where it is: moved by hand, it stays. */
+/** Whether packing placed a figure where it is: moved by hand, it stays.
+ *  A table's corner is measured, so it may differ by a fraction of a unit
+ *  from one browser to the next; a hand moves it whole cells. */
 export function packed(circuit, figure) {
   const at = figure.placed;
   const stand = standOf(circuit, figure);
-  return !!at && !!stand && at.x === stand.x && at.y === stand.y;
+  return !!at && !!stand && Math.abs(at.x - stand.x) < 0.5 && Math.abs(at.y - stand.y) < 0.5;
 }
 
 /** Remember where figure `id` is now as packing's place for it. */
@@ -257,14 +259,20 @@ function bestSpot(core, rects, kind, size) {
   return best || { x: anchor.x, y: before ? ceilGrid(before.y + before.h) + GAP : anchor.y, w, h };
 }
 
+/** The longest a drawing may be for its width (or height) before its
+ *  shape costs as much as its size: a page, a screen. */
+const MAX_ASPECT = 3;
+
 /**
- * What a layout costs: the drawing's area, a little more for each figure
- * away from its kind's own place (anchorFor) -- a sixth more for one a
- * circuit's size away -- so each goes there unless elsewhere the drawing
- * is clearly smaller.
+ * What a layout costs: the drawing's area, scaled by its aspect ratio past
+ * MAX_ASPECT (a 9:1 strip counts three times its area), and a little more
+ * for each figure away from its kind's own place
+ * (anchorFor) -- a sixth more for one a circuit's size away -- so each
+ * goes there unless elsewhere the drawing is clearly smaller.
  */
 function layoutCost(box, distance, base) {
-  return box.w * box.h * (1 + (0.15 * distance) / Math.max(4 * GRID, base.w + base.h));
+  const aspect = Math.max(box.w / box.h, box.h / box.w) || 1;
+  return box.w * box.h * Math.max(1, aspect / MAX_ASPECT) * (1 + (0.15 * distance) / Math.max(4 * GRID, base.w + base.h));
 }
 
 /** The orders to try packing `items` in: every one for a few, else some

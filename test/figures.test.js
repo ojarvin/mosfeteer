@@ -126,6 +126,29 @@ test('figures are packed as one: whatever the order, the drawing is as small, an
   assert.equal(new Set(areas).size, 1, areas.join(', '));
 });
 
+test('beside a wide, low circuit the figures make a block, not a strip', () => {
+  const circuit = new Circuit();
+  run(circuit, 'add resistor R1 --at 0 0 --rot 90', 'add resistor R2 --at 2400 0 --rot 90', 'connect R1.b R2.a');
+  block(circuit, 'equations', { w: 560, h: 320 });
+  block(circuit, 'plot', { w: 1000, h: 440 });
+  block(circuit, 'plot', { w: 1000, h: 440 });
+  assertClear(circuit);
+  const { w, h } = extent(circuit);
+  assert.ok(w / h < 4, `${w} x ${h}`);
+  const core = coreBounds(circuit);
+  for (const figure of listFigures(circuit)) assert.ok(figureBounds(circuit, figure).y > core.y + core.h, figure.id);
+});
+
+test('a table measured a fraction of a unit off where packing put it is still packing\'s', () => {
+  const circuit = amplifier();
+  const label = table(circuit);
+  const [figure] = listFigures(circuit);
+  label.figure = { ...label.figure, placed: { x: figure.placed.x + 0.0001, y: figure.placed.y - 0.0001 } };
+  assert.equal(packed(circuit, listFigures(circuit)[0]), true);
+  label.figure = { ...label.figure, placed: { x: figure.placed.x + 40, y: figure.placed.y } };
+  assert.equal(packed(circuit, listFigures(circuit)[0]), false);
+});
+
 test('a figure moved by hand stays where it was put; packing works around it', () => {
   const circuit = amplifier();
   const moved = block(circuit, 'plot', { w: 400, h: 400 });
