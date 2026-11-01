@@ -19,6 +19,7 @@ import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renam
 import { TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, parseDither, parseGain, parseLevels, readTransferFunction, transferFunctionDisplay, transferFunctionLines } from './transfer-function.js';
 import { normalizePartsTable, partsTableLayout } from './parts-table.js';
 import { normalizeFigure } from './figures.js';
+import { fanStacks, normalizeStack, segmentEnters, stackRects, stackedBoxes, wireEchoes } from './box-stack.js';
 import { PART_VALUE_ROLE, VALUE_LABEL_MODES, VALUE_TYPES, valueLabelTex } from './part-value.js';
 import { MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize } from './mos-size.js';
 
@@ -1448,6 +1449,8 @@ export class LabelInstance {
     // A box may carry a parts table (parts-table.js), drawn from the parts
     // it lists; its box is then the table's size (syncTableBox).
     this.table = this.kind === 'box' && opts.table ? normalizePartsTable(opts.table) : null;
+    // A plain box may be stacked (box-stack.js): copies of its outline behind it.
+    this.stack = this.kind === 'box' && !this.plot && !this.image && !this.table ? normalizeStack(opts.stack) : null;
     // A timing diagram's name or wave (timing-diagram.js) remembers its row.
     this.timing = normalizeTiming(opts.timing);
     // What a tool annotated is a figure (figures.js): its identity.
@@ -1824,6 +1827,7 @@ export class LabelInstance {
       if (this.table) this.syncTableBox();
       // A timing diagram's break reaches past what it cuts.
       if (this.timing?.part === 'break') return rectUnion([rectFromPoints([this.anchor, this.end]), this.timingBreak().rect]);
+      if (this.stack) return rectUnion(stackRects(rectFromPoints([this.anchor, this.end]), this.stack));
       return rectFromPoints([this.anchor, this.end]);
     }
     const b = this.bbox();
@@ -2123,6 +2127,7 @@ export class LabelInstance {
       ...(this.plot ? { plot: normalizePlot(this.plot) } : {}),
       ...(this.image ? { image: { ...this.image } } : {}),
       ...(this.table ? { table: normalizePartsTable(this.table) } : {}),
+      ...(this.stack ? { stack: { ...this.stack } } : {}),
       ...(this.timing ? { timing: { ...this.timing } } : {}),
       ...(this.figure ? { figure: { ...this.figure } } : {}),
       ...(this.columns ? { columns: this.columns } : {}),
@@ -2464,6 +2469,8 @@ export class Net {
     /** A bus net's bit-count labels: { offsets: { slashKey: {x,y} } } beside
      *  its slashes (bus.js), or null when they are not shown. */
     this.busCount = normalizeBusCount(opts.busCount);
+    /** The stacked boxes (their ids) this net fans into (box-stack.js). */
+    this.fans = Array.isArray(opts.fans) ? [...new Set(opts.fans.filter((id) => typeof id === 'string' && id))] : [];
     /** Ordered list of {comp, term} terminal references. */
     this.terminals = [];
     /** Explicit authorization for authored diagonal segments. */
@@ -2574,6 +2581,7 @@ export class Net {
       preserveEmpty: this.preserveEmpty,
       ...(this.analysis.role || this.analysis.acGround ? { analysis: { ...this.analysis } } : {}),
       ...(this.busCount ? { busCount: normalizeBusCount(this.busCount) } : {}),
+      ...(this.fans.length ? { fans: [...this.fans] } : {}),
       terminals: this.terminals.map((t) => ({ ...t })),
       allowDiagonal: this.allowDiagonal,
       route: this.route ? this.route.map((p) => ({ ...p })) : null,
@@ -4466,6 +4474,71 @@ export class Circuit {
   /** Draw a plot's traces in their colors (`on`) or in black, told apart by
    *  dash. Its legend moves aside by the room its line samples take in
    *  black, and back; its notes stay. Returns whether anything changed. */
+  /** Stack a plain box annotation (box-stack.js), or with null unstack it.
+   *  Returns whether it changed. */
+  setBoxStack(box, stack) {
+    if (box?.kind !== 'box' || box.plot || box.image || box.table) throw new Error(`"${box?.id}" is not a plain box`);
+    const next = stack ? normalizeStack(stack) : null;
+    if (stack && !next) throw new Error(`not a stack: ${JSON.stringify(stack)}`);
+    const same = (a, b) => (!a && !b) || (a && b && a.copies === b.copies && a.dx === b.dx && a.dy === b.dy);
+    if (same(box.stack, next)) return false;
+    // A stack reads as one solid; a dashed box turns solid when stacked.
+    if (next && !box.stack && box.style.lineStyle === 'dashed') box.style.lineStyle = 'solid';
+    const captions = this._stackCaptions(box);
+    box.stack = next;
+    this._placeStackCaptions(box, captions);
+    return true;
+  }
+
+  /** The captions above a box (or its stack): its child labels whose box
+   *  ends at its top. */
+  _stackCaptions(box) {
+    const top = rectUnion(stackRects(box.bbox(), box.stack)).y;
+    return [...this.labels.values()].filter((child) => child.parent === box.id && child.bbox().y + child.bbox().h <= top + GRID / 2);
+  }
+
+  /** Put `captions` above the box's stack: centered over it, or slid along
+   *  it, a cell at a time, clear of the wires and fans there. */
+  _placeStackCaptions(box, captions) {
+    if (!captions.length) return;
+    const reach = rectUnion(stackRects(box.bbox(), box.stack));
+    const stacks = stackedBoxes(this);
+    const lines = [];
+    for (const net of this.nets.values()) {
+      const paths = net.paths();
+      lines.push(...paths, ...wireEchoes(this, paths, stacks, net.fans).map((echo) => echo.points));
+    }
+    const clear = (r) => lines.every((line) => line.every((p, i) => !i || !segmentEnters(line[i - 1], p, r)));
+    for (const child of captions) {
+      const h = child.rowHeight() * GRID;
+      // Its box's foot on or above the stack's top.
+      const y = Math.floor((reach.y - h / 2) / GRID) * GRID;
+      const center = snap(reach.x + reach.w / 2);
+      const tries = [0];
+      for (let d = GRID; d <= reach.w / 2 + GRID * 4; d += GRID) tries.push(d, -d);
+      const x = tries.map((d) => center + d).find((cx) => {
+        child.moveTo(cx, y);
+        return clear(child.inkRect());
+      }) ?? center;
+      child.moveTo(x, y);
+    }
+  }
+
+  /** Fan `net` into the stacked box `box` (box-stack.js), or stop. Returns
+   *  whether it changed; a net that does not enter that stack cannot fan
+   *  into it. */
+  setNetFan(netOrId, box, on) {
+    const net = this._resolveNet(netOrId);
+    if (!box?.stack) throw new Error(`"${box?.id}" is not a stacked box`);
+    const has = net.fans.includes(box.id);
+    if (has === !!on) return false;
+    if (on && !fanStacks(this, net.paths()).includes(box)) throw new Error(`net ${net.name || net.id} does not enter ${box.id}`);
+    const captions = this._stackCaptions(box);
+    net.fans = on ? [...net.fans, box.id] : net.fans.filter((id) => id !== box.id);
+    this._placeStackCaptions(box, captions);
+    return true;
+  }
+
   setPlotTraceColors(box, on) {
     if (!box?.plot) throw new Error(`"${box?.id}" is not a plot`);
     if (!box.style.blackTraces === !!on) return false;
@@ -7258,11 +7331,15 @@ export class Circuit {
     const rects = [];
     for (const c of this.components.values()) rects.push(c.inkRectWorld());
     for (const label of this.labels.values()) if (!labels || labels(label)) rects.push(label.inkRect());
+    const stacks = stackedBoxes(this);
     for (const net of this.nets.values()) {
-      for (const path of net.paths()) {
+      const paths = net.paths();
+      for (const path of paths) {
         if (path.length === 1) rects.push(rectFromPoints(path));
         for (let i = 1; i < path.length; i++) rects.push(rectFromPoints([path[i - 1], path[i]]));
       }
+      // A wire repeated behind stacked boxes (box-stack.js).
+      for (const echo of wireEchoes(this, paths, stacks, net.fans)) rects.push(rectFromPoints(echo.points));
     }
     return rects;
   }
@@ -7369,6 +7446,7 @@ export class Circuit {
         drawOrder: n.drawOrder,
         wireStyles: n.wireStyles,
         busCount: n.busCount,
+        fans: n.fans,
         allowDiagonal: n.allowDiagonal === true,
         preserveEmpty: !!n.preserveEmpty || !n.terminals?.length,
       });
@@ -7432,6 +7510,7 @@ export class Circuit {
           plot: l.plot || null,
           image: l.image || null,
           table: l.table || null,
+          stack: l.stack || null,
           timing: l.timing || null,
           figure: l.figure || null,
           columns: l.columns || null,

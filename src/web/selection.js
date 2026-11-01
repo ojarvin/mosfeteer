@@ -27,6 +27,7 @@ export function copyableLabelPayload(label) {
     ...(label.plot ? { plot: label.plot } : {}),
     ...(label.image ? { image: label.image } : {}),
     ...(label.table ? { table: label.table } : {}),
+    ...(label.stack ? { stack: { ...label.stack } } : {}),
     ...(label.curve ? { curve: true } : {}),
   };
 }

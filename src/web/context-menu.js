@@ -29,6 +29,7 @@ import { shortPlacementLabel } from './toolbar.js';
 import { swapCandidates } from '../core/swap.js';
 import { appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename } from './side-panel.js';
 import { busWidth, netNamesConnect } from '../core/bus.js';
+import { STACK_DEFAULT, fanStacks } from '../core/box-stack.js';
 import { handleStyleControlClick, selectionStyleState, styleDefaults, syncStyleControls, wireStyleValue } from './style-controls.js';
 import { activateCopy, activateMove, annotationGeometryAt, commit, deleteSelection, namedGroupNets, pickAt, pickLabel, pickWire, render, restackSelected, selectedComps, selectedTransform, setLabelSelection, setSelection, supplyBarGroup, supplyBarHit, syncSelectedWire } from './main.js';
 import { noteTip } from './onboarding.js';
@@ -805,6 +806,7 @@ function appendContextActions(menu, target) {
     const lines = selectedLines();
     if (target.value.kind === 'line' && lines.length > 1) appendContextItem(group, `Join ${lines.length} lines`, joinSelectedLines);
     if (target.value.plot) appendPlotColorsItem(group, target.value);
+    appendBoxStackMenu(group, target.value);
     appendBeatContextItems(group, target);
   } else if (target.kind === 'net' || target.kind === 'wire') {
     const net = contextNet(target);
@@ -816,6 +818,7 @@ function appendContextActions(menu, target) {
         logLine(`${shown ? 'hid' : 'showing'} the bit count of ${net.name}`, 'status');
       }, { active: shown });
     }
+    appendFanItems(group, net);
   }
   if (target.kind !== 'net' && target.kind !== 'wire') {
     appendContextItem(group, 'Move', () => activateMove('connected'), { shortcut: 'm' });
@@ -850,6 +853,43 @@ function appendPlotColorsItem(group, box) {
     commit(() => editor.circuit.setPlotTraceColors(box, !colored));
     logLine(colored ? 'the plot\'s traces in black, told apart by dash' : 'the plot\'s traces in their colors', 'status');
   }, { active: colored });
+}
+
+/** Stack: copies of a plain box's outline behind it (box-stack.js), and
+ *  which way they go. */
+function appendBoxStackMenu(group, box) {
+  if (box.kind !== 'box' || box.plot || box.image || box.table) return;
+  const stack = box.stack;
+  const set = (next, text) => {
+    commit(() => editor.circuit.setBoxStack(box, next));
+    logLine(text, 'status');
+  };
+  appendContextSubmenu(group, 'Stack', (submenu) => {
+    appendContextItem(submenu, 'None', () => set(null, 'box not stacked'), { active: !stack });
+    for (const copies of [1, 2, 3, 4]) {
+      const step = stack || STACK_DEFAULT;
+      appendContextItem(submenu, `${copies} ${copies === 1 ? 'copy' : 'copies'}`, () => set({ ...step, copies }, `box stacked, ${copies} ${copies === 1 ? 'copy' : 'copies'}`), { active: stack?.copies === copies });
+    }
+    const step = Math.abs(stack?.dx || STACK_DEFAULT.dx);
+    for (const [label, dx, dy] of [['Up and right', step, -step], ['Down and right', step, step], ['Up and left', -step, -step], ['Down and left', -step, step]]) {
+      appendContextItem(submenu, label, () => set({ ...stack, dx, dy }, `stack ${label.toLowerCase()}`), { disabled: !stack, active: stack?.dx === dx && stack?.dy === dy });
+    }
+  });
+}
+
+/** Fan in/out: for each stacked box the wire enters, a short wire into
+ *  every copy. */
+function appendFanItems(group, net) {
+  const boxes = fanStacks(editor.circuit, net.paths());
+  for (const box of boxes) {
+    const on = net.fans.includes(box.id);
+    const caption = [...editor.circuit.labels.values()].find((label) => label.parent === box.id)?.text;
+    const label = boxes.length > 1 ? `Fan in/out (${caption || box.id})` : 'Fan in/out';
+    appendContextItem(group, label, () => {
+      commit(() => editor.circuit.setNetFan(net, box, !on));
+      logLine(`${net.name || net.id} ${on ? 'no longer fans into' : 'fans into'} the stack`, 'status');
+    }, { active: on });
+  }
 }
 
 /** Delete, the destructive action, last and in a group of its own. */

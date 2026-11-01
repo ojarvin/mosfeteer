@@ -127,6 +127,26 @@ it in the name's place and hides the name (`replacedNameLabels`, as a size
 label's `replacesName` does). The label is a projection of the value;
 deleting it hides it and keeps the value.
 
+A stacked box (`src/core/box-stack.js`) is a plain box annotation carrying
+`stack: { copies, dx, dy }`: 1 to 8 copies of its outline behind it, each
+`dx, dy` (at most two cells either way) past the one before, for a block
+repeated in parallel (`annotation stack BOX N|off [--offset DX,DY]`, the
+box's right-click Stack). The copies are ink only. Each copy draws the
+part of its outline the nearer copies leave uncovered, joined into one
+stroke per copy, so the stack has no fill. Stacking a dashed box makes it
+solid. A caption above the box goes above the stack, centered, or slid a
+cell at a time clear of the wires and fans there; stacking and fanning
+place it again. A wire piece outside the boxes is repeated once per copy,
+shifted by the step and cut where a nearer copy covers it, when it runs
+from a stack to a stack of the same step and copy count, or from a stack
+to a free wire end (`wireEchoes`). A wire into a stack, on any side, may
+fan instead (`Net#fans`, box ids; `net <id> fan BOX on|off`, the wire's
+right-click Fan in/out): a diagonal along the step, a cell clear of the
+stack at both ends and as far out as the wire runs straight, and from it
+one short wire into each copy, up to where a nearer copy covers it (on a
+side the copies hide behind, the front box).
+Exports frame the copies, the repeats, and the fans.
+
 A parts table (`src/core/parts-table.js`) is a box annotation carrying
 `table: { parts }`: the names it lists, or null for every part with a size
 or value. It is a view, never a copy: it is drawn from the parts each time

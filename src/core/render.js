@@ -13,6 +13,7 @@ import { TRANSFER_FUNCTION_TYPES } from './transfer-function.js';
 import { normalizePageGuide, pageGuideFrame } from './page-guide.js';
 import { bodeFigure, locusFigure, responseFigure, stepFigure, swingFigure } from './bode-figure.js';
 import { mathRuns } from './math-text.js';
+import { joinSegments, stackOutline, stackedBoxes, wireEchoes } from './box-stack.js';
 
 function pt(x, y) {
   return `${fmt(x)} ${fmt(y)}`;
@@ -777,7 +778,12 @@ function shapeAnnotationSvg(label, opacity = '') {
   }
   if (label.kind === 'box') {
     const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
-    return `<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" fill="none"${opacity} ${attrs}/>`;
+    const w = Math.abs(b.x - a.x); const h = Math.abs(b.y - a.y);
+    const rect = `<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(w)}" height="${fmt(h)}" fill="none"${opacity} ${attrs}/>`;
+    if (!label.stack) return rect;
+    // A stack's copies behind it, each where the nearer ones leave it showing.
+    const d = joinSegments(stackOutline({ x, y, w, h }, label.stack)).map(polylineD).join(' ');
+    return `${rect}<path class="box-stack" d="${d}" fill="none"${opacity} ${attrs}/>`;
   }
 }
 /** Stroke widths, dashes, and opacities of a plot's parts, in drawing units. */
@@ -1247,6 +1253,7 @@ export function svgString(circuit, opts = {}) {
     }
   }
   const UNPAINTED = ' stroke-opacity="0"';
+  const stacks = stackedBoxes(circuit);
   let pinInsetMap = null;
   const pinInsets = () => (pinInsetMap ||= bodyEdgePinInsets(circuit));
   const signalPins = signalInputPins(circuit);
@@ -1311,6 +1318,17 @@ export function svgString(circuit, opts = {}) {
         parts.push(`<path class="wire-managed" d="${paintedD}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="${i}" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}, segment ${i}`)}" ${styleAttrs(segmentStyle, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
         parts.push(arrowheadsSvg(geometry.heads, segmentStyle.color, opacity));
       }
+    }
+    // Between stacked boxes the wire is repeated, once per copy, or fans
+    // into a stack (box-stack.js).
+    for (const echo of wireEchoes(circuit, paths, stacks, net.fans)) {
+      const ends = arrowheadEnds(netStyle?.arrowhead);
+      const arrowhead = ends.start && echo.start ? (ends.end && echo.end ? 'both' : 'start') : ends.end && echo.end ? 'end' : 'none';
+      let svg = styledPolylineSvg(echo.points, { ...(netStyle || {}), arrowhead }, 'wire', 'none', opacity);
+      // A fan's lines end on other lines: flush ends, a cut corner, nothing
+      // poking past them.
+      if (echo.fan) svg = svg.replace(/stroke-linecap="[^"]*"/, 'stroke-linecap="butt"').replace(/stroke-linejoin="[^"]*"/, 'stroke-linejoin="bevel"');
+      parts.push(`<g class="wire-echo" pointer-events="none">${svg}</g>`);
     }
     // A bus (D[7:0], D<7:0>) carries a slash at each pin on it (bus.js), solid
     // and in the wire's own color.

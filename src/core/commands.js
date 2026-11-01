@@ -20,6 +20,7 @@ import { addTimingDiagram, existingTimingDiagram, timingBeatBands, timingPhaseNa
 import { addTerminalStubs } from './stubs.js';
 import { SYNTHESIS_GATES, SYNTHESIS_STYLES, drawSynthesis, gateSummary, signalNames, synthesizeLogic } from './analysis/logic-synthesis.js';
 import { addBoxAround } from './wrap-box.js';
+import { STACK_DEFAULT, stackError } from './box-stack.js';
 import { addPartsTable, partsTableParts } from './parts-table.js';
 import { RENUMBER_ORDERS, renumberParts } from './renumber.js';
 import { swapCandidates, swapComponentType } from './swap.js';
@@ -121,6 +122,7 @@ const FLAG_ARITY = {
   gates: 1,
   'max-inputs': 1,
   print: 0,
+  offset: 1,
 };
 
 const SYNTHESIZE_USAGE = 'usage: synthesize logic IN ... OUT=VALUES ... [--style and-or|nand|or-and|nor] [--gates inverter,and,nand,or,nor] [--max-inputs 2|3] [--at X Y] [--print]';
@@ -536,7 +538,8 @@ export function commandHelp() {
     '                                   without markup TEXT looks through it (M1 finds M_{1}); --regex matches the text as written',
     '  replace FIND WITH [--case] [--regex] - replace FIND in all of them, through each one\'s own rename; all or nothing ("" for WITH deletes; $1 with --regex)',
     '  nets                           - list nets with terminals and length',
-    '  net <id> add|drop|name|label|bitcount|rm|segment-rm ... - manage a net',
+    '  net <id> add|drop|name|label|bitcount|fan|rm|segment-rm ... - manage a net',
+    '  net <id> fan BOX on|off        - the net fans into stacked box BOX: a diagonal a cell out, a short wire into each copy',
     '  net <id> bitcount on|off       - show a bus net\'s bit count beside its slashes',
     '                                   net N1 add R1.a ; net N1 drop R2.b ;',
     '                                   net N1 name OUT ; net N1 rm',
@@ -550,6 +553,7 @@ export function commandHelp() {
     '  annotation join ID ID ...      - join line annotations that meet end to end or share a stretch into one line',
     '  annotation vertex-rm ID N      - remove vertex N (from 0) of a line or arrow',
     '  annotation plotcolors PLOT on|off - a plot\'s traces in their colors, or in black told apart by dash (a new plot\'s)',
+    '  annotation stack BOX N|off [--offset DX,DY] - N copies of a box\'s outline behind it, DX,DY apart (20,-20); wires between stacks repeat',
     '  list                           - list components',
     '  state                          - full JSON state',
     '  bounds                         - drawing extents',
@@ -1613,6 +1617,24 @@ function annotationCommand(circuit, pos, result, flags = {}) {
     circuit.setPlotTraceColors(box, state === 'on');
     return result(state === 'on' ? `${box.id}: traces in their colors` : `${box.id}: traces in black, told apart by dash`, box.toJSON(), true);
   }
+  if (op === 'stack') {
+    const box = circuit.labels.get(pos[1]);
+    const usage = 'usage: annotation stack BOX N|off [--offset DX,DY]';
+    if (!box || pos.length !== 3) throw new Error(usage);
+    if (box.kind !== 'box' || box.plot || box.image || box.table) throw new Error(`"${box.id}" is not a plain box`);
+    if (pos[2] === 'off') {
+      const changed = circuit.setBoxStack(box, null);
+      return result(`${box.id}: not stacked`, box.toJSON(), changed);
+    }
+    const copies = Number(pos[2]);
+    const [dx, dy] = flags.offset ? String(flags.offset[0]).split(',').map(Number)
+      : box.stack ? [box.stack.dx, box.stack.dy] : [STACK_DEFAULT.dx, STACK_DEFAULT.dy];
+    const stack = { copies, dx, dy };
+    const problem = stackError(stack);
+    if (problem) throw new Error(`${problem}; ${usage}`);
+    const changed = circuit.setBoxStack(box, stack);
+    return result(`${box.id}: stacked, ${copies} ${copies === 1 ? 'copy' : 'copies'} ${dx},${dy} apart`, box.toJSON(), changed);
+  }
   if (op === 'vertex-rm') {
     const label = circuit.labels.get(pos[1]);
     if (!label || !['arrow', 'line'].includes(label.kind)) throw new Error(`unknown line or arrow "${pos[1]}"`);
@@ -1621,7 +1643,7 @@ function annotationCommand(circuit, pos, result, flags = {}) {
     if (!label.removeVertex(index)) throw new Error(`cannot remove vertex ${index} of ${label.id}: a line keeps two distinct points and an arrow two cells of length`);
     return result(`removed vertex ${index} of ${label.id}`, label.toJSON(), true);
   }
-  throw new Error('usage: annotation add|rename|move|align|rm|vertex-rm|plotcolors|list ...');
+  throw new Error('usage: annotation add|rename|move|align|rm|vertex-rm|plotcolors|stack|list ...');
 }
 
 /** A 1-based beat number from a command, as a 0-based index. */
@@ -1736,6 +1758,12 @@ function netCommand(circuit, pos, result) {
     const shown = circuit.setBusCountShown(net, pos[2] === 'on');
     return result(`net ${net.id} bit count ${shown ? 'shown' : 'hidden'}`, net.toJSON(), true);
   }
+  if (op === 'fan') {
+    const box = circuit.labels.get(pos[2]);
+    if (!box || !['on', 'off'].includes(pos[3])) throw new Error('usage: net <id> fan BOX on|off');
+    const changed = circuit.setNetFan(net, box, pos[3] === 'on');
+    return result(`net ${net.id} ${pos[3] === 'on' ? 'fans into' : 'does not fan into'} ${box.id}`, net.toJSON(), changed);
+  }
   if (op === 'label') return netLabelCommand(circuit, [pos[2], net.id, ...pos.slice(3)], result);
   if (op === 'segment-rm') {
     const branch = Number(pos[2]);
@@ -1749,5 +1777,5 @@ function netCommand(circuit, pos, result) {
     circuit.removeNet(net);
     return result(`removed net ${net.id}`, null, true);
   }
-  throw new Error('usage: net <id> add|drop|name|label|bitcount|rm|segment-rm');
+  throw new Error('usage: net <id> add|drop|name|label|bitcount|fan|rm|segment-rm');
 }

@@ -22086,6 +22086,332 @@ function locusFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
 
 };
 
+__modules["src/core/box-stack.js"] = function (__require, __exports) {
+__exports.stackError = stackError;
+__exports.normalizeStack = normalizeStack;
+__exports.stackRects = stackRects;
+__exports.polylineOutside = polylineOutside;
+__exports.stackOutline = stackOutline;
+__exports.joinSegments = joinSegments;
+__exports.stackedBoxes = stackedBoxes;
+__exports.fanStacks = fanStacks;
+__exports.wireEchoes = wireEchoes;
+let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
+/**
+ * A stacked box: a box annotation drawn with offset copies of its outline
+ * behind it, for a block repeated in parallel (an "8x Sub-ADC"). The copies
+ * are ink only -- they place, route, connect, and analyze nothing -- and each
+ * draws only the part of its outline the copies in front of it leave
+ * uncovered, so the stack needs no fill.
+ *
+ * A wire between two stacks of the same step and copy count is drawn
+ * repeated too, once per copy, shifted by the step and cut where a nearer
+ * copy covers it; so is a wire from a stack to a free wire end. A wire into
+ * a stack may fan (`Net#fans`, the stacked boxes it fans into), on any
+ * side: a diagonal along the step a cell clear of the stack, and from it one
+ * short wire into each copy, up to where a nearer copy covers that one.
+ */
+
+
+
+/** A new stack: three copies half a cell up and right. */
+const STACK_DEFAULT = Object.freeze({ copies: 3, dx: GRID / 2, dy: -GRID / 2 });
+const STACK_MAX_COPIES = 8;
+/** The largest step between copies, either way, in drawing units. */
+const STACK_MAX_STEP = 2 * GRID;
+
+const EPS = 1e-6;
+
+/** Why `stack` ({ copies, dx, dy }) is not a stack, or null when it is. */
+function stackError(stack) {
+  if (!stack || typeof stack !== 'object') return 'a stack is { copies, dx, dy }';
+  const { copies, dx, dy } = stack;
+  if (!Number.isInteger(copies) || copies < 1 || copies > STACK_MAX_COPIES) return `a stack has 1 to ${STACK_MAX_COPIES} copies`;
+  if (![dx, dy].every((d) => Number.isInteger(d) && Math.abs(d) <= STACK_MAX_STEP)) return `a stack's step is whole units, at most ${STACK_MAX_STEP} either way`;
+  if (dx === 0 && dy === 0) return 'a stack\'s step is not zero';
+  return null;
+}
+
+/** `value` as a stack, or null when it is none or not one. */
+function normalizeStack(value) {
+  if (!value || typeof value !== 'object') return null;
+  const stack = { copies: Number(value.copies), dx: Number(value.dx), dy: Number(value.dy) };
+  return stackError(stack) ? null : stack;
+}
+
+/** The box's own rectangle and its copies', front first:
+ *  [front, copy 1, ..., copy n]. */
+function stackRects(rect, stack) {
+  const rects = [rect];
+  for (let k = 1; k <= (stack?.copies || 0); k++) rects.push({ x: rect.x + k * stack.dx, y: rect.y + k * stack.dy, w: rect.w, h: rect.h });
+  return rects;
+}
+
+/** The parameter interval of segment a-b inside the open rectangle `r`, or
+ *  null (Liang-Barsky); a segment along an edge is not inside. */
+function insideInterval(a, b, r) {
+  const dx = b.x - a.x; const dy = b.y - a.y;
+  let t0 = 0; let t1 = 1;
+  for (const [p, q] of [[-dx, a.x - r.x], [dx, r.x + r.w - a.x], [-dy, a.y - r.y], [dy, r.y + r.h - a.y]]) {
+    if (Math.abs(p) < EPS) {
+      if (q <= EPS) return null;
+      continue;
+    }
+    const t = q / p;
+    if (p < 0) t0 = Math.max(t0, t);
+    else t1 = Math.min(t1, t);
+  }
+  return t1 - t0 > EPS ? [t0, t1] : null;
+}
+
+/** Whether segment a-b runs through the inside of rectangle `r`. */
+const segmentEnters = (a, b, r) => !!insideInterval(a, b, r);
+
+/** The parameter intervals of segment a-b outside every open rectangle in
+ *  `rects`, in order. */
+function outsideIntervals(a, b, rects) {
+  let kept = [[0, 1]];
+  for (const r of rects) {
+    const cut = insideInterval(a, b, r);
+    if (!cut) continue;
+    kept = kept.flatMap(([s, e]) => [[s, Math.min(e, cut[0])], [Math.max(s, cut[1]), e]].filter(([u, v]) => v - u > EPS));
+  }
+  return kept;
+}
+
+const lerp = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+const samePoint = (a, b) => Math.abs(a.x - b.x) < EPS && Math.abs(a.y - b.y) < EPS;
+
+/** The polyline `points` with what lies inside `rects` cut out: the
+ *  polylines left, each { points, first, last } where `first`/`last` say
+ *  whether that end is the polyline's own. */
+function polylineOutside(points, rects) {
+  const pieces = [];
+  let open = null;
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1]; const b = points[i];
+    for (const [s, e] of outsideIntervals(a, b, rects)) {
+      const from = lerp(a, b, s); const to = lerp(a, b, e);
+      if (open && s < EPS && samePoint(open.points.at(-1), from)) open.points.push(to);
+      else {
+        if (open) pieces.push(open);
+        open = { points: [from, to], first: i === 1 && s < EPS, last: false };
+      }
+      open.last = i === points.length - 1 && e > 1 - EPS;
+    }
+    // A cut ends the piece.
+    if (open && !samePoint(open.points.at(-1), b)) {
+      pieces.push(open);
+      open = null;
+    }
+  }
+  if (open) pieces.push(open);
+  return pieces;
+}
+
+/** The visible outline of a stacked box's copies: segments [{ a, b }], each
+ *  copy's edges less what the copies in front of it cover. */
+function stackOutline(rect, stack) {
+  const rects = stackRects(rect, stack);
+  const segments = [];
+  for (let k = 1; k < rects.length; k++) {
+    const { x, y, w, h } = rects[k];
+    const corners = [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
+    for (let i = 0; i < 4; i++) {
+      const a = corners[i]; const b = corners[(i + 1) % 4];
+      for (const [s, e] of outsideIntervals(a, b, rects.slice(0, k))) segments.push({ a: lerp(a, b, s), b: lerp(a, b, e) });
+    }
+  }
+  return segments;
+}
+
+/** `segments` chained end to end into polylines, so a corner is one joined
+ *  stroke rather than two capped ones. */
+function joinSegments(segments) {
+  const left = segments.map((s) => [s.a, s.b]);
+  const lines = [];
+  while (left.length) {
+    const line = left.pop();
+    for (let grown = true; grown;) {
+      grown = false;
+      for (let i = 0; i < left.length; i++) {
+        const [a, b] = left[i];
+        if (samePoint(line.at(-1), a)) line.push(b);
+        else if (samePoint(line.at(-1), b)) line.push(a);
+        else if (samePoint(line[0], b)) line.unshift(a);
+        else if (samePoint(line[0], a)) line.unshift(b);
+        else continue;
+        left.splice(i, 1);
+        grown = true;
+        break;
+      }
+    }
+    lines.push(line);
+  }
+  return lines;
+}
+
+/** A box annotation's rectangle. */
+const boxRect = (box) => ({
+  x: Math.min(box.anchor.x, box.end.x),
+  y: Math.min(box.anchor.y, box.end.y),
+  w: Math.abs(box.end.x - box.anchor.x),
+  h: Math.abs(box.end.y - box.anchor.y),
+});
+
+/** Every stacked box of `circuit`: [{ box, rect, stack, rects }]. */
+function stackedBoxes(circuit) {
+  const out = [];
+  for (const label of circuit.labels.values()) {
+    if (label.kind !== 'box' || !label.stack) continue;
+    const rect = boxRect(label);
+    out.push({ box: label, rect, stack: label.stack, rects: stackRects(rect, label.stack) });
+  }
+  return out;
+}
+
+const onEdge = (p, r) => {
+  const inX = p.x > r.x - EPS && p.x < r.x + r.w + EPS;
+  const inY = p.y > r.y - EPS && p.y < r.y + r.h + EPS;
+  return inX && inY && (Math.abs(p.x - r.x) < EPS || Math.abs(p.x - r.x - r.w) < EPS || Math.abs(p.y - r.y) < EPS || Math.abs(p.y - r.y - r.h) < EPS);
+};
+
+const sameStep = (s, t) => s.copies === t.copies && s.dx === t.dx && s.dy === t.dy;
+
+/** How far past the last copy a fan's diagonal is. */
+const FAN_CLEAR = GRID;
+
+/** Where a wire piece meets a stack: the end `at` on its front edge, `out`,
+ *  the unit direction the wire leaves it in, and `reach`, how far out the
+ *  fan's diagonal starts. */
+function crossing(points, atStart, side) {
+  const at = atStart ? points[0] : points.at(-1);
+  const next = atStart ? points.find((p) => !samePoint(p, at)) : [...points].reverse().find((p) => !samePoint(p, at));
+  if (!next) return null;
+  const len = Math.hypot(next.x - at.x, next.y - at.y);
+  const out = { x: (next.x - at.x) / len, y: (next.y - at.y) / len };
+  // The diagonal a cell clear of the stack at both ends: on a side the
+  // copies stand out on, past the last; on a side they hide behind the box,
+  // its far end a cell from the box. As far as the wire runs straight.
+  const along = Math.abs(out.x * side.stack.dx + out.y * side.stack.dy);
+  return { at, out, reach: Math.min(side.stack.copies * along + FAN_CLEAR, len) };
+}
+
+/** A fan at `c` (crossing) into stack `side`: the diagonal along the step a
+ *  reach out, and one short wire from it into each copy, cut where a nearer
+ *  copy covers it. */
+function fanLines(c, side) {
+  const { copies, dx, dy } = side.stack;
+  const from = { x: c.at.x + c.out.x * c.reach, y: c.at.y + c.out.y * c.reach };
+  const far = { x: from.x + copies * dx, y: from.y + copies * dy };
+  const lines = [];
+  let last = null;
+  for (let k = 1; k <= copies; k++) {
+    const drop = [{ x: from.x + k * dx, y: from.y + k * dy }, { x: c.at.x + k * dx, y: c.at.y + k * dy }];
+    for (const part of polylineOutside(drop, side.rects.slice(0, k))) {
+      if (k === copies && part.first) last = part.points;
+      else lines.push(part.points);
+    }
+  }
+  // The last copy's wire and the diagonal turn one corner, so it does not
+  // poke out; the others end on the diagonal.
+  lines.push(last ? [...[...last].reverse().slice(0, -1), far, from] : [far, from]);
+  return lines;
+}
+
+/** The pieces of `paths` outside the stacked boxes, each with the stacks
+ *  its ends are on: [{ branch, piece, from, to }]. */
+function stackPieces(paths, stacks) {
+  const fronts = stacks.map((s) => s.rect);
+  const at = (p) => stacks.find((s) => onEdge(p, s.rect)) || null;
+  const out = [];
+  paths.forEach((path, branch) => {
+    if (!path || path.length < 2) return;
+    for (const piece of polylineOutside(path, fronts)) out.push({ branch, piece, from: at(piece.points[0]), to: at(piece.points.at(-1)) });
+  });
+  return out;
+}
+
+/** The stacked boxes a net's `paths` can fan into: those a piece of it
+ *  enters, on any side, unless it runs on to a stack it is repeated to. */
+function fanStacks(circuit, paths, stacks = stackedBoxes(circuit)) {
+  const found = new Set();
+  for (const { piece, from, to } of stackPieces(paths, stacks)) {
+    if (from && to && from !== to && sameStep(from.stack, to.stack)) continue;
+    if (from && crossing(piece.points, true, from)) found.add(from.box);
+    if (to && to !== from && crossing(piece.points, false, to)) found.add(to.box);
+  }
+  return [...found];
+}
+
+/**
+ * The repeated wires of one net's drawn `paths` (net.paths()): its pieces
+ * outside every stacked box that run from a stack to a stack of the same
+ * step and copy count, or from a stack to a free wire end, each shifted once
+ * per copy and cut where a nearer copy of either end's stack covers it; and
+ * the fans into the stacks named in `fans` (box ids, `Net#fans`). Returns
+ * [{ branch, points, start, end, fan }], `start`/`end` true where the echo
+ * keeps the path's own end (and so its arrowhead), `fan` on a fan's lines,
+ * whose ends meet other lines and are drawn flush.
+ */
+function wireEchoes(circuit, paths, stacks = stackedBoxes(circuit), fans = []) {
+  if (!stacks.length) return [];
+  let pins = null;
+  const isPin = (p) => {
+    if (!pins) {
+      pins = new Set();
+      for (const c of circuit.components.values()) for (const t of c.worldTerminals()) pins.add(`${t.x},${t.y}`);
+    }
+    return pins.has(`${p.x},${p.y}`);
+  };
+  // A path end met by no other path of the net and no pin is free.
+  const ends = new Map();
+  for (const path of paths) for (const p of [path[0], path.at(-1)]) if (p) ends.set(`${p.x},${p.y}`, (ends.get(`${p.x},${p.y}`) || 0) + 1);
+  const touches = (p) => paths.some((path) => path.some((q, i) => i > 0 && i < path.length - 1 && samePoint(p, q)));
+  const isFree = (p) => ends.get(`${p.x},${p.y}`) === 1 && !touches(p) && !isPin(p);
+  const fanned = (side) => side && fans.includes(side.box.id);
+  const echoes = [];
+  for (const { branch, piece, from, to } of stackPieces(paths, stacks)) {
+    const head = piece.points[0]; const tail = piece.points.at(-1);
+    let sides = null;
+    if (from && to) {
+      if (from !== to && sameStep(from.stack, to.stack)) sides = [from, to];
+    } else if ((from && !fanned(from)) || (to && !fanned(to))) {
+      const loose = from ? (piece.last && tail) : (piece.first && head);
+      if (loose && isFree(loose)) sides = [from || to];
+    }
+    if (sides) {
+      const { copies, dx, dy } = sides[0].stack;
+      for (let k = 1; k <= copies; k++) {
+        const shifted = piece.points.map((p) => ({ x: p.x + k * dx, y: p.y + k * dy }));
+        const covers = sides.flatMap((s) => s.rects.slice(0, k));
+        for (const part of polylineOutside(shifted, covers)) {
+          echoes.push({
+            branch,
+            points: part.points,
+            start: part.first && piece.first && !from,
+            end: part.last && piece.last && !to,
+          });
+        }
+      }
+      continue;
+    }
+    for (const [side, atStart] of [[from, true], [to, false]]) {
+      if (!fanned(side) || (!atStart && side === from)) continue;
+      const c = crossing(piece.points, atStart, side);
+      if (c) for (const points of fanLines(c, side)) echoes.push({ branch, points, start: false, end: false, fan: true });
+    }
+  }
+  return echoes;
+}
+
+__exports.STACK_DEFAULT = STACK_DEFAULT;
+__exports.STACK_MAX_COPIES = STACK_MAX_COPIES;
+__exports.STACK_MAX_STEP = STACK_MAX_STEP;
+__exports.segmentEnters = segmentEnters;
+__exports.FAN_CLEAR = FAN_CLEAR;
+};
+
 __modules["src/core/bus.js"] = function (__require, __exports) {
 __exports.busBits = busBits;
 __exports.netNameParts = netNameParts;
@@ -22712,6 +23038,7 @@ let addTimingDiagram, existingTimingDiagram, timingBeatBands, timingPhaseNamed, 
 let addTerminalStubs; __bind(() => { ({ addTerminalStubs } = __require("src/core/stubs.js")); });
 let SYNTHESIS_GATES, SYNTHESIS_STYLES, drawSynthesis, gateSummary, signalNames, synthesizeLogic; __bind(() => { ({ SYNTHESIS_GATES, SYNTHESIS_STYLES, drawSynthesis, gateSummary, signalNames, synthesizeLogic } = __require("src/core/analysis/logic-synthesis.js")); });
 let addBoxAround; __bind(() => { ({ addBoxAround } = __require("src/core/wrap-box.js")); });
+let STACK_DEFAULT, stackError; __bind(() => { ({ STACK_DEFAULT, stackError } = __require("src/core/box-stack.js")); });
 let addPartsTable, partsTableParts; __bind(() => { ({ addPartsTable, partsTableParts } = __require("src/core/parts-table.js")); });
 let RENUMBER_ORDERS, renumberParts; __bind(() => { ({ RENUMBER_ORDERS, renumberParts } = __require("src/core/renumber.js")); });
 let swapCandidates, swapComponentType; __bind(() => { ({ swapCandidates, swapComponentType } = __require("src/core/swap.js")); });
@@ -22725,6 +23052,7 @@ let parsePageGuide; __bind(() => { ({ parsePageGuide } = __require("src/core/pag
 let findInLabels, replaceInLabels; __bind(() => { ({ findInLabels, replaceInLabels } = __require("src/core/label-search.js")); });
 let normalizeNotes, notesMarkdown; __bind(() => { ({ normalizeNotes, notesMarkdown } = __require("src/core/notes.js")); });
 let checkpointHistory, historyEntries, historyEntryState, historyText, pinHistoryEntry, removeHistoryEntry, settledHistory, unpinHistoryEntry; __bind(() => { ({ checkpointHistory, historyEntries, historyEntryState, historyText, pinHistoryEntry, removeHistoryEntry, settledHistory, unpinHistoryEntry } = __require("src/core/save-history.js")); });
+
 
 
 
@@ -22848,6 +23176,7 @@ const FLAG_ARITY = {
   gates: 1,
   'max-inputs': 1,
   print: 0,
+  offset: 1,
 };
 
 const SYNTHESIZE_USAGE = 'usage: synthesize logic IN ... OUT=VALUES ... [--style and-or|nand|or-and|nor] [--gates inverter,and,nand,or,nor] [--max-inputs 2|3] [--at X Y] [--print]';
@@ -23263,7 +23592,8 @@ function commandHelp() {
     '                                   without markup TEXT looks through it (M1 finds M_{1}); --regex matches the text as written',
     '  replace FIND WITH [--case] [--regex] - replace FIND in all of them, through each one\'s own rename; all or nothing ("" for WITH deletes; $1 with --regex)',
     '  nets                           - list nets with terminals and length',
-    '  net <id> add|drop|name|label|bitcount|rm|segment-rm ... - manage a net',
+    '  net <id> add|drop|name|label|bitcount|fan|rm|segment-rm ... - manage a net',
+    '  net <id> fan BOX on|off        - the net fans into stacked box BOX: a diagonal a cell out, a short wire into each copy',
     '  net <id> bitcount on|off       - show a bus net\'s bit count beside its slashes',
     '                                   net N1 add R1.a ; net N1 drop R2.b ;',
     '                                   net N1 name OUT ; net N1 rm',
@@ -23277,6 +23607,7 @@ function commandHelp() {
     '  annotation join ID ID ...      - join line annotations that meet end to end or share a stretch into one line',
     '  annotation vertex-rm ID N      - remove vertex N (from 0) of a line or arrow',
     '  annotation plotcolors PLOT on|off - a plot\'s traces in their colors, or in black told apart by dash (a new plot\'s)',
+    '  annotation stack BOX N|off [--offset DX,DY] - N copies of a box\'s outline behind it, DX,DY apart (20,-20); wires between stacks repeat',
     '  list                           - list components',
     '  state                          - full JSON state',
     '  bounds                         - drawing extents',
@@ -24340,6 +24671,24 @@ function annotationCommand(circuit, pos, result, flags = {}) {
     circuit.setPlotTraceColors(box, state === 'on');
     return result(state === 'on' ? `${box.id}: traces in their colors` : `${box.id}: traces in black, told apart by dash`, box.toJSON(), true);
   }
+  if (op === 'stack') {
+    const box = circuit.labels.get(pos[1]);
+    const usage = 'usage: annotation stack BOX N|off [--offset DX,DY]';
+    if (!box || pos.length !== 3) throw new Error(usage);
+    if (box.kind !== 'box' || box.plot || box.image || box.table) throw new Error(`"${box.id}" is not a plain box`);
+    if (pos[2] === 'off') {
+      const changed = circuit.setBoxStack(box, null);
+      return result(`${box.id}: not stacked`, box.toJSON(), changed);
+    }
+    const copies = Number(pos[2]);
+    const [dx, dy] = flags.offset ? String(flags.offset[0]).split(',').map(Number)
+      : box.stack ? [box.stack.dx, box.stack.dy] : [STACK_DEFAULT.dx, STACK_DEFAULT.dy];
+    const stack = { copies, dx, dy };
+    const problem = stackError(stack);
+    if (problem) throw new Error(`${problem}; ${usage}`);
+    const changed = circuit.setBoxStack(box, stack);
+    return result(`${box.id}: stacked, ${copies} ${copies === 1 ? 'copy' : 'copies'} ${dx},${dy} apart`, box.toJSON(), changed);
+  }
   if (op === 'vertex-rm') {
     const label = circuit.labels.get(pos[1]);
     if (!label || !['arrow', 'line'].includes(label.kind)) throw new Error(`unknown line or arrow "${pos[1]}"`);
@@ -24348,7 +24697,7 @@ function annotationCommand(circuit, pos, result, flags = {}) {
     if (!label.removeVertex(index)) throw new Error(`cannot remove vertex ${index} of ${label.id}: a line keeps two distinct points and an arrow two cells of length`);
     return result(`removed vertex ${index} of ${label.id}`, label.toJSON(), true);
   }
-  throw new Error('usage: annotation add|rename|move|align|rm|vertex-rm|plotcolors|list ...');
+  throw new Error('usage: annotation add|rename|move|align|rm|vertex-rm|plotcolors|stack|list ...');
 }
 
 /** A 1-based beat number from a command, as a 0-based index. */
@@ -24463,6 +24812,12 @@ function netCommand(circuit, pos, result) {
     const shown = circuit.setBusCountShown(net, pos[2] === 'on');
     return result(`net ${net.id} bit count ${shown ? 'shown' : 'hidden'}`, net.toJSON(), true);
   }
+  if (op === 'fan') {
+    const box = circuit.labels.get(pos[2]);
+    if (!box || !['on', 'off'].includes(pos[3])) throw new Error('usage: net <id> fan BOX on|off');
+    const changed = circuit.setNetFan(net, box, pos[3] === 'on');
+    return result(`net ${net.id} ${pos[3] === 'on' ? 'fans into' : 'does not fan into'} ${box.id}`, net.toJSON(), changed);
+  }
   if (op === 'label') return netLabelCommand(circuit, [pos[2], net.id, ...pos.slice(3)], result);
   if (op === 'segment-rm') {
     const branch = Number(pos[2]);
@@ -24476,7 +24831,7 @@ function netCommand(circuit, pos, result) {
     circuit.removeNet(net);
     return result(`removed net ${net.id}`, null, true);
   }
-  throw new Error('usage: net <id> add|drop|name|label|bitcount|rm|segment-rm');
+  throw new Error('usage: net <id> add|drop|name|label|bitcount|fan|rm|segment-rm');
 }
 
 };
@@ -28529,8 +28884,10 @@ let SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeat
 let TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, parseDither, parseGain, parseLevels, readTransferFunction, transferFunctionDisplay, transferFunctionLines; __bind(() => { ({ TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, parseDither, parseGain, parseLevels, readTransferFunction, transferFunctionDisplay, transferFunctionLines } = __require("src/core/transfer-function.js")); });
 let normalizePartsTable, partsTableLayout; __bind(() => { ({ normalizePartsTable, partsTableLayout } = __require("src/core/parts-table.js")); });
 let normalizeFigure; __bind(() => { ({ normalizeFigure } = __require("src/core/figures.js")); });
+let fanStacks, normalizeStack, segmentEnters, stackRects, stackedBoxes, wireEchoes; __bind(() => { ({ fanStacks, normalizeStack, segmentEnters, stackRects, stackedBoxes, wireEchoes } = __require("src/core/box-stack.js")); });
 let PART_VALUE_ROLE, VALUE_LABEL_MODES, VALUE_TYPES, valueLabelTex; __bind(() => { ({ PART_VALUE_ROLE, VALUE_LABEL_MODES, VALUE_TYPES, valueLabelTex } = __require("src/core/part-value.js")); });
 let MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize; __bind(() => { ({ MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize } = __require("src/core/mos-size.js")); });
+
 
 
 
@@ -29981,6 +30338,8 @@ class LabelInstance {
     // A box may carry a parts table (parts-table.js), drawn from the parts
     // it lists; its box is then the table's size (syncTableBox).
     this.table = this.kind === 'box' && opts.table ? normalizePartsTable(opts.table) : null;
+    // A plain box may be stacked (box-stack.js): copies of its outline behind it.
+    this.stack = this.kind === 'box' && !this.plot && !this.image && !this.table ? normalizeStack(opts.stack) : null;
     // A timing diagram's name or wave (timing-diagram.js) remembers its row.
     this.timing = normalizeTiming(opts.timing);
     // What a tool annotated is a figure (figures.js): its identity.
@@ -30357,6 +30716,7 @@ class LabelInstance {
       if (this.table) this.syncTableBox();
       // A timing diagram's break reaches past what it cuts.
       if (this.timing?.part === 'break') return rectUnion([rectFromPoints([this.anchor, this.end]), this.timingBreak().rect]);
+      if (this.stack) return rectUnion(stackRects(rectFromPoints([this.anchor, this.end]), this.stack));
       return rectFromPoints([this.anchor, this.end]);
     }
     const b = this.bbox();
@@ -30656,6 +31016,7 @@ class LabelInstance {
       ...(this.plot ? { plot: normalizePlot(this.plot) } : {}),
       ...(this.image ? { image: { ...this.image } } : {}),
       ...(this.table ? { table: normalizePartsTable(this.table) } : {}),
+      ...(this.stack ? { stack: { ...this.stack } } : {}),
       ...(this.timing ? { timing: { ...this.timing } } : {}),
       ...(this.figure ? { figure: { ...this.figure } } : {}),
       ...(this.columns ? { columns: this.columns } : {}),
@@ -30997,6 +31358,8 @@ class Net {
     /** A bus net's bit-count labels: { offsets: { slashKey: {x,y} } } beside
      *  its slashes (bus.js), or null when they are not shown. */
     this.busCount = normalizeBusCount(opts.busCount);
+    /** The stacked boxes (their ids) this net fans into (box-stack.js). */
+    this.fans = Array.isArray(opts.fans) ? [...new Set(opts.fans.filter((id) => typeof id === 'string' && id))] : [];
     /** Ordered list of {comp, term} terminal references. */
     this.terminals = [];
     /** Explicit authorization for authored diagonal segments. */
@@ -31107,6 +31470,7 @@ class Net {
       preserveEmpty: this.preserveEmpty,
       ...(this.analysis.role || this.analysis.acGround ? { analysis: { ...this.analysis } } : {}),
       ...(this.busCount ? { busCount: normalizeBusCount(this.busCount) } : {}),
+      ...(this.fans.length ? { fans: [...this.fans] } : {}),
       terminals: this.terminals.map((t) => ({ ...t })),
       allowDiagonal: this.allowDiagonal,
       route: this.route ? this.route.map((p) => ({ ...p })) : null,
@@ -32999,6 +33363,71 @@ class Circuit {
   /** Draw a plot's traces in their colors (`on`) or in black, told apart by
    *  dash. Its legend moves aside by the room its line samples take in
    *  black, and back; its notes stay. Returns whether anything changed. */
+  /** Stack a plain box annotation (box-stack.js), or with null unstack it.
+   *  Returns whether it changed. */
+  setBoxStack(box, stack) {
+    if (box?.kind !== 'box' || box.plot || box.image || box.table) throw new Error(`"${box?.id}" is not a plain box`);
+    const next = stack ? normalizeStack(stack) : null;
+    if (stack && !next) throw new Error(`not a stack: ${JSON.stringify(stack)}`);
+    const same = (a, b) => (!a && !b) || (a && b && a.copies === b.copies && a.dx === b.dx && a.dy === b.dy);
+    if (same(box.stack, next)) return false;
+    // A stack reads as one solid; a dashed box turns solid when stacked.
+    if (next && !box.stack && box.style.lineStyle === 'dashed') box.style.lineStyle = 'solid';
+    const captions = this._stackCaptions(box);
+    box.stack = next;
+    this._placeStackCaptions(box, captions);
+    return true;
+  }
+
+  /** The captions above a box (or its stack): its child labels whose box
+   *  ends at its top. */
+  _stackCaptions(box) {
+    const top = rectUnion(stackRects(box.bbox(), box.stack)).y;
+    return [...this.labels.values()].filter((child) => child.parent === box.id && child.bbox().y + child.bbox().h <= top + GRID / 2);
+  }
+
+  /** Put `captions` above the box's stack: centered over it, or slid along
+   *  it, a cell at a time, clear of the wires and fans there. */
+  _placeStackCaptions(box, captions) {
+    if (!captions.length) return;
+    const reach = rectUnion(stackRects(box.bbox(), box.stack));
+    const stacks = stackedBoxes(this);
+    const lines = [];
+    for (const net of this.nets.values()) {
+      const paths = net.paths();
+      lines.push(...paths, ...wireEchoes(this, paths, stacks, net.fans).map((echo) => echo.points));
+    }
+    const clear = (r) => lines.every((line) => line.every((p, i) => !i || !segmentEnters(line[i - 1], p, r)));
+    for (const child of captions) {
+      const h = child.rowHeight() * GRID;
+      // Its box's foot on or above the stack's top.
+      const y = Math.floor((reach.y - h / 2) / GRID) * GRID;
+      const center = snap(reach.x + reach.w / 2);
+      const tries = [0];
+      for (let d = GRID; d <= reach.w / 2 + GRID * 4; d += GRID) tries.push(d, -d);
+      const x = tries.map((d) => center + d).find((cx) => {
+        child.moveTo(cx, y);
+        return clear(child.inkRect());
+      }) ?? center;
+      child.moveTo(x, y);
+    }
+  }
+
+  /** Fan `net` into the stacked box `box` (box-stack.js), or stop. Returns
+   *  whether it changed; a net that does not enter that stack cannot fan
+   *  into it. */
+  setNetFan(netOrId, box, on) {
+    const net = this._resolveNet(netOrId);
+    if (!box?.stack) throw new Error(`"${box?.id}" is not a stacked box`);
+    const has = net.fans.includes(box.id);
+    if (has === !!on) return false;
+    if (on && !fanStacks(this, net.paths()).includes(box)) throw new Error(`net ${net.name || net.id} does not enter ${box.id}`);
+    const captions = this._stackCaptions(box);
+    net.fans = on ? [...net.fans, box.id] : net.fans.filter((id) => id !== box.id);
+    this._placeStackCaptions(box, captions);
+    return true;
+  }
+
   setPlotTraceColors(box, on) {
     if (!box?.plot) throw new Error(`"${box?.id}" is not a plot`);
     if (!box.style.blackTraces === !!on) return false;
@@ -35791,11 +36220,15 @@ class Circuit {
     const rects = [];
     for (const c of this.components.values()) rects.push(c.inkRectWorld());
     for (const label of this.labels.values()) if (!labels || labels(label)) rects.push(label.inkRect());
+    const stacks = stackedBoxes(this);
     for (const net of this.nets.values()) {
-      for (const path of net.paths()) {
+      const paths = net.paths();
+      for (const path of paths) {
         if (path.length === 1) rects.push(rectFromPoints(path));
         for (let i = 1; i < path.length; i++) rects.push(rectFromPoints([path[i - 1], path[i]]));
       }
+      // A wire repeated behind stacked boxes (box-stack.js).
+      for (const echo of wireEchoes(this, paths, stacks, net.fans)) rects.push(rectFromPoints(echo.points));
     }
     return rects;
   }
@@ -35902,6 +36335,7 @@ class Circuit {
         drawOrder: n.drawOrder,
         wireStyles: n.wireStyles,
         busCount: n.busCount,
+        fans: n.fans,
         allowDiagonal: n.allowDiagonal === true,
         preserveEmpty: !!n.preserveEmpty || !n.terminals?.length,
       });
@@ -35965,6 +36399,7 @@ class Circuit {
           plot: l.plot || null,
           image: l.image || null,
           table: l.table || null,
+          stack: l.stack || null,
           timing: l.timing || null,
           figure: l.figure || null,
           columns: l.columns || null,
@@ -38515,6 +38950,8 @@ let TRANSFER_FUNCTION_TYPES; __bind(() => { ({ TRANSFER_FUNCTION_TYPES } = __req
 let normalizePageGuide, pageGuideFrame; __bind(() => { ({ normalizePageGuide, pageGuideFrame } = __require("src/core/page-guide.js")); });
 let bodeFigure, locusFigure, responseFigure, stepFigure, swingFigure; __bind(() => { ({ bodeFigure, locusFigure, responseFigure, stepFigure, swingFigure } = __require("src/core/bode-figure.js")); });
 let mathRuns; __bind(() => { ({ mathRuns } = __require("src/core/math-text.js")); });
+let joinSegments, stackOutline, stackedBoxes, wireEchoes; __bind(() => { ({ joinSegments, stackOutline, stackedBoxes, wireEchoes } = __require("src/core/box-stack.js")); });
+
 
 
 
@@ -39294,7 +39731,12 @@ function shapeAnnotationSvg(label, opacity = '') {
   }
   if (label.kind === 'box') {
     const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
-    return `<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" fill="none"${opacity} ${attrs}/>`;
+    const w = Math.abs(b.x - a.x); const h = Math.abs(b.y - a.y);
+    const rect = `<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(w)}" height="${fmt(h)}" fill="none"${opacity} ${attrs}/>`;
+    if (!label.stack) return rect;
+    // A stack's copies behind it, each where the nearer ones leave it showing.
+    const d = joinSegments(stackOutline({ x, y, w, h }, label.stack)).map(polylineD).join(' ');
+    return `${rect}<path class="box-stack" d="${d}" fill="none"${opacity} ${attrs}/>`;
   }
 }
 /** Stroke widths, dashes, and opacities of a plot's parts, in drawing units. */
@@ -39764,6 +40206,7 @@ function svgString(circuit, opts = {}) {
     }
   }
   const UNPAINTED = ' stroke-opacity="0"';
+  const stacks = stackedBoxes(circuit);
   let pinInsetMap = null;
   const pinInsets = () => (pinInsetMap ||= bodyEdgePinInsets(circuit));
   const signalPins = signalInputPins(circuit);
@@ -39828,6 +40271,17 @@ function svgString(circuit, opts = {}) {
         parts.push(`<path class="wire-managed" d="${paintedD}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="${i}" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}, segment ${i}`)}" ${styleAttrs(segmentStyle, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
         parts.push(arrowheadsSvg(geometry.heads, segmentStyle.color, opacity));
       }
+    }
+    // Between stacked boxes the wire is repeated, once per copy, or fans
+    // into a stack (box-stack.js).
+    for (const echo of wireEchoes(circuit, paths, stacks, net.fans)) {
+      const ends = arrowheadEnds(netStyle?.arrowhead);
+      const arrowhead = ends.start && echo.start ? (ends.end && echo.end ? 'both' : 'start') : ends.end && echo.end ? 'end' : 'none';
+      let svg = styledPolylineSvg(echo.points, { ...(netStyle || {}), arrowhead }, 'wire', 'none', opacity);
+      // A fan's lines end on other lines: flush ends, a cut corner, nothing
+      // poking past them.
+      if (echo.fan) svg = svg.replace(/stroke-linecap="[^"]*"/, 'stroke-linecap="butt"').replace(/stroke-linejoin="[^"]*"/, 'stroke-linejoin="bevel"');
+      parts.push(`<g class="wire-echo" pointer-events="none">${svg}</g>`);
     }
     // A bus (D[7:0], D<7:0>) carries a slash at each pin on it (bus.js), solid
     // and in the wire's own color.
@@ -59993,6 +60447,7 @@ let shortPlacementLabel; __bind(() => { ({ shortPlacementLabel } = __require("sr
 let swapCandidates; __bind(() => { ({ swapCandidates } = __require("src/core/swap.js")); });
 let appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename; __bind(() => { ({ appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename } = __require("src/web/side-panel.js")); });
 let busWidth, netNamesConnect; __bind(() => { ({ busWidth, netNamesConnect } = __require("src/core/bus.js")); });
+let STACK_DEFAULT, fanStacks; __bind(() => { ({ STACK_DEFAULT, fanStacks } = __require("src/core/box-stack.js")); });
 let handleStyleControlClick, selectionStyleState, styleDefaults, syncStyleControls, wireStyleValue; __bind(() => { ({ handleStyleControlClick, selectionStyleState, styleDefaults, syncStyleControls, wireStyleValue } = __require("src/web/style-controls.js")); });
 let activateCopy, activateMove, annotationGeometryAt, commit, deleteSelection, namedGroupNets, pickAt, pickLabel, pickWire, render, restackSelected, selectedComps, selectedTransform, setLabelSelection, setSelection, supplyBarGroup, supplyBarHit, syncSelectedWire; __bind(() => { ({ activateCopy, activateMove, annotationGeometryAt, commit, deleteSelection, namedGroupNets, pickAt, pickLabel, pickWire, render, restackSelected, selectedComps, selectedTransform, setLabelSelection, setSelection, supplyBarGroup, supplyBarHit, syncSelectedWire } = __require("src/web/main.js")); });
 let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); });
@@ -60001,6 +60456,7 @@ let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); 
  * selection, style, switch, signal-flow, and small-signal submenus, and the
  * panel rows' renames it offers.
  */
+
 
 
 
@@ -60803,6 +61259,7 @@ function appendContextActions(menu, target) {
     const lines = selectedLines();
     if (target.value.kind === 'line' && lines.length > 1) appendContextItem(group, `Join ${lines.length} lines`, joinSelectedLines);
     if (target.value.plot) appendPlotColorsItem(group, target.value);
+    appendBoxStackMenu(group, target.value);
     appendBeatContextItems(group, target);
   } else if (target.kind === 'net' || target.kind === 'wire') {
     const net = contextNet(target);
@@ -60814,6 +61271,7 @@ function appendContextActions(menu, target) {
         logLine(`${shown ? 'hid' : 'showing'} the bit count of ${net.name}`, 'status');
       }, { active: shown });
     }
+    appendFanItems(group, net);
   }
   if (target.kind !== 'net' && target.kind !== 'wire') {
     appendContextItem(group, 'Move', () => activateMove('connected'), { shortcut: 'm' });
@@ -60848,6 +61306,43 @@ function appendPlotColorsItem(group, box) {
     commit(() => editor.circuit.setPlotTraceColors(box, !colored));
     logLine(colored ? 'the plot\'s traces in black, told apart by dash' : 'the plot\'s traces in their colors', 'status');
   }, { active: colored });
+}
+
+/** Stack: copies of a plain box's outline behind it (box-stack.js), and
+ *  which way they go. */
+function appendBoxStackMenu(group, box) {
+  if (box.kind !== 'box' || box.plot || box.image || box.table) return;
+  const stack = box.stack;
+  const set = (next, text) => {
+    commit(() => editor.circuit.setBoxStack(box, next));
+    logLine(text, 'status');
+  };
+  appendContextSubmenu(group, 'Stack', (submenu) => {
+    appendContextItem(submenu, 'None', () => set(null, 'box not stacked'), { active: !stack });
+    for (const copies of [1, 2, 3, 4]) {
+      const step = stack || STACK_DEFAULT;
+      appendContextItem(submenu, `${copies} ${copies === 1 ? 'copy' : 'copies'}`, () => set({ ...step, copies }, `box stacked, ${copies} ${copies === 1 ? 'copy' : 'copies'}`), { active: stack?.copies === copies });
+    }
+    const step = Math.abs(stack?.dx || STACK_DEFAULT.dx);
+    for (const [label, dx, dy] of [['Up and right', step, -step], ['Down and right', step, step], ['Up and left', -step, -step], ['Down and left', -step, step]]) {
+      appendContextItem(submenu, label, () => set({ ...stack, dx, dy }, `stack ${label.toLowerCase()}`), { disabled: !stack, active: stack?.dx === dx && stack?.dy === dy });
+    }
+  });
+}
+
+/** Fan in/out: for each stacked box the wire enters, a short wire into
+ *  every copy. */
+function appendFanItems(group, net) {
+  const boxes = fanStacks(editor.circuit, net.paths());
+  for (const box of boxes) {
+    const on = net.fans.includes(box.id);
+    const caption = [...editor.circuit.labels.values()].find((label) => label.parent === box.id)?.text;
+    const label = boxes.length > 1 ? `Fan in/out (${caption || box.id})` : 'Fan in/out';
+    appendContextItem(group, label, () => {
+      commit(() => editor.circuit.setNetFan(net, box, !on));
+      logLine(`${net.name || net.id} ${on ? 'no longer fans into' : 'fans into'} the stack`, 'status');
+    }, { active: on });
+  }
 }
 
 /** Delete, the destructive action, last and in a group of its own. */
@@ -61707,6 +62202,7 @@ function pasteClipboard({ recordHistory = true, connect = true } = {}) {
           ...(l.plot ? { plot: l.plot } : {}),
           ...(l.image ? { image: l.image } : {}),
           ...(l.table ? { table: { parts: l.table.parts && l.table.parts.map((refdes) => refMap.get(refdes) || refdes) } } : {}),
+          ...(l.stack ? { stack: l.stack } : {}),
           ...(l.curve ? { curve: true } : {}),
         });
         labelMap.set(l.id, shape.id);
@@ -84913,6 +85409,7 @@ function copyableLabelPayload(label) {
     ...(label.plot ? { plot: label.plot } : {}),
     ...(label.image ? { image: label.image } : {}),
     ...(label.table ? { table: label.table } : {}),
+    ...(label.stack ? { stack: { ...label.stack } } : {}),
     ...(label.curve ? { curve: true } : {}),
   };
 }

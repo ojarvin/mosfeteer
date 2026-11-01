@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { start, sleep, browserSkip } from './harness.js';
 import { amplifier, editing, modulator } from './fixtures.js';
 import { Circuit } from '../../src/core/model.js';
+import { runCommand } from '../../src/core/commands.js';
 import { COLOR_PALETTE } from '../../src/core/style.js';
 
 describe('editor chrome', { skip: browserSkip() }, () => {
@@ -425,6 +426,47 @@ describe('editor chrome', { skip: browserSkip() }, () => {
     await h.click('[data-layout-align="left"]');
     const left = (id) => h.evaluate(`${h.module('editor-state.js')}.then((m) => Math.round(m.editor.circuit.labels.get(${JSON.stringify(id)}).inkRect().x))`);
     assert.equal(await left(child.id), await left(loose.id));
+  });
+
+  test('a box\'s Stack menu draws copies of it behind and repeats the wire between stacks, one undo step', async () => {
+    const circuit = new Circuit();
+    runCommand(circuit, 'add gain A1 --at 0 0');
+    runCommand(circuit, 'add gain A2 --at 480 0');
+    runCommand(circuit, 'connect A1.out A2.in');
+    const one = runCommand(circuit, 'box A1').json.id;
+    const two = runCommand(circuit, 'box A2').json.id;
+    runCommand(circuit, `annotation stack ${two} 3`);
+    await h.evaluate(`window.__load(${JSON.stringify(circuit.toJSON())})`);
+    await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.fitView())`);
+    const box = circuit.labels.get(one).bbox();
+    await rightClick(box.x, box.y + box.h / 2);
+    const row = (text) => `[...document.querySelectorAll('.component-context-menu button')].find((b) => (b.firstChild?.textContent || '').trim() === ${JSON.stringify(text)})`;
+    await h.evaluate(`${row('Stack')}.click()`);
+    await h.evaluate(`${row('3 copies')}.click()`);
+    const stack = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.labels.get(${JSON.stringify(one)}).stack)`);
+    assert.deepEqual(await stack(), { copies: 3, dx: 20, dy: -20 });
+    await h.until(`document.querySelectorAll('#canvas .box-stack').length === 2 && document.querySelectorAll('#canvas .wire-echo').length === 3`);
+    await h.key('z', { ctrlKey: true });
+    assert.equal(await stack(), null);
+    await h.until(`document.querySelectorAll('#canvas .wire-echo').length === 0`);
+  });
+
+  test('a wire into a stack offers Fan in/out on its menu, which draws the fan', async () => {
+    const circuit = new Circuit();
+    for (const line of ['add gain A1 --at 0 0 --rot 90', 'add port VIN --at 0 -440', 'connect VIN.p A1.in']) runCommand(circuit, line);
+    const box = runCommand(circuit, 'box A1').json.id;
+    runCommand(circuit, `annotation stack ${box} 3`);
+    const top = circuit.labels.get(box).bbox().y;
+    await h.evaluate(`window.__load(${JSON.stringify(circuit.toJSON())})`);
+    await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.fitView())`);
+    await rightClick(0, top - 70);
+    const row = `[...document.querySelectorAll('.component-context-menu button')].find((b) => (b.firstChild?.textContent || '').trim() === 'Fan in/out')`;
+    await h.evaluate(`${row}.click()`);
+    const fans = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.netOfTerminal({ comp: 'A1', term: 'in' }).fans)`);
+    assert.deepEqual(await fans(), [box]);
+    await h.until(`document.querySelectorAll('#canvas .wire-echo').length === 3`);
+    await h.key('z', { ctrlKey: true });
+    assert.deepEqual(await fans(), []);
   });
 
   test('the style swatches offer every palette color, stored as its token', async () => {
