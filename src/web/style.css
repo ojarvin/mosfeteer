@@ -54,6 +54,12 @@
   --glass-border: color-mix(in srgb, var(--border) 80%, transparent);
   --glass-filter: blur(14px) saturate(1.4);
   --glass-shadow: 0 8px 28px rgba(20, 24, 34, 0.16), 0 1px 3px rgba(20, 24, 34, 0.08);
+  /* A hairline inside a glass surface: under a title bar, between menu
+     groups. */
+  --glass-rule: color-mix(in srgb, var(--border) 70%, transparent);
+  /* The window with the keyboard: an accent hairline and a soft ring. */
+  --focus-window-border: color-mix(in srgb, var(--accent) 85%, transparent);
+  --focus-window-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
   /* One type scale, one radius scale, one control height: every window,
      view, and control draws from these. */
   --font-ui: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
@@ -520,8 +526,8 @@ button:focus-visible {
 
 .toolbar-menu button {
   width: 100%;
-  height: 30px;
-  padding: 0 9px;
+  height: var(--control-h);
+  padding: 0 8px;
   background: transparent;
   border: 0;
   border-radius: var(--radius-sm);
@@ -873,8 +879,10 @@ button:disabled {
   width: min(28rem, calc(100vw - 32px));
   padding: 20px;
   color: var(--text);
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-window);
 }
@@ -1343,8 +1351,12 @@ html.dark.invert-pictures .light-picture {
 }
 
 .notes-suggestions li[aria-selected="true"] {
-  color: var(--accent);
-  background: var(--accent-dim);
+  color: var(--on-accent);
+  background: var(--accent);
+}
+
+.notes-suggestions li[aria-selected="true"] .notes-suggestion-detail {
+  color: inherit;
 }
 
 .notes-suggestion-name {
@@ -1613,7 +1625,7 @@ html.dark.invert-pictures .light-picture {
 .toolbar-menu-separator {
   height: 1px;
   margin: 3px 4px;
-  background: var(--border);
+  background: var(--glass-rule);
 }
 
 /* ----- file browser (Open / Save as / workspace folder) -------- */
@@ -1769,8 +1781,10 @@ html.dark.invert-pictures .light-picture {
   overflow: hidden;
   box-sizing: border-box;
   color: var(--text);
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-window);
 }
@@ -2081,11 +2095,14 @@ html.dark.invert-pictures .light-picture {
   max-width: calc(100% - 16px);
   max-height: calc(100% - 16px);
   color: var(--text);
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
   overflow: hidden;
   box-shadow: var(--shadow-window);
+  transition: border-color var(--motion) var(--ease-out), box-shadow var(--motion) var(--ease-out);
 }
 
 .floating-window[hidden] {
@@ -2125,34 +2142,32 @@ html.dark.invert-pictures .light-picture {
 }
 
 /* The window with the keyboard (the focus is in it, so keys go to it, not
-   to the drawing): its border and title bar in the accent. */
+   to the drawing): an accent border and ring, its title at full strength.
+   The others' titles are dim. */
 .floating-window:focus {
   outline: none;
 }
 
 .floating-window:focus-within {
-  border-color: var(--accent);
-}
-
-.floating-window:focus-within .floating-window-header {
-  background: var(--accent-tint);
+  border-color: var(--focus-window-border);
+  box-shadow: var(--focus-window-ring), var(--shadow-window);
 }
 
 .floating-window:focus-within .floating-window-title {
-  color: var(--accent);
+  color: var(--text);
 }
 
 .floating-window-header {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 8px;
-  padding: 3px 4px 3px 12px;
-  border-bottom: 1px solid var(--border);
+  gap: 6px;
+  padding: 4px 6px 4px 12px;
+  border-bottom: 1px solid var(--glass-rule);
   cursor: grab;
   touch-action: none;
   user-select: none;
-  min-height: 38px;
+  min-height: 34px;
 }
 
 .floating-window.dragging .floating-window-header {
@@ -2169,22 +2184,24 @@ html.dark.invert-pictures .light-picture {
   min-width: 0;
   margin: 0;
   overflow: hidden;
+  color: var(--text-dim);
   font-size: var(--text-md);
   font-weight: 600;
   white-space: nowrap;
   text-overflow: ellipsis;
+  transition: color var(--motion) var(--ease-out);
 }
 
 .floating-window-close {
   flex: none;
-  width: 28px;
-  height: 28px;
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
   color: var(--text-dim);
   background: transparent;
-  font: 400 var(--text-xl)/1 var(--font-ui);
+  font: 400 var(--text-lg)/1 var(--font-ui);
   cursor: pointer;
 }
 
@@ -4053,12 +4070,12 @@ button.status-chip:hover {
 }
 
 .insert-menu-group + .insert-menu-group .insert-menu-category {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--glass-rule);
 }
 
 .insert-menu-query {
   color: var(--text);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--glass-rule);
   margin-bottom: 2px;
   padding: 2px 6px 6px;
   white-space: nowrap;
@@ -4120,7 +4137,8 @@ button.status-chip:hover {
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 6px 8px;
+  min-height: var(--control-h);
+  padding: 4px 8px;
   color: inherit;
   background: transparent;
   border: 0;
@@ -4156,7 +4174,7 @@ button.status-chip:hover {
   gap: 2px;
   padding-bottom: 4px;
   margin-bottom: 2px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--glass-rule);
 }
 
 /* The last group (Delete) is set off above, not below. */
@@ -4164,7 +4182,7 @@ button.status-chip:hover {
   padding: 4px 0 0;
   margin: 2px 0 0;
   border-bottom: 0;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--glass-rule);
 }
 
 .context-menu-group + .context-menu-group.context-menu-end {
@@ -4303,8 +4321,8 @@ button.status-chip:hover {
 }
 
 .context-menu-heading {
-  border-bottom: 1px solid var(--border);
-  font-weight: 700;
+  border-bottom: 1px solid var(--glass-rule);
+  font-weight: 600;
 }
 
 .component-context-menu.opens-left .context-submenu {
@@ -4319,8 +4337,10 @@ button.status-chip:hover {
   min-width: 175px;
   padding: 4px;
   display: none;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
   box-shadow: var(--glass-shadow);
 }
@@ -4533,7 +4553,7 @@ button.off {
   width: 24px;
   height: 1px;
   margin: 3px auto;
-  background: var(--border);
+  background: var(--glass-rule);
 }
 
 :is(.mode-toolbar, .rail-flyout) .mode-control kbd {
@@ -7124,7 +7144,6 @@ body.chrome-away [data-editor-edge="right"] {
   padding: 3px 6px;
   border: 0;
   border-radius: var(--radius-sm);
-  color: var(--text);
   background: none;
   text-align: left;
   cursor: pointer;
@@ -7139,8 +7158,8 @@ body.chrome-away [data-editor-edge="right"] {
   display: inline-grid;
   flex: none;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
@@ -7156,8 +7175,8 @@ body.chrome-away [data-editor-edge="right"] {
 }
 
 .reference-button .button-icon {
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
 }
 
 .reference-viewport {
@@ -7221,8 +7240,8 @@ body.chrome-away [data-editor-edge="right"] {
   display: inline-grid;
   flex: none;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
@@ -7238,8 +7257,8 @@ body.chrome-away [data-editor-edge="right"] {
 }
 
 .floating-window-dock .button-icon {
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
 }
 
 .floating-window-dock[aria-pressed="true"] {
@@ -7256,11 +7275,23 @@ body.chrome-away [data-editor-edge="right"] {
   min-height: 6rem;
   max-width: none;
   max-height: none;
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
   border: 0;
   border-top: 1px solid var(--border);
   border-radius: 0;
   box-shadow: none;
   resize: none;
+}
+
+.side-panel > .floating-window.docked:focus-within {
+  border-color: var(--border);
+  box-shadow: none;
+}
+
+.side-panel > .floating-window.docked:focus-within .floating-window-title {
+  color: var(--accent);
 }
 
 .side-panel > .floating-window.docked[hidden] {

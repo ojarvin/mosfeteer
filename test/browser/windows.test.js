@@ -174,7 +174,8 @@ describe('floating windows', { skip: browserSkip() }, () => {
     await h.until(`!!document.querySelector('.calculator-window:not([hidden])') && !!document.querySelector('.reference-window:not([hidden])')`);
     // Back in their default places, wherever the tests before left them.
     await h.evaluate(`['.calculator-window', '.reference-window'].forEach((w) => document.querySelector(w + ' .floating-window-header').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })))`);
-    const litNow = `[...document.querySelectorAll('.floating-window:not([hidden])')].filter((w) => getComputedStyle(w.querySelector('.floating-window-header')).backgroundColor !== 'rgba(0, 0, 0, 0)').map((w) => w.className.split(' ')[1])`;
+    // Lit: the title at full strength (the body's text color), the others dim.
+    const litNow = `[...document.querySelectorAll('.floating-window:not([hidden])')].filter((w) => getComputedStyle(w.querySelector('.floating-window-title')).color === getComputedStyle(document.body).color).map((w) => w.className.split(' ')[1])`;
     // The lit windows, once they settle on `expected`.
     const lit = async (expected) => {
       await h.until(`JSON.stringify(${litNow}) === ${JSON.stringify(JSON.stringify(expected))}`).catch(() => {});
