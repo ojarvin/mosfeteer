@@ -223,6 +223,9 @@ export function fitTarget() {
   return Object.assign(target, fittedView({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, rects));
 }
 
+// Pixels kept between a fitted drawing and the pane's edges, the rail, and windows.
+const FIT_MARGIN = 24;
+
 /** What floats over the canvas and would cover a fitted drawing: the tool
  *  rail and the open floating windows, as rectangles in pane pixels. */
 function paneObstacles(paneRect, floating) {
@@ -252,7 +255,7 @@ export function fittedView(bounds, rects = []) {
   const box = { x: bounds.x, y: bounds.y, w: Math.max(1, bounds.w), h: Math.max(1, bounds.h) };
   const rail = paneRect ? paneObstacles(paneRect, [document.querySelector('.mode-toolbar')]) : [];
   const windows = paneRect ? paneObstacles(paneRect, document.querySelectorAll('.canvas-pane .floating-window')) : [];
-  const { scale, cx, cy } = fitPlacement(paneW, paneH, [...rail, ...windows], box, rects, 16, { centred: !windows.length });
+  const { scale, cx, cy } = fitPlacement(paneW, paneH, [...rail, ...windows], box, rects, FIT_MARGIN, { centred: !windows.length });
   const aspect = paneW / paneH;
   let tw = paneW / scale;
   let th = paneH / scale;
