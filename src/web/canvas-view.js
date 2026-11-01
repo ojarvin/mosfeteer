@@ -225,8 +225,7 @@ export function fitTarget() {
 
 /** What floats over the canvas and would cover a fitted drawing: the tool
  *  rail and the open floating windows, as rectangles in pane pixels. */
-function paneObstacles(paneRect) {
-  const floating = [document.querySelector('.mode-toolbar'), ...document.querySelectorAll('.canvas-pane .floating-window')];
+function paneObstacles(paneRect, floating) {
   const obstacles = [];
   for (const el of floating) {
     if (!el || el.closest('[hidden]')) continue;
@@ -243,14 +242,17 @@ function paneObstacles(paneRect) {
 /** The editor view that fits world rectangle `bounds` as F does: as large as
  *  it can be with its ink (`rects`, piece by piece; the whole rectangle when
  *  none are given) clear of the tool rail and the open windows, and at that
- *  size as near the pane's middle as it can be (`fitPlacement`). The Atlas
+ *  size as near the pane's middle as it can be (`fitPlacement`); with no
+ *  window open, on the pane's middle line. The Atlas
  *  uses it to aim at where a design will land. */
 export function fittedView(bounds, rects = []) {
   const paneRect = document.querySelector('.canvas-pane')?.getBoundingClientRect();
   const paneW = paneRect?.width || 1;
   const paneH = paneRect?.height || 1;
   const box = { x: bounds.x, y: bounds.y, w: Math.max(1, bounds.w), h: Math.max(1, bounds.h) };
-  const { scale, cx, cy } = fitPlacement(paneW, paneH, paneRect ? paneObstacles(paneRect) : [], box, rects, 16);
+  const rail = paneRect ? paneObstacles(paneRect, [document.querySelector('.mode-toolbar')]) : [];
+  const windows = paneRect ? paneObstacles(paneRect, document.querySelectorAll('.canvas-pane .floating-window')) : [];
+  const { scale, cx, cy } = fitPlacement(paneW, paneH, [...rail, ...windows], box, rects, 16, { centred: !windows.length });
   const aspect = paneW / paneH;
   let tw = paneW / scale;
   let th = paneH / scale;

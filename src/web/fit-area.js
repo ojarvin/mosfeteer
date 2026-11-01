@@ -1,8 +1,10 @@
 /**
  * Where F fits the drawing: the free part of the pane, clear of what floats
- * over it (the tool rail, open windows), that shows the drawing largest. A
- * wide drawing goes under the rail rather than beside it; with a window open
- * it goes beside the window. Pure: rectangles in, rectangle out.
+ * over it (the tool rail, open windows), that shows the drawing largest.
+ * With no window open the drawing stays on the pane's middle line, beside the
+ * rail or reaching under it where its ink clears it; with a window open a
+ * wide drawing may go under the rail, and goes beside the window. Pure:
+ * rectangles in, rectangle out.
  */
 
 /**
@@ -52,9 +54,14 @@ export function fitArea(paneW, paneH, obstacles, rangeW, rangeH, margin = 0) {
  * corner of it; at that size, as near the pane's middle as it can be. Never
  * smaller than the fit in the best free area (`fitArea`), which keeps the
  * whole extent clear and is the answer when nothing larger is.
+ * `centred` (no window open, only the rail) keeps the drawing on the pane's
+ * middle line: it moves only sideways, reaches under the rail only where its
+ * ink clears the rail there, and is never smaller than the fit beside the
+ * rail over the full height. Where no full-height room is left (a rail across
+ * the top), the rule above.
  * Returns the scale (pixels per unit) and where the extent's centre lands.
  */
-export function fitPlacement(paneW, paneH, obstacles, bounds, rects, margin = 0) {
+export function fitPlacement(paneW, paneH, obstacles, bounds, rects, margin = 0, { centred = false } = {}) {
   const w = Math.max(1, bounds.w);
   const h = Math.max(1, bounds.h);
   const bx = bounds.x + bounds.w / 2;
@@ -81,34 +88,48 @@ export function fitPlacement(paneW, paneH, obstacles, bounds, rects, margin = 0)
     return pieces.every((r) => { const s = screen(r, scale, cx, cy); return obstacles.every((o) => !hits(s, o)); });
   };
   // From the pane's middle, the least move each way that takes the ink off
-  // one obstacle.
-  const moves = (scale, cx, cy) => {
+  // one obstacle; `sideways` only left and right.
+  const moves = (scale, cx, cy, sideways) => {
     const out = [[cx, cy]];
     for (const o of obstacles) {
       const over = pieces.map((r) => screen(r, scale, cx, cy)).filter((s) => hits(s, o));
       if (!over.length) continue;
       out.push([cx + Math.max(...over.map((s) => o.x1 + margin - s.x0)), cy]);
       out.push([cx - Math.max(...over.map((s) => s.x1 - (o.x0 - margin))), cy]);
+      if (sideways) continue;
       out.push([cx, cy + Math.max(...over.map((s) => o.y1 + margin - s.y0))]);
       out.push([cx, cy - Math.max(...over.map((s) => s.y1 - (o.y0 - margin)))]);
     }
     return out;
   };
-  // Every size from the whole pane's down to the free area's, that one too:
-  // at its own size a drawing may still sit nearer the middle than the area.
-  const scales = [];
-  for (let scale = fullScale; scale > areaScale; scale *= 0.985) scales.push(scale);
-  scales.push(areaScale);
-  for (const scale of scales) {
-    let best = null;
-    for (const [cx, cy] of moves(scale, paneW / 2, paneH / 2)) {
-      if (!valid(scale, cx, cy)) continue;
-      const off = Math.hypot(cx - paneW / 2, cy - paneH / 2);
-      if (!best || off < best.off) best = { cx, cy, off };
+  // Every size from the whole pane's down to `floor`, that one too: at its
+  // own size a drawing may still sit nearer the middle than the area.
+  const search = (floor, sideways, extra = []) => {
+    const scales = [];
+    for (let scale = fullScale; scale > floor; scale *= 0.985) scales.push(scale);
+    scales.push(floor);
+    for (const scale of scales) {
+      let best = null;
+      for (const [cx, cy] of [...moves(scale, paneW / 2, paneH / 2, sideways), ...extra]) {
+        if (!valid(scale, cx, cy)) continue;
+        const off = Math.hypot(cx - paneW / 2, cy - paneH / 2);
+        if (!best || off < best.off) best = { cx, cy, off };
+      }
+      if (best) return { scale, cx: best.cx, cy: best.cy };
     }
-    if (best) return { scale, cx: best.cx, cy: best.cy };
+    return null;
+  };
+  if (centred) {
+    // The room beside the obstacles over the pane's full height.
+    const columns = obstacles.map((o) => ({ ...o, y0: 0, y1: paneH }));
+    const strip = fitArea(paneW, paneH, columns, w, h, margin);
+    if (!columns.some((o) => o.x0 < strip.x1 && o.x1 > strip.x0)) {
+      const stripScale = Math.max(1e-9, Math.min((strip.x1 - strip.x0 - margin * 2) / w, (paneH - margin * 2) / h));
+      const at = search(stripScale, true, [[(strip.x0 + strip.x1) / 2, paneH / 2]]);
+      if (at) return at;
+    }
   }
-  return fallback;
+  return search(areaScale, false) || fallback;
 }
 
 /**

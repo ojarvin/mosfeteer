@@ -72,3 +72,42 @@ test('beside an open window the ink stays clear of it, and the drawing is never 
   const area = fitArea(1200, 900, [rail, window], 1600, 1000, 16);
   assert.ok(at.scale >= Math.min((area.x1 - area.x0 - 32) / 1600, (area.y1 - area.y0 - 32) / 1000), JSON.stringify(at));
 });
+
+test('with no window open, a wide drawing stays on the middle line beside the rail rather than larger under it', () => {
+  const wide = { x: 0, y: 0, w: 4800, h: 200 };
+  const under = fitPlacement(1200, 900, [rail], wide, [wide], 16);
+  const at = fitPlacement(1200, 900, [rail], wide, [wide], 16, { centred: true });
+  assert.equal(at.cy, 450);
+  assert.ok(at.scale < under.scale, JSON.stringify({ at, under }));
+  assert.ok(at.cx - 2400 * at.scale >= rail.x1 + 16 - 0.5 && at.cx + 2400 * at.scale <= 1184 + 0.5, JSON.stringify(at));
+});
+
+test('with no window open, a drawing whose ink clears the rail on the middle line reaches under it', () => {
+  // A row along the bottom: centred, it starts left of the rail's right edge, below the rail.
+  const low = { x: 0, y: 0, w: 1600, h: 1000 };
+  const row = [{ x: 0, y: 900, w: 1600, h: 100 }, { x: 1500, y: 0, w: 100, h: 900 }];
+  const at = fitPlacement(1200, 900, [rail], low, row, 16, { centred: true });
+  assert.equal(at.cy, 450);
+  assert.equal(at.scale, Math.min(1168 / 1600, 868 / 1000));
+  assert.equal(at.cx - 800 * at.scale < rail.x1, true, JSON.stringify(at));
+});
+
+test('with no window open, ink on the rail moves the drawing sideways only', () => {
+  const at = fitPlacement(1200, 900, [rail], bounds, [bounds], 16, { centred: true });
+  assert.equal(at.cy, 450);
+  assert.ok(apart(onScreen(bounds, at), { x0: rail.x0 - 16, y0: rail.y0 - 16, x1: rail.x1 + 16, y1: rail.y1 + 16 }), JSON.stringify(at));
+});
+
+test('with a window open, centring changes nothing: the drawing may move down under the rail', () => {
+  const window = { x0: 900, y0: 40, x1: 1190, y1: 300 };
+  const wide = { x: 0, y: 0, w: 4800, h: 200 };
+  const at = fitPlacement(1200, 900, [rail, window], wide, [wide], 16);
+  assert.ok(at.cy > 450, JSON.stringify(at));
+  assert.ok(at.cx - 2400 * at.scale < rail.x1, JSON.stringify(at));
+});
+
+test('a rail across the top leaves no full-height room: the drawing moves down below it', () => {
+  const strip = { x0: 8, y0: 8, x1: 1192, y1: 52 };
+  const at = fitPlacement(1200, 900, [strip], bounds, [bounds], 16, { centred: true });
+  assert.ok(onScreen(bounds, at).y0 >= strip.y1 + 16 - 0.5, JSON.stringify(at));
+});

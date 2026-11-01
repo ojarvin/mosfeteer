@@ -237,7 +237,7 @@ describe('canvas editing', { skip: browserSkip() }, () => {
     assert.ok(layout.inkLeft >= layout.paneLeft - 1 && layout.inkRight <= layout.paneRight + 1, JSON.stringify(layout));
   });
 
-  test('F fits a wide drawing under the tool rail, and beside an open window', async () => {
+  test('F keeps a wide drawing on the middle line beside the tool rail, and beside an open window', async () => {
     const wide = new Circuit();
     for (let k = 0; k < 30; k++) runCommand(wide, `add resistor R${k} --at ${k * 160} 0 --rot 90`);
     await h.evaluate(`window.__load(${JSON.stringify(wide.toJSON())})`);
@@ -250,24 +250,25 @@ describe('canvas editing', { skip: browserSkip() }, () => {
       return { ink: { left: a.x, top: a.y, right: z.x, bottom: z.y }, rail: box(document.querySelector('.mode-toolbar')), pane: box(document.querySelector('.canvas-pane')), window: win.hidden ? null : box(win) };
     })`);
     const clear = (r, o) => r.right <= o.left + 1 || r.left >= o.right - 1 || r.bottom <= o.top + 1 || r.top >= o.bottom - 1;
-    // On a tall window the drawing clears the rail at the pane's middle, and stays there.
+    const middle = (r) => (r.top + r.bottom) / 2;
+    // On a tall window the drawing clears the rail at the pane's middle, under it.
     await h.send('Emulation.setDeviceMetricsOverride', { width: 1263, height: 1392, deviceScaleFactor: 1, mobile: false });
     await h.until(`innerHeight === 1392`);
     await h.key('f');
     await h.settle();
-    let tall = await fitted();
+    const tall = await fitted();
     await h.send('Emulation.setDeviceMetricsOverride', { width: 1400, height: 900, deviceScaleFactor: 1, mobile: false });
     await h.until(`innerHeight === 900`);
-    assert.ok(tall.ink.top >= tall.rail.bottom - 1, JSON.stringify(tall));
-    assert.ok(Math.abs((tall.ink.top + tall.ink.bottom) / 2 - (tall.pane.top + tall.pane.bottom) / 2) <= 2, JSON.stringify(tall));
+    assert.ok(tall.ink.top >= tall.rail.bottom - 1 && tall.ink.left < tall.rail.right, JSON.stringify(tall));
+    assert.ok(Math.abs(middle(tall.ink) - middle(tall.pane)) <= 2, JSON.stringify(tall));
     await h.key('f');
     await h.settle();
     let at = await fitted();
-    // Under the rail, the drawing spans the pane's width, left of the rail's right edge.
-    assert.ok(at.ink.top >= at.rail.bottom - 1, JSON.stringify(at));
-    assert.ok(at.ink.left < at.rail.right, JSON.stringify(at));
-    assert.ok(at.ink.right <= at.pane.right + 1 && at.ink.bottom <= at.pane.bottom + 1, JSON.stringify(at));
-    const under = at.ink.right - at.ink.left;
+    // The rail reaches below the middle line: the drawing stays on it, beside the rail.
+    assert.ok(at.rail.bottom > middle(at.pane), JSON.stringify(at));
+    assert.ok(Math.abs(middle(at.ink) - middle(at.pane)) <= 2, JSON.stringify(at));
+    assert.ok(at.ink.left >= at.rail.right - 1 && at.ink.right <= at.pane.right + 1, JSON.stringify(at));
+    const beside = at.ink.right - at.ink.left;
     await h.key('S', { shiftKey: true });
     await h.until(`!document.getElementById('analysis-dialog').hidden && !document.getElementById('analysis-dialog').classList.contains('docked')`);
     await h.key('f');
@@ -277,7 +278,7 @@ describe('canvas editing', { skip: browserSkip() }, () => {
     await h.until(`document.getElementById('analysis-dialog').hidden`);
     // The window stays clear of the drawing, which fits in the room left beside it.
     assert.ok(clear(at.ink, at.window) && clear(at.ink, at.rail), JSON.stringify(at));
-    assert.ok(at.ink.right - at.ink.left < under, JSON.stringify(at));
+    assert.ok(at.ink.right - at.ink.left < beside, JSON.stringify(at));
   });
 
   test('F lets the tool rail float over an empty corner of the drawing, which stays centred', async () => {
