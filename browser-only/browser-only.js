@@ -51922,8 +51922,9 @@ function atlasOpen() {
  *  floated clear of the pick (drawing units); the view; a design in
  *  flight between the desk and the screen (its depth, 1 at the screen);
  *  and where the last frame's
- *  link beams landed, with the card each landed on (screen pixels); null
- *  when closed. */
+ *  link beams landed, with the card each landed on (screen pixels); how
+ *  many images it has baked and whether it is baking more; null when
+ *  closed. */
 function atlasSnapshot() {
   if (!state) return null;
   return {
@@ -51935,6 +51936,7 @@ function atlasSnapshot() {
     flight: state.flight ? { id: state.flight.id, depth: state.flight.depth } : null,
     beams: state.beams || [],
     baked: state.baked || 0,
+    baking: !!state.baking || !!state.wanted?.length,
     accent: state.colors?.accent || null,
     tiles: state.tiles.map((tile) => {
       const entry = state.entries.get(tile.id);

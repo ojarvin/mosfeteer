@@ -13,6 +13,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # Three test files at a time: GitHub's runner is small, and each browser
-      # test file starts a Chromium of its own (npm test runs six locally).
+      # The unit tests, then the browser tests one file at a time: each starts
+      # a Chromium of its own, and GitHub's runner is small.
       - run: npm run test:ci

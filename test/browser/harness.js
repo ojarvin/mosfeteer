@@ -16,6 +16,46 @@ import { fileURLToPath } from 'node:url';
 
 const REPO = fileURLToPath(new URL('../../', import.meta.url));
 
+// node:test gives hooks no time limit (--test-timeout covers tests only), and
+// most tests start their editor in a `before` hook: every wait in start() has
+// a deadline of its own, so a stuck start fails instead of hanging the run.
+// Deadlines read a monotonic clock: a suspend or a clock change never expires
+// one early.
+const now = () => performance.now();
+const within = (promise, ms, what) => {
+  let timer;
+  return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${what}: no answer in ${ms} ms`)), ms); })])
+    .finally(() => clearTimeout(timer));
+};
+
+// Every server and browser started here, ended with this process whatever
+// way it ends, so a failed or cancelled test file leaves none behind.
+const children = new Set();
+process.once('exit', () => { for (const child of children) signal(child, 'SIGKILL'); });
+// A browser starts in a process group of its own (`detached`) and is
+// signalled as one: its renderers and helpers end with it, not after it.
+const groups = new WeakSet();
+const signal = (child, name) => {
+  try { if (groups.has(child)) process.kill(-child.pid, name); else child.kill(name); } catch { /* gone */ }
+};
+const track = (child, { group = false } = {}) => {
+  children.add(child);
+  if (group) groups.add(child);
+  child.once('exit', () => children.delete(child));
+  return child;
+};
+/** End `child`: SIGTERM, then SIGKILL if it has not gone within `ms`. Its
+ *  pipes are closed either way, so it never keeps the test process alive. */
+async function end(child, ms = 5000) {
+  if (child.exitCode === null && child.signalCode === null) {
+    const gone = new Promise((resolve) => child.once('exit', resolve));
+    signal(child, 'SIGTERM');
+    try { await within(gone, ms, 'exit'); } catch { signal(child, 'SIGKILL'); await within(gone, ms, 'exit').catch(() => {}); }
+  }
+  for (const stream of [child.stdout, child.stderr]) stream?.destroy();
+  children.delete(child);
+}
+
 // Installed before the page's own scripts: a gate on its timers, so a test can
 // make a gesture's events one moment however slowly this machine delivers
 // them. While held (gesture()), a timer that comes due waits; on release the
@@ -84,26 +124,37 @@ export async function start({ docs = {}, width = 1400, height = 900, folder = 'w
   await mkdir(join(home, 'Pictures'), { recursive: true });
   for (const [name, state] of Object.entries(docs)) await writeFile(join(workspace, `${name}.json`), JSON.stringify(state));
   const port = await freePort();
-  const server = spawn(process.execPath, [join(REPO, 'src/server/serve.js')], {
+  const server = track(spawn(process.execPath, [join(REPO, 'src/server/serve.js')], {
     cwd: REPO,
     // A home of its own: nothing a test does (an export to ~/Pictures) reaches the user's.
     env: { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, '.config'), PORT: String(port), SCHEMATIC_WORKSPACE: workspace, DATA_ROOT: join(root, 'data') },
     stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  }));
   let out = '';
-  await new Promise((resolve, reject) => {
+  let chrome = null;
+  // A start that fails leaves nothing running: the test fails at once
+  // instead of waiting out its time limit on a browser no one drives.
+  const abandon = async (err) => {
+    await Promise.all([chrome && end(chrome), end(server)]);
+    await rm(root, { recursive: true, force: true, maxRetries: 10 });
+    throw err;
+  };
+  await within(new Promise((resolve, reject) => {
     server.stdout.on('data', (chunk) => { out += chunk; if (out.includes('running')) resolve(); });
     server.stderr.on('data', (chunk) => { out += chunk; });
     server.once('exit', () => reject(new Error(out)));
-  });
+  }), 30000, 'the server start').catch((err) => abandon(new Error(`${err.message}\n${out.trim()}`.trim())));
   // Chrome picks its own debugging port and writes it down, so two
   // browsers started at once never race for one.
   // CI runners (GitHub's Ubuntu) do not allow Chromium's sandbox.
   const sandbox = process.env.CI ? ['--no-sandbox'] : [];
+  // Software drawing and nothing in the background: less for each browser
+  // to do while the others run.
+  const LEAN = ['--disable-gpu', '--disable-background-networking', '--disable-component-update', '--disable-extensions', '--disable-sync', '--mute-audio'];
   const launch = (attempt) => {
     const dir = join(root, attempt ? `chrome-${attempt}` : 'chrome');
-    const child = spawn(chromePath(), ['--headless=new', ...sandbox, '--remote-debugging-port=0', `--user-data-dir=${dir}`,
-      `--window-size=${width},${height}`, '--no-first-run', '--no-default-browser-check', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, HOME: home } });
+    const child = track(spawn(chromePath(), ['--headless=new', ...sandbox, '--remote-debugging-port=0', `--user-data-dir=${dir}`,
+      `--window-size=${width},${height}`, '--no-first-run', '--no-default-browser-check', ...LEAN, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, HOME: home }, detached: true }), { group: true });
     const launched = { child, dir, err: '' };
     child.stderr.on('data', (chunk) => { launched.err = (launched.err + chunk).slice(-2000); });
     return launched;
@@ -113,72 +164,73 @@ export async function start({ docs = {}, width = 1400, height = 900, folder = 'w
   // not a count of polls, and one fresh try before the test fails.
   const STARTUP_MS = 45000;
   const pageOf = async (launched) => {
-    const deadline = Date.now() + STARTUP_MS;
+    const deadline = now() + STARTUP_MS;
     let cdpPort = null;
-    while (!cdpPort && Date.now() < deadline && launched.child.exitCode === null) {
+    while (!cdpPort && now() < deadline && launched.child.exitCode === null) {
       try { cdpPort = Number((await readFile(join(launched.dir, 'DevToolsActivePort'), 'utf8')).split('\n')[0]) || null; } catch { /* not up yet */ }
       if (!cdpPort) await sleep(100);
     }
     let targets = [];
-    while (cdpPort && !targets.some((t) => t.type === 'page') && Date.now() < deadline) {
-      try { targets = await (await fetch(`http://127.0.0.1:${cdpPort}/json`)).json(); } catch { /* not up yet */ }
+    while (cdpPort && !targets.some((t) => t.type === 'page') && now() < deadline) {
+      try { targets = await (await fetch(`http://127.0.0.1:${cdpPort}/json`, { signal: AbortSignal.timeout(5000) })).json(); } catch { /* not up yet */ }
       if (!targets.some((t) => t.type === 'page')) await sleep(100);
     }
     return { cdpPort, page: targets.find((t) => t.type === 'page') };
   };
   let launched = launch(0);
-  let chrome = launched.child;
+  chrome = launched.child;
   let ws;
   try {
     let { cdpPort, page } = await pageOf(launched);
     if (!page) {
-      launched.child.kill('SIGTERM');
+      await end(launched.child);
       launched = launch(1);
       chrome = launched.child;
       ({ cdpPort, page } = await pageOf(launched));
     }
     if (!page) throw new Error(`Chromium ${cdpPort ? 'offered no page to drive' : 'did not start'}${launched.err ? `:\n${launched.err.trim()}` : ''}`);
-    ws = new WebSocket(page.webSocketDebuggerUrl);
-    await new Promise((resolve, reject) => {
-      ws.addEventListener('open', resolve, { once: true });
-      ws.addEventListener('error', () => reject(new Error('could not connect to Chromium')), { once: true });
-    });
+    // A browser just started can refuse its first connection on a busy
+    // machine: tried again until the startup deadline.
+    const connectBy = now() + STARTUP_MS;
+    for (;;) {
+      ws = new WebSocket(page.webSocketDebuggerUrl);
+      const open = await within(new Promise((resolve) => {
+        ws.addEventListener('open', () => resolve(true), { once: true });
+        ws.addEventListener('error', () => resolve(false), { once: true });
+      }), 15000, 'the connection to Chromium');
+      if (open) break;
+      if (now() > connectBy) throw new Error(`could not connect to Chromium${launched.err ? `:\n${launched.err.trim()}` : ''}`);
+      await sleep(200);
+    }
   } catch (err) {
-    // A start that fails leaves nothing running: the test fails at once
-    // instead of waiting out its time limit on a browser no one drives.
-    chrome.kill('SIGTERM');
-    server.kill('SIGTERM');
-    await sleep(200);
-    await rm(root, { recursive: true, force: true });
-    throw err;
+    try { ws?.close(); } catch { /* closed */ }
+    await abandon(err);
   }
   let id = 0;
   const pending = new Map();
   const logs = [];
+  let crashed = null;
   ws.addEventListener('message', (ev) => {
     const msg = JSON.parse(ev.data);
     if (msg.id && pending.has(msg.id)) { pending.get(msg.id)(msg); pending.delete(msg.id); }
     if (msg.method === 'Runtime.exceptionThrown') logs.push(['exception', msg.params.exceptionDetails.exception?.description || msg.params.exceptionDetails.text]);
+    if (msg.method === 'Inspector.targetCrashed') {
+      crashed = `the page crashed${launched.err ? `:\n${launched.err.trim()}` : ''}`;
+      for (const answer of pending.values()) answer({ error: { message: crashed } });
+      pending.clear();
+    }
+    if (msg.method === 'Page.javascriptDialogOpening') logs.push(['dialog', `${msg.params.type}: ${msg.params.message}`]);
     if (msg.method === 'Runtime.consoleAPICalled') logs.push([msg.params.type, msg.params.args.map((a) => a.value ?? a.description).join(' ')]);
   });
   // Every call answers within a time limit: a page that stops answering
   // fails its test instead of hanging the run.
   const send = (method, params = {}, timeout = 30000) => new Promise((resolve, reject) => {
+    if (crashed) { reject(new Error(`${method}: ${crashed}`)); return; }
     const i = ++id;
-    const timer = setTimeout(() => { pending.delete(i); reject(new Error(`${method}: no answer in ${timeout} ms`)); }, timeout);
+    const timer = setTimeout(() => { pending.delete(i); reject(new Error(`${method}: no answer in ${timeout} ms${launched.err ? `\n  Chromium: ${launched.err.trim().split('\n').slice(-3).join('\n  ')}` : ''}`)); }, timeout);
     pending.set(i, (m) => { clearTimeout(timer); if (m.error) reject(new Error(`${method}: ${m.error.message}`)); else resolve(m.result); });
     ws.send(JSON.stringify({ id: i, method, params }));
   });
-  await send('Runtime.enable');
-  await send('Page.enable');
-  // THROTTLE=8 slows the page's CPU that many times, as a busy CI runner's
-  // headless Chromium is: a way to try a test against a slow machine.
-  if (process.env.THROTTLE) await send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.THROTTLE) });
-  await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: scale, mobile: false });
-  // Motion reduced: animations and view transitions finish at once.
-  await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
-  await send('Page.addScriptToEvaluateOnNewDocument', { source: TIMER_GATE });
-  await send('Page.navigate', { url: `http://127.0.0.1:${port}/` });
   const evaluate = async (expression) => {
     const r = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
     if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || r.exceptionDetails.text);
@@ -186,10 +238,10 @@ export async function start({ docs = {}, width = 1400, height = 900, folder = 'w
   };
   /** Resolves once `expression` is truthy (its value), or throws after `timeout`. */
   const until = async (expression, timeout = 5000) => {
-    const end = Date.now() + timeout;
+    const deadline = now() + timeout;
     for (;;) {
       try { const value = await evaluate(expression); if (value) return value; } catch { /* page still loading */ }
-      if (Date.now() > end) {
+      if (now() > deadline) {
         // What the page shows then: an open dialog or a focused field often explains it.
         const state = await evaluate(`JSON.stringify({ dialogs: [...document.querySelectorAll('dialog[open]')].map((d) => d.id || d.className), focus: document.activeElement && (document.activeElement.id || document.activeElement.className || document.activeElement.tagName), status: document.getElementById('status-message')?.textContent })`).catch(() => 'unknown');
         throw new Error(`timed out waiting for ${expression}\n  page: ${state}`);
@@ -197,8 +249,24 @@ export async function start({ docs = {}, width = 1400, height = 900, folder = 'w
       await sleep(50);
     }
   };
-  await until(`typeof window.__circuit === 'function' && document.readyState === 'complete' && !document.getElementById('startup-cover')`, 15000);
-  await evaluate(`(() => { const a = document.getElementById('atlas'); if (a && !a.hidden) document.getElementById('atlas-close')?.click(); })()`);
+  try {
+    await send('Runtime.enable');
+    await send('Page.enable');
+    await send('Inspector.enable');
+    // THROTTLE=8 slows the page's CPU that many times, as a busy CI runner's
+    // headless Chromium is: a way to try a test against a slow machine.
+    if (process.env.THROTTLE) await send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.THROTTLE) });
+    await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: scale, mobile: false });
+    // Motion reduced: animations and view transitions finish at once.
+    await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+    await send('Page.addScriptToEvaluateOnNewDocument', { source: TIMER_GATE });
+    await send('Page.navigate', { url: `http://127.0.0.1:${port}/` });
+    await until(`typeof window.__circuit === 'function' && document.readyState === 'complete' && !document.getElementById('startup-cover')`, STARTUP_MS);
+    await evaluate(`(() => { const a = document.getElementById('atlas'); if (a && !a.hidden) document.getElementById('atlas-close')?.click(); })()`);
+  } catch (err) {
+    try { ws.close(); } catch { /* closed */ }
+    await abandon(err);
+  }
   /** An editor module, the same instance the page runs: `module('main.js')`. */
   const module = (file) => `import(new URL(${JSON.stringify(file)}, document.querySelector('script[src="main.js"]').src).href)`;
   /** Open a workspace document by name (discarding unsaved changes when
@@ -255,10 +323,22 @@ export async function start({ docs = {}, width = 1400, height = 900, folder = 'w
   const exceptions = () => logs.filter(([type]) => type === 'exception' || type === 'error').map(([, text]) => text);
   const stop = async () => {
     try { ws.close(); } catch { /* closed */ }
-    chrome.kill('SIGTERM');
-    server.kill('SIGTERM');
-    await sleep(200);
-    await rm(root, { recursive: true, force: true });
+    await Promise.all([end(chrome), end(server)]);
+    await rm(root, { recursive: true, force: true, maxRetries: 10 });
   };
   return { send, evaluate, until, untilDiscarding, module, open, key, click, mouse, gesture, tap, settle, screenshot, exceptions, stop, logs, workspace, home, port };
+}
+
+/** The desk at rest: its snapshot the same over two frames in a row, however
+ *  long a busy machine takes to get there. */
+export async function stillDesk(h, timeout = 15000) {
+  const deadline = now() + timeout;
+  let last = '';
+  for (;;) {
+    await h.settle();
+    const snapshot = JSON.stringify(await h.evaluate(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot())`));
+    if (snapshot === last) return JSON.parse(snapshot);
+    if (now() > deadline) throw new Error('the desk never came to rest');
+    last = snapshot;
+  }
 }

@@ -189,7 +189,8 @@ npm run cli -- amp "add nmos M1 --at 120 120"   # edits <workspace>/amp.json
 
 ```sh
 npm run serve   # dev server with auto-restart at http://127.0.0.1:47280/
-npm test
+npm test               # unit tests
+npm run test:browser   # the editor driven in headless Chromium
 ```
 
 - [`docs/model.md`](docs/model.md) · [`docs/editor.md`](docs/editor.md): symbols, model rules, and editor behavior

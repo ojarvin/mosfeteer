@@ -45,7 +45,8 @@ read the one for the area you change before changing it.
 - `launch.mjs`, `Mosfeteer.cmd` — launcher and its Windows double-click wrapper.
 
 ```sh
-npm test                         # all Node tests
+npm test                         # unit tests and the browser-only build check (under a minute)
+npm run test:browser             # the browser tests, one file at a time (CI runs both)
 npm run serve                    # watch server at 127.0.0.1:47280
 npm run browser-only             # regenerate browser-only/
 curl 127.0.0.1:47280/api/symbols.svg  # every symbol, drawn live (also Learn → Symbols)
@@ -127,7 +128,8 @@ history follows the drawing; only the editor's Save adds a save point.
 ## Workflow
 
 - Read the relevant guideline, doc, source module, and tests first.
-- Every behavior change gets a focused test; `npm test` must pass.
+- Every behavior change gets a focused test; `npm test` must pass. Run
+  `npm run test:browser` for browser-visible changes.
 - Rebuild `browser-only/` (`npm run browser-only`) and commit it with the
   change; `test/browser-only-build.test.js` fails on a stale build.
 - Browser-visible changes get a test in `test/browser/` (its `harness.js`

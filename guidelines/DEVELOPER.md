@@ -128,7 +128,8 @@ browser and `/api/export`, not here.
 2. **Read the relevant source.** Don't guess — open the file and the test.
 3. **Plan in one paragraph.** "I will change X by doing Y because Z."
 4. **Write the test first (or alongside) when adding behavior.**
-5. **Run `npm test`** and confirm green before commit.
+5. **Run `npm test`** and confirm green before commit; `npm run test:browser`
+   too for a browser-visible change.
 6. **Test it in the browser when the change is user-visible.** Add to
    `test/browser/`; see "Browser tests" below.
 7. **Update the authoritative doc.** Touch `AGENTS.md` for cross-cutting
@@ -151,7 +152,10 @@ browser and `/api/export`, not here.
 
 ## Tests
 
-`npm test` runs the Node test runner over `test/**/*.test.js`. Tests use plain
+`npm test` runs the unit tests, `test/*.test.js` (the browser-only build
+check included): no browser, no timing, the same result on every run.
+`npm run test:browser` runs `test/browser/`, one file at a time. A file whose tests take many seconds of solving is split
+so it runs beside the others (`loop-break-*.test.js`). Tests use plain
 `node --test`; no Jest or transpilation. Shared test data lives under
 `test/fixtures/`. Read one existing `test/<thing>.test.js` before writing a new one.
 The browser rendering benchmark is `test/browser-performance.html`; serve the
@@ -232,10 +236,13 @@ flags are the user's only view of the CLI surface — keep them honest.
 
 ## Browser tests
 
-What the editor does in a page is tested in `test/browser/`, as part of
-`npm test` (skipped when no Chromium is found; set `CHROME` to point at one).
+What the editor does in a page is tested in `test/browser/`, by
+`npm run test:browser` (skipped when no Chromium is found; set `CHROME` to point at one).
 `harness.js` starts a server on temporary folders, with a home of its own, and
-a headless Chromium on its own debugging port, over one CDP connection:
+a headless Chromium on its own debugging port, over one CDP connection. Every
+wait in `start()` has a deadline (node:test gives `before` hooks none), a
+crashed page fails the call at once, and a failed or ended test file leaves
+no server or browser running:
 
 ```js
 const h = await start({ docs: { amp: amplifier() } }); // fixtures.js
@@ -270,8 +277,9 @@ A test that watches an animation on its way must not depend on the frame
 rate: CI's headless Chromium draws on the CPU, and one frame can take as long
 as a whole animation. Slow the page's clock instead (atlas.test.js's
 `motion()`), and try the test against a slow machine with `THROTTLE=8` (the
-page's CPU slowed that many times) before pushing. CI runs `npm run test:ci`: the same suite,
-three files at a time on GitHub's small runner.
+page's CPU slowed that many times) before pushing. CI runs `npm run test:ci`:
+`npm test`, then the browser tests. Logic a browser test checks that needs no
+page (a layout, a table edit) belongs in a unit test.
 
 ## Style & code quality
 

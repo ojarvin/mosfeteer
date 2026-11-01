@@ -4,7 +4,6 @@ import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
 import { analyzeSmallSignalV2, numericLoopGain, numericSmallSignal } from '../src/core/analysis/engine.js';
 import { resolveLoopBreak } from '../src/core/analysis/loop-gain.js';
-import { expressionSymbols, numericCoefficients, polynomialRoots } from '../src/core/analysis/bode.js';
 
 function net(circuit, name, ...refs) {
   const result = circuit._createNet(name);
@@ -127,69 +126,4 @@ test('in numbers, a broken loop gives the same T, at any size, and an open loop\
   assert.equal(open.at(values).ok, true);
   // An opamp's break is a return ratio: not in numbers here.
   assert.equal(numericLoopGain(withLoad('wire'), { input: 'VIN', output: 'VOUT', loopGain: { at: 'M2' } }).ok, false);
-});
-
-/** A PMOS-input two-stage Miller OTA, open loop: its only loop through M5
- *  is the local one through R_M and C_M. */
-function millerOta() {
-  const circuit = new Circuit();
-  [['input', 'VINP'], ['input', 'VINN'], ['output', 'VOUT'], ['pmos', 'M1'], ['pmos', 'M2'], ['nmos', 'M3'], ['nmos', 'M4'], ['nmos', 'M5'], ['pmos', 'M6'], ['pmos', 'M7'], ['pmos', 'M8'],
-    ['current_source', 'I1'], ['resistor', 'RM'], ['capacitor', 'CM'], ['capacitor', 'CL'], ['ground', 'GND'], ['supply', 'VDD']]
-    .forEach(([type, refdes], i) => circuit.addComponent(type, { refdes, x: i * 400, y: 0 }));
-  net(circuit, 'VINN', 'VINN.p', 'M1.g');
-  net(circuit, 'VINP', 'VINP.p', 'M2.g');
-  net(circuit, 'TAIL', 'M1.s', 'M2.s', 'M8.d');
-  net(circuit, 'MIRROR', 'M1.d', 'M3.d', 'M3.g', 'M4.g');
-  net(circuit, 'VO1', 'M2.d', 'M4.d', 'M5.g', 'RM.a');
-  net(circuit, 'MS', 'RM.b', 'CM.a');
-  net(circuit, 'VOUT', 'M5.d', 'M6.d', 'CM.b', 'CL.a', 'VOUT.p');
-  net(circuit, 'VBP', 'M6.g', 'M7.g', 'M7.d', 'M8.g', 'I1.a');
-  net(circuit, 'VSS', 'M3.s', 'M4.s', 'M5.s', 'CL.b', 'I1.b', 'GND.gnd');
-  net(circuit, 'VDD', 'M6.s', 'M7.s', 'M8.s', 'VDD.p');
-  return circuit;
-}
-
-test('a loop too large for its symbols is solved at the same numbers wherever it breaks: the design\'s loads stay loads', () => {
-  const circuit = millerOta();
-  // A budget too small for the symbols: T solved at the sketch's values.
-  const loop = (loopGain) => analyzeSmallSignalV2(circuit, { input: 'VINP', output: 'VOUT', loopGain, ignoreBodyEffect: true, loopGainOperations: 2000 }).loop;
-  const [element, gate] = [loop({ element: 'M5' }), loop({ at: 'M5.g' })];
-  for (const result of [element, gate]) {
-    assert.equal(result.ok, true, result.error);
-    assert.equal(result.numeric, true);
-  }
-  // In numbers, as decimals: the denominator's constant term 1, four
-  // significant digits, each before its power of s.
-  for (const result of [element, gate]) assert.match(result.equations[0], /^T\(s\) = \\frac\{[\d.]+ \\, s\}\{[\d.]+ \\, s\^\{2\} \+ [\d.]+ \\, s \+ 1\}$/);
-  // C_L and C_M sit on the output: loads, ten units, also when the break
-  // is solved to its return net (VO1).
-  assert.deepEqual(gate.values, element.values);
-  assert.equal(gate.values.CL, 10);
-  assert.ok(gate.outputComponents.includes('CL'));
-  // M5's gate draws no current: one T, its common factors canceled, so
-  // the same poles (in the left half-plane) from either break.
-  const coefficients = (list) => numericCoefficients(list, element.values);
-  const roots = (result) => polynomialRoots(coefficients(result.exact.denominatorCoefficients)).map((root) => root.re).sort((a, b) => a - b);
-  assert.equal(roots(gate).length, roots(element).length);
-  roots(gate).forEach((root, i) => assert.ok(Math.abs(root - roots(element)[i]) <= 1e-9 * Math.abs(root), `${root} vs ${roots(element)[i]}`));
-  assert.ok(roots(element).every((root) => root < 0));
-  // The sliders' model for the break reads the same loads.
-  const model = numericLoopGain(circuit, { input: 'VINP', output: 'VOUT', ignoreBodyEffect: true, loopGain: { at: 'M5.g' } });
-  assert.equal(model.ok, true, model.error);
-  assert.ok(model.outputComponents.has('CL') && !model.outputComponents.has('RM'));
-});
-
-test('a loop open at an input port breaks there though the port is held at AC ground for the gain', () => {
-  const circuit = millerOta();
-  const loop = (acGrounds, extra = {}) => analyzeSmallSignalV2(circuit, { input: 'VINP', output: 'VOUT', acGrounds, loopGain: { at: 'VOUT to VINN' }, ignoreBodyEffect: true, ...extra });
-  // VINN is quiet for VINP -> VOUT; for the loop it is the open input.
-  const open = loop(['VINN']).loop;
-  assert.equal(open.ok, true, open.error);
-  const values = Object.fromEntries([...open.exact.numeratorCoefficients, ...open.exact.denominatorCoefficients].flatMap(({ coefficient }) => [...expressionSymbols(coefficient)]).map((name) => [name, /^r/.test(name) ? 100 : 1]));
-  const dc = (list) => numericCoefficients(list, values)[0];
-  assert.ok(dc(open.exact.numeratorCoefficients) / dc(open.exact.denominatorCoefficients) > 1, 'negative feedback through the inverting input: T(0) > 0');
-  // Port quantities past their budget leave the loop gain to its own.
-  const tight = loop(['VINN'], { maxOperations: 200 });
-  assert.equal(tight.ok, false);
-  assert.equal(tight.loop?.ok, true, tight.loop?.error);
 });
