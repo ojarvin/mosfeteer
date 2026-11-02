@@ -63035,13 +63035,47 @@ function chooseDataFile(target = null) {
 const SCALES = [['linear', 'Linear'], ['log', 'Log']];
 const capitalized = (name) => name[0].toUpperCase() + name.slice(1);
 
-/** The palette's swatches (the style panel's), `color` checked; `pick(value)`
- *  hears the one chosen. */
-function swatches(color, pick) {
-  return el('div', { class: 'swatches data-plot-swatches', role: 'radiogroup', 'aria-label': 'Color' }, Object.entries(COLOR_PALETTE).map(([name, value]) => el('button', {
+/** Swatches a row in the palette over a trace's color. */
+const PALETTE_COLUMNS = 6;
+
+/**
+ * The palette's swatches (the style panel's) over `button`, the current
+ * `color` right on top of it: a popover above the dialog that a click
+ * outside or Escape closes. `pick(value)` hears the one chosen.
+ */
+function openPalette(button, color, pick) {
+  const entries = Object.entries(COLOR_PALETTE);
+  const palette = el('div', { class: 'swatches data-plot-swatches', popover: 'auto', role: 'radiogroup', 'aria-label': 'Color' }, entries.map(([name, value]) => el('button', {
     type: 'button', class: 'swatch', role: 'radio', 'data-value': name, 'aria-label': capitalized(name), title: capitalized(name),
-    'aria-checked': String(value.toLowerCase() === String(color).toLowerCase()), style: `--swatch:${value}`, onclick: () => pick(value),
+    'aria-checked': String(value.toLowerCase() === String(color).toLowerCase()), style: `--swatch:${value}`,
+    onclick: () => { palette.hidePopover(); pick(value); },
   })));
+  palette.style.setProperty('--palette-columns', String(PALETTE_COLUMNS));
+  // Escape closes the palette, not the dialog under it.
+  const dialog = button.closest('dialog');
+  const keepDialog = (ev) => { ev.preventDefault(); palette.hidePopover(); };
+  palette.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') keepDialog(ev); });
+  dialog.addEventListener('cancel', keepDialog);
+  palette.addEventListener('toggle', (ev) => {
+    if (ev.newState !== 'closed') return;
+    dialog.removeEventListener('cancel', keepDialog);
+    palette.remove();
+    button.setAttribute('aria-expanded', 'false');
+    button.focus({ preventScroll: true });
+  });
+  dialog.append(palette);
+  palette.showPopover();
+  button.setAttribute('aria-expanded', 'true');
+  // The current swatch over the button, the whole palette kept on screen.
+  const current = palette.querySelector('[aria-checked="true"]') || palette.querySelector('.swatch');
+  const at = button.getBoundingClientRect();
+  const own = current.getBoundingClientRect();
+  const box = palette.getBoundingClientRect();
+  const left = Math.max(8, Math.min(window.innerWidth - box.width - 8, at.left + at.width / 2 - (own.left - box.left) - own.width / 2));
+  const top = Math.max(8, Math.min(window.innerHeight - box.height - 8, at.top + at.height / 2 - (own.top - box.top) - own.height / 2));
+  palette.style.left = `${left}px`;
+  palette.style.top = `${top}px`;
+  current.focus({ preventScroll: true });
 }
 
 /** A labeled select: `choices` [value, text]. */
@@ -63085,16 +63119,12 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {} } = {}) {
     axes.replaceChildren(axisFields('x'), axisFields('y'));
     const left = shown().length;
     traceList.replaceChildren(...shown().map((trace) => {
-      // Its color opens the palette under it.
-      const palette = swatches(trace.color, (value) => { trace.color = value; refresh(); show(); });
-      palette.hidden = true;
       return el('div', { class: 'data-plot-trace' }, [
-        el('button', { type: 'button', class: 'swatch', style: `--swatch:${trace.color}`, title: 'Color', 'aria-label': `${trace.label}: color`, 'aria-expanded': 'false',
-          onclick: (ev) => { palette.hidden = !palette.hidden; ev.currentTarget.setAttribute('aria-expanded', String(!palette.hidden)); } }),
+        el('button', { type: 'button', class: 'swatch', style: `--swatch:${trace.color}`, title: 'Color', 'aria-label': `${trace.label}: color`, 'aria-haspopup': 'true', 'aria-expanded': 'false',
+          onclick: (ev) => openPalette(ev.currentTarget, trace.color, (value) => { trace.color = value; refresh(); show(); }) }),
         el('input', { type: 'text', value: trace.label, 'aria-label': 'Trace name', spellcheck: 'false', oninput: (ev) => { trace.label = ev.target.value; show(); } }),
         el('button', { type: 'button', class: 'data-plot-trace-remove', text: '×', title: 'Remove', 'aria-label': `Remove ${trace.label}`, disabled: left < 2,
           onclick: () => { if (onRemove) onRemove(trace); else { trace.removed = true; refresh(); show(); } } }),
-        palette,
       ]);
     }));
   };

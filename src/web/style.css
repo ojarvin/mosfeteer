@@ -6855,19 +6855,28 @@ details.analysis-options > * + * {
   gap: 6px;
 }
 
-.data-plot-trace {
-  flex-wrap: wrap;
-}
-
 .data-plot-trace input[type="text"] { flex: 1; }
 .data-plot-trace > .swatch { flex: none; }
 
+/* A trace's palette: a popover over its color, the current swatch on it. */
 .data-plot-swatches {
-  flex-basis: 100%;
-  padding: 4px 0 4px 26px;
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(var(--palette-columns), 18px);
+  gap: 6px;
+  padding: 8px;
+  color: var(--text);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--glass-shadow);
 }
 
-.data-plot-swatches[hidden] { display: none; }
+.data-plot-swatches:not(:popover-open) { display: none; }
 
 .data-plot-heading {
   margin: 4px 0 8px;

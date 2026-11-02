@@ -57,8 +57,16 @@ describe('data plot', { skip: browserSkip() }, () => {
       name.value = 'f (Hz)';
       name.dispatchEvent(new Event('input'));
       document.querySelector('.data-plot-trace > .swatch').click();
-      document.querySelector('.data-plot-swatches [data-value="crimson"]').click();
     })()`);
+    // The palette opens over the swatch, its current color right on it, and adds no row.
+    const over = await h.evaluate(`(() => {
+      const at = document.querySelector('.data-plot-trace > .swatch').getBoundingClientRect();
+      const current = document.querySelector('.data-plot-swatches [aria-checked="true"]').getBoundingClientRect();
+      return { dx: Math.round(current.x - at.x), dy: Math.round(current.y - at.y), rows: document.querySelectorAll('.data-plot-trace').length };
+    })()`);
+    assert.deepEqual(over, { dx: 0, dy: 0, rows: 2 });
+    await h.evaluate(`document.querySelector('.data-plot-swatches [data-value="crimson"]').click()`);
+    assert.equal(await h.evaluate(`document.querySelectorAll('.data-plot-swatches').length`), 0);
     assert.equal(await h.evaluate(`document.querySelectorAll('.data-plot-dialog input[type="color"]').length`), 0);
     await h.evaluate(`${button('.data-plot-dialog', 'Place')}.click()`);
     await h.until(`!document.querySelector('.data-plot-dialog')`);
