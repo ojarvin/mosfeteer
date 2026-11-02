@@ -6856,6 +6856,7 @@ details.analysis-options > * + * {
 }
 
 .data-plot-trace input[type="text"] { flex: 1; }
+.data-plot-trace-move { min-width: 24px; padding: 0 4px; }
 .data-plot-trace > .swatch { flex: none; }
 
 /* A trace's palette: a popover over its color, the current swatch on it. */

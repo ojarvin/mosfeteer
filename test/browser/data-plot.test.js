@@ -166,5 +166,20 @@ describe('data plot', { skip: browserSkip() }, () => {
     await h.key('z', { ctrlKey: true });
     assert.deepEqual((await plot()).legend, before.legend);
   });
+
+  test('Plot settings… moves a trace down the list, to draw over the others, its legend entry with it', async () => {
+    const before = await plot();
+    await h.evaluate(`${h.module('editor-state.js')}.then((s) => ${h.module('data-plot-ui.js')}.then((m) => m.openDataPlotSettings([...s.editor.circuit.labels.values()].find((l) => l.plot))))`);
+    await h.until(`!!document.querySelector('.data-plot-dialog[open] .data-plot-trace')`);
+    await h.evaluate(`document.querySelector('.data-plot-trace-move[aria-label^="Move"][aria-label$="down"]').click()`);
+    await h.evaluate(`${button('.data-plot-dialog', 'Apply')}.click()`);
+    await h.until(`!document.querySelector('.data-plot-dialog')`);
+    const after = await plot();
+    const expected = [before.legend[1], before.legend[0], ...before.legend.slice(2)];
+    assert.deepEqual(after.plot.traces.map((t) => t.label), expected);
+    assert.deepEqual(after.legend, expected);
+    await h.key('z', { ctrlKey: true });
+    assert.deepEqual((await plot()).legend, before.legend);
+  });
 });
 

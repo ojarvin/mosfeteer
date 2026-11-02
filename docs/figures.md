@@ -113,7 +113,8 @@ columns separated by spaces (`src/core/csv-data.js`, `src/core/data-plot.js`,
   rows, and the columns to plot; under them is the plot editor that
   **Plot settings…** (right-click, or double-click) shows too: the plot to
   pan and zoom, each axis's name and scale, and each trace's name, color
-  (a palette swatch), or removal. The plot keeps the zoom shown. Place
+  (a palette swatch), place in the list, or removal: a trace lower in the
+  list draws on top. The plot keeps the zoom shown. Place
   packs the new plot; Apply is one undo step. A double-click on the plot
   opens its settings.
 - **Add file…** adds another file's traces to the plot, up to 8 in all,
@@ -126,7 +127,7 @@ columns separated by spaces (`src/core/csv-data.js`, `src/core/data-plot.js`,
 - `annotation dataplot FILE` places a plot from the CLI, which reads the
   file and sends it with the command (`--into PLOT` adds it to a plot);
   `annotation plotaxis`, `plotview`, and `plottrace` (`--color` a palette
-  name) edit it.
+  name, `--position M` a place in the list) edit it.
 - Annotating and Update plots never touch a data plot.
 
 

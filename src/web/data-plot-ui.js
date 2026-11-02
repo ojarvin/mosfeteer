@@ -16,7 +16,7 @@
 import { element as el } from './dom.js';
 import { MAX_DATA_TRACES, readTable, tableTraces } from '../core/csv-data.js';
 import { TRACE_COLORS } from '../core/analysis/signal-flow.js';
-import { appendDataPlotTraces, placeDataPlot, removeDataPlotTrace, replaceDataPlotTraces, setDataPlotAxis, setDataPlotTrace, setDataPlotView } from '../core/data-plot.js';
+import { appendDataPlotTraces, moveDataPlotTrace, placeDataPlot, removeDataPlotTrace, replaceDataPlotTraces, setDataPlotAxis, setDataPlotTrace, setDataPlotView } from '../core/data-plot.js';
 import { MAX_DATA_POINTS, normalizePlot } from '../core/model.js';
 import { COLOR_PALETTE } from '../core/style.js';
 import { dataSpec } from '../core/plot-spec.js';
@@ -108,12 +108,14 @@ function select(label, id, choices, value, onchange) {
  * The plot editor both dialogs show. `draft` is `{ x: { label, scale }, y:
  * { label, scale }, traces: [{ label, color, points, removed? }] }`, edited
  * in place. `onRemove(trace)` takes a trace off (by default it is marked
- * removed); `onAxis(axis)` hears an axis edited by hand. Returns its `parts`,
+ * removed); `onAxis(axis)` hears an axis edited by hand; `onMove()` hears
+ * the traces reordered (by default only the draft is). A later trace draws
+ * over an earlier one. Returns its `parts`,
  * `show()` to draw the draft again (after it changed from outside: also
  * `refresh()` for the fields), `plot()` the plot it shows with its zoom,
  * and `dispose()`.
  */
-function plotEditor(draft, { onRemove = null, onAxis = () => {} } = {}) {
+function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null } = {}) {
   const view = createPlotView({ height: 260, wheel: 'always', className: 'data-plot-view' });
   const shown = () => draft.traces.filter((t) => !t.removed);
   const bare = () => normalizePlot({ kind: 'data', x: draft.x, y: draft.y, traces: shown().map(({ label, color, points }) => ({ label, color, points })) });
@@ -136,8 +138,20 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {} } = {}) {
   const refresh = () => {
     axes.replaceChildren(axisFields('x'), axisFields('y'));
     const left = shown().length;
-    traceList.replaceChildren(...shown().map((trace) => {
+    const visible = shown();
+    // Swap with the next visible trace up or down the list.
+    const move = (trace, step) => {
+      const other = visible[visible.indexOf(trace) + step];
+      const a = draft.traces.indexOf(trace);
+      const b = draft.traces.indexOf(other);
+      [draft.traces[a], draft.traces[b]] = [draft.traces[b], draft.traces[a]];
+      if (onMove) onMove();
+      else { refresh(); show(); }
+    };
+    traceList.replaceChildren(...visible.map((trace, i) => {
       return el('div', { class: 'data-plot-trace' }, [
+        el('button', { type: 'button', class: 'data-plot-trace-move', text: '↑', title: 'Move up', 'aria-label': `Move ${trace.label} up`, disabled: i === 0, onclick: () => move(trace, -1) }),
+        el('button', { type: 'button', class: 'data-plot-trace-move', text: '↓', title: 'Move down', 'aria-label': `Move ${trace.label} down`, disabled: i === visible.length - 1, onclick: () => move(trace, 1) }),
         el('button', { type: 'button', class: 'swatch', style: `--swatch:${trace.color}`, title: 'Color', 'aria-label': `${trace.label}: color`, 'aria-haspopup': 'true', 'aria-expanded': 'false',
           onclick: (ev) => openPalette(ev.currentTarget, trace.color, (value) => { trace.color = value; refresh(); show(); }) }),
         el('input', { type: 'text', value: trace.label, 'aria-label': 'Trace name', spellcheck: 'false', oninput: (ev) => { trace.label = ev.target.value; show(); } }),
@@ -148,7 +162,7 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {} } = {}) {
   };
   refresh();
   return {
-    parts: [view.el, el('p', { class: 'field-hint', text: 'Drag pans, right-drag zooms to a box, the wheel zooms, double-click fits. The plot on the drawing keeps this zoom.' }), axes, traceList],
+    parts: [view.el, el('p', { class: 'field-hint', text: 'Drag pans, right-drag zooms to a box, the wheel zooms, double-click fits. The plot on the drawing keeps this zoom. A trace lower in the list draws on top.' }), axes, traceList],
     show,
     refresh,
     zoomTo: (range) => view.zoomTo(range),
@@ -169,8 +183,23 @@ function applyDraft(circuit, box, draft) {
   const own = draft.traces.filter((trace) => trace.index !== undefined);
   for (const trace of own) if (!trace.removed) setDataPlotTrace(circuit, box, trace.index, { label: trace.label, color: trace.color });
   // Last first, so the indices still hold.
-  for (const trace of [...own].reverse()) if (trace.removed) removeDataPlotTrace(circuit, box, trace.index);
+  for (const trace of [...own].sort((a, b) => b.index - a.index)) if (trace.removed) removeDataPlotTrace(circuit, box, trace.index);
 }
+
+/** Put `box`'s traces in the draft's order. `current` is the draft traces
+ *  in the plot's order now: its own (by index), then those just added. */
+function applyOrder(circuit, box, draft, current) {
+  const now = [...current];
+  draft.traces.filter((t) => !t.removed).forEach((trace, place) => {
+    const at = now.indexOf(trace);
+    if (at === place) return;
+    moveDataPlotTrace(circuit, box, at, place);
+    now.splice(place, 0, now.splice(at, 1)[0]);
+  });
+}
+
+/** The draft's own traces left, in the plot's order. */
+const ownLeft = (draft) => draft.traces.filter((t) => t.index !== undefined && !t.removed).sort((a, b) => a.index - b.index);
 
 /** The zoom shown on `box`'s axes, those it can show. */
 function applyZoom(box, zoom) {
@@ -204,6 +233,7 @@ export function openDataPlotDialog(text, name, target = null, { mode = 'replace'
       else y = y.filter((c) => c !== trace.column);
       update();
     },
+    onMove: () => update(),
   });
 
   /** The traces of the columns picked, each keeping a name or color given it. */
@@ -221,7 +251,11 @@ export function openDataPlotDialog(text, name, target = null, { mode = 'replace'
       trace.color = TRACE_COLORS.find((c) => !taken.has(c)) || TRACE_COLORS[0];
       taken.add(trace.color);
     }
-    draft.traces = [...own, ...added];
+    // In the order the list was left in; a new column's trace goes last.
+    const key = (t) => (t.index !== undefined ? `o${t.index}` : `c${t.column}`);
+    const rank = new Map(draft.traces.map((t, i) => [key(t), i]));
+    draft.traces = [...own, ...added].map((t, i) => [t, rank.has(key(t)) ? rank.get(key(t)) : Infinity, i])
+      .sort((a, b) => a[1] - b[1] || a[2] - b[2]).map(([t]) => t);
     if (!edited.x) draft.x.label = x === null ? 'Row' : table.names[x];
     if (!edited.y) draft.y.label = added.length === 1 ? added[0].label : '';
     drawColumns();
@@ -307,6 +341,7 @@ export function openDataPlotDialog(text, name, target = null, { mode = 'replace'
         applyDraft(editor.circuit, target, draft);
         const fresh = draft.traces.filter((t) => t.index === undefined);
         if (fresh.length) appendDataPlotTraces(editor.circuit, target, fresh.map(({ label, color, points }) => ({ label, color, points })), { file: name });
+        applyOrder(editor.circuit, target, draft, [...ownLeft(draft), ...fresh]);
         applyZoom(target, zoom);
         placed = { box: target, legend: editor.circuit.plotLegend(target) };
       } else if (target) {
@@ -375,6 +410,7 @@ export function openDataPlotSettings(box) {
     dialog.close();
     commit(() => {
       applyDraft(editor.circuit, box, draft);
+      applyOrder(editor.circuit, box, draft, ownLeft(draft));
       applyZoom(box, zoom);
     });
     // Renamed entries are measured again: the column keeps its left edge and top.

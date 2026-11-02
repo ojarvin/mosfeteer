@@ -23080,7 +23080,7 @@ __exports.evaluate = evaluate;
 __exports.commandHelp = commandHelp;
 __exports.runCommand = runCommand;
 let plotCsv, plotSeries; __bind(() => { ({ plotCsv, plotSeries } = __require("src/core/plot-export.js")); });
-let appendDataPlotTraces, dataPlotFromText, placeDataPlot, removeDataPlotTrace, setDataPlotAxis, setDataPlotTrace, setDataPlotView; __bind(() => { ({ appendDataPlotTraces, dataPlotFromText, placeDataPlot, removeDataPlotTrace, setDataPlotAxis, setDataPlotTrace, setDataPlotView } = __require("src/core/data-plot.js")); });
+let appendDataPlotTraces, dataPlotFromText, moveDataPlotTrace, placeDataPlot, removeDataPlotTrace, setDataPlotAxis, setDataPlotTrace, setDataPlotView; __bind(() => { ({ appendDataPlotTraces, dataPlotFromText, moveDataPlotTrace, placeDataPlot, removeDataPlotTrace, setDataPlotAxis, setDataPlotTrace, setDataPlotView } = __require("src/core/data-plot.js")); });
 let analyzeSignalFlow, complexText; __bind(() => { ({ analyzeSignalFlow, complexText } = __require("src/core/analysis/signal-flow.js")); });
 let analyzeLogic; __bind(() => { ({ analyzeLogic } = __require("src/core/analysis/logic.js")); });
 let Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld; __bind(() => { ({ Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld } = __require("src/core/model.js")); });
@@ -23256,6 +23256,7 @@ const FLAG_ARITY = {
   color: 1,
   into: 1,
   traces: 1,
+  position: 1,
 };
 
 const SYNTHESIZE_USAGE = 'usage: synthesize logic IN ... OUT=VALUES ... [--style and-or|nand|or-and|nor] [--gates inverter,and,nand,or,nor] [--max-inputs 2|3] [--at X Y] [--print]';
@@ -23692,7 +23693,7 @@ function commandHelp() {
     '  annotation plotcsv PLOT [--traces N,N] [--sep comma|semicolon|tab] [--decimal point|comma] - any plot\'s numbers as CSV text (traces from 1)',
     '  annotation plotaxis PLOT x|y [--label TEXT] [--scale log|linear] - name a data plot\'s axis, or set its scale',
     '  annotation plotview PLOT x|y LOW HIGH|fit - zoom a data plot\'s axis, or fit it to the data',
-    '  annotation plottrace PLOT N rm|[--label TEXT] [--color COLOR] - take trace N (from 1) off a data plot, or rename it or color it from the palette (red, blue, ...)',
+    '  annotation plottrace PLOT N rm|[--label TEXT] [--color COLOR] [--position M] - take trace N (from 1) off a data plot, rename it, color it from the palette (red, blue, ...), or move it to position M (a later trace draws on top)',
     '  annotation stack BOX N|off [--offset DX,DY] - N copies of a box\'s outline behind it, DX,DY apart (20,-20); wires between stacks repeat',
     '  list                           - list components',
     '  state                          - full JSON state',
@@ -24823,14 +24824,20 @@ function annotationCommand(circuit, pos, result, flags = {}, io) {
   }
   if (op === 'plottrace') {
     const box = circuit.labels.get(pos[1]);
-    const usage = 'usage: annotation plottrace PLOT N rm|[--label TEXT] [--color COLOR]';
+    const usage = 'usage: annotation plottrace PLOT N rm|[--label TEXT] [--color COLOR] [--position M]';
     if (!box || !/^\d+$/.test(pos[2] || '')) throw new Error(usage);
     if (pos[3] === 'rm' && pos.length === 4) {
       removeDataPlotTrace(circuit, box, Number(pos[2]) - 1);
       return result(`${box.id}: took off trace ${pos[2]}`, box.toJSON(), true);
     }
-    if (pos.length !== 3 || (!flags.label && !flags.color)) throw new Error(usage);
-    const changed = setDataPlotTrace(circuit, box, Number(pos[2]) - 1, { label: flags.label?.[0], color: flags.color?.[0] });
+    if (pos.length !== 3 || (!flags.label && !flags.color && !flags.position)) throw new Error(usage);
+    if (flags.position && !/^\d+$/.test(flags.position[0])) throw new Error(usage);
+    let changed = false;
+    if (flags.label || flags.color) changed = setDataPlotTrace(circuit, box, Number(pos[2]) - 1, { label: flags.label?.[0], color: flags.color?.[0] });
+    if (flags.position) {
+      changed = moveDataPlotTrace(circuit, box, Number(pos[2]) - 1, Number(flags.position[0]) - 1) || changed;
+      return result(`${box.id}: trace ${pos[2]} moved to ${flags.position[0]}`, box.toJSON(), changed);
+    }
     return result(`${box.id}: trace ${pos[2]} "${box.plot.traces[Number(pos[2]) - 1].label}" ${box.plot.traces[Number(pos[2]) - 1].color}`, box.toJSON(), changed);
   }
   if (op === 'stack') {
@@ -27210,6 +27217,7 @@ __exports.placeDataPlot = placeDataPlot;
 __exports.setDataPlotAxis = setDataPlotAxis;
 __exports.setDataPlotView = setDataPlotView;
 __exports.setDataPlotTrace = setDataPlotTrace;
+__exports.moveDataPlotTrace = moveDataPlotTrace;
 __exports.removeDataPlotTrace = removeDataPlotTrace;
 __exports.appendDataPlotTraces = appendDataPlotTraces;
 __exports.replaceDataPlotTraces = replaceDataPlotTraces;
@@ -27367,6 +27375,37 @@ function setDataPlotTrace(circuit, box, index, { label, color } = {}) {
       entry.moveTo(anchor.x + left - entry.bbox().x, anchor.y);
     }
     entry.style = { ...entry.style, color: next.color };
+  }
+  return true;
+}
+
+/** Move trace `from` (from 0) of a data plot to position `to`: a later trace
+ *  draws over an earlier one. Its legend entry moves with it, the column
+ *  stacked again in the new order from where it starts. Returns whether it
+ *  moved. */
+function moveDataPlotTrace(circuit, box, from, to) {
+  const plot = dataPlotOf(box);
+  const count = plot.traces.length;
+  for (const [n, i] of [['trace', from], ['position', to]]) if (!Number.isInteger(i) || i < 0 || i >= count) throw new Error(`no ${n} ${i + 1} (the plot has ${count})`);
+  if (from === to) return false;
+  const order = plot.traces.map((_, i) => i);
+  order.splice(to, 0, order.splice(from, 1)[0]);
+  box.plot = normalizePlot({ ...plot, traces: order.map((i) => plot.traces[i]) });
+  const legend = circuit.plotLegend(box);
+  if (legend.length >= count) {
+    const left = Math.min(...legend.map((l) => l.bbox().x));
+    let top = Math.min(...legend.map((l) => l.bbox().y));
+    // The legend is read in the labels' order: theirs follows the traces'.
+    const moved = [...order.map((i) => legend[i]), ...legend.slice(count)];
+    for (const label of moved) {
+      circuit.labels.delete(label.id);
+      circuit.labels.set(label.id, label);
+    }
+    for (const label of moved) {
+      const size = label.bbox();
+      label.moveTo(snap(left + size.w / 2), snap(top + size.h / 2));
+      top = label.bbox().y + label.bbox().h;
+    }
   }
   return true;
 }
@@ -63152,7 +63191,7 @@ __exports.installDataPlotUi = installDataPlotUi;
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 let MAX_DATA_TRACES, readTable, tableTraces; __bind(() => { ({ MAX_DATA_TRACES, readTable, tableTraces } = __require("src/core/csv-data.js")); });
 let TRACE_COLORS; __bind(() => { ({ TRACE_COLORS } = __require("src/core/analysis/signal-flow.js")); });
-let appendDataPlotTraces, placeDataPlot, removeDataPlotTrace, replaceDataPlotTraces, setDataPlotAxis, setDataPlotTrace, setDataPlotView; __bind(() => { ({ appendDataPlotTraces, placeDataPlot, removeDataPlotTrace, replaceDataPlotTraces, setDataPlotAxis, setDataPlotTrace, setDataPlotView } = __require("src/core/data-plot.js")); });
+let appendDataPlotTraces, moveDataPlotTrace, placeDataPlot, removeDataPlotTrace, replaceDataPlotTraces, setDataPlotAxis, setDataPlotTrace, setDataPlotView; __bind(() => { ({ appendDataPlotTraces, moveDataPlotTrace, placeDataPlot, removeDataPlotTrace, replaceDataPlotTraces, setDataPlotAxis, setDataPlotTrace, setDataPlotView } = __require("src/core/data-plot.js")); });
 let MAX_DATA_POINTS, normalizePlot; __bind(() => { ({ MAX_DATA_POINTS, normalizePlot } = __require("src/core/model.js")); });
 let COLOR_PALETTE; __bind(() => { ({ COLOR_PALETTE } = __require("src/core/style.js")); });
 let dataSpec; __bind(() => { ({ dataSpec } = __require("src/core/plot-spec.js")); });
@@ -63271,12 +63310,14 @@ function select(label, id, choices, value, onchange) {
  * The plot editor both dialogs show. `draft` is `{ x: { label, scale }, y:
  * { label, scale }, traces: [{ label, color, points, removed? }] }`, edited
  * in place. `onRemove(trace)` takes a trace off (by default it is marked
- * removed); `onAxis(axis)` hears an axis edited by hand. Returns its `parts`,
+ * removed); `onAxis(axis)` hears an axis edited by hand; `onMove()` hears
+ * the traces reordered (by default only the draft is). A later trace draws
+ * over an earlier one. Returns its `parts`,
  * `show()` to draw the draft again (after it changed from outside: also
  * `refresh()` for the fields), `plot()` the plot it shows with its zoom,
  * and `dispose()`.
  */
-function plotEditor(draft, { onRemove = null, onAxis = () => {} } = {}) {
+function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null } = {}) {
   const view = createPlotView({ height: 260, wheel: 'always', className: 'data-plot-view' });
   const shown = () => draft.traces.filter((t) => !t.removed);
   const bare = () => normalizePlot({ kind: 'data', x: draft.x, y: draft.y, traces: shown().map(({ label, color, points }) => ({ label, color, points })) });
@@ -63299,8 +63340,20 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {} } = {}) {
   const refresh = () => {
     axes.replaceChildren(axisFields('x'), axisFields('y'));
     const left = shown().length;
-    traceList.replaceChildren(...shown().map((trace) => {
+    const visible = shown();
+    // Swap with the next visible trace up or down the list.
+    const move = (trace, step) => {
+      const other = visible[visible.indexOf(trace) + step];
+      const a = draft.traces.indexOf(trace);
+      const b = draft.traces.indexOf(other);
+      [draft.traces[a], draft.traces[b]] = [draft.traces[b], draft.traces[a]];
+      if (onMove) onMove();
+      else { refresh(); show(); }
+    };
+    traceList.replaceChildren(...visible.map((trace, i) => {
       return el('div', { class: 'data-plot-trace' }, [
+        el('button', { type: 'button', class: 'data-plot-trace-move', text: '↑', title: 'Move up', 'aria-label': `Move ${trace.label} up`, disabled: i === 0, onclick: () => move(trace, -1) }),
+        el('button', { type: 'button', class: 'data-plot-trace-move', text: '↓', title: 'Move down', 'aria-label': `Move ${trace.label} down`, disabled: i === visible.length - 1, onclick: () => move(trace, 1) }),
         el('button', { type: 'button', class: 'swatch', style: `--swatch:${trace.color}`, title: 'Color', 'aria-label': `${trace.label}: color`, 'aria-haspopup': 'true', 'aria-expanded': 'false',
           onclick: (ev) => openPalette(ev.currentTarget, trace.color, (value) => { trace.color = value; refresh(); show(); }) }),
         el('input', { type: 'text', value: trace.label, 'aria-label': 'Trace name', spellcheck: 'false', oninput: (ev) => { trace.label = ev.target.value; show(); } }),
@@ -63311,7 +63364,7 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {} } = {}) {
   };
   refresh();
   return {
-    parts: [view.el, el('p', { class: 'field-hint', text: 'Drag pans, right-drag zooms to a box, the wheel zooms, double-click fits. The plot on the drawing keeps this zoom.' }), axes, traceList],
+    parts: [view.el, el('p', { class: 'field-hint', text: 'Drag pans, right-drag zooms to a box, the wheel zooms, double-click fits. The plot on the drawing keeps this zoom. A trace lower in the list draws on top.' }), axes, traceList],
     show,
     refresh,
     zoomTo: (range) => view.zoomTo(range),
@@ -63332,8 +63385,23 @@ function applyDraft(circuit, box, draft) {
   const own = draft.traces.filter((trace) => trace.index !== undefined);
   for (const trace of own) if (!trace.removed) setDataPlotTrace(circuit, box, trace.index, { label: trace.label, color: trace.color });
   // Last first, so the indices still hold.
-  for (const trace of [...own].reverse()) if (trace.removed) removeDataPlotTrace(circuit, box, trace.index);
+  for (const trace of [...own].sort((a, b) => b.index - a.index)) if (trace.removed) removeDataPlotTrace(circuit, box, trace.index);
 }
+
+/** Put `box`'s traces in the draft's order. `current` is the draft traces
+ *  in the plot's order now: its own (by index), then those just added. */
+function applyOrder(circuit, box, draft, current) {
+  const now = [...current];
+  draft.traces.filter((t) => !t.removed).forEach((trace, place) => {
+    const at = now.indexOf(trace);
+    if (at === place) return;
+    moveDataPlotTrace(circuit, box, at, place);
+    now.splice(place, 0, now.splice(at, 1)[0]);
+  });
+}
+
+/** The draft's own traces left, in the plot's order. */
+const ownLeft = (draft) => draft.traces.filter((t) => t.index !== undefined && !t.removed).sort((a, b) => a.index - b.index);
 
 /** The zoom shown on `box`'s axes, those it can show. */
 function applyZoom(box, zoom) {
@@ -63367,6 +63435,7 @@ function openDataPlotDialog(text, name, target = null, { mode = 'replace' } = {}
       else y = y.filter((c) => c !== trace.column);
       update();
     },
+    onMove: () => update(),
   });
 
   /** The traces of the columns picked, each keeping a name or color given it. */
@@ -63384,7 +63453,11 @@ function openDataPlotDialog(text, name, target = null, { mode = 'replace' } = {}
       trace.color = TRACE_COLORS.find((c) => !taken.has(c)) || TRACE_COLORS[0];
       taken.add(trace.color);
     }
-    draft.traces = [...own, ...added];
+    // In the order the list was left in; a new column's trace goes last.
+    const key = (t) => (t.index !== undefined ? `o${t.index}` : `c${t.column}`);
+    const rank = new Map(draft.traces.map((t, i) => [key(t), i]));
+    draft.traces = [...own, ...added].map((t, i) => [t, rank.has(key(t)) ? rank.get(key(t)) : Infinity, i])
+      .sort((a, b) => a[1] - b[1] || a[2] - b[2]).map(([t]) => t);
     if (!edited.x) draft.x.label = x === null ? 'Row' : table.names[x];
     if (!edited.y) draft.y.label = added.length === 1 ? added[0].label : '';
     drawColumns();
@@ -63470,6 +63543,7 @@ function openDataPlotDialog(text, name, target = null, { mode = 'replace' } = {}
         applyDraft(editor.circuit, target, draft);
         const fresh = draft.traces.filter((t) => t.index === undefined);
         if (fresh.length) appendDataPlotTraces(editor.circuit, target, fresh.map(({ label, color, points }) => ({ label, color, points })), { file: name });
+        applyOrder(editor.circuit, target, draft, [...ownLeft(draft), ...fresh]);
         applyZoom(target, zoom);
         placed = { box: target, legend: editor.circuit.plotLegend(target) };
       } else if (target) {
@@ -63538,6 +63612,7 @@ function openDataPlotSettings(box) {
     dialog.close();
     commit(() => {
       applyDraft(editor.circuit, box, draft);
+      applyOrder(editor.circuit, box, draft, ownLeft(draft));
       applyZoom(box, zoom);
     });
     // Renamed entries are measured again: the column keeps its left edge and top.

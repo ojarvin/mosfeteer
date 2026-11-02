@@ -142,3 +142,23 @@ test('dataplot --into adds a file\'s traces to a data plot, their legend entries
   for (let i = 0; i < 5; i++) runCommand(circuit, `annotation dataplot sim.csv --into ${box.id}`, io(files));
   assert.throws(() => runCommand(circuit, `annotation dataplot sim.csv --into ${box.id}`, io(files)), /at most 8 traces/);
 });
+
+test('a data plot\'s trace moves to another place, a later one drawn on top, its legend entry with it', () => {
+  const files = { 'runs/scope.csv': SCOPE, 'sim.csv': 'Time (s),Sim (V)\n0,0.15\n2e-6,0.25\n' };
+  const { circuit, box } = plotted(files);
+  runCommand(circuit, `annotation dataplot sim.csv --into ${box.id}`, io(files));
+  const slots = circuit.plotLegend(box).map((l) => l.bbox().y);
+  const left = circuit.plotLegend(box)[0].bbox().x;
+  const out = runCommand(circuit, `annotation plottrace ${box.id} 3 --position 1`);
+  assert.equal(out.mutated, true);
+  assert.deepEqual(box.plot.traces.map((t) => t.label), ['Sim (V)', 'CH1 (V)', 'CH2 (V)']);
+  const legend = circuit.plotLegend(box);
+  assert.deepEqual(legend.map((l) => l.text), ['Sim (V)', 'CH1 (V)', 'CH2 (V)']);
+  assert.deepEqual(legend.map((l) => l.bbox().y), slots);
+  assert.ok(legend.every((l) => Math.abs(l.bbox().x - left) <= 20));
+  // Saved and loaded in that order; the last drawn last.
+  const loaded = loadDocument(JSON.parse(JSON.stringify(circuit.toJSON())));
+  assert.deepEqual(loaded.plotLegend(loaded.labels.get(box.id)).map((l) => l.text), ['Sim (V)', 'CH1 (V)', 'CH2 (V)']);
+  assert.equal(runCommand(circuit, `annotation plottrace ${box.id} 1 --position 1`).mutated, false);
+  assert.throws(() => runCommand(circuit, `annotation plottrace ${box.id} 1 --position 9`), /no position 9/);
+});

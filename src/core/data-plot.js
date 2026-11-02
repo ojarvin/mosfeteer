@@ -150,6 +150,37 @@ export function setDataPlotTrace(circuit, box, index, { label, color } = {}) {
   return true;
 }
 
+/** Move trace `from` (from 0) of a data plot to position `to`: a later trace
+ *  draws over an earlier one. Its legend entry moves with it, the column
+ *  stacked again in the new order from where it starts. Returns whether it
+ *  moved. */
+export function moveDataPlotTrace(circuit, box, from, to) {
+  const plot = dataPlotOf(box);
+  const count = plot.traces.length;
+  for (const [n, i] of [['trace', from], ['position', to]]) if (!Number.isInteger(i) || i < 0 || i >= count) throw new Error(`no ${n} ${i + 1} (the plot has ${count})`);
+  if (from === to) return false;
+  const order = plot.traces.map((_, i) => i);
+  order.splice(to, 0, order.splice(from, 1)[0]);
+  box.plot = normalizePlot({ ...plot, traces: order.map((i) => plot.traces[i]) });
+  const legend = circuit.plotLegend(box);
+  if (legend.length >= count) {
+    const left = Math.min(...legend.map((l) => l.bbox().x));
+    let top = Math.min(...legend.map((l) => l.bbox().y));
+    // The legend is read in the labels' order: theirs follows the traces'.
+    const moved = [...order.map((i) => legend[i]), ...legend.slice(count)];
+    for (const label of moved) {
+      circuit.labels.delete(label.id);
+      circuit.labels.set(label.id, label);
+    }
+    for (const label of moved) {
+      const size = label.bbox();
+      label.moveTo(snap(left + size.w / 2), snap(top + size.h / 2));
+      top = label.bbox().y + label.bbox().h;
+    }
+  }
+  return true;
+}
+
 /** Take trace `index` (from 0) off a data plot, and its legend entry. The
  *  last one stays. */
 export function removeDataPlotTrace(circuit, box, index) {
