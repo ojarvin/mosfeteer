@@ -11,6 +11,7 @@ import { TRACE_COLORS } from './analysis/signal-flow.js';
 import { newFigureId, placeFigure, settlePlaced } from './figures.js';
 import { GRID, snap } from './grid.js';
 import { PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot } from './model.js';
+import { COLOR_PALETTE, colorToken } from './style.js';
 import { MAX_DATA_TRACES, readTable, tableTraces } from './csv-data.js';
 
 /** A new data plot's box, in cells. */
@@ -124,18 +125,26 @@ export function setDataPlotView(box, axis, range) {
 }
 
 /** Rename or recolor trace `index` (from 0) of a data plot, its legend
- *  entry with it. Returns whether anything changed. */
+ *  entry with it; a color is one of the palette's (its name or value).
+ *  Returns whether anything changed. */
 export function setDataPlotTrace(circuit, box, index, { label, color } = {}) {
   const plot = dataPlotOf(box);
   const trace = plot.traces[index];
   if (!trace) throw new Error(`no trace ${index + 1} (the plot has ${plot.traces.length})`);
-  if (color !== undefined && !/^#[0-9a-f]{6}$/i.test(color)) throw new Error('a color is #rrggbb');
-  const next = { ...trace, ...(label !== undefined ? { label: String(label).slice(0, 400) } : {}), ...(color !== undefined ? { color: color.toLowerCase() } : {}) };
+  const token = color === undefined ? null : colorToken(color);
+  if (color !== undefined && !token) throw new Error(`a color is one of ${Object.keys(COLOR_PALETTE).join(', ')}`);
+  const next = { ...trace, ...(label !== undefined ? { label: String(label).slice(0, 400) } : {}), ...(token ? { color: COLOR_PALETTE[token] } : {}) };
   if (next.label === trace.label && next.color === trace.color) return false;
   box.plot = normalizePlot({ ...plot, traces: plot.traces.map((t, i) => (i === index ? next : t)) });
   const entry = circuit.plotLegend(box)[index];
   if (entry) {
-    if (next.label !== trace.label) entry.setText(next.label || ' ');
+    if (next.label !== trace.label) {
+      // Its left edge stays beside the plot as its text grows or shrinks.
+      const left = entry.bbox().x;
+      entry.setText(next.label || ' ');
+      const anchor = entry.anchorWorld();
+      entry.moveTo(anchor.x + left - entry.bbox().x, anchor.y);
+    }
     entry.style = { ...entry.style, color: next.color };
   }
   return true;

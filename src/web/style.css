@@ -6827,14 +6827,6 @@ details.analysis-options > * + * {
 
 .data-plot-table .data-plot-skipped { color: var(--text-dim); }
 
-.data-plot-preview svg {
-  display: block;
-  width: 100%;
-  height: auto;
-  max-height: 18rem;
-  border-radius: var(--radius-sm);
-}
-
 .data-plot-axis {
   display: flex;
   gap: 8px;
@@ -6863,8 +6855,25 @@ details.analysis-options > * + * {
   gap: 6px;
 }
 
+.data-plot-trace {
+  flex-wrap: wrap;
+}
+
 .data-plot-trace input[type="text"] { flex: 1; }
-.data-plot-trace input[type="color"] { width: 28px; height: 24px; padding: 0; border: 0; background: none; }
+.data-plot-trace > .swatch { flex: none; }
+
+.data-plot-swatches {
+  flex-basis: 100%;
+  padding: 4px 0 4px 26px;
+}
+
+.data-plot-swatches[hidden] { display: none; }
+
+.data-plot-heading {
+  margin: 4px 0 8px;
+  font-size: var(--text-md);
+  font-weight: 600;
+}
 
 .data-plot-dialog .plot-view { margin-bottom: 4px; }
 

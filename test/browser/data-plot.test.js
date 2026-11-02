@@ -1,7 +1,8 @@
 /** A data plot in a browser: More → Data plot… reads a chosen file, its
- *  guesses shown and the plot placed with its legend; its right-click
- *  Plot settings… sets an axis's scale and name, takes a trace off, and
- *  keeps the zoom, as one undo step. */
+ *  guesses shown, an axis named and a trace colored from the palette, and
+ *  the plot placed with its legend; its right-click Plot settings… sets an
+ *  axis's scale and name, takes a trace off, and keeps the zoom, as one
+ *  undo step. */
 
 import { describe, before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -41,15 +42,24 @@ describe('data plot', { skip: browserSkip() }, () => {
       };
     })()`);
     await h.evaluate(`document.getElementById('btn-data-plot').click()`);
-    await h.until(`!!document.querySelector('.data-plot-dialog .data-plot-preview svg')`);
+    await h.until(`!!document.querySelector('.data-plot-dialog .plot-view svg path')`);
     const read = await h.evaluate(`({
       separator: document.getElementById('data-plot-separator').value,
       decimal: document.getElementById('data-plot-decimal').value,
       skip: document.getElementById('data-plot-skip').value,
-      xscale: document.getElementById('data-plot-xscale').value,
+      xscale: document.querySelector('[data-axis-scale="x"]').value,
       heads: [...document.querySelectorAll('.data-plot-table th')].map((th) => th.textContent),
     })`);
     assert.deepEqual(read, { separator: ';', decimal: ',', skip: '2', xscale: 'log', heads: ['f', 'Ua', 'Ub'] });
+    // Named and colored there, from the palette.
+    await h.evaluate(`(() => {
+      const name = document.querySelector('[data-axis-label="x"]');
+      name.value = 'f (Hz)';
+      name.dispatchEvent(new Event('input'));
+      document.querySelector('.data-plot-trace > .swatch').click();
+      document.querySelector('.data-plot-swatches [data-value="crimson"]').click();
+    })()`);
+    assert.equal(await h.evaluate(`document.querySelectorAll('.data-plot-dialog input[type="color"]').length`), 0);
     await h.evaluate(`${button('.data-plot-dialog', 'Place')}.click()`);
     await h.until(`!document.querySelector('.data-plot-dialog')`);
     const placed = await plot();
@@ -57,6 +67,8 @@ describe('data plot', { skip: browserSkip() }, () => {
     assert.equal(placed.plot.file, 'messung.csv');
     assert.deepEqual(placed.plot.traces[0].points, [[1, 0.5], [10, 0.25], [100, 0.125], [1000, 0.0625], [10000, 0.03125]]);
     assert.deepEqual(placed.legend, ['Ua', 'Ub']);
+    assert.equal(placed.plot.x.label, 'f (Hz)');
+    assert.equal(placed.plot.traces[0].color, '#cd2a46');
     assert.ok(await h.evaluate(`document.querySelectorAll('#canvas .plot-annotation').length > 0`), 'drawn');
   });
 

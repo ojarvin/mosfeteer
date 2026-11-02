@@ -569,7 +569,7 @@ export function commandHelp() {
     '                                   - plot a CSV file\'s columns (by number or name); unset options are guessed. The file is read, never kept',
     '  annotation plotaxis PLOT x|y [--label TEXT] [--scale log|linear] - name a data plot\'s axis, or set its scale',
     '  annotation plotview PLOT x|y LOW HIGH|fit - zoom a data plot\'s axis, or fit it to the data',
-    '  annotation plottrace PLOT N rm|[--label TEXT] [--color #RRGGBB] - take trace N (from 1) off a data plot, or rename or recolor it',
+    '  annotation plottrace PLOT N rm|[--label TEXT] [--color COLOR] - take trace N (from 1) off a data plot, or rename it or color it from the palette (red, blue, ...)',
     '  annotation stack BOX N|off [--offset DX,DY] - N copies of a box\'s outline behind it, DX,DY apart (20,-20); wires between stacks repeat',
     '  list                           - list components',
     '  state                          - full JSON state',
@@ -1676,7 +1676,7 @@ function annotationCommand(circuit, pos, result, flags = {}, io) {
   }
   if (op === 'plottrace') {
     const box = circuit.labels.get(pos[1]);
-    const usage = 'usage: annotation plottrace PLOT N rm|[--label TEXT] [--color #RRGGBB]';
+    const usage = 'usage: annotation plottrace PLOT N rm|[--label TEXT] [--color COLOR]';
     if (!box || !/^\d+$/.test(pos[2] || '')) throw new Error(usage);
     if (pos[3] === 'rm' && pos.length === 4) {
       removeDataPlotTrace(circuit, box, Number(pos[2]) - 1);

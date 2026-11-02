@@ -110,13 +110,15 @@ columns separated by spaces (`src/core/csv-data.js`, `src/core/data-plot.js`,
   traces; a positive column over more than three decades is suggested a
   log scale.
 - **More → Data plot…** chooses the file and shows the guesses, the first
-  rows, the columns, the scales, and the plot as it will be drawn; Place
-  packs it as a plot. `annotation dataplot FILE` does the same from the
-  CLI, which reads the file and sends it with the command.
-- **Plot settings…** (right-click, or double-click) sets each axis's name
-  and scale, each trace's name and color or its removal, and the zoom,
-  panned and zoomed in the window's plot; Apply is one undo step. **Read
-  file…** reads a file into the plot, keeping its place, axes, and zoom.
-  Commands: `annotation plotaxis`, `plotview`, `plottrace`.
+  rows, and the columns to plot; under them is the plot editor that
+  **Plot settings…** (right-click, or double-click) shows too: the plot to
+  pan and zoom, each axis's name and scale, and each trace's name, color
+  (a palette swatch), or removal. The plot keeps the zoom shown. Place
+  packs the new plot; Apply is one undo step. **Read file…** reads a file
+  into the plot, keeping its place, axes, and zoom.
+- A renamed trace's legend entry keeps its left edge beside the plot.
+- `annotation dataplot FILE` places a plot from the CLI, which reads the
+  file and sends it with the command; `annotation plotaxis`, `plotview`,
+  and `plottrace` (`--color` a palette name) edit it.
 - Annotating and Update plots never touch a data plot.
 

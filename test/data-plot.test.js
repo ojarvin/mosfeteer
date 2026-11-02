@@ -102,13 +102,15 @@ test('a data plot read again keeps its place, axes, and zoom, and writes its leg
 
 test('a data plot\'s trace is renamed and recolored by command, its legend entry with it', () => {
   const { circuit, box } = plotted();
-  const out = runCommand(circuit, `annotation plottrace ${box.id} 2 --label "Out" --color #AA0000`);
+  const out = runCommand(circuit, `annotation plottrace ${box.id} 2 --label "Out" --color crimson`);
   assert.equal(out.mutated, true);
-  assert.deepEqual([box.plot.traces[1].label, box.plot.traces[1].color], ['Out', '#aa0000']);
+  assert.deepEqual([box.plot.traces[1].label, box.plot.traces[1].color], ['Out', '#cd2a46']);
   const entry = circuit.plotLegend(box)[1];
-  assert.deepEqual([entry.text, entry.style.color], ['Out', '#aa0000']);
-  assert.equal(runCommand(circuit, `annotation plottrace ${box.id} 2 --color #aa0000`).mutated, false);
-  assert.throws(() => runCommand(circuit, `annotation plottrace ${box.id} 2 --color red`), /a color is #rrggbb/);
+  assert.deepEqual([entry.text, entry.style.color], ['Out', '#cd2a46']);
+  // A shorter name keeps the entry's left edge beside the plot.
+  assert.ok(Math.abs(entry.bbox().x - circuit.plotLegend(box)[0].bbox().x) <= 20, `${entry.bbox().x} ${circuit.plotLegend(box)[0].bbox().x}`);
+  assert.equal(runCommand(circuit, `annotation plottrace ${box.id} 2 --color #cd2a46`).mutated, false);
+  assert.throws(() => runCommand(circuit, `annotation plottrace ${box.id} 2 --color #123456`), /a color is one of red, orange/);
   assert.throws(() => runCommand(circuit, `annotation plottrace ${box.id} 5 --label x`), /no trace 5/);
   assert.throws(() => runCommand(circuit, `annotation plottrace ${box.id} 2`), /usage: annotation plottrace/);
 });
