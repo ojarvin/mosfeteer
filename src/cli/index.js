@@ -15,6 +15,7 @@
  * guidelines/CIRCUIT-AUTHOR.md for the reference.
  */
 
+import { readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 
 const SERVER = process.env.SP_SERVER || 'http://127.0.0.1:47280';
@@ -42,14 +43,32 @@ function isValidName(name) {
   return typeof name === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(name);
 }
 
+/** The files a command reads (`annotation dataplot FILE`), read here and
+ *  sent with it: { FILE: text }. */
+function commandFiles(cmd) {
+  const files = {};
+  for (const line of String(cmd).split('\n')) {
+    const match = line.match(/^\s*(?:annotation|label|annotate)\s+dataplot\s+("[^"]+"|\S+)/i);
+    if (!match) continue;
+    const file = match[1].replace(/^"|"$/g, '');
+    try {
+      files[file] = readFileSync(file, 'utf8');
+    } catch (err) {
+      throw new Error(`could not read ${file}: ${err.message}`);
+    }
+  }
+  return files;
+}
+
 async function postCommand(circuit, cmd) {
   const url = `${SERVER}/api/circuits/${encodeURIComponent(circuit)}/cmd`;
+  const files = commandFiles(cmd);
   let response;
   try {
     response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cmd }),
+      body: JSON.stringify({ cmd, ...(Object.keys(files).length ? { files } : {}) }),
     });
   } catch (err) {
     throw new Error(`could not reach server at ${SERVER}: ${err.message}`);

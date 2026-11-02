@@ -1,3 +1,4 @@
+import { dataPlotFromText, placeDataPlot, removeDataPlotTrace, setDataPlotAxis, setDataPlotView } from './data-plot.js';
 import { analyzeSignalFlow, complexText } from './analysis/signal-flow.js';
 import { analyzeLogic } from './analysis/logic.js';
 import { Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld } from './model.js';
@@ -123,6 +124,15 @@ const FLAG_ARITY = {
   'max-inputs': 1,
   print: 0,
   offset: 1,
+  x: 1,
+  y: 1,
+  skip: 1,
+  sep: 1,
+  decimal: 1,
+  'no-header': 0,
+  xscale: 1,
+  yscale: 1,
+  scale: 1,
 };
 
 const SYNTHESIZE_USAGE = 'usage: synthesize logic IN ... OUT=VALUES ... [--style and-or|nand|or-and|nor] [--gates inverter,and,nand,or,nor] [--max-inputs 2|3] [--at X Y] [--print]';
@@ -554,6 +564,11 @@ export function commandHelp() {
     '  annotation join ID ID ...      - join line annotations that meet end to end or share a stretch into one line',
     '  annotation vertex-rm ID N      - remove vertex N (from 0) of a line or arrow',
     '  annotation plotcolors PLOT on|off - a plot\'s traces in their colors, or in black told apart by dash (a new plot\'s)',
+    '  annotation dataplot FILE [--x COL|row] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y]',
+    '                                   - plot a CSV file\'s columns (by number or name); unset options are guessed. The file is read, never kept',
+    '  annotation plotaxis PLOT x|y [--label TEXT] [--scale log|linear] - name a data plot\'s axis, or set its scale',
+    '  annotation plotview PLOT x|y LOW HIGH|fit - zoom a data plot\'s axis, or fit it to the data',
+    '  annotation plottrace PLOT N rm  - take trace N (from 1) off a data plot',
     '  annotation stack BOX N|off [--offset DX,DY] - N copies of a box\'s outline behind it, DX,DY apart (20,-20); wires between stacks repeat',
     '  list                           - list components',
     '  state                          - full JSON state',
@@ -1120,7 +1135,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
     return netLabelCommand(circuit, pos, result);
   }
   if (cmd === 'annotation' || cmd === 'annotate' || cmd === 'label') {
-    return annotationCommand(circuit, pos, result, flags);
+    return annotationCommand(circuit, pos, result, flags, io);
   }
   if (cmd === 'net') return netCommand(circuit, pos, result);
   if (cmd === 'swap') {
@@ -1547,7 +1562,7 @@ function netLabelCommand(circuit, pos, result) {
   throw new Error('usage: netlabel add|rename|retarget|convert|detach|rm|list ...');
 }
 
-function annotationCommand(circuit, pos, result, flags = {}) {
+function annotationCommand(circuit, pos, result, flags = {}, io) {
   const op = pos[0];
   if (op === 'list') {
     const labels = [...circuit.labels.values()].filter((label) => !label.owner && !label.isNetLabel());
@@ -1618,6 +1633,52 @@ function annotationCommand(circuit, pos, result, flags = {}) {
     circuit.setPlotTraceColors(box, state === 'on');
     return result(state === 'on' ? `${box.id}: traces in their colors` : `${box.id}: traces in black, told apart by dash`, box.toJSON(), true);
   }
+  if (op === 'dataplot') {
+    const file = pos[1];
+    if (!file || pos.length !== 2) throw new Error('usage: annotation dataplot FILE [--x COL] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y]');
+    if (!io?.readDataFile) throw new Error('dataplot reads a file: use the CLI, or Insert → Data plot… in the editor');
+    const separators = { tab: '\t', semicolon: ';', comma: ',', space: ' ' };
+    const decimals = { point: '.', comma: ',' };
+    const one = (name) => flags[name]?.[0];
+    if (one('sep') !== undefined && !separators[one('sep')]) throw new Error('--sep is tab, semicolon, comma, or space');
+    if (one('decimal') !== undefined && !decimals[one('decimal')]) throw new Error('--decimal is point or comma');
+    for (const name of ['xscale', 'yscale']) if (one(name) !== undefined && !['log', 'linear'].includes(one(name))) throw new Error(`--${name} is log or linear`);
+    const skip = one('skip') === undefined ? undefined : Number(one('skip'));
+    if (skip !== undefined && !(Number.isInteger(skip) && skip >= 0)) throw new Error('--skip is a whole number of rows');
+    const plot = dataPlotFromText(io.readDataFile(file), {
+      file: file.split(/[\\/]/).pop(), x: one('x'), y: one('y'), skip,
+      separator: separators[one('sep')], decimal: decimals[one('decimal')], ...(flags['no-header'] ? { header: false } : {}),
+      xscale: one('xscale'), yscale: one('yscale'),
+    });
+    const at = flags.at ? { x: Number(flags.at[0]), y: Number(flags.at[1]) } : null;
+    if (at && !(Number.isFinite(at.x) && Number.isFinite(at.y))) throw new Error('--at X Y takes two numbers');
+    const { box } = placeDataPlot(circuit, plot, { at });
+    return result(`plotted ${plot.traces.length} trace${plot.traces.length === 1 ? '' : 's'} from ${plot.file || file} as ${box.id}`, box.toJSON(), true);
+  }
+  if (op === 'plotaxis') {
+    const box = circuit.labels.get(pos[1]);
+    if (!box || !['x', 'y'].includes(pos[2]) || pos.length !== 3 || (!flags.label && !flags.scale)) throw new Error('usage: annotation plotaxis PLOT x|y [--label TEXT] [--scale log|linear]');
+    const changed = setDataPlotAxis(box, pos[2], { label: flags.label?.[0], scale: flags.scale?.[0] });
+    return result(`${box.id}: ${pos[2]} axis ${box.plot[pos[2]].scale}${box.plot[pos[2]].label ? `, "${box.plot[pos[2]].label}"` : ''}`, box.toJSON(), changed);
+  }
+  if (op === 'plotview') {
+    const box = circuit.labels.get(pos[1]);
+    const usage = 'usage: annotation plotview PLOT x|y LOW HIGH|fit';
+    if (!box || !['x', 'y'].includes(pos[2])) throw new Error(usage);
+    if (pos[3] === 'fit' && pos.length === 4) {
+      const changed = setDataPlotView(box, pos[2], null);
+      return result(`${box.id}: ${pos[2]} axis fitted to the data`, box.toJSON(), changed);
+    }
+    if (pos.length !== 5) throw new Error(usage);
+    const changed = setDataPlotView(box, pos[2], [Number(pos[3]), Number(pos[4])]);
+    return result(`${box.id}: ${pos[2]} axis ${pos[3]} to ${pos[4]}`, box.toJSON(), changed);
+  }
+  if (op === 'plottrace') {
+    const box = circuit.labels.get(pos[1]);
+    if (!box || !/^\d+$/.test(pos[2] || '') || pos[3] !== 'rm' || pos.length !== 4) throw new Error('usage: annotation plottrace PLOT N rm');
+    removeDataPlotTrace(circuit, box, Number(pos[2]) - 1);
+    return result(`${box.id}: took off trace ${pos[2]}`, box.toJSON(), true);
+  }
   if (op === 'stack') {
     const box = circuit.labels.get(pos[1]);
     const usage = 'usage: annotation stack BOX N|off [--offset DX,DY]';
@@ -1644,7 +1705,7 @@ function annotationCommand(circuit, pos, result, flags = {}) {
     if (!label.removeVertex(index)) throw new Error(`cannot remove vertex ${index} of ${label.id}: a line keeps two distinct points and an arrow two cells of length`);
     return result(`removed vertex ${index} of ${label.id}`, label.toJSON(), true);
   }
-  throw new Error('usage: annotation add|rename|move|align|rm|vertex-rm|plotcolors|stack|list ...');
+  throw new Error('usage: annotation add|rename|move|align|rm|vertex-rm|plotcolors|dataplot|plotaxis|plotview|plottrace|stack|list ...');
 }
 
 /** A 1-based beat number from a command, as a 0-based index. */

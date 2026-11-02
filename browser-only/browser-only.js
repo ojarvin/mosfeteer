@@ -23079,6 +23079,7 @@ __exports.parseArgs = parseArgs;
 __exports.evaluate = evaluate;
 __exports.commandHelp = commandHelp;
 __exports.runCommand = runCommand;
+let dataPlotFromText, placeDataPlot, removeDataPlotTrace, setDataPlotAxis, setDataPlotView; __bind(() => { ({ dataPlotFromText, placeDataPlot, removeDataPlotTrace, setDataPlotAxis, setDataPlotView } = __require("src/core/data-plot.js")); });
 let analyzeSignalFlow, complexText; __bind(() => { ({ analyzeSignalFlow, complexText } = __require("src/core/analysis/signal-flow.js")); });
 let analyzeLogic; __bind(() => { ({ analyzeLogic } = __require("src/core/analysis/logic.js")); });
 let Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld; __bind(() => { ({ Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld } = __require("src/core/model.js")); });
@@ -23115,6 +23116,7 @@ let parsePageGuide; __bind(() => { ({ parsePageGuide } = __require("src/core/pag
 let findInLabels, replaceInLabels; __bind(() => { ({ findInLabels, replaceInLabels } = __require("src/core/label-search.js")); });
 let normalizeNotes, notesMarkdown; __bind(() => { ({ normalizeNotes, notesMarkdown } = __require("src/core/notes.js")); });
 let checkpointHistory, historyEntries, historyEntryState, historyText, pinHistoryEntry, removeHistoryEntry, settledHistory, unpinHistoryEntry; __bind(() => { ({ checkpointHistory, historyEntries, historyEntryState, historyText, pinHistoryEntry, removeHistoryEntry, settledHistory, unpinHistoryEntry } = __require("src/core/save-history.js")); });
+
 
 
 
@@ -23240,6 +23242,15 @@ const FLAG_ARITY = {
   'max-inputs': 1,
   print: 0,
   offset: 1,
+  x: 1,
+  y: 1,
+  skip: 1,
+  sep: 1,
+  decimal: 1,
+  'no-header': 0,
+  xscale: 1,
+  yscale: 1,
+  scale: 1,
 };
 
 const SYNTHESIZE_USAGE = 'usage: synthesize logic IN ... OUT=VALUES ... [--style and-or|nand|or-and|nor] [--gates inverter,and,nand,or,nor] [--max-inputs 2|3] [--at X Y] [--print]';
@@ -23671,6 +23682,11 @@ function commandHelp() {
     '  annotation join ID ID ...      - join line annotations that meet end to end or share a stretch into one line',
     '  annotation vertex-rm ID N      - remove vertex N (from 0) of a line or arrow',
     '  annotation plotcolors PLOT on|off - a plot\'s traces in their colors, or in black told apart by dash (a new plot\'s)',
+    '  annotation dataplot FILE [--x COL|row] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y]',
+    '                                   - plot a CSV file\'s columns (by number or name); unset options are guessed. The file is read, never kept',
+    '  annotation plotaxis PLOT x|y [--label TEXT] [--scale log|linear] - name a data plot\'s axis, or set its scale',
+    '  annotation plotview PLOT x|y LOW HIGH|fit - zoom a data plot\'s axis, or fit it to the data',
+    '  annotation plottrace PLOT N rm  - take trace N (from 1) off a data plot',
     '  annotation stack BOX N|off [--offset DX,DY] - N copies of a box\'s outline behind it, DX,DY apart (20,-20); wires between stacks repeat',
     '  list                           - list components',
     '  state                          - full JSON state',
@@ -24237,7 +24253,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
     return netLabelCommand(circuit, pos, result);
   }
   if (cmd === 'annotation' || cmd === 'annotate' || cmd === 'label') {
-    return annotationCommand(circuit, pos, result, flags);
+    return annotationCommand(circuit, pos, result, flags, io);
   }
   if (cmd === 'net') return netCommand(circuit, pos, result);
   if (cmd === 'swap') {
@@ -24664,7 +24680,7 @@ function netLabelCommand(circuit, pos, result) {
   throw new Error('usage: netlabel add|rename|retarget|convert|detach|rm|list ...');
 }
 
-function annotationCommand(circuit, pos, result, flags = {}) {
+function annotationCommand(circuit, pos, result, flags = {}, io) {
   const op = pos[0];
   if (op === 'list') {
     const labels = [...circuit.labels.values()].filter((label) => !label.owner && !label.isNetLabel());
@@ -24735,6 +24751,52 @@ function annotationCommand(circuit, pos, result, flags = {}) {
     circuit.setPlotTraceColors(box, state === 'on');
     return result(state === 'on' ? `${box.id}: traces in their colors` : `${box.id}: traces in black, told apart by dash`, box.toJSON(), true);
   }
+  if (op === 'dataplot') {
+    const file = pos[1];
+    if (!file || pos.length !== 2) throw new Error('usage: annotation dataplot FILE [--x COL] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y]');
+    if (!io?.readDataFile) throw new Error('dataplot reads a file: use the CLI, or Insert → Data plot… in the editor');
+    const separators = { tab: '\t', semicolon: ';', comma: ',', space: ' ' };
+    const decimals = { point: '.', comma: ',' };
+    const one = (name) => flags[name]?.[0];
+    if (one('sep') !== undefined && !separators[one('sep')]) throw new Error('--sep is tab, semicolon, comma, or space');
+    if (one('decimal') !== undefined && !decimals[one('decimal')]) throw new Error('--decimal is point or comma');
+    for (const name of ['xscale', 'yscale']) if (one(name) !== undefined && !['log', 'linear'].includes(one(name))) throw new Error(`--${name} is log or linear`);
+    const skip = one('skip') === undefined ? undefined : Number(one('skip'));
+    if (skip !== undefined && !(Number.isInteger(skip) && skip >= 0)) throw new Error('--skip is a whole number of rows');
+    const plot = dataPlotFromText(io.readDataFile(file), {
+      file: file.split(/[\\/]/).pop(), x: one('x'), y: one('y'), skip,
+      separator: separators[one('sep')], decimal: decimals[one('decimal')], ...(flags['no-header'] ? { header: false } : {}),
+      xscale: one('xscale'), yscale: one('yscale'),
+    });
+    const at = flags.at ? { x: Number(flags.at[0]), y: Number(flags.at[1]) } : null;
+    if (at && !(Number.isFinite(at.x) && Number.isFinite(at.y))) throw new Error('--at X Y takes two numbers');
+    const { box } = placeDataPlot(circuit, plot, { at });
+    return result(`plotted ${plot.traces.length} trace${plot.traces.length === 1 ? '' : 's'} from ${plot.file || file} as ${box.id}`, box.toJSON(), true);
+  }
+  if (op === 'plotaxis') {
+    const box = circuit.labels.get(pos[1]);
+    if (!box || !['x', 'y'].includes(pos[2]) || pos.length !== 3 || (!flags.label && !flags.scale)) throw new Error('usage: annotation plotaxis PLOT x|y [--label TEXT] [--scale log|linear]');
+    const changed = setDataPlotAxis(box, pos[2], { label: flags.label?.[0], scale: flags.scale?.[0] });
+    return result(`${box.id}: ${pos[2]} axis ${box.plot[pos[2]].scale}${box.plot[pos[2]].label ? `, "${box.plot[pos[2]].label}"` : ''}`, box.toJSON(), changed);
+  }
+  if (op === 'plotview') {
+    const box = circuit.labels.get(pos[1]);
+    const usage = 'usage: annotation plotview PLOT x|y LOW HIGH|fit';
+    if (!box || !['x', 'y'].includes(pos[2])) throw new Error(usage);
+    if (pos[3] === 'fit' && pos.length === 4) {
+      const changed = setDataPlotView(box, pos[2], null);
+      return result(`${box.id}: ${pos[2]} axis fitted to the data`, box.toJSON(), changed);
+    }
+    if (pos.length !== 5) throw new Error(usage);
+    const changed = setDataPlotView(box, pos[2], [Number(pos[3]), Number(pos[4])]);
+    return result(`${box.id}: ${pos[2]} axis ${pos[3]} to ${pos[4]}`, box.toJSON(), changed);
+  }
+  if (op === 'plottrace') {
+    const box = circuit.labels.get(pos[1]);
+    if (!box || !/^\d+$/.test(pos[2] || '') || pos[3] !== 'rm' || pos.length !== 4) throw new Error('usage: annotation plottrace PLOT N rm');
+    removeDataPlotTrace(circuit, box, Number(pos[2]) - 1);
+    return result(`${box.id}: took off trace ${pos[2]}`, box.toJSON(), true);
+  }
   if (op === 'stack') {
     const box = circuit.labels.get(pos[1]);
     const usage = 'usage: annotation stack BOX N|off [--offset DX,DY]';
@@ -24761,7 +24823,7 @@ function annotationCommand(circuit, pos, result, flags = {}) {
     if (!label.removeVertex(index)) throw new Error(`cannot remove vertex ${index} of ${label.id}: a line keeps two distinct points and an arrow two cells of length`);
     return result(`removed vertex ${index} of ${label.id}`, label.toJSON(), true);
   }
-  throw new Error('usage: annotation add|rename|move|align|rm|vertex-rm|plotcolors|stack|list ...');
+  throw new Error('usage: annotation add|rename|move|align|rm|vertex-rm|plotcolors|dataplot|plotaxis|plotview|plottrace|stack|list ...');
 }
 
 /** A 1-based beat number from a command, as a 0-based index. */
@@ -26919,6 +26981,353 @@ const vcm = defineSymbol({
 });
 
 __exports.vcm = vcm;
+};
+
+__modules["src/core/csv-data.js"] = function (__require, __exports) {
+__exports.cellNumber = cellNumber;
+__exports.splitLine = splitLine;
+__exports.guessFormat = guessFormat;
+__exports.suggestScale = suggestScale;
+__exports.readTable = readTable;
+__exports.tableTraces = tableTraces;
+let valueNumber; __bind(() => { ({ valueNumber } = __require("src/core/part-value.js")); });
+/**
+ * Columns of numbers read from a CSV or similar text file, for a data plot
+ * (docs/figures.md). The file itself is never kept: only the traces built
+ * from it go into the design.
+ *
+ * `readTable(text, options)` guesses what it is not told: the separator
+ * (tab, semicolon, comma, or runs of spaces), the decimal sign (a decimal
+ * comma when the separator is not a comma), and the rows before the data
+ * (a title, a header, a simulator's notes). The last of those rows names the
+ * columns when it has a name for each. Lines starting with `#`, `%`, or `//`
+ * are comments. A cell is a number as JavaScript reads it, or a value with an
+ * SI suffix (`1.2k`, `3n`, part-value.js); anything else is a gap.
+ */
+
+
+
+/** The most traces a data plot draws. */
+const MAX_DATA_TRACES = 8;
+
+const SEPARATORS = ['\t', ';', ',', ' '];
+const SAMPLE_LINES = 60;
+const COMMENT = /^\s*(#|%|\/\/)/;
+
+/** A cell as a number, or NaN: `decimal` ',' reads 1,5 as 1.5. */
+function cellNumber(cell, decimal = '.') {
+  let text = String(cell ?? '').trim();
+  if (text.startsWith('"') && text.endsWith('"') && text.length > 1) text = text.slice(1, -1).trim();
+  if (!text) return NaN;
+  if (decimal === ',') text = text.replace(',', '.');
+  if (/^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i.test(text)) return Number(text);
+  if (/^[+-]?(inf|infinity|nan)$/i.test(text)) return NaN;
+  return valueNumber(text);
+}
+
+/** One line's cells, split at `separator` (' ' is any run of spaces or
+ *  tabs); double quotes hold a separator, and "" is a quote. */
+function splitLine(line, separator) {
+  if (separator === ' ') return line.trim().split(/\s+/).filter((cell) => cell !== '');
+  const cells = [];
+  let cell = '';
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (quoted) {
+      if (ch === '"' && line[i + 1] === '"') { cell += '"'; i += 1; } else if (ch === '"') quoted = false;
+      else cell += ch;
+    } else if (ch === '"' && !cell.trim()) quoted = true;
+    else if (ch === separator) { cells.push(cell.trim()); cell = ''; } else cell += ch;
+  }
+  cells.push(cell.trim());
+  return cells;
+}
+
+/** The lines that carry anything: no blank lines, no comments. */
+function contentLines(text) {
+  return String(text ?? '').replace(/^﻿/, '').split(/\r\n|\r|\n/).filter((line) => line.trim() && !COMMENT.test(line));
+}
+
+const mode = (values) => {
+  const counts = new Map();
+  for (const value of values) counts.set(value, (counts.get(value) || 0) + 1);
+  let best = null;
+  for (const [value, count] of counts) if (!best || count > best.count || (count === best.count && value > best.value)) best = { value, count };
+  return best || { value: 0, count: 0 };
+};
+
+/** How well `separator` and `decimal` read the sample: the share of lines
+ *  with the usual number of cells, times the share of their cells that are
+ *  numbers; 0 for one cell a line. */
+function separatorScore(lines, separator, decimal) {
+  const rows = lines.map((line) => splitLine(line, separator));
+  const usual = mode(rows.map((row) => row.length));
+  if (usual.value < 2) return 0;
+  const regular = rows.filter((row) => row.length === usual.value);
+  const cells = regular.flat();
+  const numeric = cells.filter((cell) => Number.isFinite(cellNumber(cell, decimal))).length;
+  return (usual.count / rows.length) * (numeric / Math.max(1, cells.length));
+}
+
+/** The separator and decimal sign that read the most numbers in the file's
+ *  last lines (its data, past any header). */
+function guessFormat(text) {
+  const lines = contentLines(text);
+  const sample = lines.slice(-SAMPLE_LINES);
+  let best = { separator: ',', decimal: '.', score: 0 };
+  for (const separator of SEPARATORS) {
+    for (const decimal of separator === ',' ? ['.'] : ['.', ',']) {
+      const score = separatorScore(sample, separator, decimal);
+      if (score > best.score + 1e-9) best = { separator, decimal, score };
+    }
+  }
+  if (best.score > 0) return { separator: best.separator, decimal: best.decimal };
+  // One number a line: a single column.
+  const decimal = sample.some((line) => /^\s*[+-]?\d+,\d+\s*$/.test(line)) ? ',' : '.';
+  return { separator: ',', decimal };
+}
+
+/** Whether a row is data: at least half its cells (and one) are numbers. */
+function isDataRow(row, decimal) {
+  const numbers = row.filter((cell) => Number.isFinite(cellNumber(cell, decimal))).length;
+  return numbers > 0 && numbers * 2 >= row.length;
+}
+
+/** The rows before the data: the first row from which this one and the
+ *  next are data. */
+function guessSkip(rows, decimal) {
+  for (let i = 0; i < rows.length; i++) {
+    if (isDataRow(rows[i], decimal) && (i + 1 >= rows.length || isDataRow(rows[i + 1], decimal))) return i;
+  }
+  return rows.length;
+}
+
+/** A column's suggested scale: log when it is all positive and spans more
+ *  than three decades. */
+function suggestScale(values) {
+  const finite = values.filter(Number.isFinite);
+  if (!finite.length || finite.some((v) => v <= 0)) return 'linear';
+  let low = Infinity;
+  let high = -Infinity;
+  for (const v of finite) { if (v < low) low = v; if (v > high) high = v; }
+  return high / low > 1e3 ? 'log' : 'linear';
+}
+
+/**
+ * The table a text file holds: `{ separator, decimal, skip, header, rows,
+ * names, columns, numeric, x, y, scale: { x, y } }`. `rows` are the content
+ * lines' cells (comments and blank lines out), `skip` how many of them come
+ * before the data, `header` whether the last of those names the columns.
+ * `columns[c]` are column c's numbers in the data rows (NaN for a gap),
+ * `numeric` the columns at least half numbers. `x` and `y` suggest the
+ * columns to plot: the first numeric column against the next ones. Every
+ * guess can be given in `options` instead.
+ */
+function readTable(text, options = {}) {
+  const guessed = guessFormat(text);
+  const separator = SEPARATORS.includes(options.separator) ? options.separator : guessed.separator;
+  const decimal = options.decimal === ',' || options.decimal === '.' ? options.decimal : guessed.decimal;
+  const rows = contentLines(text).map((line) => splitLine(line, separator));
+  const skip = Number.isInteger(options.skip) && options.skip >= 0 ? Math.min(options.skip, rows.length) : guessSkip(rows, decimal);
+  const data = rows.slice(skip);
+  const width = data.length ? mode(data.map((row) => row.length)).value : (rows[skip - 1]?.length || 0);
+  const columns = Array.from({ length: width }, (_, c) => data.map((row) => cellNumber(row[c], decimal)));
+  const numeric = columns.map((values, c) => [values, c]).filter(([values]) => values.length
+    && values.filter(Number.isFinite).length * 2 >= values.length).map(([, c]) => c);
+  const last = rows[skip - 1];
+  const named = !!last && last.length >= width && last.slice(0, width).every((cell) => cell && !Number.isFinite(cellNumber(cell, decimal)));
+  const header = typeof options.header === 'boolean' ? options.header && !!last : named;
+  const names = Array.from({ length: width }, (_, c) => (header && last?.[c] ? last[c].replace(/^"|"$/g, '') : `Column ${c + 1}`));
+  const x = numeric.length > 1 ? numeric[0] : null;
+  const y = numeric.filter((c) => c !== x).slice(0, MAX_DATA_TRACES);
+  return {
+    separator, decimal, skip, header, rows, names, columns, numeric, x, y,
+    scale: { x: x === null ? 'linear' : suggestScale(columns[x]), y: suggestScale(y.flatMap((c) => columns[c])) },
+  };
+}
+
+/** Traces of `table`'s columns `y` against column `x` (null: the row
+ *  number): `[{ label, points: [[x, y]] }]`, points in file order, the rows
+ *  missing either number left out. */
+function tableTraces(table, x, y) {
+  const xs = x === null || x === undefined ? null : table.columns[x];
+  return y.slice(0, MAX_DATA_TRACES).map((c) => {
+    const ys = table.columns[c] || [];
+    const points = [];
+    ys.forEach((value, i) => {
+      const at = xs ? xs[i] : i;
+      if (Number.isFinite(at) && Number.isFinite(value)) points.push([at, value]);
+    });
+    return { label: table.names[c] || `Column ${c + 1}`, points };
+  }).filter((trace) => trace.points.length > 1);
+}
+
+__exports.MAX_DATA_TRACES = MAX_DATA_TRACES;
+};
+
+__modules["src/core/data-plot.js"] = function (__require, __exports) {
+__exports.dataPlot = dataPlot;
+__exports.columnIndex = columnIndex;
+__exports.dataPlotFromText = dataPlotFromText;
+__exports.placeDataPlot = placeDataPlot;
+__exports.setDataPlotAxis = setDataPlotAxis;
+__exports.setDataPlotView = setDataPlotView;
+__exports.removeDataPlotTrace = removeDataPlotTrace;
+__exports.replaceDataPlotTraces = replaceDataPlotTraces;
+let TRACE_COLORS; __bind(() => { ({ TRACE_COLORS } = __require("src/core/analysis/signal-flow.js")); });
+let newFigureId, placeFigure, settlePlaced; __bind(() => { ({ newFigureId, placeFigure, settlePlaced } = __require("src/core/figures.js")); });
+let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
+let PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot; __bind(() => { ({ PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot } = __require("src/core/model.js")); });
+let MAX_DATA_TRACES, readTable, tableTraces; __bind(() => { ({ MAX_DATA_TRACES, readTable, tableTraces } = __require("src/core/csv-data.js")); });
+/**
+ * Data plots on the drawing: a plot box (`plot.kind` 'data', model.js
+ * normalizeDataPlot) built from a text file's columns (csv-data.js), its
+ * legend a column of labels beside it as the analysis plots have. The file
+ * is read once; the design keeps the traces, never the file. Its axes, its
+ * zoom, and its traces are edited here, for the commands and the plot's
+ * settings window alike.
+ */
+
+
+
+
+
+
+
+/** A new data plot's box, in cells. */
+const BOX = { w: 18, h: 11 };
+
+/** The plot `table`'s columns `y` against `x` make (null when they make no
+ *  trace of two points), its axes named after the columns: one trace's own
+ *  name on y, or none for several, which the legend names. */
+function dataPlot(table, { x = table.x, y = table.y, file = '', scale = table.scale } = {}) {
+  const traces = tableTraces(table, x, y).map((trace, i) => ({ ...trace, color: TRACE_COLORS[i % TRACE_COLORS.length] }));
+  return normalizePlot({
+    kind: 'data',
+    file,
+    x: { label: x === null || x === undefined ? 'Row' : table.names[x], scale: scale?.x || 'linear' },
+    y: { label: traces.length === 1 ? traces[0].label : '', scale: scale?.y || 'linear' },
+    traces,
+  });
+}
+
+/** A column named by its 1-based number or its name (any case), as an
+ *  index; 'row' is the row number (null). */
+function columnIndex(table, name) {
+  const text = String(name).trim();
+  if (/^row$/i.test(text)) return null;
+  if (/^\d+$/.test(text)) {
+    const index = Number(text) - 1;
+    if (index >= 0 && index < table.names.length) return index;
+  }
+  const index = table.names.findIndex((n) => n.toLowerCase() === text.toLowerCase());
+  if (index >= 0) return index;
+  throw new Error(`no column "${text}" (columns: ${table.names.map((n, i) => `${i + 1} ${n}`).join(', ')})`);
+}
+
+/** Read `text` as `options` say (csv-data.js readTable, columns by number
+ *  or name) and make its plot. Throws when there is nothing to plot. */
+function dataPlotFromText(text, { file = '', x, y, xscale, yscale, ...read } = {}) {
+  const table = readTable(text, read);
+  const xi = x === undefined ? table.x : columnIndex(table, x);
+  const yi = y === undefined ? table.y.filter((c) => c !== xi) : String(y).split(',').map((name) => columnIndex(table, name));
+  if (!yi.length) throw new Error('no column of numbers to plot');
+  if (yi.length > MAX_DATA_TRACES) throw new Error(`at most ${MAX_DATA_TRACES} traces`);
+  const plot = dataPlot(table, { x: xi, y: yi, file, scale: { x: xscale || table.scale.x, y: yscale || table.scale.y } });
+  if (!plot) throw new Error('the columns have no two rows of numbers to plot');
+  return plot;
+}
+
+/**
+ * Put `plot` on the drawing: a box packed clear of what is there
+ * (figures.js) or at `at` (its top-left corner), drawn in black as a new
+ * plot is, its legend beside it. Returns `{ box, legend }`; the browser
+ * stacks the legend again once it has measured it.
+ */
+function placeDataPlot(circuit, plot, { at = null } = {}) {
+  const figure = { kind: 'plot', source: 'data', key: 'data', id: newFigureId(circuit) };
+  const spot = at || placeFigure(circuit, 'plot', { size: { w: (BOX.w + 6) * GRID, h: BOX.h * GRID } });
+  const x = snap(spot.x);
+  const y = snap(spot.y);
+  const box = circuit.addAnnotation('box', { x, y, end: { x: x + BOX.w * GRID, y: y + BOX.h * GRID }, plot, style: { lineStyle: 'solid', blackTraces: true }, figure });
+  if (!at) settlePlaced(circuit, figure.id);
+  const legend = writeLegend(circuit, box, box.plot.traces);
+  return { box, legend };
+}
+
+/** A legend for `traces` beside `box`, one label under another, past the
+ *  room the line samples take in black. */
+function writeLegend(circuit, box, traces, at = null) {
+  const frame = box.bbox();
+  const left = at?.x ?? frame.x + frame.w + PLOT_LEGEND_SAMPLE_ROOM;
+  let top = at?.y ?? frame.y;
+  return traces.map((trace) => {
+    const label = circuit.addLabel({ text: trace.label || ' ', parent: box.id, role: PLOT_LEGEND_ROLE, align: 'left', x: 0, y: 0, style: { color: trace.color } });
+    const size = label.bbox();
+    label.moveTo(snap(left + size.w / 2), snap(top + size.h / 2));
+    top = label.bbox().y + label.bbox().h;
+    return label;
+  });
+}
+
+function dataPlotOf(box) {
+  if (box?.plot?.kind !== 'data') throw new Error(`"${box?.id}" is not a data plot`);
+  return box.plot;
+}
+
+/** Name an axis ('x' or 'y') of a data plot, or set its scale ('linear',
+ *  'log'). A zoom the new scale cannot show (at or under zero on log) goes.
+ *  Returns whether anything changed. */
+function setDataPlotAxis(box, axis, { label, scale } = {}) {
+  const plot = dataPlotOf(box);
+  if (axis !== 'x' && axis !== 'y') throw new Error('the axis is x or y');
+  if (scale !== undefined && scale !== 'log' && scale !== 'linear') throw new Error('the scale is log or linear');
+  const next = normalizePlot({ ...plot, [axis]: { ...plot[axis], ...(label !== undefined ? { label } : {}), ...(scale ? { scale } : {}) } });
+  if (JSON.stringify(next) === JSON.stringify(plot)) return false;
+  box.plot = next;
+  return true;
+}
+
+/** Zoom a data plot's axis to [low, high] in its data's units, or with
+ *  null fit it to the data. Returns whether it changed. */
+function setDataPlotView(box, axis, range) {
+  const plot = dataPlotOf(box);
+  if (axis !== 'x' && axis !== 'y') throw new Error('the axis is x or y');
+  if (range && !(range.length === 2 && range.every(Number.isFinite) && range[0] < range[1])) throw new Error('a range is LOW HIGH, low under high');
+  if (range && plot[axis].scale === 'log' && range[0] <= 0) throw new Error('a log axis shows only positive values');
+  const view = { ...(plot.view || {}) };
+  if (range) view[axis] = range;
+  else delete view[axis];
+  const next = normalizePlot({ ...plot, view });
+  if (JSON.stringify(next) === JSON.stringify(plot)) return false;
+  box.plot = next;
+  return true;
+}
+
+/** Take trace `index` (from 0) off a data plot, and its legend entry. The
+ *  last one stays. */
+function removeDataPlotTrace(circuit, box, index) {
+  const plot = dataPlotOf(box);
+  if (!Number.isInteger(index) || index < 0 || index >= plot.traces.length) throw new Error(`no trace ${index + 1} (the plot has ${plot.traces.length})`);
+  if (plot.traces.length === 1) throw new Error('a plot keeps one trace at least');
+  const legend = circuit.plotLegend(box);
+  if (legend[index]) circuit.removeLabel(legend[index].id);
+  box.plot = normalizePlot({ ...plot, traces: plot.traces.filter((_, i) => i !== index) });
+}
+
+/** Replace a data plot's traces with `plot`'s (the file read again, or
+ *  other columns), keeping its place, size, style, axes' names and scales,
+ *  and zoom; its legend is written again where it was. */
+function replaceDataPlotTraces(circuit, box, plot) {
+  const old = dataPlotOf(box);
+  const legend = circuit.plotLegend(box);
+  const at = legend.length ? { x: Math.min(...legend.map((l) => l.bbox().x)), y: Math.min(...legend.map((l) => l.bbox().y)) } : null;
+  for (const label of legend) circuit.removeLabel(label.id);
+  box.plot = normalizePlot({ ...old, file: plot.file || old.file, traces: plot.traces });
+  return writeLegend(circuit, box, box.plot.traces, at);
+}
+
 };
 
 __modules["src/core/design-index.js"] = function (__require, __exports) {

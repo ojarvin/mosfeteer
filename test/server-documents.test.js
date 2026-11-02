@@ -508,3 +508,15 @@ serverTest('report over HTTP includes the workspace designs its notes embed as s
   assert.equal(done.results[0].text, 'Fig. 1 circuit (circuit, 8.0 pt text)\nFig. 2 ota: circuit (circuit, 8.0 pt text)');
   assert.match(done.results[0].json.html, /<section id="design-ota" class="design-section">\n<h2>OTA<\/h2>/);
 });
+
+serverTest('a data plot\'s file comes with the command, and the server reads no path it is given', async (t) => {
+  const app = await startServer();
+  t.after(() => app.stop());
+  const sent = await app.request('/api/circuits/data-plot/cmd', { method: 'POST', body: { cmd: 'annotation dataplot scope.csv', files: { 'scope.csv': 't,v\n0,1\n1,2\n' } } });
+  const result = (await sent.json()).results[0];
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.json.plot.kind, 'data');
+  const missing = await command(app, 'data-plot', 'annotation dataplot /etc/hostname');
+  assert.equal(missing.results[0].ok, false);
+  assert.match(missing.results[0].error, /did not come with the command/);
+});

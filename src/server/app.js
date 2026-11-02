@@ -520,7 +520,14 @@ export async function startApp({
       const results = [];
       let mutated = false;
       // Read only for a command that needs them: arrange searches them, a report includes them.
-      const io = lines.some((line) => /^\s*(arrange|report)\b/i.test(line)) ? { designs: await otherDesigns(path) } : undefined;
+      const io = lines.some((line) => /^\s*(arrange|report)\b/i.test(line)) ? { designs: await otherDesigns(path) } : {};
+      // A data plot's file comes with the command (the CLI reads it): the
+      // server never reads a path it is given.
+      const files = body.files && typeof body.files === 'object' ? body.files : {};
+      io.readDataFile = (file) => {
+        if (typeof files[file] !== 'string') throw new Error(`the file ${file} did not come with the command (the CLI sends it)`);
+        return files[file];
+      };
       for (const line of lines) {
         try {
           const result = runCommand(circuit, line, io);
