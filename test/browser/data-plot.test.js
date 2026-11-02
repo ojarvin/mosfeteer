@@ -125,4 +125,17 @@ describe('data plot', { skip: browserSkip() }, () => {
     }
     assert.equal((await plot()).plot.traces[0].label, 'Ua');
   });
+
+  test('a double-click on a data plot opens its settings, not its text', async () => {
+    const { box } = await plot();
+    const p = await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.worldToClient(${box.x + box.w / 2}, ${box.y + box.h / 2}))`);
+    await h.mouse('mousePressed', p.x, p.y, { clickCount: 1 });
+    await h.mouse('mouseReleased', p.x, p.y, { clickCount: 1 });
+    await h.mouse('mousePressed', p.x, p.y, { clickCount: 2 });
+    await h.mouse('mouseReleased', p.x, p.y, { clickCount: 2 });
+    await h.until(`!!document.querySelector('.data-plot-dialog[open]')`);
+    assert.equal(await h.evaluate(`!!document.querySelector('.label-inline-editor')`), false);
+    await h.evaluate(`${button('.data-plot-dialog', 'Cancel')}.click()`);
+    await h.until(`!document.querySelector('.data-plot-dialog')`);
+  });
 });

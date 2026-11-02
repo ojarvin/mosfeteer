@@ -75780,6 +75780,13 @@ if (!mathFontReady) {
 // metrics — then slides that edge by half the width change, which is what
 // makes a saved equation stack drift sideways when it is reopened. Box widths
 // are even cell multiples, so half a change stays on the grid.
+/** What a double-click on a label opens: a data plot's settings, else its
+ *  text in place. */
+function editLabelOpened(label) {
+  if (label.plot?.kind === 'data') openDataPlotSettings(label);
+  else inlineEditLabel(label);
+}
+
 function keepAlignedEdge(label, before) {
   if (label.netId || label.owner) return; // anchored to a wire or a component
   // A plot's legend entry keeps its left edge, beside the plot.
@@ -77754,7 +77761,7 @@ function canvasMouseDown(ev) {
       return;
     }
     if (ev.detail >= 2) {
-      setTimeout(() => inlineEditLabel(annotationText), 0);
+      setTimeout(() => editLabelOpened(annotationText), 0);
       return;
     }
     drag = { mode: 'annotationtextmove', label: annotationText, startClient, startWorld, startText: { ...annotationText.textAnchor }, startSnapshot: snapshot(), moved: false };
@@ -77787,6 +77794,12 @@ function canvasMouseDown(ev) {
     }
     setSelection([]);
     setLabelSelection([annotationGeometry.id]);
+    // A data plot opens its settings on a double-click.
+    if (ev.detail >= 2 && annotationGeometry.plot?.kind === 'data') {
+      render();
+      setTimeout(() => openDataPlotSettings(annotationGeometry), 0);
+      return;
+    }
     drag = { mode: 'labelmove', labelId: annotationGeometry.id, startClient, startWorld, startAnchors: new Map([[annotationGeometry.id, { x: annotationGeometry.anchor.x, y: annotationGeometry.anchor.y }]]), moved: false, committed: false, duplicate: false };
     render();
     return;
@@ -77833,7 +77846,7 @@ function canvasMouseDown(ev) {
       setSelection([]);
       setLabelSelection([labelHit.id]);
       render();
-      setTimeout(() => inlineEditLabel(labelHit), 0);
+      setTimeout(() => editLabelOpened(labelHit), 0);
       return;
     }
     // Manual double-click detection (timing + position) as a fallback for
@@ -77851,7 +77864,7 @@ function canvasMouseDown(ev) {
       setSelection([]);
       setLabelSelection([labelHit.id]);
       render();
-      setTimeout(() => inlineEditLabel(labelHit), 0);
+      setTimeout(() => editLabelOpened(labelHit), 0);
       return;
     }
     if (armLabelCopyGrab(labelHit, startWorld, startClient, ev)) return;
@@ -79522,8 +79535,7 @@ canvasEl.addEventListener('dblclick', (ev) => {
   if (linkBubbleAt(clientToWorld(ev.clientX, ev.clientY))) return;
   const w = clientToWorld(ev.clientX, ev.clientY);
   const label = pickLabel(w);
-  if (label?.plot?.kind === 'data') openDataPlotSettings(label);
-  else if (label) inlineEditLabel(label);
+  if (label) editLabelOpened(label);
   else {
     const wire = pickWire(w);
     const hit = pickAt(w) || (wire ? null : supplyBarHit(w));
