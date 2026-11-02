@@ -21441,6 +21441,7 @@ __exports.SWITCH_TYPES = SWITCH_TYPES;
 };
 
 __modules["src/core/bode-figure.js"] = function (__require, __exports) {
+__exports.rangeWithExtra = rangeWithExtra;
 __exports.bodeFigure = bodeFigure;
 __exports.cornerNames = cornerNames;
 __exports.responseFigure = responseFigure;
@@ -21568,6 +21569,17 @@ function extraPaths(plot, x, y, pane, base) {
     if (points.length > 1) items.push(...clipToPane([{ type: 'path', points, role: 'curve', color: trace.color, trace: base + k }], pane));
   });
   return items;
+}
+
+/** The x range [low, high] that holds a plot's own range and its added
+ *  traces: on a log axis (`log`) in decades, whole ones, as the plot's is. */
+function rangeWithExtra(plot, { log = false } = {}) {
+  const xs = (plot.extra || []).flatMap((trace) => trace.points.map((p) => p[0])).filter((v) => Number.isFinite(v) && (!log || v > 0));
+  const low = plot.range.low;
+  const high = plot.range.high;
+  if (!xs.length) return [low, high];
+  if (log) return [Math.min(low, Math.floor(Math.log10(Math.min(...xs)) + 1e-9)), Math.max(high, Math.ceil(Math.log10(Math.max(...xs)) - 1e-9))];
+  return [Math.min(low, Math.min(...xs)), Math.max(high, Math.max(...xs))];
 }
 
 /** The y values of a plot's added traces, for the range it fits. */
@@ -21741,7 +21753,7 @@ function responseFigure(plot, { width = 480, height = 260, fontSize = 11 } = {})
   const em = fontSize;
   // A zoomed plot keeps the limits it was annotated at (`view`).
   const view = plot.view || {};
-  const [low, high] = view.x ? view.x.map(Math.log10) : [plot.range.low, plot.range.high];
+  const [low, high] = view.x ? view.x.map(Math.log10) : rangeWithExtra(plot, { log: true });
   const left = AXIS_LEFT_EM * em;
   const right = 0.9 * em;
   const top = 0.9 * em;
@@ -21830,7 +21842,7 @@ function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const bottom = AXIS_BOTTOM_EM * em;
   const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
   const view = plot.view || {};
-  const [low, high] = view.x || [plot.range.low, plot.range.high];
+  const [low, high] = view.x || rangeWithExtra(plot);
   const x = (t) => pane.x + ((t - low) / (high - low || 1)) * pane.w;
   const values = [...plot.traces.flatMap((trace) => trace.points.map((p) => p.y)), ...extraValues(plot)].filter(Number.isFinite);
   const yTop = Math.max(0, ...values);
@@ -21956,7 +21968,7 @@ function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const items = [];
   const em = fontSize;
   const view = plot.view || {};
-  const [low, high] = view.x || [plot.range.low, plot.range.high];
+  const [low, high] = view.x || rangeWithExtra(plot);
   const left = AXIS_LEFT_EM * em;
   const right = 0.9 * em;
   const top = 0.9 * em;
@@ -22119,7 +22131,7 @@ function locusFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   // In z the view stays near the unit circle: a pole far outside is
   // unstable either way, and following it would shrink the circle away.
   const near = (p) => !z || Math.hypot(p.re, p.im) <= 2.5;
-  const all = [...plot.points, ...plot.current].filter(near);
+  const all = [...plot.points, ...plot.current, ...(plot.extra || []).flatMap((trace) => trace.points.map(([re, im]) => ({ re, im })))].filter(near);
   let reLow = Math.min(...all.map((p) => p.re), z ? -1.1 : 0);
   let reHigh = Math.max(...all.map((p) => p.re), z ? 1.1 : 0);
   let imHigh = Math.max(...all.map((p) => Math.abs(p.im)), z ? 1.1 : 0);
@@ -39616,6 +39628,15 @@ function stepSpec(plot) {
   };
 }
 
+/** A spec's x range widened to hold a plot's added traces (`extra`). */
+function withExtraRange(spec, plot) {
+  if (!plot.extra || !spec.x.range) return spec;
+  const log = spec.x.scale === 'log';
+  const xs = plot.extra.flatMap((trace) => trace.points.map((p) => p[0])).filter((v) => Number.isFinite(v) && (!log || v > 0));
+  if (!xs.length) return spec;
+  return { ...spec, x: { ...spec.x, range: [Math.min(spec.x.range[0], ...xs), Math.max(spec.x.range[1], ...xs)] } };
+}
+
 /** A data plot (columns read from a file, core/data-plot.js), each axis
  *  linear or log as it says. */
 function dataSpec(plot) {
@@ -39757,7 +39778,7 @@ function plotSpec(plot) {
     : null;
   if (!spec || !plot.extra) return spec;
   const parametric = plot.kind === 'locus' ? { parametric: true } : {};
-  return { ...spec, series: [...spec.series, ...plot.extra.map((trace) => ({ label: trace.label, color: trace.color, role: 'curve', points: trace.points.map(([x, y]) => [x, y]), ...parametric }))] };
+  return { ...withExtraRange(spec, plot), series: [...spec.series, ...plot.extra.map((trace) => ({ label: trace.label, color: trace.color, role: 'curve', points: trace.points.map(([x, y]) => [x, y]), ...parametric }))] };
 }
 
 };

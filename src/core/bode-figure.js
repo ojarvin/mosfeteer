@@ -114,6 +114,17 @@ function extraPaths(plot, x, y, pane, base) {
   return items;
 }
 
+/** The x range [low, high] that holds a plot's own range and its added
+ *  traces: on a log axis (`log`) in decades, whole ones, as the plot's is. */
+export function rangeWithExtra(plot, { log = false } = {}) {
+  const xs = (plot.extra || []).flatMap((trace) => trace.points.map((p) => p[0])).filter((v) => Number.isFinite(v) && (!log || v > 0));
+  const low = plot.range.low;
+  const high = plot.range.high;
+  if (!xs.length) return [low, high];
+  if (log) return [Math.min(low, Math.floor(Math.log10(Math.min(...xs)) + 1e-9)), Math.max(high, Math.ceil(Math.log10(Math.max(...xs)) - 1e-9))];
+  return [Math.min(low, Math.min(...xs)), Math.max(high, Math.max(...xs))];
+}
+
 /** The y values of a plot's added traces, for the range it fits. */
 const extraValues = (plot) => (plot.extra || []).flatMap((trace) => trace.points.map((p) => p[1]));
 
@@ -285,7 +296,7 @@ export function responseFigure(plot, { width = 480, height = 260, fontSize = 11 
   const em = fontSize;
   // A zoomed plot keeps the limits it was annotated at (`view`).
   const view = plot.view || {};
-  const [low, high] = view.x ? view.x.map(Math.log10) : [plot.range.low, plot.range.high];
+  const [low, high] = view.x ? view.x.map(Math.log10) : rangeWithExtra(plot, { log: true });
   const left = AXIS_LEFT_EM * em;
   const right = 0.9 * em;
   const top = 0.9 * em;
@@ -374,7 +385,7 @@ export function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = 
   const bottom = AXIS_BOTTOM_EM * em;
   const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
   const view = plot.view || {};
-  const [low, high] = view.x || [plot.range.low, plot.range.high];
+  const [low, high] = view.x || rangeWithExtra(plot);
   const x = (t) => pane.x + ((t - low) / (high - low || 1)) * pane.w;
   const values = [...plot.traces.flatMap((trace) => trace.points.map((p) => p.y)), ...extraValues(plot)].filter(Number.isFinite);
   const yTop = Math.max(0, ...values);
@@ -500,7 +511,7 @@ export function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } =
   const items = [];
   const em = fontSize;
   const view = plot.view || {};
-  const [low, high] = view.x || [plot.range.low, plot.range.high];
+  const [low, high] = view.x || rangeWithExtra(plot);
   const left = AXIS_LEFT_EM * em;
   const right = 0.9 * em;
   const top = 0.9 * em;
@@ -663,7 +674,7 @@ export function locusFigure(plot, { width = 480, height = 260, fontSize = 11 } =
   // In z the view stays near the unit circle: a pole far outside is
   // unstable either way, and following it would shrink the circle away.
   const near = (p) => !z || Math.hypot(p.re, p.im) <= 2.5;
-  const all = [...plot.points, ...plot.current].filter(near);
+  const all = [...plot.points, ...plot.current, ...(plot.extra || []).flatMap((trace) => trace.points.map(([re, im]) => ({ re, im })))].filter(near);
   let reLow = Math.min(...all.map((p) => p.re), z ? -1.1 : 0);
   let reHigh = Math.max(...all.map((p) => p.re), z ? 1.1 : 0);
   let imHigh = Math.max(...all.map((p) => Math.abs(p.im)), z ? 1.1 : 0);

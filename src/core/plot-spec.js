@@ -71,6 +71,15 @@ export function stepSpec(plot) {
   };
 }
 
+/** A spec's x range widened to hold a plot's added traces (`extra`). */
+function withExtraRange(spec, plot) {
+  if (!plot.extra || !spec.x.range) return spec;
+  const log = spec.x.scale === 'log';
+  const xs = plot.extra.flatMap((trace) => trace.points.map((p) => p[0])).filter((v) => Number.isFinite(v) && (!log || v > 0));
+  if (!xs.length) return spec;
+  return { ...spec, x: { ...spec.x, range: [Math.min(spec.x.range[0], ...xs), Math.max(spec.x.range[1], ...xs)] } };
+}
+
 /** A data plot (columns read from a file, core/data-plot.js), each axis
  *  linear or log as it says. */
 export function dataSpec(plot) {
@@ -212,5 +221,5 @@ export function plotSpec(plot) {
     : null;
   if (!spec || !plot.extra) return spec;
   const parametric = plot.kind === 'locus' ? { parametric: true } : {};
-  return { ...spec, series: [...spec.series, ...plot.extra.map((trace) => ({ label: trace.label, color: trace.color, role: 'curve', points: trace.points.map(([x, y]) => [x, y]), ...parametric }))] };
+  return { ...withExtraRange(spec, plot), series: [...spec.series, ...plot.extra.map((trace) => ({ label: trace.label, color: trace.color, role: 'curve', points: trace.points.map(([x, y]) => [x, y]), ...parametric }))] };
 }

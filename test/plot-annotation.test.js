@@ -247,3 +247,20 @@ test('an analysis plot keeps traces added from files and draws them over its own
   const dashed = [...svgString(circuit).matchAll(/<path d="[^"]*"[^>]*stroke-dasharray="([^"]+)"/g)].map((m) => m[1]);
   assert.ok(dashed.length >= 1, 'the added curve is dashed');
 });
+
+test('an analysis plot fits its added traces too: past its own range, on the drawing and in a window', async () => {
+  const { responseFigure, stepFigure, rangeWithExtra } = await import('../src/core/bode-figure.js');
+  const { plotSpec } = await import('../src/core/plot-spec.js');
+  const response = normalizePlot({
+    kind: 'response', axis: 'relative', range: { low: 0, high: 2 },
+    traces: [{ label: 'H', points: [{ f: 1, db: 0 }, { f: 100, db: -20 }] }],
+    extra: [{ label: 'sim', points: [[0.5, 0], [3e4, -60]] }],
+  });
+  assert.deepEqual(rangeWithExtra(response, { log: true }), [-1, 5]);
+  const numbers = responseFigure(response).items.filter((item) => item.role === 'number').map((item) => item.text);
+  assert.ok(numbers.includes('10^{5}') && numbers.includes('10^{-1}'), numbers.join());
+  assert.deepEqual(plotSpec(response).x.range, [0.5, 3e4]);
+  const step = normalizePlot({ kind: 'step', unit: 't', range: { low: 0, high: 1 }, traces: [{ label: 'y', points: [{ t: 0, y: 0 }, { t: 1, y: 1 }] }], extra: [{ label: 's', points: [[0, 0], [3, 1]] }] });
+  assert.deepEqual(rangeWithExtra(step), [0, 3]);
+  assert.ok(stepFigure(step).items.some((item) => item.role === 'number' && item.text === '3'));
+});
