@@ -541,6 +541,7 @@ export function commandHelp() {
     '  net <id> add|drop|name|label|bitcount|fan|rm|segment-rm ... - manage a net',
     '  net <id> fan BOX on|off        - the net fans into stacked box BOX: a diagonal a cell out, a short wire into each copy',
     '  net <id> bitcount on|off       - show a bus net\'s bit count beside its slashes',
+    '  net <id> busslash on|off       - show or hide a bus net\'s slashes',
     '                                   net N1 add R1.a ; net N1 drop R2.b ;',
     '                                   net N1 name OUT ; net N1 rm',
     '  netlabel add NET [ID] NAME X Y  - place a label on a physical net',
@@ -1757,6 +1758,11 @@ function netCommand(circuit, pos, result) {
     if (!['on', 'off'].includes(pos[2])) throw new Error('usage: net <id> bitcount on|off');
     const shown = circuit.setBusCountShown(net, pos[2] === 'on');
     return result(`net ${net.id} bit count ${shown ? 'shown' : 'hidden'}`, net.toJSON(), true);
+  }
+  if (op === 'busslash') {
+    if (!['on', 'off'].includes(pos[2])) throw new Error('usage: net <id> busslash on|off');
+    const shown = circuit.setBusSlashShown(net, pos[2] === 'on');
+    return result(`net ${net.id} bus slash ${shown ? 'shown' : 'hidden'}`, net.toJSON(), true);
   }
   if (op === 'fan') {
     const box = circuit.labels.get(pos[2]);

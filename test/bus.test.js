@@ -180,6 +180,33 @@ test('a bus net can show its bit count beside each slash, and each count moves w
   assert.throws(() => runCommand(circuit, `net ${net.id} bitcount maybe`), /usage: net <id> bitcount on\|off/);
 });
 
+test('a bus net can hide its slashes, and its bit counts with them', async () => {
+  const { drawnBusCounts } = await import('../src/core/render.js');
+  const circuit = new Circuit();
+  for (const line of ['add adc U1 --at 0 0', 'add output P1 --at 640 0', 'connect U1.d P1.p --name D[3:0]']) runCommand(circuit, line);
+  const net = circuit.netOfTerminal({ comp: 'U1', term: 'd' });
+  runCommand(circuit, `net ${net.id} bitcount on`);
+  const slashes = () => (svgString(circuit).match(/class="bus-mark"/g) || []).length;
+  assert.equal(slashes(), 2);
+  const off = runCommand(circuit, `net ${net.id} busslash off`);
+  assert.equal(off.mutated, true);
+  assert.equal(slashes(), 0);
+  assert.deepEqual(drawnBusCounts(circuit), []);
+  // Saved and loaded hidden; shown again, the count is back too.
+  const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
+  assert.equal(loaded.nets.get(net.id).busSlashHidden, true);
+  runCommand(circuit, `net ${net.id} busslash on`);
+  assert.equal(slashes(), 2);
+  assert.equal(drawnBusCounts(circuit).length, 2);
+  assert.equal('busSlashHidden' in net.toJSON(), false);
+  // Only a multi-bit bus has a slash; the command says how to use it.
+  runCommand(circuit, 'add resistor R1 --at 0 400');
+  runCommand(circuit, 'add resistor R2 --at 400 400');
+  runCommand(circuit, 'connect R1.b R2.a --name D[1]');
+  assert.throws(() => runCommand(circuit, `net ${circuit.netOfTerminal({ comp: 'R1', term: 'b' }).id} busslash off`), /not a multi-bit bus/);
+  assert.throws(() => runCommand(circuit, `net ${net.id} busslash maybe`), /usage: net <id> busslash on\|off/);
+});
+
 test('typed label names spell a bus out bit by bit, in written order', () => {
   assert.deepEqual(expandLabelNames('DOUT[3:0]'), ['DOUT[3]', 'DOUT[2]', 'DOUT[1]', 'DOUT[0]']);
   assert.deepEqual(expandLabelNames('CLK, DOUT<0:1>'), ['CLK', 'DOUT<0>', 'DOUT<1>']);

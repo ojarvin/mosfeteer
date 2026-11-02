@@ -812,11 +812,16 @@ function appendContextActions(menu, target) {
     const net = contextNet(target);
     appendContextItem(group, 'Rename net…', later(() => renameFromPanel(netsListEl, `#net-option-${CSS.escape(net.id)}`, (ref) => startNetRename(net, ref))));
     if (busWidth(net.name)) {
+      const slash = !net.busSlashHidden;
+      appendContextItem(group, 'Show bus slash', () => {
+        commit(() => editor.circuit.setBusSlashShown(net, !slash));
+        logLine(`${slash ? 'hid' : 'showing'} the bus slash of ${net.name}`, 'status');
+      }, { active: slash });
       const shown = !!net.busCount;
       appendContextItem(group, `Show bit count (${busWidth(net.name)})`, () => {
         commit(() => editor.circuit.setBusCountShown(net, !shown));
         logLine(`${shown ? 'hid' : 'showing'} the bit count of ${net.name}`, 'status');
-      }, { active: shown });
+      }, { active: shown && slash, disabled: !slash });
     }
     appendFanItems(group, net);
   }

@@ -2469,6 +2469,8 @@ export class Net {
     /** A bus net's bit-count labels: { offsets: { slashKey: {x,y} } } beside
      *  its slashes (bus.js), or null when they are not shown. */
     this.busCount = normalizeBusCount(opts.busCount);
+    /** Whether a bus net's slashes (and so its bit counts) are hidden. */
+    this.busSlashHidden = !!opts.busSlashHidden;
     /** The stacked boxes (their ids) this net fans into (box-stack.js). */
     this.fans = Array.isArray(opts.fans) ? [...new Set(opts.fans.filter((id) => typeof id === 'string' && id))] : [];
     /** Ordered list of {comp, term} terminal references. */
@@ -2581,6 +2583,7 @@ export class Net {
       preserveEmpty: this.preserveEmpty,
       ...(this.analysis.role || this.analysis.acGround ? { analysis: { ...this.analysis } } : {}),
       ...(this.busCount ? { busCount: normalizeBusCount(this.busCount) } : {}),
+      ...(this.busSlashHidden ? { busSlashHidden: true } : {}),
       ...(this.fans.length ? { fans: [...this.fans] } : {}),
       terminals: this.terminals.map((t) => ({ ...t })),
       allowDiagonal: this.allowDiagonal,
@@ -4025,6 +4028,15 @@ export class Circuit {
     if (!busWidth(net.name) && show) throw new Error(`net ${net.name || net.id} is not a multi-bit bus`);
     net.busCount = show ? (net.busCount || { offsets: {} }) : null;
     return !!net.busCount;
+  }
+
+  /** Show or hide a bus net's slashes; its bit counts go with them.
+   *  Returns whether they are shown. */
+  setBusSlashShown(netOrId, show) {
+    const net = this._resolveNet(netOrId);
+    if (!busWidth(net.name)) throw new Error(`net ${net.name || net.id} is not a multi-bit bus`);
+    net.busSlashHidden = !show;
+    return !net.busSlashHidden;
   }
 
   /** Place one bit-count label at `offset` from its slash (`key`). */
@@ -7446,6 +7458,7 @@ export class Circuit {
         drawOrder: n.drawOrder,
         wireStyles: n.wireStyles,
         busCount: n.busCount,
+        busSlashHidden: n.busSlashHidden,
         fans: n.fans,
         allowDiagonal: n.allowDiagonal === true,
         preserveEmpty: !!n.preserveEmpty || !n.terminals?.length,

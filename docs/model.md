@@ -223,7 +223,9 @@ an ADC's terminal, a cell out from a port, two from a pin on a body's edge
 such as a sum or block, for an arrowhead; two pins close together on one
 plain wire share one slash mid-way). A bus net's right-click "Show bit
 count" (`net <id> bitcount on|off`, `net.busCount`) puts its width beside each
-slash; each count drags on its own, keeping its offset from its slash. A port named that way folds the range into its
+slash; each count drags on its own, keeping its offset from its slash.
+"Show bus slash" (`net <id> busslash on|off`, `net.busSlashHidden`) hides
+the slashes, and the counts with them. A port named that way folds the range into its
 identity (`D_{OUT}[3:0]` is `DOUT_3_0`) and keeps it in its label and net
 name. Buses are for digital nets: small-signal analysis joins nets by exact
 name only.

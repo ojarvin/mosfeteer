@@ -168,7 +168,7 @@ function netBusMarks(circuit, net, paths = drawnNetPaths(net)) {
 export function drawnBusCounts(circuit) {
   const out = [];
   for (const net of circuit.nets.values()) {
-    if (!net.busCount || !busWidth(net.name)) continue;
+    if (!net.busCount || net.busSlashHidden || !busWidth(net.name)) continue;
     for (const count of busCountLabels(net, netBusMarks(circuit, net))) out.push({ netId: net.id, ...count });
   }
   return out;
@@ -1331,8 +1331,8 @@ export function svgString(circuit, opts = {}) {
       parts.push(`<g class="wire-echo" pointer-events="none">${svg}</g>`);
     }
     // A bus (D[7:0], D<7:0>) carries a slash at each pin on it (bus.js), solid
-    // and in the wire's own color.
-    if (busWidth(net.name)) {
+    // and in the wire's own color, unless hidden.
+    if (busWidth(net.name) && !net.busSlashHidden) {
       const marks = netBusMarks(circuit, net, paths);
       const slash = { ...(netStyle || {}), lineStyle: 'solid' };
       for (const mark of marks) {

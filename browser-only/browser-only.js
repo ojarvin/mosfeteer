@@ -23595,6 +23595,7 @@ function commandHelp() {
     '  net <id> add|drop|name|label|bitcount|fan|rm|segment-rm ... - manage a net',
     '  net <id> fan BOX on|off        - the net fans into stacked box BOX: a diagonal a cell out, a short wire into each copy',
     '  net <id> bitcount on|off       - show a bus net\'s bit count beside its slashes',
+    '  net <id> busslash on|off       - show or hide a bus net\'s slashes',
     '                                   net N1 add R1.a ; net N1 drop R2.b ;',
     '                                   net N1 name OUT ; net N1 rm',
     '  netlabel add NET [ID] NAME X Y  - place a label on a physical net',
@@ -24811,6 +24812,11 @@ function netCommand(circuit, pos, result) {
     if (!['on', 'off'].includes(pos[2])) throw new Error('usage: net <id> bitcount on|off');
     const shown = circuit.setBusCountShown(net, pos[2] === 'on');
     return result(`net ${net.id} bit count ${shown ? 'shown' : 'hidden'}`, net.toJSON(), true);
+  }
+  if (op === 'busslash') {
+    if (!['on', 'off'].includes(pos[2])) throw new Error('usage: net <id> busslash on|off');
+    const shown = circuit.setBusSlashShown(net, pos[2] === 'on');
+    return result(`net ${net.id} bus slash ${shown ? 'shown' : 'hidden'}`, net.toJSON(), true);
   }
   if (op === 'fan') {
     const box = circuit.labels.get(pos[2]);
@@ -31358,6 +31364,8 @@ class Net {
     /** A bus net's bit-count labels: { offsets: { slashKey: {x,y} } } beside
      *  its slashes (bus.js), or null when they are not shown. */
     this.busCount = normalizeBusCount(opts.busCount);
+    /** Whether a bus net's slashes (and so its bit counts) are hidden. */
+    this.busSlashHidden = !!opts.busSlashHidden;
     /** The stacked boxes (their ids) this net fans into (box-stack.js). */
     this.fans = Array.isArray(opts.fans) ? [...new Set(opts.fans.filter((id) => typeof id === 'string' && id))] : [];
     /** Ordered list of {comp, term} terminal references. */
@@ -31470,6 +31478,7 @@ class Net {
       preserveEmpty: this.preserveEmpty,
       ...(this.analysis.role || this.analysis.acGround ? { analysis: { ...this.analysis } } : {}),
       ...(this.busCount ? { busCount: normalizeBusCount(this.busCount) } : {}),
+      ...(this.busSlashHidden ? { busSlashHidden: true } : {}),
       ...(this.fans.length ? { fans: [...this.fans] } : {}),
       terminals: this.terminals.map((t) => ({ ...t })),
       allowDiagonal: this.allowDiagonal,
@@ -32914,6 +32923,15 @@ class Circuit {
     if (!busWidth(net.name) && show) throw new Error(`net ${net.name || net.id} is not a multi-bit bus`);
     net.busCount = show ? (net.busCount || { offsets: {} }) : null;
     return !!net.busCount;
+  }
+
+  /** Show or hide a bus net's slashes; its bit counts go with them.
+   *  Returns whether they are shown. */
+  setBusSlashShown(netOrId, show) {
+    const net = this._resolveNet(netOrId);
+    if (!busWidth(net.name)) throw new Error(`net ${net.name || net.id} is not a multi-bit bus`);
+    net.busSlashHidden = !show;
+    return !net.busSlashHidden;
   }
 
   /** Place one bit-count label at `offset` from its slash (`key`). */
@@ -36335,6 +36353,7 @@ class Circuit {
         drawOrder: n.drawOrder,
         wireStyles: n.wireStyles,
         busCount: n.busCount,
+        busSlashHidden: n.busSlashHidden,
         fans: n.fans,
         allowDiagonal: n.allowDiagonal === true,
         preserveEmpty: !!n.preserveEmpty || !n.terminals?.length,
@@ -39121,7 +39140,7 @@ function netBusMarks(circuit, net, paths = drawnNetPaths(net)) {
 function drawnBusCounts(circuit) {
   const out = [];
   for (const net of circuit.nets.values()) {
-    if (!net.busCount || !busWidth(net.name)) continue;
+    if (!net.busCount || net.busSlashHidden || !busWidth(net.name)) continue;
     for (const count of busCountLabels(net, netBusMarks(circuit, net))) out.push({ netId: net.id, ...count });
   }
   return out;
@@ -40284,8 +40303,8 @@ function svgString(circuit, opts = {}) {
       parts.push(`<g class="wire-echo" pointer-events="none">${svg}</g>`);
     }
     // A bus (D[7:0], D<7:0>) carries a slash at each pin on it (bus.js), solid
-    // and in the wire's own color.
-    if (busWidth(net.name)) {
+    // and in the wire's own color, unless hidden.
+    if (busWidth(net.name) && !net.busSlashHidden) {
       const marks = netBusMarks(circuit, net, paths);
       const slash = { ...(netStyle || {}), lineStyle: 'solid' };
       for (const mark of marks) {
@@ -61265,11 +61284,16 @@ function appendContextActions(menu, target) {
     const net = contextNet(target);
     appendContextItem(group, 'Rename net…', later(() => renameFromPanel(netsListEl, `#net-option-${CSS.escape(net.id)}`, (ref) => startNetRename(net, ref))));
     if (busWidth(net.name)) {
+      const slash = !net.busSlashHidden;
+      appendContextItem(group, 'Show bus slash', () => {
+        commit(() => editor.circuit.setBusSlashShown(net, !slash));
+        logLine(`${slash ? 'hid' : 'showing'} the bus slash of ${net.name}`, 'status');
+      }, { active: slash });
       const shown = !!net.busCount;
       appendContextItem(group, `Show bit count (${busWidth(net.name)})`, () => {
         commit(() => editor.circuit.setBusCountShown(net, !shown));
         logLine(`${shown ? 'hid' : 'showing'} the bit count of ${net.name}`, 'status');
-      }, { active: shown });
+      }, { active: shown && slash, disabled: !slash });
     }
     appendFanItems(group, net);
   }

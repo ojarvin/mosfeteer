@@ -234,6 +234,25 @@ describe('editor chrome', { skip: browserSkip() }, () => {
     await h.key('Escape');
   });
 
+  test("a bus net's menu hides its slash, and its bit count with it", async () => {
+    const circuit = new Circuit();
+    for (const line of ['add adc U1 --at 0 0', 'add output P1 --at 640 0', 'connect U1.d P1.p --name D[3:0]']) runCommand(circuit, line);
+    const net = circuit.netOfTerminal({ comp: 'U1', term: 'd' });
+    runCommand(circuit, `net ${net.id} bitcount on`);
+    await h.evaluate(`window.__load(${JSON.stringify(circuit.toJSON())})`);
+    const [a, b] = net.route;
+    await rightClick(Math.round((a.x + b.x) / 2 / 40) * 40, a.y);
+    const row = (text) => `[...document.querySelectorAll('.component-context-menu button')].find((b) => b.textContent.trim().startsWith(${JSON.stringify(text)}))`;
+    assert.equal(await h.evaluate(`${row('Show bus slash')}.classList.contains('context-item-active')`), true);
+    await h.evaluate(`${row('Show bus slash')}.click()`);
+    await h.until(`document.querySelectorAll('#canvas .bus-mark, #canvas .bus-count').length === 0`);
+    assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.nets.values()].find((n) => n.name === 'D[3:0]').busSlashHidden)`), true);
+    await rightClick(Math.round((a.x + b.x) / 2 / 40) * 40, a.y);
+    assert.equal(await h.evaluate(`${row('Show bit count')}.disabled`), true);
+    await h.evaluate(`${row('Show bus slash')}.click()`);
+    await h.until(`document.querySelectorAll('#canvas .bus-mark').length === 2 && document.querySelectorAll('#canvas .bus-count').length === 2`);
+  });
+
   test('the menu highlight follows the pointer: a left trigger goes dark at once, a plain row once the pointer leaves', async () => {
     await h.open('amplifier');
     await rightClick(-20, 0); // M1
