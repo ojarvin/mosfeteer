@@ -23079,6 +23079,7 @@ __exports.parseArgs = parseArgs;
 __exports.evaluate = evaluate;
 __exports.commandHelp = commandHelp;
 __exports.runCommand = runCommand;
+let plotCsv, plotSeries; __bind(() => { ({ plotCsv, plotSeries } = __require("src/core/plot-export.js")); });
 let appendDataPlotTraces, dataPlotFromText, placeDataPlot, removeDataPlotTrace, setDataPlotAxis, setDataPlotTrace, setDataPlotView; __bind(() => { ({ appendDataPlotTraces, dataPlotFromText, placeDataPlot, removeDataPlotTrace, setDataPlotAxis, setDataPlotTrace, setDataPlotView } = __require("src/core/data-plot.js")); });
 let analyzeSignalFlow, complexText; __bind(() => { ({ analyzeSignalFlow, complexText } = __require("src/core/analysis/signal-flow.js")); });
 let analyzeLogic; __bind(() => { ({ analyzeLogic } = __require("src/core/analysis/logic.js")); });
@@ -23116,6 +23117,7 @@ let parsePageGuide; __bind(() => { ({ parsePageGuide } = __require("src/core/pag
 let findInLabels, replaceInLabels; __bind(() => { ({ findInLabels, replaceInLabels } = __require("src/core/label-search.js")); });
 let normalizeNotes, notesMarkdown; __bind(() => { ({ normalizeNotes, notesMarkdown } = __require("src/core/notes.js")); });
 let checkpointHistory, historyEntries, historyEntryState, historyText, pinHistoryEntry, removeHistoryEntry, settledHistory, unpinHistoryEntry; __bind(() => { ({ checkpointHistory, historyEntries, historyEntryState, historyText, pinHistoryEntry, removeHistoryEntry, settledHistory, unpinHistoryEntry } = __require("src/core/save-history.js")); });
+
 
 
 
@@ -23253,6 +23255,7 @@ const FLAG_ARITY = {
   scale: 1,
   color: 1,
   into: 1,
+  traces: 1,
 };
 
 const SYNTHESIZE_USAGE = 'usage: synthesize logic IN ... OUT=VALUES ... [--style and-or|nand|or-and|nor] [--gates inverter,and,nand,or,nor] [--max-inputs 2|3] [--at X Y] [--print]';
@@ -23686,6 +23689,7 @@ function commandHelp() {
     '  annotation plotcolors PLOT on|off - a plot\'s traces in their colors, or in black told apart by dash (a new plot\'s)',
     '  annotation dataplot FILE [--x COL|row] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y | --into PLOT]',
     '                                   - plot a CSV file\'s columns (by number or name), or add them to a data plot; unset options are guessed. The file is read, never kept',
+    '  annotation plotcsv PLOT [--traces N,N] [--sep comma|semicolon|tab] [--decimal point|comma] - any plot\'s numbers as CSV text (traces from 1)',
     '  annotation plotaxis PLOT x|y [--label TEXT] [--scale log|linear] - name a data plot\'s axis, or set its scale',
     '  annotation plotview PLOT x|y LOW HIGH|fit - zoom a data plot\'s axis, or fit it to the data',
     '  annotation plottrace PLOT N rm|[--label TEXT] [--color COLOR] - take trace N (from 1) off a data plot, or rename it or color it from the palette (red, blue, ...)',
@@ -24780,6 +24784,24 @@ function annotationCommand(circuit, pos, result, flags = {}, io) {
     if (at && !(Number.isFinite(at.x) && Number.isFinite(at.y))) throw new Error('--at X Y takes two numbers');
     const { box } = placeDataPlot(circuit, plot, { at });
     return result(`plotted ${plot.traces.length} trace${plot.traces.length === 1 ? '' : 's'} from ${plot.file || file} as ${box.id}`, box.toJSON(), true);
+  }
+  if (op === 'plotcsv') {
+    const box = circuit.labels.get(pos[1]);
+    if (!box || pos.length !== 2) throw new Error('usage: annotation plotcsv PLOT [--traces N,N] [--sep comma|semicolon|tab] [--decimal point|comma]');
+    if (!box.plot) throw new Error(`"${box.id}" is not a plot`);
+    const separators = { comma: ',', semicolon: ';', tab: '\t' };
+    const decimals = { point: '.', comma: ',' };
+    const sep = flags.sep?.[0];
+    const decimal = flags.decimal?.[0];
+    if (sep !== undefined && !separators[sep]) throw new Error('--sep is comma, semicolon, or tab');
+    if (decimal !== undefined && !decimals[decimal]) throw new Error('--decimal is point or comma');
+    const traces = flags.traces ? flags.traces[0].split(',').map((n) => {
+      if (!/^\d+$/.test(n.trim())) throw new Error('--traces lists trace numbers from 1: 1,3');
+      return Number(n) - 1;
+    }) : null;
+    // Decimal commas go with semicolons unless a separator is given.
+    const csv = plotCsv(box.plot, { traces, separator: separators[sep] || (decimal === 'comma' ? ';' : ','), decimal: decimals[decimal] || '.' });
+    return result(csv.replace(/\n$/, ''), { csv, traces: plotSeries(box.plot).map((s) => s.name) });
   }
   if (op === 'plotaxis') {
     const box = circuit.labels.get(pos[1]);
@@ -38996,6 +39018,125 @@ function addPinRail(circuit, ref, type) {
 }
 
 __exports.PIN_RAIL_TYPES = PIN_RAIL_TYPES;
+};
+
+__modules["src/core/plot-export.js"] = function (__require, __exports) {
+__exports.plainName = plainName;
+__exports.plotSeries = plotSeries;
+__exports.seriesTable = seriesTable;
+__exports.plotCsv = plotCsv;
+let plainTex; __bind(() => { ({ plainTex } = __require("src/core/bode-figure.js")); });
+let axisName; __bind(() => { ({ axisName } = __require("src/core/plot-spec.js")); });
+/**
+ * Any plot on the drawing as columns of numbers, and those as CSV: the
+ * numbers the plot keeps (model.js normalizePlot), as it keeps them -- an
+ * analysis's samples rounded, a data plot's thinned -- never sampled again.
+ *
+ * `plotSeries(plot)` gives each curve as `{ name, columns, rows }`: its
+ * column names, x first, and its rows of numbers (null for a gap).
+ * `plotCsv(plot, options)` joins the curves chosen: one x column when they
+ * share their x values, else each curve's own columns side by side.
+ */
+
+
+
+
+/** A TeX or markup name as a CSV heading reads it: V_{OUT}/V_{IN} is V_OUT/V_IN. */
+function plainName(text) {
+  return axisName(plainTex(text || ''))
+    .replace(/([_^])\{([^{}]*)\}/g, (_, mark, inner) => `${mark}${inner}`)
+    .replace(/\\([a-zA-Z]+)/g, '$1')
+    .trim();
+}
+
+const named = (trace, index, fallback = 'Trace') => plainName(trace.label) || `${fallback} ${index + 1}`;
+
+/** Each curve of `plot` as `{ name, columns, rows }`. */
+function plotSeries(plot) {
+  if (!plot) return [];
+  if (plot.kind === 'data') {
+    const x = plainName(plot.x.label) || 'x';
+    return plot.traces.map((trace, i) => ({ name: named(trace, i), columns: [x, named(trace, i)], rows: trace.points.map(([px, py]) => [px, py]) }));
+  }
+  if (plot.kind === 'response') {
+    const x = plot.axis === 'normalized' ? 'f/fs' : 'ω (rad/s)';
+    const y = plot.quantity === 'phase' ? 'phase (°)' : plot.units === 'dBFS' ? 'dBFS' : 'dB';
+    return plot.traces.map((trace, i) => {
+      const name = trace.background ? (plainName(trace.label) || 'Spectrum') : named(trace, i);
+      return { name, columns: [x, `${name} (${y})`], rows: trace.points.map((p) => [p.f, p.db]) };
+    });
+  }
+  if (plot.kind === 'step' || plot.kind === 'wave') {
+    const x = plot.unit === 'n' ? 'n' : 't (s)';
+    return plot.traces.map((trace, i) => ({ name: named(trace, i), columns: [x, named(trace, i)], rows: trace.points.map((p) => [p.t, p.y]) }));
+  }
+  if (plot.kind === 'swing') {
+    return plot.traces.map((trace, i) => ({ name: named(trace, i), columns: ['input (dBFS)', `${named(trace, i)} (dBFS)`], rows: trace.points.map((p) => [p.a, p.db]) }));
+  }
+  if (plot.kind === 'locus') {
+    const name = plainName(plot.label) || 'Root locus';
+    // `t` runs from the sweep's start (0) to its end (1).
+    return [{ name, columns: ['Re', 'Im', `${plainName(plot.parameter) || 'k'} sweep (0 to 1)`], rows: plot.points.map((p) => [p.re, p.im, p.t]) }];
+  }
+  // A Bode sketch: magnitude and phase, and its straight-line asymptote.
+  const quantity = plainName(plot.quantity) || 'A';
+  return [
+    { name: `|${quantity}|`, columns: ['ω (rad/s)', `|${quantity}| (dB)`, `∠${quantity} (°)`], rows: plot.points.map((p) => [p.w, p.db, p.phase]) },
+    ...(plot.asymptote?.length ? [{ name: 'Asymptote', columns: ['ω (rad/s)', 'Asymptote (dB)'], rows: plot.asymptote.map((p) => [p.w, p.db]) }] : []),
+  ];
+}
+
+const sameX = (series) => series.every((s) => s.rows.length === series[0].rows.length && s.rows.every((row, i) => row[0] === series[0].rows[i][0]));
+
+/**
+ * The curves `series` (plotSeries's, those to export) as a table:
+ * `{ header, rows }`. Curves on the same x values share one x column;
+ * otherwise each brings its own columns, a shorter one's rows left empty.
+ */
+function seriesTable(series) {
+  if (!series.length) return { header: [], rows: [] };
+  if (series.length > 1 && sameX(series)) {
+    return {
+      header: [series[0].columns[0], ...series.flatMap((s) => s.columns.slice(1))],
+      rows: series[0].rows.map((row, i) => [row[0], ...series.flatMap((s) => s.rows[i].slice(1))]),
+    };
+  }
+  const length = Math.max(...series.map((s) => s.rows.length));
+  return {
+    header: series.flatMap((s) => (series.length > 1 ? s.columns.map((c, k) => (k ? c : `${c} [${s.name}]`)) : s.columns)),
+    rows: Array.from({ length }, (_, i) => series.flatMap((s) => s.rows[i] || s.columns.map(() => null))),
+  };
+}
+
+/** A CSV cell: quoted when it holds the separator, a quote, or a line break. */
+function cell(value, { separator, decimal }) {
+  if (value === null || value === undefined || (typeof value === 'number' && !Number.isFinite(value))) return '';
+  let text = String(value);
+  if (typeof value === 'number' && decimal === ',') text = text.replace('.', ',');
+  return text.includes(separator) || /["\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+/**
+ * `plot` as CSV text: the curves `traces` (indices into plotSeries, all by
+ * default), separated by `separator` (',' ';' or tab) with `decimal` '.'
+ * or ','. A comma separator with decimal commas is refused: they would read
+ * as cells.
+ */
+function plotCsv(plot, { traces = null, separator = ',', decimal = '.' } = {}) {
+  if (![',', ';', '\t'].includes(separator)) throw new Error('the separator is a comma, a semicolon, or a tab');
+  if (decimal !== '.' && decimal !== ',') throw new Error('the decimal sign is a point or a comma');
+  if (separator === ',' && decimal === ',') throw new Error('decimal commas need a semicolon or tab separator');
+  const all = plotSeries(plot);
+  const picked = traces === null ? all : traces.map((i) => {
+    if (!all[i]) throw new Error(`no trace ${i + 1} (the plot has ${all.length})`);
+    return all[i];
+  });
+  if (!picked.length) throw new Error('no trace to export');
+  const { header, rows } = seriesTable(picked);
+  const format = { separator, decimal };
+  return [header, ...rows].map((row) => row.map((value) => cell(value, format)).join(separator)).join('\n') + '\n';
+}
+
 };
 
 __modules["src/core/plot-scale.js"] = function (__require, __exports) {
@@ -61088,6 +61229,7 @@ let shortPlacementLabel; __bind(() => { ({ shortPlacementLabel } = __require("sr
 let swapCandidates; __bind(() => { ({ swapCandidates } = __require("src/core/swap.js")); });
 let appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename; __bind(() => { ({ appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename } = __require("src/web/side-panel.js")); });
 let openDataPlotSettings; __bind(() => { ({ openDataPlotSettings } = __require("src/web/data-plot-ui.js")); });
+let openPlotExport; __bind(() => { ({ openPlotExport } = __require("src/web/plot-export-ui.js")); });
 let busWidth, netNamesConnect; __bind(() => { ({ busWidth, netNamesConnect } = __require("src/core/bus.js")); });
 let STACK_DEFAULT, fanStacks; __bind(() => { ({ STACK_DEFAULT, fanStacks } = __require("src/core/box-stack.js")); });
 let handleStyleControlClick, selectionStyleState, styleDefaults, syncStyleControls, wireStyleValue; __bind(() => { ({ handleStyleControlClick, selectionStyleState, styleDefaults, syncStyleControls, wireStyleValue } = __require("src/web/style-controls.js")); });
@@ -61098,6 +61240,7 @@ let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); 
  * selection, style, switch, signal-flow, and small-signal submenus, and the
  * panel rows' renames it offers.
  */
+
 
 
 
@@ -61902,6 +62045,7 @@ function appendContextActions(menu, target) {
     const lines = selectedLines();
     if (target.value.kind === 'line' && lines.length > 1) appendContextItem(group, `Join ${lines.length} lines`, joinSelectedLines);
     if (target.value.plot?.kind === 'data') appendContextItem(group, 'Plot settings…', later(() => openDataPlotSettings(target.value)));
+    if (target.value.plot) appendContextItem(group, 'Export data…', later(() => openPlotExport(target.value)));
     if (target.value.plot) appendPlotColorsItem(group, target.value);
     appendBoxStackMenu(group, target.value);
     appendBeatContextItems(group, target);
@@ -84689,6 +84833,141 @@ function installPictureTheme() {
     }
   }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['src', 'href'] });
   markWithin(document.body);
+}
+
+};
+
+__modules["src/web/plot-export-ui.js"] = function (__require, __exports) {
+__exports.openPlotExport = openPlotExport;
+let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
+let plotCsv, plotSeries, seriesTable; __bind(() => { ({ plotCsv, plotSeries, seriesTable } = __require("src/core/plot-export.js")); });
+let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
+let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
+/**
+ * Export data… (any plot's right-click menu): the plot's numbers as a CSV
+ * file (core/plot-export.js). The curves to include, the separator, and the
+ * decimal sign are chosen over a preview of the first rows; Save asks where
+ * (or downloads), Copy puts the text on the clipboard.
+ */
+
+
+
+
+
+
+const PREVIEW_ROWS = 8;
+const SEPARATORS = [[',', 'Comma'], [';', 'Semicolon'], ['\t', 'Tab']];
+const KIND_NAMES = { response: 'response', step: 'step-response', wave: 'waveforms', swing: 'swing', locus: 'root-locus', data: 'data' };
+
+/** A file name for the plot's data: its file's, else its kind's. */
+function suggestedName(plot) {
+  const file = plot.kind === 'data' && plot.file ? plot.file.split(', ')[0].replace(/\.[^.]*$/, '') : '';
+  return `${file || KIND_NAMES[plot.kind] || 'bode'}.csv`;
+}
+
+/** Save `text` as `name`: where the save picker says, else as a download. */
+async function saveText(text, name) {
+  if (typeof window.showSaveFilePicker === 'function') {
+    try {
+      const handle = await window.showSaveFilePicker({ suggestedName: name, types: [{ description: 'CSV', accept: { 'text/csv': ['.csv'] } }] });
+      const writable = await handle.createWritable();
+      await writable.write(text);
+      await writable.close();
+      return handle.name;
+    } catch (error) {
+      if (error?.name === 'AbortError') return null;
+      if (error?.name !== 'NotSupportedError' && error?.name !== 'SecurityError') throw error;
+    }
+  }
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/csv' }));
+  const link = el('a', { href: url, download: name, hidden: true });
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+  return name;
+}
+
+/** The export dialog for the plot box `box`. */
+function openPlotExport(box) {
+  if (!box?.plot) return;
+  const series = plotSeries(box.plot);
+  const chosen = new Set(series.map((_, i) => i));
+  let separator = ',';
+  let decimal = '.';
+  const select = (label, id, choices, value, onchange) => el('label', { class: 'data-plot-field', for: id }, [
+    el('span', { text: label }),
+    el('select', { id, onchange: (ev) => onchange(ev.target.value) }, choices.map(([v, t]) => el('option', { value: v, text: t, selected: v === value }))),
+  ]);
+  const form = el('div', { class: 'data-plot-form' });
+  const preview = el('div', { class: 'data-plot-table', role: 'region', 'aria-label': 'The first rows', tabindex: '0' });
+  const status = el('p', { class: 'field-hint', 'aria-live': 'polite' });
+  const save = el('button', { type: 'button', class: 'primary-action', text: 'Save…' });
+  const copy = el('button', { type: 'button', text: 'Copy' });
+  const csv = () => plotCsv(box.plot, { traces: [...chosen].sort((a, b) => a - b), separator, decimal });
+
+  function draw() {
+    form.replaceChildren(
+      el('fieldset', { class: 'data-plot-y' }, [
+        el('legend', { text: 'Traces' }),
+        ...series.map((s, i) => el('label', {}, [
+          el('input', { type: 'checkbox', 'data-trace': String(i), checked: chosen.has(i), onchange: (ev) => { if (ev.target.checked) chosen.add(i); else chosen.delete(i); draw(); } }),
+          ` ${s.name}`,
+        ])),
+      ]),
+      select('Separator', 'plot-export-separator', SEPARATORS, separator, (v) => { separator = v; if (v === ',' && decimal === ',') decimal = '.'; draw(); }),
+      select('Decimal sign', 'plot-export-decimal', [['.', 'Point'], [',', 'Comma']], decimal, (v) => { decimal = v; if (v === ',' && separator === ',') separator = ';'; draw(); }),
+    );
+    save.disabled = !chosen.size;
+    copy.disabled = !chosen.size;
+    if (!chosen.size) {
+      preview.replaceChildren();
+      status.textContent = 'Choose a trace to export.';
+      return;
+    }
+    const table = seriesTable([...chosen].sort((a, b) => a - b).map((i) => series[i]));
+    const number = (v) => (v === null || !Number.isFinite(v) ? '' : decimal === ',' ? String(v).replace('.', ',') : String(v));
+    preview.replaceChildren(el('table', {}, [
+      el('thead', {}, [el('tr', {}, table.header.map((text) => el('th', { text })))]),
+      el('tbody', {}, table.rows.slice(0, PREVIEW_ROWS).map((row) => el('tr', {}, row.map((v) => el('td', { text: number(v) }))))),
+    ]));
+    status.textContent = `${table.rows.length} rows, ${table.header.length} columns. The numbers as the plot keeps them.`;
+  }
+
+  save.addEventListener('click', async () => {
+    const text = csv();
+    dialog.close();
+    try {
+      const saved = await saveText(text, suggestedName(box.plot));
+      if (saved) logLine(`saved the plot's data as ${saved}`);
+    } catch (error) {
+      logLine(`could not save the plot's data: ${error.message}`, 'error');
+    }
+  });
+  copy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(csv());
+      logLine('copied the plot\'s data as CSV');
+    } catch (error) {
+      logLine(`could not copy the plot's data: ${error.message}`, 'error');
+    }
+  });
+
+  const dialog = el('dialog', { class: 'confirm-dialog data-plot-dialog', 'aria-label': 'Export plot data' });
+  dialog.append(
+    el('h2', { text: 'Export plot data' }),
+    form, preview, status,
+    el('div', { class: 'dialog-actions' }, [el('button', { type: 'button', text: 'Cancel', onclick: () => dialog.close() }), copy, save]),
+  );
+  dialog.addEventListener('keydown', (event) => event.stopPropagation());
+  dialog.addEventListener('close', () => {
+    dialog.remove();
+    canvasEl.focus({ preventScroll: true });
+  }, { once: true });
+  draw();
+  document.body.append(dialog);
+  dialog.showModal();
+  save.focus();
 }
 
 };

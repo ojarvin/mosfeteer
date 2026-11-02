@@ -1,3 +1,4 @@
+import { plotCsv, plotSeries } from './plot-export.js';
 import { appendDataPlotTraces, dataPlotFromText, placeDataPlot, removeDataPlotTrace, setDataPlotAxis, setDataPlotTrace, setDataPlotView } from './data-plot.js';
 import { analyzeSignalFlow, complexText } from './analysis/signal-flow.js';
 import { analyzeLogic } from './analysis/logic.js';
@@ -135,6 +136,7 @@ const FLAG_ARITY = {
   scale: 1,
   color: 1,
   into: 1,
+  traces: 1,
 };
 
 const SYNTHESIZE_USAGE = 'usage: synthesize logic IN ... OUT=VALUES ... [--style and-or|nand|or-and|nor] [--gates inverter,and,nand,or,nor] [--max-inputs 2|3] [--at X Y] [--print]';
@@ -568,6 +570,7 @@ export function commandHelp() {
     '  annotation plotcolors PLOT on|off - a plot\'s traces in their colors, or in black told apart by dash (a new plot\'s)',
     '  annotation dataplot FILE [--x COL|row] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y | --into PLOT]',
     '                                   - plot a CSV file\'s columns (by number or name), or add them to a data plot; unset options are guessed. The file is read, never kept',
+    '  annotation plotcsv PLOT [--traces N,N] [--sep comma|semicolon|tab] [--decimal point|comma] - any plot\'s numbers as CSV text (traces from 1)',
     '  annotation plotaxis PLOT x|y [--label TEXT] [--scale log|linear] - name a data plot\'s axis, or set its scale',
     '  annotation plotview PLOT x|y LOW HIGH|fit - zoom a data plot\'s axis, or fit it to the data',
     '  annotation plottrace PLOT N rm|[--label TEXT] [--color COLOR] - take trace N (from 1) off a data plot, or rename it or color it from the palette (red, blue, ...)',
@@ -1662,6 +1665,24 @@ function annotationCommand(circuit, pos, result, flags = {}, io) {
     if (at && !(Number.isFinite(at.x) && Number.isFinite(at.y))) throw new Error('--at X Y takes two numbers');
     const { box } = placeDataPlot(circuit, plot, { at });
     return result(`plotted ${plot.traces.length} trace${plot.traces.length === 1 ? '' : 's'} from ${plot.file || file} as ${box.id}`, box.toJSON(), true);
+  }
+  if (op === 'plotcsv') {
+    const box = circuit.labels.get(pos[1]);
+    if (!box || pos.length !== 2) throw new Error('usage: annotation plotcsv PLOT [--traces N,N] [--sep comma|semicolon|tab] [--decimal point|comma]');
+    if (!box.plot) throw new Error(`"${box.id}" is not a plot`);
+    const separators = { comma: ',', semicolon: ';', tab: '\t' };
+    const decimals = { point: '.', comma: ',' };
+    const sep = flags.sep?.[0];
+    const decimal = flags.decimal?.[0];
+    if (sep !== undefined && !separators[sep]) throw new Error('--sep is comma, semicolon, or tab');
+    if (decimal !== undefined && !decimals[decimal]) throw new Error('--decimal is point or comma');
+    const traces = flags.traces ? flags.traces[0].split(',').map((n) => {
+      if (!/^\d+$/.test(n.trim())) throw new Error('--traces lists trace numbers from 1: 1,3');
+      return Number(n) - 1;
+    }) : null;
+    // Decimal commas go with semicolons unless a separator is given.
+    const csv = plotCsv(box.plot, { traces, separator: separators[sep] || (decimal === 'comma' ? ';' : ','), decimal: decimals[decimal] || '.' });
+    return result(csv.replace(/\n$/, ''), { csv, traces: plotSeries(box.plot).map((s) => s.name) });
   }
   if (op === 'plotaxis') {
     const box = circuit.labels.get(pos[1]);

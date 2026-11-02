@@ -129,3 +129,15 @@ columns separated by spaces (`src/core/csv-data.js`, `src/core/data-plot.js`,
   name) edit it.
 - Annotating and Update plots never touch a data plot.
 
+
+## Exporting a plot's data
+
+**Export data…** (any plot's right-click menu, `src/web/plot-export-ui.js`)
+saves the numbers a plot keeps as CSV (`src/core/plot-export.js`; tests
+`test/plot-export.test.js`, `test/browser/plot-export.test.js`): an
+analysis plot's samples as rounded when annotated, a data plot's points as
+thinned. The traces to include, the separator (comma, semicolon, tab),
+and the decimal sign are chosen over a preview; a decimal comma takes a
+semicolon. Traces on the same x values share one x column; otherwise each
+brings its own. Save asks where or downloads; Copy puts the text on the
+clipboard. `annotation plotcsv PLOT` gives the same text.
