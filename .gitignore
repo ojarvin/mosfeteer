@@ -5,3 +5,5 @@ circuits/
 *.local.json
 # Local plans and to-dos; never published.
 notes/
+# Claude Code: local settings, launch configs, and worktrees.
+.claude/
