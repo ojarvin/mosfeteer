@@ -215,6 +215,25 @@ describe('editor chrome', { skip: browserSkip() }, () => {
     await h.key('Escape');
   });
 
+  test('a submenu blurs the drawing behind it: nothing above it filters its backdrop', async () => {
+    await h.open('amplifier');
+    await rightClick(-20, 0); // M1
+    const row = (text) => `[...document.querySelectorAll('.component-context-menu button')].find((b) => b.textContent.trim().startsWith(${JSON.stringify(text)}))`;
+    await h.evaluate(`${row('Small-signal attributes')}.click()`);
+    await h.evaluate(`${row('Device model')}.click()`);
+    const glass = await h.evaluate(`(() => {
+      const filter = (el, pseudo) => getComputedStyle(el, pseudo).backdropFilter;
+      const open = [...document.querySelectorAll('.component-context-menu .context-submenu.open')];
+      const ancestors = [];
+      for (let el = open.at(-1).parentElement; el; el = el.parentElement) ancestors.push(filter(el));
+      return { open: open.map((el) => filter(el, '::before')), menu: filter(document.querySelector('.component-context-menu'), '::before'), ancestors };
+    })()`);
+    assert.equal(glass.open.length, 2);
+    for (const filter of [glass.menu, ...glass.open]) assert.match(filter, /blur/);
+    assert.ok(glass.ancestors.every((filter) => filter === 'none'), glass.ancestors.join(', '));
+    await h.key('Escape');
+  });
+
   test('the menu highlight follows the pointer: a left trigger goes dark at once, a plain row once the pointer leaves', async () => {
     await h.open('amplifier');
     await rightClick(-20, 0); // M1
