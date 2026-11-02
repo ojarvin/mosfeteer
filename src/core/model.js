@@ -4569,10 +4569,21 @@ export class Circuit {
     // A data plot's traces, or those added to an analysis plot from files.
     const key = plot?.kind === 'data' ? 'traces' : plot?.extra ? 'extra' : null;
     if (!key) return;
-    const index = this.plotLegend(box).indexOf(entry) - (key === 'extra' ? plotCurveCount(plot) - plot.extra.length : 0);
+    const index = this.plotLegend(box).indexOf(entry) - (key === 'extra' ? this.plotLegendCurves(box).length - plot.extra.length : 0);
     const trace = plot[key][index];
     if (!trace || trace.label === entry.text) return;
     box.plot = { ...plot, [key]: plot[key].map((t, i) => (i === index ? { ...t, label: entry.text.slice(0, 400) } : t)) };
+  }
+
+  /** A plot box's legend curves (plotLegendCurves) as its legend has them:
+   *  a spectrum no entry names -- a plot annotated before a spectrum had
+   *  one -- has none, so the entries after it keep their curves (and a
+   *  note stays a note). */
+  plotLegendCurves(box) {
+    const curves = plotLegendCurves(box?.plot);
+    if (!curves.some((curve) => curve.spectrum)) return curves;
+    const names = new Set(this.plotLegend(box).map((entry) => String(entry.text).replace(/\$/g, '').trim()));
+    return curves.filter((curve) => !curve.spectrum || names.has(String(box.plot.traces[curve.trace].label).trim()));
   }
 
   /** A plot box's legend labels, in trace order: ours by role (older
@@ -4655,7 +4666,7 @@ export class Circuit {
     if (on) delete box.style.blackTraces;
     else box.style.blackTraces = true;
     const shift = on ? -PLOT_LEGEND_SAMPLE_ROOM : PLOT_LEGEND_SAMPLE_ROOM;
-    for (const label of this.plotLegend(box).slice(0, plotCurveCount(box.plot))) label.moveTo(label.anchor.x + shift, label.anchor.y);
+    for (const label of this.plotLegend(box).slice(0, this.plotLegendCurves(box).length)) label.moveTo(label.anchor.x + shift, label.anchor.y);
     this.invalidateRoutingCache();
     return true;
   }

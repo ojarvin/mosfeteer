@@ -286,3 +286,23 @@ test('a simulated spectrum behind a response has a legend entry after the curves
   assert.doesNotMatch(samples[0], /stroke-opacity/);
   assert.match(samples[2], /stroke-dasharray/);
 });
+
+test('a spectrum plot annotated before the spectrum had an entry keeps its SNDR note a note', () => {
+  const plot = normalizePlot({
+    kind: 'response', axis: 'normalized', range: { low: -3, high: Math.log10(0.5) }, units: 'dBFS',
+    traces: [
+      { label: '\\text{simulated output}', color: '#7a7d85', background: true, points: [{ f: 0.001, db: -100 }, { f: 0.5, db: -40 }] },
+      { label: 'NTF', points: [{ f: 0.001, db: -80 }, { f: 0.5, db: 6 }] },
+    ],
+    extra: [{ label: 'sim', points: [[0.001, -70], [0.5, 0]] }],
+  });
+  const circuit = new Circuit();
+  const box = circuit.addAnnotation('box', { x: 0, y: 0, end: { x: 720, y: 440 }, plot, style: { lineStyle: 'solid', blackTraces: true } });
+  for (const [i, text] of ['$NTF$', 'sim', '$\\text{SNDR 80 dB}$'].entries()) circuit.addLabel({ text, math: text.startsWith('$'), parent: box.id, role: 'plot-legend', align: 'left', x: 880, y: 40 + 80 * i });
+  assert.deepEqual(circuit.plotLegendCurves(box), [{ trace: 1, rank: 0 }, { trace: 2, rank: 1 }]);
+  const samples = [...svgString(circuit).matchAll(/<line class="plot-legend-sample"[^>]*>/g)];
+  assert.equal(samples.length, 2);
+  // Its added trace is still the entry after the curve's.
+  runCommand(circuit, `annotation plottrace ${box.id} 1 --label Simulated`);
+  assert.deepEqual(circuit.plotLegend(box).map((l) => l.text), ['$NTF$', 'Simulated', '$\\text{SNDR 80 dB}$']);
+});

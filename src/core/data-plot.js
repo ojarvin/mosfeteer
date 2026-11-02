@@ -10,7 +10,7 @@
 import { TRACE_COLORS } from './analysis/signal-flow.js';
 import { newFigureId, placeFigure, settlePlaced } from './figures.js';
 import { GRID, snap } from './grid.js';
-import { MAX_PLOT_EXTRA, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, plotCurveCount } from './model.js';
+import { MAX_PLOT_EXTRA, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot } from './model.js';
 import { COLOR_PALETTE, colorToken } from './style.js';
 import { MAX_DATA_TRACES, readTable, tableTraces } from './csv-data.js';
 
@@ -132,13 +132,13 @@ const EXTRA_KINDS = new Set(['response', 'step', 'wave', 'swing', 'locus']);
  * an analysis plot from files (`extra`, drawn over the analysis's), with
  * the index of the first one's legend entry and how many there may be.
  */
-function editableTraces(box) {
+function editableTraces(box, circuit) {
   const plot = box?.plot;
   if (!plot) throw new Error(`"${box?.id}" is not a plot`);
   if (plot.kind === 'data') return { key: 'traces', traces: plot.traces, offset: 0, max: MAX_DATA_TRACES, min: 1 };
   if (!EXTRA_KINDS.has(plot.kind)) throw new Error(`"${box.id}" takes no traces from a file`);
   const traces = plot.extra || [];
-  return { key: 'extra', traces, offset: plotCurveCount(plot) - traces.length, max: MAX_PLOT_EXTRA, min: 0 };
+  return { key: 'extra', traces, offset: circuit.plotLegendCurves(box).length - traces.length, max: MAX_PLOT_EXTRA, min: 0 };
 }
 
 /**
@@ -184,7 +184,7 @@ function putLast(circuit, labels) {
  *  one added to an analysis plot), its legend entry with it; a color is one
  *  of the palette's (its name or value). Returns whether anything changed. */
 export function setPlotTrace(circuit, box, index, { label, color } = {}) {
-  const own = editableTraces(box);
+  const own = editableTraces(box, circuit);
   const trace = own.traces[index];
   if (!trace) throw new Error(`no trace ${index + 1} (the plot has ${own.traces.length})`);
   const token = color === undefined ? null : colorToken(color);
@@ -211,7 +211,7 @@ export function setPlotTrace(circuit, box, index, { label, color } = {}) {
  *  entries stacked again in the new order from where they start. Returns
  *  whether it moved. */
 export function movePlotTrace(circuit, box, from, to) {
-  const own = editableTraces(box);
+  const own = editableTraces(box, circuit);
   const count = own.traces.length;
   for (const [n, i] of [['trace', from], ['position', to]]) if (!Number.isInteger(i) || i < 0 || i >= count) throw new Error(`no ${n} ${i + 1} (the plot has ${count})`);
   if (from === to) return false;
@@ -237,7 +237,7 @@ export function movePlotTrace(circuit, box, from, to) {
 /** Take trace `index` (from 0) off a plot, and its legend entry. A data
  *  plot keeps one. */
 export function removePlotTrace(circuit, box, index) {
-  const own = editableTraces(box);
+  const own = editableTraces(box, circuit);
   if (!Number.isInteger(index) || index < 0 || index >= own.traces.length) throw new Error(`no trace ${index + 1} (the plot has ${own.traces.length})`);
   if (own.traces.length <= own.min) throw new Error('a plot keeps one trace at least');
   const entry = ownEntries(circuit, box, own)[index];
@@ -256,7 +256,7 @@ function joinFiles(...names) {
  *  entries under its others. A trace without a color takes one the plot
  *  does not use yet. Returns the new entries. */
 export function appendPlotTraces(circuit, box, traces, { file = '' } = {}) {
-  const own = editableTraces(box);
+  const own = editableTraces(box, circuit);
   const plot = box.plot;
   if (!traces.length) throw new Error('no trace to add');
   if (own.traces.length + traces.length > own.max) throw new Error(`a plot takes at most ${own.max} traces ${own.key === 'extra' ? 'from files ' : ''}(it has ${own.traces.length})`);

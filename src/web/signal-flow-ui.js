@@ -1228,11 +1228,15 @@ function writePlot(target, plot, shown, { identity = null } = {}) {
   if (target) {
     // The column is where its curves' entries are (notes may sit apart).
     const entries = legendOf(target);
-    const named = entries.slice(0, plotCurveCount(target.plot));
+    const named = entries.slice(0, circuit.plotLegendCurves(target).length);
     const old = (named.length ? named : entries).map((label) => label.bbox());
     const frame = target.bbox();
     left = old.length ? Math.min(...old.map((r) => r.x)) : frame.x + frame.w;
     top = old.length ? Math.min(...old.map((r) => r.y)) : frame.y;
+    // A column beside the plot never starts inside it, nor in black over
+    // its line samples' room: one that slid there goes back beside it.
+    const room = target.style.blackTraces ? PLOT_LEGEND_SAMPLE_ROOM : 0;
+    if (top < frame.y + frame.h && left > frame.x && left < frame.x + frame.w + room) left = frame.x + frame.w + room;
   } else {
     // Packed clear of what is there (figures.js): the box, and its legend
     // beside it about as wide as a third of the box.

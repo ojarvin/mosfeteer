@@ -344,5 +344,12 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     const entries = await h.evaluate(legend);
     const spectrum = entries.indexOf('$\\text{simulated output}$');
     assert.ok(spectrum > 0 && spectrum === entries.indexOf(note) - 1, entries.join(' | '));
+    // A legend that slid over the plot goes back beside it when the plot is updated.
+    const column = `${h.module('editor-state.js')}.then((m) => { const labels = [...m.editor.circuit.labels.values()]; const box = labels.find((l) => l.plot?.units === 'dBFS'); const curves = m.editor.circuit.plotLegend(box).slice(0, m.editor.circuit.plotLegendCurves(box).length); return { right: box.bbox().x + box.bbox().w, left: Math.min(...curves.map((l) => l.bbox().x)) }; })`;
+    const placed = await h.evaluate(column);
+    await h.evaluate(`${h.module('editor-state.js')}.then((m) => { const labels = [...m.editor.circuit.labels.values()]; const box = labels.find((l) => l.plot?.units === 'dBFS'); for (const l of m.editor.circuit.plotLegend(box)) l.moveTo(l.anchor.x - 240, l.anchor.y); })`);
+    await annotate('Graph');
+    await h.until(`${column}.then((c) => c.left === ${placed.left})`);
+    assert.ok(placed.left >= placed.right, JSON.stringify(placed));
   });
 });

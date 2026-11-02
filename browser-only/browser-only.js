@@ -27265,7 +27265,7 @@ __exports.replaceDataPlotTraces = replaceDataPlotTraces;
 let TRACE_COLORS; __bind(() => { ({ TRACE_COLORS } = __require("src/core/analysis/signal-flow.js")); });
 let newFigureId, placeFigure, settlePlaced; __bind(() => { ({ newFigureId, placeFigure, settlePlaced } = __require("src/core/figures.js")); });
 let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
-let MAX_PLOT_EXTRA, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, plotCurveCount; __bind(() => { ({ MAX_PLOT_EXTRA, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, plotCurveCount } = __require("src/core/model.js")); });
+let MAX_PLOT_EXTRA, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot; __bind(() => { ({ MAX_PLOT_EXTRA, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot } = __require("src/core/model.js")); });
 let COLOR_PALETTE, colorToken; __bind(() => { ({ COLOR_PALETTE, colorToken } = __require("src/core/style.js")); });
 let MAX_DATA_TRACES, readTable, tableTraces; __bind(() => { ({ MAX_DATA_TRACES, readTable, tableTraces } = __require("src/core/csv-data.js")); });
 /**
@@ -27402,13 +27402,13 @@ const EXTRA_KINDS = new Set(['response', 'step', 'wave', 'swing', 'locus']);
  * an analysis plot from files (`extra`, drawn over the analysis's), with
  * the index of the first one's legend entry and how many there may be.
  */
-function editableTraces(box) {
+function editableTraces(box, circuit) {
   const plot = box?.plot;
   if (!plot) throw new Error(`"${box?.id}" is not a plot`);
   if (plot.kind === 'data') return { key: 'traces', traces: plot.traces, offset: 0, max: MAX_DATA_TRACES, min: 1 };
   if (!EXTRA_KINDS.has(plot.kind)) throw new Error(`"${box.id}" takes no traces from a file`);
   const traces = plot.extra || [];
-  return { key: 'extra', traces, offset: plotCurveCount(plot) - traces.length, max: MAX_PLOT_EXTRA, min: 0 };
+  return { key: 'extra', traces, offset: circuit.plotLegendCurves(box).length - traces.length, max: MAX_PLOT_EXTRA, min: 0 };
 }
 
 /**
@@ -27454,7 +27454,7 @@ function putLast(circuit, labels) {
  *  one added to an analysis plot), its legend entry with it; a color is one
  *  of the palette's (its name or value). Returns whether anything changed. */
 function setPlotTrace(circuit, box, index, { label, color } = {}) {
-  const own = editableTraces(box);
+  const own = editableTraces(box, circuit);
   const trace = own.traces[index];
   if (!trace) throw new Error(`no trace ${index + 1} (the plot has ${own.traces.length})`);
   const token = color === undefined ? null : colorToken(color);
@@ -27481,7 +27481,7 @@ function setPlotTrace(circuit, box, index, { label, color } = {}) {
  *  entries stacked again in the new order from where they start. Returns
  *  whether it moved. */
 function movePlotTrace(circuit, box, from, to) {
-  const own = editableTraces(box);
+  const own = editableTraces(box, circuit);
   const count = own.traces.length;
   for (const [n, i] of [['trace', from], ['position', to]]) if (!Number.isInteger(i) || i < 0 || i >= count) throw new Error(`no ${n} ${i + 1} (the plot has ${count})`);
   if (from === to) return false;
@@ -27507,7 +27507,7 @@ function movePlotTrace(circuit, box, from, to) {
 /** Take trace `index` (from 0) off a plot, and its legend entry. A data
  *  plot keeps one. */
 function removePlotTrace(circuit, box, index) {
-  const own = editableTraces(box);
+  const own = editableTraces(box, circuit);
   if (!Number.isInteger(index) || index < 0 || index >= own.traces.length) throw new Error(`no trace ${index + 1} (the plot has ${own.traces.length})`);
   if (own.traces.length <= own.min) throw new Error('a plot keeps one trace at least');
   const entry = ownEntries(circuit, box, own)[index];
@@ -27526,7 +27526,7 @@ function joinFiles(...names) {
  *  entries under its others. A trace without a color takes one the plot
  *  does not use yet. Returns the new entries. */
 function appendPlotTraces(circuit, box, traces, { file = '' } = {}) {
-  const own = editableTraces(box);
+  const own = editableTraces(box, circuit);
   const plot = box.plot;
   if (!traces.length) throw new Error('no trace to add');
   if (own.traces.length + traces.length > own.max) throw new Error(`a plot takes at most ${own.max} traces ${own.key === 'extra' ? 'from files ' : ''}(it has ${own.traces.length})`);
@@ -34169,10 +34169,21 @@ class Circuit {
     // A data plot's traces, or those added to an analysis plot from files.
     const key = plot?.kind === 'data' ? 'traces' : plot?.extra ? 'extra' : null;
     if (!key) return;
-    const index = this.plotLegend(box).indexOf(entry) - (key === 'extra' ? plotCurveCount(plot) - plot.extra.length : 0);
+    const index = this.plotLegend(box).indexOf(entry) - (key === 'extra' ? this.plotLegendCurves(box).length - plot.extra.length : 0);
     const trace = plot[key][index];
     if (!trace || trace.label === entry.text) return;
     box.plot = { ...plot, [key]: plot[key].map((t, i) => (i === index ? { ...t, label: entry.text.slice(0, 400) } : t)) };
+  }
+
+  /** A plot box's legend curves (plotLegendCurves) as its legend has them:
+   *  a spectrum no entry names -- a plot annotated before a spectrum had
+   *  one -- has none, so the entries after it keep their curves (and a
+   *  note stays a note). */
+  plotLegendCurves(box) {
+    const curves = plotLegendCurves(box?.plot);
+    if (!curves.some((curve) => curve.spectrum)) return curves;
+    const names = new Set(this.plotLegend(box).map((entry) => String(entry.text).replace(/\$/g, '').trim()));
+    return curves.filter((curve) => !curve.spectrum || names.has(String(box.plot.traces[curve.trace].label).trim()));
   }
 
   /** A plot box's legend labels, in trace order: ours by role (older
@@ -34255,7 +34266,7 @@ class Circuit {
     if (on) delete box.style.blackTraces;
     else box.style.blackTraces = true;
     const shift = on ? -PLOT_LEGEND_SAMPLE_ROOM : PLOT_LEGEND_SAMPLE_ROOM;
-    for (const label of this.plotLegend(box).slice(0, plotCurveCount(box.plot))) label.moveTo(label.anchor.x + shift, label.anchor.y);
+    for (const label of this.plotLegend(box).slice(0, this.plotLegendCurves(box).length)) label.moveTo(label.anchor.x + shift, label.anchor.y);
     this.invalidateRoutingCache();
     return true;
   }
@@ -40818,7 +40829,7 @@ function plotAnnotationSvg(label, opacity = '') {
   const black = plotInBlack(label);
   const rank = new Map();
   // Added traces dash on after the plot's own curves (a root locus's is one).
-  const legendCurves = plotLegendCurves(plot);
+  const legendCurves = label.circuit ? label.circuit.plotLegendCurves(label) : plotLegendCurves(plot);
   for (const curve of legendCurves) if (!curve.spectrum) rank.set(curve.trace, curve.rank);
   const dashOf = (n) => PLOT_TRACE_DASHES[n % PLOT_TRACE_DASHES.length];
   const curve = (item) => {
@@ -89335,11 +89346,15 @@ function writePlot(target, plot, shown, { identity = null } = {}) {
   if (target) {
     // The column is where its curves' entries are (notes may sit apart).
     const entries = legendOf(target);
-    const named = entries.slice(0, plotCurveCount(target.plot));
+    const named = entries.slice(0, circuit.plotLegendCurves(target).length);
     const old = (named.length ? named : entries).map((label) => label.bbox());
     const frame = target.bbox();
     left = old.length ? Math.min(...old.map((r) => r.x)) : frame.x + frame.w;
     top = old.length ? Math.min(...old.map((r) => r.y)) : frame.y;
+    // A column beside the plot never starts inside it, nor in black over
+    // its line samples' room: one that slid there goes back beside it.
+    const room = target.style.blackTraces ? PLOT_LEGEND_SAMPLE_ROOM : 0;
+    if (top < frame.y + frame.h && left > frame.x && left < frame.x + frame.w + room) left = frame.x + frame.w + room;
   } else {
     // Packed clear of what is there (figures.js): the box, and its legend
     // beside it about as wide as a third of the box.
