@@ -314,7 +314,7 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     assert.ok(now.legend.every((text) => !/\s=\s/.test(text)), JSON.stringify(now.legend));
   });
 
-  test('an annotated spectrum\'s SNDR is two short legend lines', async () => {
+  test('an annotated spectrum has its legend entry, and its SNDR stays in the window', async () => {
     await openAnalysis('modulator');
     await h.evaluate(`${h.module('editor-state.js')}.then((m) => { m.editor.circuit.analysisValues.band = { bw: 0.01 }; })`);
     await derive();
@@ -337,13 +337,12 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     await h.evaluate(`(() => { for (let i = 0; i < 20; i++) { const c = ${checks}.find((c) => !c.checked); if (!c) break; c.click(); } })()`);
     await annotate('Graph');
     const legend = `${h.module('editor-state.js')}.then((m) => { const labels = [...m.editor.circuit.labels.values()]; const box = labels.find((l) => l.plot?.units === 'dBFS'); return box ? labels.filter((l) => l.parent === box.id).map((l) => l.text) : []; })`;
-    await h.until(`${legend}.then((l) => l.some((t) => t.includes('SNDR')))`);
-    const note = (await h.evaluate(legend)).find((text) => text.includes('SNDR'));
-    assert.match(note, /^\$\\text\{SNDR −?[\d.]+ dB\}\n\\text\{at −20 dBFS\}\$$/);
-    // The spectrum has its entry, after the curves' and before the SNDR.
+    await h.until(`${legend}.then((l) => l.length > 1)`);
     const entries = await h.evaluate(legend);
-    const spectrum = entries.indexOf('$\\text{simulated output}$');
-    assert.ok(spectrum > 0 && spectrum === entries.indexOf(note) - 1, entries.join(' | '));
+    // The curves' entries, then the spectrum's last; no SNDR on the drawing.
+    assert.equal(entries.at(-1), '$\\text{simulated output}$', entries.join(' | '));
+    assert.ok(!entries.some((text) => text.includes('SNDR')), entries.join(' | '));
+    assert.match(await h.evaluate(`document.querySelector('.plots-window .signal-flow-spectrum-status').textContent`), /SNDR/);
     // A legend that slid over the plot goes back beside it when the plot is updated.
     const column = `${h.module('editor-state.js')}.then((m) => { const labels = [...m.editor.circuit.labels.values()]; const box = labels.find((l) => l.plot?.units === 'dBFS'); const curves = m.editor.circuit.plotLegend(box).slice(0, m.editor.circuit.plotLegendCurves(box).length); return { right: box.bbox().x + box.bbox().w, left: Math.min(...curves.map((l) => l.bbox().x)) }; })`;
     const placed = await h.evaluate(column);

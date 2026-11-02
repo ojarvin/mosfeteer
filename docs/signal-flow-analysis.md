@@ -311,11 +311,13 @@ A new plot is drawn in black (`style.blackTraces`): its traces in its ink,
 told apart by dash (solid, dashed, dash-dot, dotted, then around again),
 its legend in its ink with each curve's line before it (a lone curve's
 too), in the room (`PLOT_LEGEND_SAMPLE_ROOM`) left between the box and the
-legend. Legend entries past the curves (`plotCurveCount`) are notes (the
-simulated SNDR): no line, starting where the lines do. A plot from before
-has no flag and keeps its colors. **Colored traces** in a plot's context
-menu (`annotation plotcolors PLOT on|off`) switches it, moving the curves'
-entries by that room; the notes stay. Every annotated plot titles its axes
+legend. A simulated spectrum has its entry after the curves', its line
+gray; its SNDR stays in the window, never on the drawing. A plot from
+before may keep an SNDR note past its curves' entries
+(`Circuit#plotLegendCurves`), with no line, until it is updated. A plot
+from before black traces has no flag and keeps its colors. **Colored
+traces** in a plot's context menu (`annotation plotcolors PLOT on|off`)
+switches it, moving the curves' entries by that room. Every annotated plot titles its axes
 outside the frame -- the x axis's under its numbers, the y axis's turned up
 beside them -- as a quantity and its unit in parentheses (`Frequency
 (f/f_{s})`, `Magnitude |H| (dB)`); the plots window keeps its compact

@@ -30,7 +30,7 @@ import { stepPlot } from '../core/analysis/step.js';
 import { locusPlot, locusSteps, rootLocus } from '../core/analysis/locus.js';
 import { dbfsOffset, dbfsSpectrum, inBand, outputSpectrum, plotSpectrum } from '../core/analysis/spectrum.js';
 import { prepareSimulation, sweepAmplitudes } from '../core/analysis/simulate.js';
-import { PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, parseLabelRuns, plotCurveCount } from '../core/model.js';
+import { PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, parseLabelRuns } from '../core/model.js';
 import { texToMathML } from '../core/render.js';
 import { GRID, snap } from '../core/grid.js';
 import { chooseFigure, newFigureId, placeFigure, plotKey, settlePlaced } from '../core/figures.js';
@@ -937,19 +937,6 @@ function spectrumControls() {
   ]);
 }
 
-/** The simulated in-band SNDR, and the amplitude it was simulated at, as
- *  legend lines for an annotated magnitude plot (null without a spectrum and
- *  a band). No " = " in it: an older plot's coefficient lines are told
- *  apart by that. */
-function sndrNote() {
-  if (!spectrum?.raw) return null;
-  const measured = inBand(spectrum.raw, spectrum.frequency, bandEdges(editor.circuit.analysisValues.band));
-  if (!measured) return null;
-  // Two short lines, so the legend keeps to the width of the traces' names.
-  const signed = (text) => text.replace(/^-/, '−');
-  return { label: `\\text{SNDR ${signed(measured.sndr.toFixed(1))} dB}\n\\text{at ${signed(String(spectrum.amplitude))} dBFS}`, color: MUTED_TRACE_COLOR };
-}
-
 function spectrumStatus() {
   if (!spectrum) return '';
   if (spectrum.error) return spectrum.error;
@@ -1169,9 +1156,8 @@ function annotateGraph() {
   const view = plotViews.graph?.zoom() || null;
   const plot = graphPlot(shown, graphView(), view && graphView() !== 'step' ? view.x : null);
   if (!plot) return;
-  // A simulated spectrum on it: its SNDR in band under the traces.
-  const note = graphView() === 'magnitude' && plot.units === 'dBFS' ? sndrNote() : null;
-  placePlot(plot, note ? [...shown, note] : shown, { view });
+  // A simulated spectrum's SNDR stays in the window: the legend names curves.
+  placePlot(plot, shown, { view });
 }
 
 /** A response plot (signal-flow.js `responsePlot`'s shape) on the drawing,
@@ -1205,7 +1191,7 @@ function placePlot(plot, shown, { source = 'signal-flow', view = null } = {}) {
   if (!written?.box) return;
   // Their sizes are estimates until the browser measures them: stack them
   // then, edge to edge (each box is rounded to the grid already).
-  alignLabelColumn(written.ids, { left: written.left, top: written.top, gap: 0, shift: written.shift });
+  alignLabelColumn(written.ids, { left: written.left, top: written.top, gap: 0 });
   setSelection([]);
   setLabelSelection([written.box.id]);
   logLine(target ? 'updated the plot on the drawing in place' : 'placed the graph on the drawing; drag to move it, its corners to resize');
@@ -1259,30 +1245,21 @@ function writePlot(target, plot, shown, { identity = null } = {}) {
     box = circuit.addAnnotation('box', { x, y: top, end: { x: x + 18 * GRID, y: top + 11 * GRID }, plot, style: { lineStyle: 'solid', blackTraces: true }, ...(figure ? { figure } : {}) });
     if (figure) settlePlaced(circuit, figure.id);
   }
-  // In black, a note after the curves' entries (a simulated SNDR) starts
-  // where their line samples do.
-  const curves = plotCurveCount(box.plot);
-  const noteShift = box.style.blackTraces ? -PLOT_LEGEND_SAMPLE_ROOM : 0;
-  const shift = {};
   let y = top;
-  const add = (text, style, dx, math = true) => {
+  const add = (text, style, math = true) => {
     const label = circuit.addLabel({ text, math, parent: box.id, role: PLOT_LEGEND_ROLE, align: 'left', x: 0, y: 0, ...(style ? { style } : {}) });
     const size = label.bbox();
-    label.moveTo(snap(left + dx + size.w / 2), snap(y + size.h / 2));
+    label.moveTo(snap(left + size.w / 2), snap(y + size.h / 2));
     y = label.bbox().y + label.bbox().h;
     ids.push(label.id);
-    if (dx) shift[label.id] = dx;
   };
   // The analysis's curves, then a simulated spectrum behind them, then the
-  // traces added from files, then notes.
-  const extra = box.plot.extra || [];
+  // traces added from files.
   const behind = (box.plot.traces || []).filter((trace) => trace.background);
-  const own = curves - extra.length - behind.length;
-  shown.slice(0, own).forEach((trace) => add(`$${trace.label}$`, { color: trace.color }, 0));
-  behind.forEach((trace) => add(`$${trace.label}$`, { color: trace.color }, 0));
-  extra.forEach((trace) => add(trace.label || ' ', { color: trace.color }, 0, false));
-  shown.slice(own).forEach((trace) => add(`$${trace.label}$`, { color: trace.color }, noteShift));
-  return { box, ids, left, top, shift };
+  shown.forEach((trace) => add(`$${trace.label}$`, { color: trace.color }));
+  behind.forEach((trace) => add(`$${trace.label}$`, { color: trace.color }));
+  for (const trace of box.plot.extra || []) add(trace.label || ' ', { color: trace.color }, false);
+  return { box, ids, left, top };
 }
 
 /** Every coefficient a plot or simulation is drawn at, sorted by name
@@ -1363,7 +1340,7 @@ async function updatePlots() {
     const rows = coefficientRows();
     if (rows.length) table = writeMathFigure({ ...COEFFICIENTS, text: rows.join('\n'), create: hadValues });
   });
-  for (const item of written) alignLabelColumn(item.ids, { left: item.left, top: item.top, gap: 0, shift: item.shift });
+  for (const item of written) alignLabelColumn(item.ids, { left: item.left, top: item.top, gap: 0 });
   table?.settle();
   render();
   const kinds = (list) => list.map((box) => (box.plot.role === 'loop' ? 'loop' : box.plot.kind === 'response' ? (box.plot.quantity === 'phase' ? 'phase' : 'magnitude') : box.plot.kind));
@@ -1386,8 +1363,7 @@ function plotUpdate(plot) {
     if (!matched.length || matched.some((t) => !t)) return null;
     const view = plot.kind === 'step' ? 'step' : plot.quantity === 'phase' ? 'phase' : 'magnitude';
     const next = graphPlot(matched, view);
-    const note = next?.units === 'dBFS' ? sndrNote() : null;
-    return next ? { plot: next, shown: note ? [...matched, note] : matched } : null;
+    return next ? { plot: next, shown: matched } : null;
   }
   if (plot.kind === 'locus') {
     const entry = latest?.ok ? latest.entries.find((e) => e.label === plot.label) : null;
