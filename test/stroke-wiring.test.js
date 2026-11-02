@@ -112,3 +112,67 @@ test('a stroke joins an unwired pin to an existing net', () => {
   applyStrokePlan(circuit, stroke(circuit, [[-120, -320], [-240, -240]]).plan());
   assert.deepEqual(netSets(circuit), ['M1.d M3.d M3.g']);
 });
+
+/** A source rail under three transistors, gates beside it: M8, M5, M7. */
+function rail() {
+  const circuit = new Circuit();
+  for (const line of ['add nmos M8 --at -400 320 --mirrorX', 'add nmos M5 --at 0 320', 'add nmos M7 --at 560 320']) runCommand(circuit, line);
+  return circuit;
+}
+
+test('a gate skimmed beside a source rail is left out; a stroke through the part keeps its pins', () => {
+  // A cell and a half from each gate, half a cell above the sources.
+  assert.deepEqual(stroke(rail(), [[-400, 380], [560, 380]]).visits.map(refOfVisit), ['M8.s', 'M5.s', 'M7.s']);
+  // Up through M5 from its source to its drain.
+  assert.deepEqual(stroke(rail(), [[-20, 420], [10, 230]]).visits.map(refOfVisit), ['M5.s', 'M5.d']);
+});
+
+test('zoomed out, a pin reaches no further than halfway to its nearest neighbour', () => {
+  const circuit = ota();
+  runCommand(circuit, 'add ground G1 --at 1000 1000');
+  const wide = (points) => {
+    const s = new StrokeWiring(circuit, { radius: 200 });
+    for (const [x, y] of points) s.add({ x, y });
+    return s.visits.map(refOfVisit);
+  };
+  assert.deepEqual(wide([[-240, 180]]), []);
+  assert.deepEqual(wide([[1000, 1100]]), ['G1.gnd']);
+});
+
+test('a pin passed at the edge of its reach counts where the stroke slows down at it', () => {
+  const circuit = new Circuit();
+  for (const line of ['add ground G1 --at 0 0', 'add ground G2 --at 400 0', 'add ground G3 --at 200 80']) runCommand(circuit, line);
+  const pass = (slow) => {
+    const s = new StrokeWiring(circuit);
+    let t = 0;
+    for (let x = 0; x <= 400; x += 10) {
+      t += Math.abs(x - 200) < 30 && slow ? 50 : 5;
+      s.add({ x, y: 15, t });
+    }
+    return s.visits.map(refOfVisit);
+  };
+  assert.deepEqual(pass(false), ['G1.gnd', 'G2.gnd']);
+  assert.deepEqual(pass(true), ['G1.gnd', 'G3.gnd', 'G2.gnd']);
+});
+
+test('going back the way it came over the last pin lets it go, and on, the one before', () => {
+  const out = [[-400, 400], [0, 400], [120, 400]];
+  assert.deepEqual(stroke(rail(), [...out, [0, 400], [-200, 400]]).visits.map(refOfVisit), ['M8.s']);
+  assert.deepEqual(stroke(rail(), [...out, [0, 400], [-480, 400]]).visits.map(refOfVisit), []);
+  // Past a pin and back to it, then on elsewhere or stopping there, keeps it.
+  assert.deepEqual(stroke(rail(), [...out, [0, 400], [0, 240]]).visits.map(refOfVisit), ['M8.s', 'M5.s', 'M5.d']);
+  assert.deepEqual(stroke(rail(), [...out, [10, 400]]).visits.map(refOfVisit), ['M8.s', 'M5.s']);
+});
+
+test('dropLast lets go of the last pin; the stroke goes on from the one before', () => {
+  const circuit = ota();
+  const s = new StrokeWiring(circuit);
+  for (const [x, y] of [[0, 240], [-240, 80]]) s.add({ x, y });
+  assert.equal(refOfVisit(s.dropLast()), 'M1.s');
+  assert.deepEqual(s.visits.map(refOfVisit), ['M5.d']);
+  s.add({ x: -240, y: -80 });
+  assert.deepEqual(s.visits.map(refOfVisit), ['M5.d', 'M1.d']);
+  applyStrokePlan(circuit, s.plan());
+  assert.deepEqual(netSets(circuit), ['M1.d M5.d']);
+  assert.equal(new StrokeWiring(circuit).dropLast(), null);
+});

@@ -193,6 +193,31 @@ describe('wiring', { skip: browserSkip() }, () => {
     assert.deepEqual(await nets(), []);
   });
 
+  test('Backspace mid-stroke lets go of the last pin the stroke caught', async () => {
+    await unwiredOta();
+    await h.key('w');
+    await h.key('Alt', { altKey: true });
+    const links = () => h.evaluate(`document.querySelectorAll('.gesture-stroke-link').length`);
+    try {
+      await strokeDrag('mouseMoved', 0, 240);
+      await strokeDrag('mousePressed', 0, 240);
+      await strokeDrag('mouseMoved', -120, 160);
+      await strokeDrag('mouseMoved', -240, 80);
+      await h.settle();
+      assert.equal(await links(), 1, 'tail drain to M1\'s source is previewed');
+      await h.key('Backspace', { altKey: true });
+      await h.settle();
+      assert.equal(await links(), 0);
+      await strokeDrag('mouseReleased', -240, 80);
+      await h.settle();
+    } finally {
+      await h.evaluate(`window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Alt', bubbles: true }))`);
+    }
+    const nets = await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.nets.size)`);
+    assert.equal(nets, 0);
+    await h.key('Escape');
+  });
+
   test('a part rotated keeps the wire at its other part as drawn: only its own leg moves', async () => {
     await h.evaluate(`window.__run('connect R1.b R2.a')`);
     await h.evaluate(`window.__run('add resistor R3 --at 0 800')`);

@@ -4556,10 +4556,11 @@ function canvasMouseDown(ev) {
   if (wire && ev.altKey && !wire.source) {
     // Alt-drag draws a stroke that wires the pins it passes (stroke-wiring.js);
     // Alt-click without a drag stays the snapped click.
-    // Pins are caught as the Alt snap catches them, within 1.75 cells.
+    // Pins are caught within 1.75 cells, or 40 pixels zoomed out where pins
+    // have room; each point's time tells where the stroke slowed down.
     const pane = paneSize();
     const stroke = new StrokeWiring(circuit, { radius: Math.max(1.75 * GRID, 40 * (pane ? view.w / pane.w : 1)) });
-    stroke.add(rawStartWorld);
+    stroke.add({ ...rawStartWorld, t: ev.timeStamp });
     drag = { mode: 'wirestroke', startClient, startWorld, rubber: null, terminalHit: nearestTerminal(startWorld), stroke, moved: false };
     return;
   }
@@ -5705,8 +5706,8 @@ export function canvasMouseMove(ev) {
 
   if (drag.mode === 'wirestroke') {
     if (movedOut) drag.moved = true;
-    drag.last = w;
-    if (altHeld) drag.stroke.add(w);
+    drag.last = { ...w, t: ev.timeStamp };
+    if (altHeld) drag.stroke.add(drag.last);
     scheduleInteractionRender();
     return;
   }
@@ -6006,7 +6007,7 @@ function finishCanvasMouseUp(ev) {
   if (drag.mode === 'wirestroke') {
     const stroke = drag;
     drag = null;
-    if (altHeld) stroke.stroke.add(releaseWorld);
+    if (altHeld) stroke.stroke.add({ ...releaseWorld, t: ev.timeStamp });
     if (stroke.moved) finishWireStroke(stroke.stroke);
     else doWireClick(snap(w.x), snap(w.y), stroke.terminalHit);
     render();
@@ -7637,6 +7638,13 @@ window.addEventListener('keydown', (ev) => {
     onAtlasKey(ev);
     return;
   }
+  // Backspace mid-stroke lets go of the last pin the stroke caught.
+  if (ev.key === 'Backspace' && drag?.mode === 'wirestroke') {
+    ev.preventDefault();
+    drag.stroke.dropLast();
+    scheduleInteractionRender();
+    return;
+  }
   // Shift+Backspace steps back from the drawing to the whole workspace.
   // (Shift+Esc too, where the browser lets it through: Chromium keeps it
   // for its task manager.)
@@ -7764,7 +7772,7 @@ window.addEventListener('keydown', (ev) => {
     altHeld = true;
     // Alt held again puts the stroke's pen down where the pointer is.
     if (drag?.mode === 'wirestroke' && drag.last) {
-      drag.stroke.add(drag.last);
+      drag.stroke.add({ ...drag.last, t: ev.timeStamp });
       scheduleInteractionRender();
     }
     if (wire) setTerminalSnap(true);

@@ -83,10 +83,26 @@ is routed, and a fresh managed layout excludes other nets' wire spans.
 
 ## Stroke wiring
 
-`src/core/stroke-wiring.js` turns one dragged path into wires. The stroke
-catches the terminal nearest its cursor within 1.75 cells (in the
-editor, at least 40 pixels), in order, and links consecutive visits into
-one net, except:
+`src/core/stroke-wiring.js` turns one dragged path into wires. Which
+terminals a run means is decided from the whole run:
+
+- a terminal is a candidate where the run comes nearest it, within its
+  reach: 1.75 cells (in the editor, at least 40 pixels, but no further than
+  halfway to its nearest neighbour), and a quarter nearer than any other
+  terminal there unless within half a cell;
+- a candidate is deliberate within half a cell, at a turn, where the
+  stroke slows to half its usual speed, or at the run's start or end; a
+  deliberate one is kept, a passing one only when it costs less to keep
+  than to leave out;
+- two terminals of one part in a row cost little when the run passes
+  through the part (in at one pin against its outward direction, out at
+  the other along its) and much when it skims past, so a gate beside a
+  source rail is left out;
+- running back the way it came over the last terminal lets it go, and on
+  over the one before, that one too; Backspace mid-stroke lets go of the
+  last one.
+
+Consecutive visits link into one net, except:
 
 - two terminals of one part never link (the stroke passes through it);
 - terminals already on two different nets never link (no shorts);
