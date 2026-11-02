@@ -6749,6 +6749,92 @@ details.analysis-options > * + * {
   min-height: 12rem;
 }
 
+.data-plot-dialog {
+  width: min(44rem, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+
+.data-plot-form,
+.data-plot-columns {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+}
+
+.data-plot-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+.data-plot-field input[type="number"] { width: 6em; }
+
+.data-plot-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+}
+
+.data-plot-y {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+}
+
+.data-plot-y legend {
+  padding: 0 4px;
+  color: var(--text-dim);
+}
+
+.data-plot-table {
+  max-height: 12rem;
+  overflow: auto;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.data-plot-table table {
+  border-collapse: collapse;
+  font-family: 'DejaVu Sans Mono', Menlo, Consolas, monospace;
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.data-plot-table th,
+.data-plot-table td {
+  padding: 2px 8px;
+  text-align: left;
+}
+
+.data-plot-table th {
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  font-weight: 600;
+}
+
+.data-plot-table .data-plot-skipped { color: var(--text-dim); }
+
+.data-plot-preview svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 18rem;
+  border-radius: var(--radius-sm);
+}
+
 .renumber-dialog {
   width: min(38rem, calc(100vw - 32px));
 }

@@ -89,6 +89,7 @@ import { axisPlacement, cycleSymmetryAxis, mirrorRecordedEdit, mountSymmetryAxis
 import { acceptArrangeSuggestion, dismissArrangeSuggestion, installArrangeSuggestions, mountArrangeSuggestion, noteDrawingEdit, noteDrawingReplaced, syncArrangeSuggestion } from './arrange-suggest.js';
 import { shortNetsAtPlacedSolder, askNameForNewNetNameConflict } from './net-names.js';
 import { installRenumberUi } from './renumber-ui.js';
+import { installDataPlotUi } from './data-plot-ui.js';
 import { installArrangeFigures } from './figure-annotate.js';
 import { installCalculator, toggleCalculator } from './calculator-window.js';
 import { installNotes, notesDocumentShown, renderNotesWindow, toggleNotes } from './notes-window.js';
@@ -6455,6 +6456,7 @@ onDocumentShown(sizingDocumentShown);
 installHistory();
 onDocumentShown(historyDocumentShown);
 installRenumberUi();
+installDataPlotUi();
 installArrangeFigures();
 canvasEl.addEventListener('dragstart', (ev) => ev.preventDefault());
 window.addEventListener('mouseup', canvasMouseUp);
