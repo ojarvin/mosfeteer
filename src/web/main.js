@@ -16,7 +16,7 @@ import { installLogicUi } from './logic-ui.js';
 import { installLogicSynthesisUi } from './logic-synthesis-ui.js';
 import { bodeSettingsRestored } from './bode-ui.js';
 import { captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, netsTouching as netsTouchingIn, rerouteTouchedNets as rerouteTouchedNetsIn } from '../core/part-moves.js';
-import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, netTerminalPositionKey, transformComponentWorld, transformNetLabelPlacement, transformWorldPoints } from '../core/model.js';
+import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, PLOT_LEGEND_ROLE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, netTerminalPositionKey, transformComponentWorld, transformNetLabelPlacement, transformWorldPoints } from '../core/model.js';
 import { getSymbol, seriesTerminalNames } from '../core/components/index.js';
 import { pinJoinPoints } from './gestures.js';
 import { runCommand, evaluate } from '../core/commands.js';
@@ -2771,6 +2771,12 @@ if (!mathFontReady) {
 // are even cell multiples, so half a change stays on the grid.
 function keepAlignedEdge(label, before) {
   if (label.netId || label.owner) return; // anchored to a wire or a component
+  // A plot's legend entry keeps its left edge, beside the plot.
+  if (label.role === PLOT_LEGEND_ROLE) {
+    const dx = before.x - label.bbox().x;
+    if (dx) label.moveTo(label.anchorWorld().x + dx, label.anchorWorld().y);
+    return;
+  }
   const parent = label.parent ? circuit.labels.get(label.parent) : null;
   const reach = parent ? annotationReach(parent) : null;
   if (reach) {

@@ -105,4 +105,16 @@ describe('data plot', { skip: browserSkip() }, () => {
     assert.deepEqual(undone.plot, before.plot);
     assert.deepEqual(undone.legend, ['Ua', 'Ub']);
   });
+
+  test('a legend entry renamed on the drawing keeps its left edge beside the plot, and names its trace', async () => {
+    const id = (await editor(`editor.circuit.plotLegend([...editor.circuit.labels.values()].find((l) => l.plot))[0].id`));
+    const left = () => editor(`editor.circuit.labels.get(${JSON.stringify(id)}).bbox().x`);
+    for (const text of ['A much longer name', 'Ua']) {
+      const before = await left();
+      await h.evaluate(`window.__run(${JSON.stringify(`annotation rename ${id} "${text}"`)})`);
+      await h.until(`${h.module('editor-state.js')}.then((m) => !!m.editor.circuit.labels.get(${JSON.stringify(id)})._renderedTextBounds)`);
+      assert.equal(await left(), before, text);
+    }
+    assert.equal((await plot()).plot.traces[0].label, 'Ua');
+  });
 });

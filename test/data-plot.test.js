@@ -114,3 +114,11 @@ test('a data plot\'s trace is renamed and recolored by command, its legend entry
   assert.throws(() => runCommand(circuit, `annotation plottrace ${box.id} 5 --label x`), /no trace 5/);
   assert.throws(() => runCommand(circuit, `annotation plottrace ${box.id} 2`), /usage: annotation plottrace/);
 });
+
+test('a data plot\'s legend entry renamed on its own renames its trace', () => {
+  const { circuit, box } = plotted();
+  const entry = circuit.plotLegend(box)[0];
+  runCommand(circuit, `annotation rename ${entry.id} "Channel 1"`);
+  assert.equal(box.plot.traces[0].label, 'Channel 1');
+  assert.equal(box.plot.traces[1].label, 'CH2 (V)');
+});

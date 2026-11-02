@@ -1943,6 +1943,7 @@ export class LabelInstance {
       if (this.owner && !this.role && !this.math && this.circuit._syncComponentLabel(this.owner, next)) return;
       if (this.owner && !this.role && this.circuit._syncReferenceMarkerLabel(this.owner, next)) return;
       this._text = next;
+      if (this.role === PLOT_LEGEND_ROLE) this.circuit._syncPlotLegendText(this);
       this.clearRenderedTextBounds();
       this.circuit.invalidateRoutingCache();
     }
@@ -4523,6 +4524,16 @@ export class Circuit {
       if (removedLabel.role === PART_VALUE_ROLE && signalComponent) signalComponent.valueLabel = null;
     }
     return removed;
+  }
+
+  /** A data plot's trace takes the name its legend entry is given. */
+  _syncPlotLegendText(entry) {
+    const box = this.labels.get(entry.parent);
+    if (box?.plot?.kind !== 'data') return;
+    const index = this.plotLegend(box).indexOf(entry);
+    const trace = box.plot.traces[index];
+    if (!trace || trace.label === entry.text) return;
+    box.plot = { ...box.plot, traces: box.plot.traces.map((t, i) => (i === index ? { ...t, label: entry.text.slice(0, 400) } : t)) };
   }
 
   /** A plot box's legend labels, in trace order: ours by role (older

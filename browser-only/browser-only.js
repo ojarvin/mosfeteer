@@ -31347,6 +31347,7 @@ class LabelInstance {
       if (this.owner && !this.role && !this.math && this.circuit._syncComponentLabel(this.owner, next)) return;
       if (this.owner && !this.role && this.circuit._syncReferenceMarkerLabel(this.owner, next)) return;
       this._text = next;
+      if (this.role === PLOT_LEGEND_ROLE) this.circuit._syncPlotLegendText(this);
       this.clearRenderedTextBounds();
       this.circuit.invalidateRoutingCache();
     }
@@ -33927,6 +33928,16 @@ class Circuit {
       if (removedLabel.role === PART_VALUE_ROLE && signalComponent) signalComponent.valueLabel = null;
     }
     return removed;
+  }
+
+  /** A data plot's trace takes the name its legend entry is given. */
+  _syncPlotLegendText(entry) {
+    const box = this.labels.get(entry.parent);
+    if (box?.plot?.kind !== 'data') return;
+    const index = this.plotLegend(box).indexOf(entry);
+    const trace = box.plot.traces[index];
+    if (!trace || trace.label === entry.text) return;
+    box.plot = { ...box.plot, traces: box.plot.traces.map((t, i) => (i === index ? { ...t, label: entry.text.slice(0, 400) } : t)) };
   }
 
   /** A plot box's legend labels, in trace order: ours by role (older
@@ -72894,7 +72905,7 @@ let installLogicUi; __bind(() => { ({ installLogicUi } = __require("src/web/logi
 let installLogicSynthesisUi; __bind(() => { ({ installLogicSynthesisUi } = __require("src/web/logic-synthesis-ui.js")); });
 let bodeSettingsRestored; __bind(() => { ({ bodeSettingsRestored } = __require("src/web/bode-ui.js")); });
 let captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, netsTouchingIn, rerouteTouchedNetsIn; __bind(() => { ({ captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, netsTouching: netsTouchingIn, rerouteTouchedNets: rerouteTouchedNetsIn } = __require("src/core/part-moves.js")); });
-let Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, netTerminalPositionKey, transformComponentWorld, transformNetLabelPlacement, transformWorldPoints; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, netTerminalPositionKey, transformComponentWorld, transformNetLabelPlacement, transformWorldPoints } = __require("src/core/model.js")); });
+let Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, PLOT_LEGEND_ROLE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, netTerminalPositionKey, transformComponentWorld, transformNetLabelPlacement, transformWorldPoints; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, PLOT_LEGEND_ROLE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, netTerminalPositionKey, transformComponentWorld, transformNetLabelPlacement, transformWorldPoints } = __require("src/core/model.js")); });
 let getSymbol, seriesTerminalNames; __bind(() => { ({ getSymbol, seriesTerminalNames } = __require("src/core/components/index.js")); });
 let pinJoinPoints; __bind(() => { ({ pinJoinPoints } = __require("src/web/gestures.js")); });
 let runCommand, evaluate; __bind(() => { ({ runCommand, evaluate } = __require("src/core/commands.js")); });
@@ -75741,6 +75752,12 @@ if (!mathFontReady) {
 // are even cell multiples, so half a change stays on the grid.
 function keepAlignedEdge(label, before) {
   if (label.netId || label.owner) return; // anchored to a wire or a component
+  // A plot's legend entry keeps its left edge, beside the plot.
+  if (label.role === PLOT_LEGEND_ROLE) {
+    const dx = before.x - label.bbox().x;
+    if (dx) label.moveTo(label.anchorWorld().x + dx, label.anchorWorld().y);
+    return;
+  }
   const parent = label.parent ? circuit.labels.get(label.parent) : null;
   const reach = parent ? annotationReach(parent) : null;
   if (reach) {
