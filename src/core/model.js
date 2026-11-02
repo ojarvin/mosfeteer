@@ -384,10 +384,11 @@ export const PLOT_LEGEND_ROLE = 'plot-legend';
 export const PLOT_LEGEND_SAMPLE_ROOM = 3 * GRID;
 
 /** How many curves a plot draws, each named by a legend entry in order:
- *  its traces less a spectrum behind them, or its one curve. Entries past
- *  them are notes (a simulated SNDR). */
+ *  its traces less a spectrum behind them, or its one curve, then the
+ *  traces added from files (`extra`). Entries past them are notes (a
+ *  simulated SNDR). */
 export function plotCurveCount(plot) {
-  return Array.isArray(plot?.traces) ? plot.traces.filter((trace) => !trace.background).length : 1;
+  return (Array.isArray(plot?.traces) ? plot.traces.filter((trace) => !trace.background).length : 1) + (plot?.extra?.length || 0);
 }
 /** How much wider than the metric estimate the browser draws math text
  *  (measured in Chromium): an unmeasured label's ink is taken so. */
@@ -1282,7 +1283,7 @@ function normalizeResponsePlot(plot) {
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   const band = (Array.isArray(plot.band) ? plot.band : []).filter((f) => finite(f) && f > 0).slice(0, 2).map((f) => round(f, 6));
-  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces, ...(band.length ? { band } : {}), ...(plot.quantity === 'phase' ? { quantity: 'phase' } : {}), ...(plot.units === 'dBFS' ? { units: 'dBFS' } : {}), ...markersOf(plot), ...(plot.role === 'loop' ? { role: 'loop' } : {}), ...sourceOf(plot), ...viewOf(plot, { positiveX: true }) };
+  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces, ...(band.length ? { band } : {}), ...(plot.quantity === 'phase' ? { quantity: 'phase' } : {}), ...(plot.units === 'dBFS' ? { units: 'dBFS' } : {}), ...markersOf(plot), ...(plot.role === 'loop' ? { role: 'loop' } : {}), ...sourceOf(plot), ...viewOf(plot, { positiveX: true }), ...extraOf(plot, { positiveX: true }) };
 }
 
 /** What a plot was drawn from, so it can be drawn again at new numbers:
@@ -1299,6 +1300,23 @@ function viewOf(plot, { positiveX = false, positiveY = false } = {}) {
   const x = pair(plot.view?.x, positiveX);
   const y = pair(plot.view?.y, positiveY);
   return x || y ? { view: { ...(x ? { x } : {}), ...(y ? { y } : {}) } } : {};
+}
+
+/** The most traces added to an analysis plot from files (`plot.extra`). */
+export const MAX_PLOT_EXTRA = 8;
+
+/** Traces added to an analysis plot from files: `extra: [{ label, color,
+ *  points: [[x, y]] }]` in the plot's own units (a response's x a positive
+ *  frequency), to six digits, thinned as a data plot's are. Updating the
+ *  plot from its analysis keeps them. */
+function extraOf(plot, { positiveX = false } = {}) {
+  const extra = (Array.isArray(plot.extra) ? plot.extra : []).slice(0, MAX_PLOT_EXTRA).map((trace) => ({
+    label: typeof trace?.label === 'string' ? trace.label.slice(0, 400) : '',
+    color: /^#[0-9a-f]{6}$/i.test(trace?.color || '') ? trace.color : '#3b74e0',
+    points: thinDataPoints((Array.isArray(trace?.points) ? trace.points : [])
+      .filter((p) => Array.isArray(p) && finite(p[0]) && finite(p[1]) && (!positiveX || p[0] > 0)).map((p) => [round(p[0], 6), round(p[1], 6)])),
+  })).filter((trace) => trace.points.length > 1);
+  return extra.length ? { extra } : {};
 }
 
 /** A plot's marked frequencies: `{ f, label }`, a few. */
@@ -1327,6 +1345,7 @@ function normalizeLocusPlot(plot) {
     current: (Array.isArray(plot.current) ? plot.current : []).filter(point).slice(0, 64).map((p) => ({ re: round(p.re, 5), im: round(p.im, 5) })),
     crossings: (Array.isArray(plot.crossings) ? plot.crossings : []).filter((c) => finite(c?.k) && ['stable', 'unstable'].includes(c.becomes)).slice(0, 8).map((c) => ({ k: round(c.k, 5), becomes: c.becomes })),
     ...sourceOf(plot),
+    ...extraOf(plot),
   };
 }
 
@@ -1344,7 +1363,7 @@ function normalizeStepPlot(plot) {
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   // A waveform (the time-domain plot's) is drawn as a step response is, in time.
-  return { kind: plot.kind === 'wave' ? 'wave' : 'step', unit: plot.unit === 'n' ? 'n' : 't', range: { low, high }, traces, ...viewOf(plot) };
+  return { kind: plot.kind === 'wave' ? 'wave' : 'step', unit: plot.unit === 'n' ? 'n' : 't', range: { low, high }, traces, ...viewOf(plot), ...extraOf(plot) };
 }
 
 /** The most points a data plot keeps of one trace (thinDataPoints). */
@@ -1410,7 +1429,7 @@ function normalizeSwingPlot(plot) {
     ...(trace?.tone ? { tone: true } : {}),
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
-  return { kind: 'swing', range: { low, high }, traces, ...viewOf(plot) };
+  return { kind: 'swing', range: { low, high }, traces, ...viewOf(plot), ...extraOf(plot) };
 }
 
 export class LabelInstance {
@@ -4526,14 +4545,17 @@ export class Circuit {
     return removed;
   }
 
-  /** A data plot's trace takes the name its legend entry is given. */
+  /** A trace a file gave a plot takes the name its legend entry is given. */
   _syncPlotLegendText(entry) {
     const box = this.labels.get(entry.parent);
-    if (box?.plot?.kind !== 'data') return;
-    const index = this.plotLegend(box).indexOf(entry);
-    const trace = box.plot.traces[index];
+    const plot = box?.plot;
+    // A data plot's traces, or those added to an analysis plot from files.
+    const key = plot?.kind === 'data' ? 'traces' : plot?.extra ? 'extra' : null;
+    if (!key) return;
+    const index = this.plotLegend(box).indexOf(entry) - (key === 'extra' ? plotCurveCount(plot) - plot.extra.length : 0);
+    const trace = plot[key][index];
     if (!trace || trace.label === entry.text) return;
-    box.plot = { ...box.plot, traces: box.plot.traces.map((t, i) => (i === index ? { ...t, label: entry.text.slice(0, 400) } : t)) };
+    box.plot = { ...plot, [key]: plot[key].map((t, i) => (i === index ? { ...t, label: entry.text.slice(0, 400) } : t)) };
   }
 
   /** A plot box's legend labels, in trace order: ours by role (older

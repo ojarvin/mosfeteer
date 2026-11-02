@@ -199,3 +199,18 @@ export function waveSpec(traces, { start = 0, label = 'n' } = {}) {
     hlines: [{ y: 0, role: 'zero' }],
   };
 }
+
+/** The spec of any plot on the drawing that a window shows: an analysis
+ *  plot with the traces added to it from files over its own, or a data
+ *  plot. Null for a Bode sketch, which windows show as two plots. */
+export function plotSpec(plot) {
+  const spec = plot.kind === 'data' ? dataSpec(plot)
+    : plot.kind === 'response' ? responseSpec(plot)
+    : plot.kind === 'step' || plot.kind === 'wave' ? stepSpec(plot)
+    : plot.kind === 'swing' ? swingSpec(plot)
+    : plot.kind === 'locus' ? locusSpec(plot)
+    : null;
+  if (!spec || !plot.extra) return spec;
+  const parametric = plot.kind === 'locus' ? { parametric: true } : {};
+  return { ...spec, series: [...spec.series, ...plot.extra.map((trace) => ({ label: trace.label, color: trace.color, role: 'curve', points: trace.points.map(([x, y]) => [x, y]), ...parametric }))] };
+}

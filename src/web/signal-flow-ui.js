@@ -1245,7 +1245,8 @@ function writePlot(target, plot, shown, { identity = null } = {}) {
   const ids = [];
   const figure = identity && { ...identity, id: target?.figure?.id || newFigureId(circuit) };
   if (target) {
-    target.plot = normalizePlot(plot);
+    // Traces added from files stay through an update.
+    target.plot = normalizePlot(target.plot?.extra ? { ...plot, extra: target.plot.extra } : plot);
     // A plot from before figures is this tool's from now on.
     if (figure && !target.figure) target.figure = figure;
     for (const label of legendOf(target)) circuit.removeLabel(label.id);
@@ -1260,15 +1261,20 @@ function writePlot(target, plot, shown, { identity = null } = {}) {
   const noteShift = box.style.blackTraces ? -PLOT_LEGEND_SAMPLE_ROOM : 0;
   const shift = {};
   let y = top;
-  const add = (text, style, dx) => {
-    const label = circuit.addLabel({ text, math: true, parent: box.id, role: PLOT_LEGEND_ROLE, align: 'left', x: 0, y: 0, ...(style ? { style } : {}) });
+  const add = (text, style, dx, math = true) => {
+    const label = circuit.addLabel({ text, math, parent: box.id, role: PLOT_LEGEND_ROLE, align: 'left', x: 0, y: 0, ...(style ? { style } : {}) });
     const size = label.bbox();
     label.moveTo(snap(left + dx + size.w / 2), snap(y + size.h / 2));
     y = label.bbox().y + label.bbox().h;
     ids.push(label.id);
     if (dx) shift[label.id] = dx;
   };
-  shown.forEach((trace, index) => add(`$${trace.label}$`, { color: trace.color }, index < curves ? 0 : noteShift));
+  // The analysis's curves, then the traces added from files, then notes.
+  const extra = box.plot.extra || [];
+  const own = curves - extra.length;
+  shown.slice(0, own).forEach((trace) => add(`$${trace.label}$`, { color: trace.color }, 0));
+  extra.forEach((trace) => add(trace.label || ' ', { color: trace.color }, 0, false));
+  shown.slice(own).forEach((trace) => add(`$${trace.label}$`, { color: trace.color }, noteShift));
   return { box, ids, left, top, shift };
 }
 

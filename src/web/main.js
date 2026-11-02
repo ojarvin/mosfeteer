@@ -89,7 +89,8 @@ import { axisPlacement, cycleSymmetryAxis, mirrorRecordedEdit, mountSymmetryAxis
 import { acceptArrangeSuggestion, dismissArrangeSuggestion, installArrangeSuggestions, mountArrangeSuggestion, noteDrawingEdit, noteDrawingReplaced, syncArrangeSuggestion } from './arrange-suggest.js';
 import { shortNetsAtPlacedSolder, askNameForNewNetNameConflict } from './net-names.js';
 import { installRenumberUi } from './renumber-ui.js';
-import { installDataPlotUi, openDataPlotSettings } from './data-plot-ui.js';
+import { installDataPlotUi, openPlotSettings } from './data-plot-ui.js';
+import { takesFileTraces } from '../core/data-plot.js';
 import { installArrangeFigures } from './figure-annotate.js';
 import { installCalculator, toggleCalculator } from './calculator-window.js';
 import { installNotes, notesDocumentShown, renderNotesWindow, toggleNotes } from './notes-window.js';
@@ -2763,19 +2764,21 @@ if (!mathFontReady) {
   document.fonts.load(MATH_FONT_PROBE).then(releaseMathMeasurement, releaseMathMeasurement);
 }
 
+/** What a double-click on a label opens: a plot's settings, else its text
+ *  in place. */
+function editLabelOpened(label) {
+  // A plot opens its settings (a Bode sketch has none): never its box's text.
+  if (label.plot) {
+    if (takesFileTraces(label)) openPlotSettings(label);
+  } else inlineEditLabel(label);
+}
+
 // A label's anchor is the center of its box, but for an aligned free
 // annotation the meaning is its aligned edge: analysis annotations are placed
 // flush with the figure's left edge. Re-measuring — a font change, new browser
 // metrics — then slides that edge by half the width change, which is what
 // makes a saved equation stack drift sideways when it is reopened. Box widths
 // are even cell multiples, so half a change stays on the grid.
-/** What a double-click on a label opens: a data plot's settings, else its
- *  text in place. */
-function editLabelOpened(label) {
-  if (label.plot?.kind === 'data') openDataPlotSettings(label);
-  else inlineEditLabel(label);
-}
-
 function keepAlignedEdge(label, before) {
   if (label.netId || label.owner) return; // anchored to a wire or a component
   // A plot's legend entry keeps its left edge, beside the plot.
@@ -4783,10 +4786,10 @@ function canvasMouseDown(ev) {
     }
     setSelection([]);
     setLabelSelection([annotationGeometry.id]);
-    // A data plot opens its settings on a double-click.
-    if (ev.detail >= 2 && annotationGeometry.plot?.kind === 'data') {
+    // A plot opens its settings on a double-click.
+    if (ev.detail >= 2 && annotationGeometry.plot) {
       render();
-      setTimeout(() => openDataPlotSettings(annotationGeometry), 0);
+      setTimeout(() => editLabelOpened(annotationGeometry), 0);
       return;
     }
     drag = { mode: 'labelmove', labelId: annotationGeometry.id, startClient, startWorld, startAnchors: new Map([[annotationGeometry.id, { x: annotationGeometry.anchor.x, y: annotationGeometry.anchor.y }]]), moved: false, committed: false, duplicate: false };

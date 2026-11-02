@@ -122,10 +122,20 @@ columns separated by spaces (`src/core/csv-data.js`, `src/core/data-plot.js`,
   traces with them, to edit too. **Replace file…** replaces the traces,
   keeping the plot's place, axes, and zoom. The plot names every file its
   traces came from.
+- An analysis plot (a response, step, waveform, swing, or root locus)
+  takes traces from files too (`plot.extra`, `[x, y]` in its own units),
+  drawn over its own curves and dashed on after them in black, their
+  legend entries after its curves'. Its **Plot settings…** (right-click,
+  or a double-click anywhere on it) edits those traces and its zoom; its
+  axes are the analysis's. Adding to a response reads x in rad/s or Hz
+  (×2π) and a magnitude in dB or as a ratio (20 log10). Updating the plot
+  from its analysis keeps them. A Bode sketch takes none, and a
+  double-click on it opens nothing.
 - A renamed trace's legend entry keeps its left edge beside the plot, and
   a legend entry renamed on the drawing renames its trace.
 - `annotation dataplot FILE` places a plot from the CLI, which reads the
-  file and sends it with the command (`--into PLOT` adds it to a plot);
+  file and sends it with the command (`--into PLOT` adds it to a plot,
+  `--hz` and `--ratio` for a response's units);
   `annotation plotaxis`, `plotview`, and `plottrace` (`--color` a palette
   name, `--position M` a place in the list) edit it.
 - Annotating and Update plots never touch a data plot.
@@ -140,5 +150,6 @@ analysis plot's samples as rounded when annotated, a data plot's points as
 thinned. The traces to include, the separator (comma, semicolon, tab),
 and the decimal sign are chosen over a preview; a decimal comma takes a
 semicolon. Traces on the same x values share one x column; otherwise each
-brings its own. Save asks where or downloads; Copy puts the text on the
+brings its own; traces added from files come after the plot's own. Save
+asks where or downloads; Copy puts the text on the
 clipboard. `annotation plotcsv PLOT` gives the same text.

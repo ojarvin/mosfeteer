@@ -21558,6 +21558,21 @@ function clipToPane(items, pane) {
   });
 }
 
+/** A plot's traces added from files (`plot.extra`, [x, y] in its own
+ *  units): each a curve placed by `x` and `y`, cut to the pane, numbered
+ *  after the plot's own `base` curves. */
+function extraPaths(plot, x, y, pane, base) {
+  const items = [];
+  (plot.extra || []).forEach((trace, k) => {
+    const points = trace.points.map(([px, py]) => ({ x: x(px), y: y(py) })).filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+    if (points.length > 1) items.push(...clipToPane([{ type: 'path', points, role: 'curve', color: trace.color, trace: base + k }], pane));
+  });
+  return items;
+}
+
+/** The y values of a plot's added traces, for the range it fits. */
+const extraValues = (plot) => (plot.extra || []).flatMap((trace) => trace.points.map((p) => p[1]));
+
 /** The ticks of a zoomed axis (plot-scale.js), about one per `room` px. */
 function zoomTicks(scale, low, high, length, room) {
   return axisTicks(scale, low, high, { target: Math.max(2, Math.round(length / room)) });
@@ -21738,7 +21753,7 @@ function responseFigure(plot, { width = 480, height = 260, fontSize = 11 } = {})
   // A phase plot: degrees in steps of 45 (90, 180 on a wide range).
   const phase = plot.quantity === 'phase';
   // A background trace (a simulated spectrum) does not set the axis.
-  const values = plot.traces.filter((trace) => !trace.background).flatMap((trace) => trace.points.map((p) => p.db)).filter((db) => db > -1000 && Number.isFinite(db));
+  const values = [...plot.traces.filter((trace) => !trace.background).flatMap((trace) => trace.points.map((p) => p.db)), ...extraValues(plot)].filter((db) => db > -1000 && Number.isFinite(db));
   let [dbLow, dbHigh] = view.y || niceRange(values, phase ? 45 : 20, 0);
   const span = dbHigh - dbLow;
   const step = phase ? (span > 720 ? 180 : span > 360 ? 90 : 45) : span > 400 ? 100 : span > 200 ? 50 : span > 100 ? 40 : 20;
@@ -21773,6 +21788,7 @@ function responseFigure(plot, { width = 480, height = 260, fontSize = 11 } = {})
     const samples = trace.points.filter((p) => Math.log10(p.f) >= low - 1e-9 && Math.log10(p.f) <= high + 1e-9).map((p) => ({ f: p.f, value: p.db }));
     for (const path of clippedPaths(samples, (s) => x(s.f), y, dbLow, dbHigh, trace.background ? 'spectrum' : 'curve')) items.push({ ...path, color: trace.color, trace: index });
   });
+  items.push(...extraPaths(plot, (f) => (f > 0 ? x(f) : NaN), (db) => pane.y + ((dbHigh - db) / (dbHigh - dbLow)) * pane.h, pane, plot.traces.length));
   // Marked frequencies (a loop's crossover, a Bode graph's corners), labeled
   // at the top; a label close to the one before goes a line lower.
   let previous = null;
@@ -21816,7 +21832,7 @@ function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const view = plot.view || {};
   const [low, high] = view.x || [plot.range.low, plot.range.high];
   const x = (t) => pane.x + ((t - low) / (high - low || 1)) * pane.w;
-  const values = plot.traces.flatMap((trace) => trace.points.map((p) => p.y)).filter(Number.isFinite);
+  const values = [...plot.traces.flatMap((trace) => trace.points.map((p) => p.y)), ...extraValues(plot)].filter(Number.isFinite);
   const yTop = Math.max(0, ...values);
   const yBottom = Math.min(0, ...values);
   const span = yTop - yBottom || 1;
@@ -21853,6 +21869,7 @@ function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
     });
     if (points.length > 1) items.push({ type: 'path', points, role: 'curve', color: trace.color, trace: index });
   });
+  items.push(...extraPaths(plot, x, (v) => pane.y + ((yHigh - v) / (yHigh - yLow)) * pane.h, pane, plot.traces.length));
   axisTitles(items, pane, em, {
     x: plot.unit === 'n' ? 'Sample n (t/T_{s})' : 'Time (s)',
     y: plot.kind === 'wave' ? 'Value (arb. units)' : 'Step response (arb. units)',
@@ -21947,7 +21964,7 @@ function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
   const x = (a) => pane.x + ((a - low) / (high - low)) * pane.w;
   // The peaks fit in whole 10 dB steps; a loop blowing up runs off the top.
-  const values = plot.traces.flatMap((trace) => trace.points.map((p) => p.db)).filter((db) => Number.isFinite(db) && db > -200);
+  const values = [...plot.traces.flatMap((trace) => trace.points.map((p) => p.db)), ...extraValues(plot)].filter((db) => Number.isFinite(db) && db > -200);
   let [dbLow, dbHigh] = niceRange(values.length ? values : [-40, 0], 10, 0);
   dbHigh = Math.min(Math.max(dbHigh, 10), 40);
   dbLow = Math.min(dbLow, -10);
@@ -21990,6 +22007,7 @@ function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
     const samples = trace.points.map((p) => ({ f: p.a, value: Number.isFinite(p.db) ? p.db : dbHigh + 100 }));
     for (const path of clippedPaths(samples, (s) => x(s.f), y, dbLow, dbHigh, 'curve')) items.push({ ...path, color: trace.color, trace: index });
   });
+  items.push(...extraPaths(plot, x, (db) => pane.y + ((dbHigh - db) / (dbHigh - dbLow)) * pane.h, pane, plot.traces.length));
   axisTitles(items, pane, em, { x: 'Input amplitude (dBFS)', y: 'Peak swing (dBFS)' });
   return { width, height, items: plot.view ? clipToPane(items, pane) : items, pane, ranges: { db: [dbLow, dbHigh] } };
 }
@@ -22126,6 +22144,8 @@ function locusFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
     if (x(p.re) < pane.x || x(p.re) > pane.x + pane.w || y(p.im) < pane.y || y(p.im) > pane.y + pane.h) continue;
     items.push({ type: 'dot', x: x(p.re), y: y(p.im), r: 0.17 * em, color: plot.color, opacity: 0.2 + 0.8 * p.t, role: 'curve' });
   }
+  // Added traces as lines over the swept poles: [Re, Im] points.
+  items.push(...extraPaths(plot, x, y, pane, 1));
   const arm = 0.4 * em;
   for (const p of plot.current) {
     items.push({ type: 'line', x1: x(p.re) - arm, y1: y(p.im) - arm, x2: x(p.re) + arm, y2: y(p.im) + arm, role: 'marker' });
@@ -23080,7 +23100,7 @@ __exports.evaluate = evaluate;
 __exports.commandHelp = commandHelp;
 __exports.runCommand = runCommand;
 let plotCsv, plotSeries; __bind(() => { ({ plotCsv, plotSeries } = __require("src/core/plot-export.js")); });
-let appendDataPlotTraces, dataPlotFromText, moveDataPlotTrace, placeDataPlot, removeDataPlotTrace, setDataPlotAxis, setDataPlotTrace, setDataPlotView; __bind(() => { ({ appendDataPlotTraces, dataPlotFromText, moveDataPlotTrace, placeDataPlot, removeDataPlotTrace, setDataPlotAxis, setDataPlotTrace, setDataPlotView } = __require("src/core/data-plot.js")); });
+let appendPlotTraces, dataPlotFromText, fileUnits, inPlotUnits, takesFileTraces, movePlotTrace, placeDataPlot, removePlotTrace, setDataPlotAxis, setPlotTrace, setDataPlotView; __bind(() => { ({ appendPlotTraces, dataPlotFromText, fileUnits, inPlotUnits, takesFileTraces, movePlotTrace, placeDataPlot, removePlotTrace, setDataPlotAxis, setPlotTrace, setDataPlotView } = __require("src/core/data-plot.js")); });
 let analyzeSignalFlow, complexText; __bind(() => { ({ analyzeSignalFlow, complexText } = __require("src/core/analysis/signal-flow.js")); });
 let analyzeLogic; __bind(() => { ({ analyzeLogic } = __require("src/core/analysis/logic.js")); });
 let Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld; __bind(() => { ({ Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld } = __require("src/core/model.js")); });
@@ -23257,6 +23277,8 @@ const FLAG_ARITY = {
   into: 1,
   traces: 1,
   position: 1,
+  hz: 0,
+  ratio: 0,
 };
 
 const SYNTHESIZE_USAGE = 'usage: synthesize logic IN ... OUT=VALUES ... [--style and-or|nand|or-and|nor] [--gates inverter,and,nand,or,nor] [--max-inputs 2|3] [--at X Y] [--print]';
@@ -23688,12 +23710,12 @@ function commandHelp() {
     '  annotation join ID ID ...      - join line annotations that meet end to end or share a stretch into one line',
     '  annotation vertex-rm ID N      - remove vertex N (from 0) of a line or arrow',
     '  annotation plotcolors PLOT on|off - a plot\'s traces in their colors, or in black told apart by dash (a new plot\'s)',
-    '  annotation dataplot FILE [--x COL|row] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y | --into PLOT]',
-    '                                   - plot a CSV file\'s columns (by number or name), or add them to a data plot; unset options are guessed. The file is read, never kept',
+    '  annotation dataplot FILE [--x COL|row] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y | --into PLOT [--hz] [--ratio]]',
+    '                                   - plot a CSV file\'s columns (by number or name), or add them to a plot (an analysis\'s too; --hz: x in Hz, --ratio: a magnitude ratio, on a response); unset options are guessed. The file is read, never kept',
     '  annotation plotcsv PLOT [--traces N,N] [--sep comma|semicolon|tab] [--decimal point|comma] - any plot\'s numbers as CSV text (traces from 1)',
     '  annotation plotaxis PLOT x|y [--label TEXT] [--scale log|linear] - name a data plot\'s axis, or set its scale',
     '  annotation plotview PLOT x|y LOW HIGH|fit - zoom a data plot\'s axis, or fit it to the data',
-    '  annotation plottrace PLOT N rm|[--label TEXT] [--color COLOR] [--position M] - take trace N (from 1) off a data plot, rename it, color it from the palette (red, blue, ...), or move it to position M (a later trace draws on top)',
+    '  annotation plottrace PLOT N rm|[--label TEXT] [--color COLOR] [--position M] - take trace N (from 1) off a data plot (or one added to an analysis plot), rename it, color it from the palette (red, blue, ...), or move it to position M (a later trace draws on top)',
     '  annotation stack BOX N|off [--offset DX,DY] - N copies of a box\'s outline behind it, DX,DY apart (20,-20); wires between stacks repeat',
     '  list                           - list components',
     '  state                          - full JSON state',
@@ -24760,7 +24782,7 @@ function annotationCommand(circuit, pos, result, flags = {}, io) {
   }
   if (op === 'dataplot') {
     const file = pos[1];
-    if (!file || pos.length !== 2) throw new Error('usage: annotation dataplot FILE [--x COL] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y | --into PLOT]');
+    if (!file || pos.length !== 2) throw new Error('usage: annotation dataplot FILE [--x COL] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y | --into PLOT [--hz] [--ratio]]');
     if (!io?.readDataFile) throw new Error('dataplot reads a file: use the CLI, or Insert → Data plot… in the editor');
     const separators = { tab: '\t', semicolon: ';', comma: ',', space: ' ' };
     const decimals = { point: '.', comma: ',' };
@@ -24777,8 +24799,12 @@ function annotationCommand(circuit, pos, result, flags = {}, io) {
     });
     if (flags.into) {
       const box = circuit.labels.get(flags.into[0]);
-      if (box?.plot?.kind !== 'data') throw new Error(`"${flags.into[0]}" is not a data plot`);
-      appendDataPlotTraces(circuit, box, plot.traces.map(({ label, points }) => ({ label, points })), { file: plot.file });
+      if (!takesFileTraces(box)) throw new Error(`"${flags.into[0]}" is not a plot that takes traces from a file`);
+      const units = fileUnits(box.plot);
+      if (flags.hz && !units.x.length) throw new Error('--hz is for a response plot over frequency');
+      if (flags.ratio && !units.y.length) throw new Error('--ratio is for a response plot\'s magnitude');
+      const traces = inPlotUnits(box.plot, plot.traces.map(({ label, points }) => ({ label, points })), { x: flags.hz ? 'Hz' : null, y: flags.ratio ? 'ratio' : null });
+      appendPlotTraces(circuit, box, traces, { file: plot.file });
       return result(`added ${plot.traces.length} trace${plot.traces.length === 1 ? '' : 's'} from ${plot.file || file} to ${box.id}`, box.toJSON(), true);
     }
     const at = flags.at ? { x: Number(flags.at[0]), y: Number(flags.at[1]) } : null;
@@ -24827,15 +24853,15 @@ function annotationCommand(circuit, pos, result, flags = {}, io) {
     const usage = 'usage: annotation plottrace PLOT N rm|[--label TEXT] [--color COLOR] [--position M]';
     if (!box || !/^\d+$/.test(pos[2] || '')) throw new Error(usage);
     if (pos[3] === 'rm' && pos.length === 4) {
-      removeDataPlotTrace(circuit, box, Number(pos[2]) - 1);
+      removePlotTrace(circuit, box, Number(pos[2]) - 1);
       return result(`${box.id}: took off trace ${pos[2]}`, box.toJSON(), true);
     }
     if (pos.length !== 3 || (!flags.label && !flags.color && !flags.position)) throw new Error(usage);
     if (flags.position && !/^\d+$/.test(flags.position[0])) throw new Error(usage);
     let changed = false;
-    if (flags.label || flags.color) changed = setDataPlotTrace(circuit, box, Number(pos[2]) - 1, { label: flags.label?.[0], color: flags.color?.[0] });
+    if (flags.label || flags.color) changed = setPlotTrace(circuit, box, Number(pos[2]) - 1, { label: flags.label?.[0], color: flags.color?.[0] });
     if (flags.position) {
-      changed = moveDataPlotTrace(circuit, box, Number(pos[2]) - 1, Number(flags.position[0]) - 1) || changed;
+      changed = movePlotTrace(circuit, box, Number(pos[2]) - 1, Number(flags.position[0]) - 1) || changed;
       return result(`${box.id}: trace ${pos[2]} moved to ${flags.position[0]}`, box.toJSON(), changed);
     }
     return result(`${box.id}: trace ${pos[2]} "${box.plot.traces[Number(pos[2]) - 1].label}" ${box.plot.traces[Number(pos[2]) - 1].color}`, box.toJSON(), changed);
@@ -27216,15 +27242,18 @@ __exports.dataPlotFromText = dataPlotFromText;
 __exports.placeDataPlot = placeDataPlot;
 __exports.setDataPlotAxis = setDataPlotAxis;
 __exports.setDataPlotView = setDataPlotView;
-__exports.setDataPlotTrace = setDataPlotTrace;
-__exports.moveDataPlotTrace = moveDataPlotTrace;
-__exports.removeDataPlotTrace = removeDataPlotTrace;
-__exports.appendDataPlotTraces = appendDataPlotTraces;
+__exports.fileUnits = fileUnits;
+__exports.inPlotUnits = inPlotUnits;
+__exports.takesFileTraces = takesFileTraces;
+__exports.setPlotTrace = setPlotTrace;
+__exports.movePlotTrace = movePlotTrace;
+__exports.removePlotTrace = removePlotTrace;
+__exports.appendPlotTraces = appendPlotTraces;
 __exports.replaceDataPlotTraces = replaceDataPlotTraces;
 let TRACE_COLORS; __bind(() => { ({ TRACE_COLORS } = __require("src/core/analysis/signal-flow.js")); });
 let newFigureId, placeFigure, settlePlaced; __bind(() => { ({ newFigureId, placeFigure, settlePlaced } = __require("src/core/figures.js")); });
 let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
-let PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot; __bind(() => { ({ PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot } = __require("src/core/model.js")); });
+let MAX_PLOT_EXTRA, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, plotCurveCount; __bind(() => { ({ MAX_PLOT_EXTRA, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, plotCurveCount } = __require("src/core/model.js")); });
 let COLOR_PALETTE, colorToken; __bind(() => { ({ COLOR_PALETTE, colorToken } = __require("src/core/style.js")); });
 let MAX_DATA_TRACES, readTable, tableTraces; __bind(() => { ({ MAX_DATA_TRACES, readTable, tableTraces } = __require("src/core/csv-data.js")); });
 /**
@@ -27353,19 +27382,75 @@ function setDataPlotView(box, axis, range) {
   return true;
 }
 
-/** Rename or recolor trace `index` (from 0) of a data plot, its legend
- *  entry with it; a color is one of the palette's (its name or value).
- *  Returns whether anything changed. */
-function setDataPlotTrace(circuit, box, index, { label, color } = {}) {
-  const plot = dataPlotOf(box);
-  const trace = plot.traces[index];
-  if (!trace) throw new Error(`no trace ${index + 1} (the plot has ${plot.traces.length})`);
+/** Kinds of analysis plot a file's traces can be added to (`plot.extra`). */
+const EXTRA_KINDS = new Set(['response', 'step', 'wave', 'swing', 'locus']);
+
+/**
+ * The traces a plot's editor changes: a data plot's own, or those added to
+ * an analysis plot from files (`extra`, drawn over the analysis's), with
+ * the index of the first one's legend entry and how many there may be.
+ */
+function editableTraces(box) {
+  const plot = box?.plot;
+  if (!plot) throw new Error(`"${box?.id}" is not a plot`);
+  if (plot.kind === 'data') return { key: 'traces', traces: plot.traces, offset: 0, max: MAX_DATA_TRACES, min: 1 };
+  if (!EXTRA_KINDS.has(plot.kind)) throw new Error(`"${box.id}" takes no traces from a file`);
+  const traces = plot.extra || [];
+  return { key: 'extra', traces, offset: plotCurveCount(plot) - traces.length, max: MAX_PLOT_EXTRA, min: 0 };
+}
+
+/**
+ * What a file's x and y mean on `plot`, for its traces to be read in the
+ * plot's own units: `[{ key, text, scale }]` per axis, the first each one's
+ * own. A response's x is an angular frequency (or f/fs), so a file in hertz
+ * is scaled by 2π; its magnitude is in dB, so a plain ratio is taken
+ * 20 log10.
+ */
+function fileUnits(plot) {
+  if (plot?.kind !== 'response' || plot.axis === 'normalized') return { x: [], y: [] };
+  return {
+    x: [{ key: 'rad/s', text: 'rad/s' }, { key: 'Hz', text: 'Hz (×2π)' }],
+    y: plot.quantity === 'phase' ? [] : [{ key: 'dB', text: 'dB' }, { key: 'ratio', text: 'Ratio (20 log₁₀)' }],
+  };
+}
+
+/** `traces`' points read as `units` say ({ x: 'Hz', y: 'ratio' }, fileUnits) in `plot`'s own units. */
+function inPlotUnits(plot, traces, units = {}) {
+  const sx = units.x === 'Hz' ? 2 * Math.PI : 1;
+  const ty = units.y === 'ratio' ? (v) => (v > 0 ? 20 * Math.log10(v) : NaN) : (v) => v;
+  if (sx === 1 && units.y !== 'ratio') return traces;
+  return traces.map((trace) => ({ ...trace, points: trace.points.map(([x, y]) => [x * sx, ty(y)]).filter(([, y]) => Number.isFinite(y)) }));
+}
+
+/** Whether `box` is a plot a file's traces can go on. */
+function takesFileTraces(box) {
+  return box?.plot?.kind === 'data' || EXTRA_KINDS.has(box?.plot?.kind);
+}
+
+/** The legend entries a plot's editable traces have, after `offset`. */
+const ownEntries = (circuit, box, { offset, traces }) => circuit.plotLegend(box).slice(offset, offset + traces.length);
+
+/** Put `labels` last in the drawing's labels: the legend is read in their order. */
+function putLast(circuit, labels) {
+  for (const label of labels) {
+    circuit.labels.delete(label.id);
+    circuit.labels.set(label.id, label);
+  }
+}
+
+/** Rename or recolor trace `index` (from 0) of a plot (a data plot's, or
+ *  one added to an analysis plot), its legend entry with it; a color is one
+ *  of the palette's (its name or value). Returns whether anything changed. */
+function setPlotTrace(circuit, box, index, { label, color } = {}) {
+  const own = editableTraces(box);
+  const trace = own.traces[index];
+  if (!trace) throw new Error(`no trace ${index + 1} (the plot has ${own.traces.length})`);
   const token = color === undefined ? null : colorToken(color);
   if (color !== undefined && !token) throw new Error(`a color is one of ${Object.keys(COLOR_PALETTE).join(', ')}`);
   const next = { ...trace, ...(label !== undefined ? { label: String(label).slice(0, 400) } : {}), ...(token ? { color: COLOR_PALETTE[token] } : {}) };
   if (next.label === trace.label && next.color === trace.color) return false;
-  box.plot = normalizePlot({ ...plot, traces: plot.traces.map((t, i) => (i === index ? next : t)) });
-  const entry = circuit.plotLegend(box)[index];
+  box.plot = normalizePlot({ ...box.plot, [own.key]: own.traces.map((t, i) => (i === index ? next : t)) });
+  const entry = ownEntries(circuit, box, own)[index];
   if (entry) {
     if (next.label !== trace.label) {
       // Its left edge stays beside the plot as its text grows or shrinks.
@@ -27379,28 +27464,25 @@ function setDataPlotTrace(circuit, box, index, { label, color } = {}) {
   return true;
 }
 
-/** Move trace `from` (from 0) of a data plot to position `to`: a later trace
- *  draws over an earlier one. Its legend entry moves with it, the column
- *  stacked again in the new order from where it starts. Returns whether it
- *  moved. */
-function moveDataPlotTrace(circuit, box, from, to) {
-  const plot = dataPlotOf(box);
-  const count = plot.traces.length;
+/** Move trace `from` (from 0) of a plot to position `to`: a later trace
+ *  draws over an earlier one. Its legend entry moves with it, those
+ *  entries stacked again in the new order from where they start. Returns
+ *  whether it moved. */
+function movePlotTrace(circuit, box, from, to) {
+  const own = editableTraces(box);
+  const count = own.traces.length;
   for (const [n, i] of [['trace', from], ['position', to]]) if (!Number.isInteger(i) || i < 0 || i >= count) throw new Error(`no ${n} ${i + 1} (the plot has ${count})`);
   if (from === to) return false;
-  const order = plot.traces.map((_, i) => i);
+  const order = own.traces.map((_, i) => i);
   order.splice(to, 0, order.splice(from, 1)[0]);
-  box.plot = normalizePlot({ ...plot, traces: order.map((i) => plot.traces[i]) });
   const legend = circuit.plotLegend(box);
-  if (legend.length >= count) {
-    const left = Math.min(...legend.map((l) => l.bbox().x));
-    let top = Math.min(...legend.map((l) => l.bbox().y));
-    // The legend is read in the labels' order: theirs follows the traces'.
-    const moved = [...order.map((i) => legend[i]), ...legend.slice(count)];
-    for (const label of moved) {
-      circuit.labels.delete(label.id);
-      circuit.labels.set(label.id, label);
-    }
+  const entries = ownEntries(circuit, box, own);
+  box.plot = normalizePlot({ ...box.plot, [own.key]: order.map((i) => own.traces[i]) });
+  if (entries.length === count) {
+    const left = Math.min(...entries.map((l) => l.bbox().x));
+    let top = Math.min(...entries.map((l) => l.bbox().y));
+    const moved = order.map((i) => entries[i]);
+    putLast(circuit, [...moved, ...legend.slice(own.offset + count)]);
     for (const label of moved) {
       const size = label.bbox();
       label.moveTo(snap(left + size.w / 2), snap(top + size.h / 2));
@@ -27410,15 +27492,15 @@ function moveDataPlotTrace(circuit, box, from, to) {
   return true;
 }
 
-/** Take trace `index` (from 0) off a data plot, and its legend entry. The
- *  last one stays. */
-function removeDataPlotTrace(circuit, box, index) {
-  const plot = dataPlotOf(box);
-  if (!Number.isInteger(index) || index < 0 || index >= plot.traces.length) throw new Error(`no trace ${index + 1} (the plot has ${plot.traces.length})`);
-  if (plot.traces.length === 1) throw new Error('a plot keeps one trace at least');
-  const legend = circuit.plotLegend(box);
-  if (legend[index]) circuit.removeLabel(legend[index].id);
-  box.plot = normalizePlot({ ...plot, traces: plot.traces.filter((_, i) => i !== index) });
+/** Take trace `index` (from 0) off a plot, and its legend entry. A data
+ *  plot keeps one. */
+function removePlotTrace(circuit, box, index) {
+  const own = editableTraces(box);
+  if (!Number.isInteger(index) || index < 0 || index >= own.traces.length) throw new Error(`no trace ${index + 1} (the plot has ${own.traces.length})`);
+  if (own.traces.length <= own.min) throw new Error('a plot keeps one trace at least');
+  const entry = ownEntries(circuit, box, own)[index];
+  if (entry) circuit.removeLabel(entry.id);
+  box.plot = normalizePlot({ ...box.plot, [own.key]: own.traces.filter((_, i) => i !== index) });
 }
 
 /** The names of the files a plot's traces came from, each once. */
@@ -27427,25 +27509,30 @@ function joinFiles(...names) {
   return files.join(', ').slice(0, 200);
 }
 
-/** Add `traces` ({ label, points, color? }) to a data plot, read from the
- *  file `file`, their legend entries under its others. A trace without a
- *  color takes one the plot does not use yet. Returns the new entries. */
-function appendDataPlotTraces(circuit, box, traces, { file = '' } = {}) {
-  const plot = dataPlotOf(box);
+/** Add `traces` ({ label, points, color? }, in the plot's own units) to a
+ *  data plot or an analysis plot, read from the file `file`, their legend
+ *  entries under its others. A trace without a color takes one the plot
+ *  does not use yet. Returns the new entries. */
+function appendPlotTraces(circuit, box, traces, { file = '' } = {}) {
+  const own = editableTraces(box);
+  const plot = box.plot;
   if (!traces.length) throw new Error('no trace to add');
-  if (plot.traces.length + traces.length > MAX_DATA_TRACES) throw new Error(`a plot has at most ${MAX_DATA_TRACES} traces (it has ${plot.traces.length})`);
-  const used = new Set(plot.traces.map((t) => t.color));
+  if (own.traces.length + traces.length > own.max) throw new Error(`a plot takes at most ${own.max} traces ${own.key === 'extra' ? 'from files ' : ''}(it has ${own.traces.length})`);
+  const used = new Set([...(plot.traces || []), ...own.traces].map((t) => t.color).concat(plot.color || []));
   const added = traces.map((trace) => {
     const color = trace.color || TRACE_COLORS.find((c) => !used.has(c)) || TRACE_COLORS[0];
     used.add(color);
     return { label: trace.label, color, points: trace.points };
   });
-  const next = normalizePlot({ ...plot, file: joinFiles(plot.file, file), traces: [...plot.traces, ...added] });
-  if (!next || next.traces.length !== plot.traces.length + added.length) throw new Error('a trace to add has no two points to plot');
+  const next = normalizePlot({ ...plot, ...(own.key === 'traces' ? { file: joinFiles(plot.file, file) } : {}), [own.key]: [...own.traces, ...added] });
+  if (!next || (next[own.key] || []).length !== own.traces.length + added.length) throw new Error('a trace to add has no two points to plot');
   const legend = circuit.plotLegend(box);
   const below = legend.length ? { x: Math.min(...legend.map((l) => l.bbox().x)), y: Math.max(...legend.map((l) => l.bbox().y + l.bbox().h)) } : null;
   box.plot = next;
-  return writeLegend(circuit, box, next.traces.slice(plot.traces.length), below);
+  const entries = writeLegend(circuit, box, next[own.key].slice(own.traces.length), below);
+  // Notes (an analysis plot's SNDR) stay after the curves' entries.
+  putLast(circuit, legend.slice(own.offset + own.traces.length));
+  return entries;
 }
 
 /** Replace a data plot's traces with `plot`'s (the file read again, or
@@ -29884,10 +29971,11 @@ const PLOT_LEGEND_ROLE = 'plot-legend';
 const PLOT_LEGEND_SAMPLE_ROOM = 3 * GRID;
 
 /** How many curves a plot draws, each named by a legend entry in order:
- *  its traces less a spectrum behind them, or its one curve. Entries past
- *  them are notes (a simulated SNDR). */
+ *  its traces less a spectrum behind them, or its one curve, then the
+ *  traces added from files (`extra`). Entries past them are notes (a
+ *  simulated SNDR). */
 function plotCurveCount(plot) {
-  return Array.isArray(plot?.traces) ? plot.traces.filter((trace) => !trace.background).length : 1;
+  return (Array.isArray(plot?.traces) ? plot.traces.filter((trace) => !trace.background).length : 1) + (plot?.extra?.length || 0);
 }
 /** How much wider than the metric estimate the browser draws math text
  *  (measured in Chromium): an unmeasured label's ink is taken so. */
@@ -30782,7 +30870,7 @@ function normalizeResponsePlot(plot) {
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   const band = (Array.isArray(plot.band) ? plot.band : []).filter((f) => finite(f) && f > 0).slice(0, 2).map((f) => round(f, 6));
-  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces, ...(band.length ? { band } : {}), ...(plot.quantity === 'phase' ? { quantity: 'phase' } : {}), ...(plot.units === 'dBFS' ? { units: 'dBFS' } : {}), ...markersOf(plot), ...(plot.role === 'loop' ? { role: 'loop' } : {}), ...sourceOf(plot), ...viewOf(plot, { positiveX: true }) };
+  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces, ...(band.length ? { band } : {}), ...(plot.quantity === 'phase' ? { quantity: 'phase' } : {}), ...(plot.units === 'dBFS' ? { units: 'dBFS' } : {}), ...markersOf(plot), ...(plot.role === 'loop' ? { role: 'loop' } : {}), ...sourceOf(plot), ...viewOf(plot, { positiveX: true }), ...extraOf(plot, { positiveX: true }) };
 }
 
 /** What a plot was drawn from, so it can be drawn again at new numbers:
@@ -30799,6 +30887,23 @@ function viewOf(plot, { positiveX = false, positiveY = false } = {}) {
   const x = pair(plot.view?.x, positiveX);
   const y = pair(plot.view?.y, positiveY);
   return x || y ? { view: { ...(x ? { x } : {}), ...(y ? { y } : {}) } } : {};
+}
+
+/** The most traces added to an analysis plot from files (`plot.extra`). */
+const MAX_PLOT_EXTRA = 8;
+
+/** Traces added to an analysis plot from files: `extra: [{ label, color,
+ *  points: [[x, y]] }]` in the plot's own units (a response's x a positive
+ *  frequency), to six digits, thinned as a data plot's are. Updating the
+ *  plot from its analysis keeps them. */
+function extraOf(plot, { positiveX = false } = {}) {
+  const extra = (Array.isArray(plot.extra) ? plot.extra : []).slice(0, MAX_PLOT_EXTRA).map((trace) => ({
+    label: typeof trace?.label === 'string' ? trace.label.slice(0, 400) : '',
+    color: /^#[0-9a-f]{6}$/i.test(trace?.color || '') ? trace.color : '#3b74e0',
+    points: thinDataPoints((Array.isArray(trace?.points) ? trace.points : [])
+      .filter((p) => Array.isArray(p) && finite(p[0]) && finite(p[1]) && (!positiveX || p[0] > 0)).map((p) => [round(p[0], 6), round(p[1], 6)])),
+  })).filter((trace) => trace.points.length > 1);
+  return extra.length ? { extra } : {};
 }
 
 /** A plot's marked frequencies: `{ f, label }`, a few. */
@@ -30827,6 +30932,7 @@ function normalizeLocusPlot(plot) {
     current: (Array.isArray(plot.current) ? plot.current : []).filter(point).slice(0, 64).map((p) => ({ re: round(p.re, 5), im: round(p.im, 5) })),
     crossings: (Array.isArray(plot.crossings) ? plot.crossings : []).filter((c) => finite(c?.k) && ['stable', 'unstable'].includes(c.becomes)).slice(0, 8).map((c) => ({ k: round(c.k, 5), becomes: c.becomes })),
     ...sourceOf(plot),
+    ...extraOf(plot),
   };
 }
 
@@ -30844,7 +30950,7 @@ function normalizeStepPlot(plot) {
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   // A waveform (the time-domain plot's) is drawn as a step response is, in time.
-  return { kind: plot.kind === 'wave' ? 'wave' : 'step', unit: plot.unit === 'n' ? 'n' : 't', range: { low, high }, traces, ...viewOf(plot) };
+  return { kind: plot.kind === 'wave' ? 'wave' : 'step', unit: plot.unit === 'n' ? 'n' : 't', range: { low, high }, traces, ...viewOf(plot), ...extraOf(plot) };
 }
 
 /** The most points a data plot keeps of one trace (thinDataPoints). */
@@ -30910,7 +31016,7 @@ function normalizeSwingPlot(plot) {
     ...(trace?.tone ? { tone: true } : {}),
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
-  return { kind: 'swing', range: { low, high }, traces, ...viewOf(plot) };
+  return { kind: 'swing', range: { low, high }, traces, ...viewOf(plot), ...extraOf(plot) };
 }
 
 class LabelInstance {
@@ -34026,14 +34132,17 @@ class Circuit {
     return removed;
   }
 
-  /** A data plot's trace takes the name its legend entry is given. */
+  /** A trace a file gave a plot takes the name its legend entry is given. */
   _syncPlotLegendText(entry) {
     const box = this.labels.get(entry.parent);
-    if (box?.plot?.kind !== 'data') return;
-    const index = this.plotLegend(box).indexOf(entry);
-    const trace = box.plot.traces[index];
+    const plot = box?.plot;
+    // A data plot's traces, or those added to an analysis plot from files.
+    const key = plot?.kind === 'data' ? 'traces' : plot?.extra ? 'extra' : null;
+    if (!key) return;
+    const index = this.plotLegend(box).indexOf(entry) - (key === 'extra' ? plotCurveCount(plot) - plot.extra.length : 0);
+    const trace = plot[key][index];
     if (!trace || trace.label === entry.text) return;
-    box.plot = { ...box.plot, traces: box.plot.traces.map((t, i) => (i === index ? { ...t, label: entry.text.slice(0, 400) } : t)) };
+    box.plot = { ...plot, [key]: plot[key].map((t, i) => (i === index ? { ...t, label: entry.text.slice(0, 400) } : t)) };
   }
 
   /** A plot box's legend labels, in trace order: ours by role (older
@@ -37159,6 +37268,7 @@ __exports.MATH_WIDTH_DRAWN = MATH_WIDTH_DRAWN;
 __exports.INTERFACE_PIN_TYPES = INTERFACE_PIN_TYPES;
 __exports.MOS_ANALYSIS_TYPES = MOS_ANALYSIS_TYPES;
 __exports.MAX_IMAGE_DATA = MAX_IMAGE_DATA;
+__exports.MAX_PLOT_EXTRA = MAX_PLOT_EXTRA;
 __exports.MAX_DATA_POINTS = MAX_DATA_POINTS;
 __exports.LabelInstance = LabelInstance;
 __exports.ComponentInstance = ComponentInstance;
@@ -39090,8 +39200,20 @@ function plainName(text) {
 
 const named = (trace, index, fallback = 'Trace') => plainName(trace.label) || `${fallback} ${index + 1}`;
 
-/** Each curve of `plot` as `{ name, columns, rows }`. */
+/** Each curve of `plot` as `{ name, columns, rows }`: its own, then
+ *  the traces added to it from files. */
 function plotSeries(plot) {
+  const own = ownSeries(plot);
+  if (!own.length || !plot.extra) return own;
+  // An added trace's y is in the plot's own units: its curves' heading's.
+  const unit = plot.kind === 'response' ? (plot.quantity === 'phase' ? ' (°)' : plot.units === 'dBFS' ? ' (dBFS)' : ' (dB)') : plot.kind === 'swing' ? ' (dBFS)' : '';
+  return [...own, ...plot.extra.map((trace, i) => {
+    const name = named(trace, i, 'Added');
+    return { name, columns: plot.kind === 'locus' ? ['Re', 'Im'] : [own[0].columns[0], `${name}${unit}`], rows: trace.points.map(([x, y]) => [x, y]) };
+  })];
+}
+
+function ownSeries(plot) {
   if (!plot) return [];
   if (plot.kind === 'data') {
     const x = plainName(plot.x.label) || 'x';
@@ -39419,6 +39541,7 @@ __exports.swingSpec = swingSpec;
 __exports.locusSpec = locusSpec;
 __exports.bodeSpecs = bodeSpecs;
 __exports.waveSpec = waveSpec;
+__exports.plotSpec = plotSpec;
 let plainTex, swingLimit; __bind(() => { ({ plainTex, swingLimit } = __require("src/core/bode-figure.js")); });
 /**
  * The plots the analysis windows show, as one kind of interactive plot
@@ -39620,6 +39743,21 @@ function waveSpec(traces, { start = 0, label = 'n' } = {}) {
     vlines: [],
     hlines: [{ y: 0, role: 'zero' }],
   };
+}
+
+/** The spec of any plot on the drawing that a window shows: an analysis
+ *  plot with the traces added to it from files over its own, or a data
+ *  plot. Null for a Bode sketch, which windows show as two plots. */
+function plotSpec(plot) {
+  const spec = plot.kind === 'data' ? dataSpec(plot)
+    : plot.kind === 'response' ? responseSpec(plot)
+    : plot.kind === 'step' || plot.kind === 'wave' ? stepSpec(plot)
+    : plot.kind === 'swing' ? swingSpec(plot)
+    : plot.kind === 'locus' ? locusSpec(plot)
+    : null;
+  if (!spec || !plot.extra) return spec;
+  const parametric = plot.kind === 'locus' ? { parametric: true } : {};
+  return { ...spec, series: [...spec.series, ...plot.extra.map((trace) => ({ label: trace.label, color: trace.color, role: 'curve', points: trace.points.map(([x, y]) => [x, y]), ...parametric }))] };
 }
 
 };
@@ -40641,6 +40779,10 @@ function plotAnnotationSvg(label, opacity = '') {
   const black = plotInBlack(label);
   const rank = new Map();
   (plot.traces || []).forEach((trace, index) => { if (!trace.background) rank.set(index, rank.size); });
+  // Added traces dash on after the plot's own curves (a root locus's is one).
+  const base = plot.traces ? plot.traces.length : 1;
+  const first = plot.traces ? rank.size : 1;
+  (plot.extra || []).forEach((_, k) => rank.set(base + k, first + k));
   const dashOf = (n) => PLOT_TRACE_DASHES[n % PLOT_TRACE_DASHES.length];
   const curve = (item) => {
     if (!black) return stroke(item.role, item.color ? escapeSvg(item.color) : color);
@@ -61267,7 +61409,8 @@ let openArrangePicker; __bind(() => { ({ openArrangePicker } = __require("src/we
 let shortPlacementLabel; __bind(() => { ({ shortPlacementLabel } = __require("src/web/toolbar.js")); });
 let swapCandidates; __bind(() => { ({ swapCandidates } = __require("src/core/swap.js")); });
 let appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename; __bind(() => { ({ appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename } = __require("src/web/side-panel.js")); });
-let openDataPlotSettings; __bind(() => { ({ openDataPlotSettings } = __require("src/web/data-plot-ui.js")); });
+let openPlotSettings; __bind(() => { ({ openPlotSettings } = __require("src/web/data-plot-ui.js")); });
+let takesFileTraces; __bind(() => { ({ takesFileTraces } = __require("src/core/data-plot.js")); });
 let openPlotExport; __bind(() => { ({ openPlotExport } = __require("src/web/plot-export-ui.js")); });
 let busWidth, netNamesConnect; __bind(() => { ({ busWidth, netNamesConnect } = __require("src/core/bus.js")); });
 let STACK_DEFAULT, fanStacks; __bind(() => { ({ STACK_DEFAULT, fanStacks } = __require("src/core/box-stack.js")); });
@@ -61279,6 +61422,7 @@ let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); 
  * selection, style, switch, signal-flow, and small-signal submenus, and the
  * panel rows' renames it offers.
  */
+
 
 
 
@@ -62083,7 +62227,7 @@ function appendContextActions(menu, target) {
     if (target.value.kind === 'label') appendContextItem(group, 'Edit text…', later(() => inlineEditLabel(target.value)), { shortcut: 't' });
     const lines = selectedLines();
     if (target.value.kind === 'line' && lines.length > 1) appendContextItem(group, `Join ${lines.length} lines`, joinSelectedLines);
-    if (target.value.plot?.kind === 'data') appendContextItem(group, 'Plot settings…', later(() => openDataPlotSettings(target.value)));
+    if (takesFileTraces(target.value)) appendContextItem(group, 'Plot settings…', later(() => openPlotSettings(target.value)));
     if (target.value.plot) appendContextItem(group, 'Export data…', later(() => openPlotExport(target.value)));
     if (target.value.plot) appendPlotColorsItem(group, target.value);
     appendBoxStackMenu(group, target.value);
@@ -63186,15 +63330,15 @@ __exports.PASTED_IMAGE_TYPES = PASTED_IMAGE_TYPES;
 __modules["src/web/data-plot-ui.js"] = function (__require, __exports) {
 __exports.chooseDataFile = chooseDataFile;
 __exports.openDataPlotDialog = openDataPlotDialog;
-__exports.openDataPlotSettings = openDataPlotSettings;
+__exports.openPlotSettings = openPlotSettings;
 __exports.installDataPlotUi = installDataPlotUi;
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 let MAX_DATA_TRACES, readTable, tableTraces; __bind(() => { ({ MAX_DATA_TRACES, readTable, tableTraces } = __require("src/core/csv-data.js")); });
 let TRACE_COLORS; __bind(() => { ({ TRACE_COLORS } = __require("src/core/analysis/signal-flow.js")); });
-let appendDataPlotTraces, moveDataPlotTrace, placeDataPlot, removeDataPlotTrace, replaceDataPlotTraces, setDataPlotAxis, setDataPlotTrace, setDataPlotView; __bind(() => { ({ appendDataPlotTraces, moveDataPlotTrace, placeDataPlot, removeDataPlotTrace, replaceDataPlotTraces, setDataPlotAxis, setDataPlotTrace, setDataPlotView } = __require("src/core/data-plot.js")); });
-let MAX_DATA_POINTS, normalizePlot; __bind(() => { ({ MAX_DATA_POINTS, normalizePlot } = __require("src/core/model.js")); });
+let appendPlotTraces, fileUnits, inPlotUnits, movePlotTrace, placeDataPlot, removePlotTrace, replaceDataPlotTraces, setDataPlotAxis, setPlotTrace, setDataPlotView, takesFileTraces; __bind(() => { ({ appendPlotTraces, fileUnits, inPlotUnits, movePlotTrace, placeDataPlot, removePlotTrace, replaceDataPlotTraces, setDataPlotAxis, setPlotTrace, setDataPlotView, takesFileTraces } = __require("src/core/data-plot.js")); });
+let MAX_DATA_POINTS, MAX_PLOT_EXTRA, normalizePlot; __bind(() => { ({ MAX_DATA_POINTS, MAX_PLOT_EXTRA, normalizePlot } = __require("src/core/model.js")); });
 let COLOR_PALETTE; __bind(() => { ({ COLOR_PALETTE } = __require("src/core/style.js")); });
-let dataSpec; __bind(() => { ({ dataSpec } = __require("src/core/plot-spec.js")); });
+let plotSpec; __bind(() => { ({ plotSpec } = __require("src/core/plot-spec.js")); });
 let createPlotView; __bind(() => { ({ createPlotView } = __require("src/web/plot-view.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
@@ -63312,19 +63456,22 @@ function select(label, id, choices, value, onchange) {
  * in place. `onRemove(trace)` takes a trace off (by default it is marked
  * removed); `onAxis(axis)` hears an axis edited by hand; `onMove()` hears
  * the traces reordered (by default only the draft is). A later trace draws
- * over an earlier one. Returns its `parts`,
+ * over an earlier one. `base`, an analysis plot, makes the draft's traces
+ * those added to it from files: its axes are its own then, and it may keep
+ * none. Returns its `parts`,
  * `show()` to draw the draft again (after it changed from outside: also
  * `refresh()` for the fields), `plot()` the plot it shows with its zoom,
  * and `dispose()`.
  */
-function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null } = {}) {
+function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, base = null } = {}) {
   const view = createPlotView({ height: 260, wheel: 'always', className: 'data-plot-view' });
   const shown = () => draft.traces.filter((t) => !t.removed);
-  const bare = () => normalizePlot({ kind: 'data', x: draft.x, y: draft.y, traces: shown().map(({ label, color, points }) => ({ label, color, points })) });
+  const traces = () => shown().map(({ label, color, points }) => ({ label, color, points }));
+  const bare = () => (base ? normalizePlot({ ...base, extra: traces() }) : normalizePlot({ kind: 'data', x: draft.x, y: draft.y, traces: traces() }));
   const show = ({ keepZoom = true } = {}) => {
     const zoom = keepZoom ? view.zoom() : null;
     const plot = bare();
-    view.set(plot ? dataSpec(plot) : null);
+    view.set(plot ? plotSpec(plot) : null);
     if (zoom && plot) view.zoomTo(zoom);
   };
   const axes = el('div', { class: 'data-plot-columns' });
@@ -63338,8 +63485,8 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null }
         SCALES.map(([v, t]) => el('option', { value: v, text: t, selected: draft[axis].scale === v })))]),
   ]);
   const refresh = () => {
-    axes.replaceChildren(axisFields('x'), axisFields('y'));
-    const left = shown().length;
+    axes.replaceChildren(...(base ? [] : [axisFields('x'), axisFields('y')]));
+    const left = shown().length + (base ? 1 : 0);
     const visible = shown();
     // Swap with the next visible trace up or down the list.
     const move = (trace, step) => {
@@ -63350,6 +63497,10 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null }
       if (onMove) onMove();
       else { refresh(); show(); }
     };
+    if (base && !visible.length) {
+      traceList.replaceChildren(el('p', { class: 'field-hint', text: 'No traces from files. Add file… adds them.' }));
+      return;
+    }
     traceList.replaceChildren(...visible.map((trace, i) => {
       return el('div', { class: 'data-plot-trace' }, [
         el('button', { type: 'button', class: 'data-plot-trace-move', text: '↑', title: 'Move up', 'aria-label': `Move ${trace.label} up`, disabled: i === 0, onclick: () => move(trace, -1) }),
@@ -63381,11 +63532,12 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null }
 /** The edits the plot editor made to `box`'s own traces (`draft.traces`
  *  with an `index`) and axes, inside a commit. */
 function applyDraft(circuit, box, draft) {
-  for (const axis of ['x', 'y']) setDataPlotAxis(box, axis, { label: draft[axis].label, scale: draft[axis].scale });
+  // An analysis plot's axes are its own.
+  if (box.plot.kind === 'data') for (const axis of ['x', 'y']) setDataPlotAxis(box, axis, { label: draft[axis].label, scale: draft[axis].scale });
   const own = draft.traces.filter((trace) => trace.index !== undefined);
-  for (const trace of own) if (!trace.removed) setDataPlotTrace(circuit, box, trace.index, { label: trace.label, color: trace.color });
+  for (const trace of own) if (!trace.removed) setPlotTrace(circuit, box, trace.index, { label: trace.label, color: trace.color });
   // Last first, so the indices still hold.
-  for (const trace of [...own].sort((a, b) => b.index - a.index)) if (trace.removed) removeDataPlotTrace(circuit, box, trace.index);
+  for (const trace of [...own].sort((a, b) => b.index - a.index)) if (trace.removed) removePlotTrace(circuit, box, trace.index);
 }
 
 /** Put `box`'s traces in the draft's order. `current` is the draft traces
@@ -63395,7 +63547,7 @@ function applyOrder(circuit, box, draft, current) {
   draft.traces.filter((t) => !t.removed).forEach((trace, place) => {
     const at = now.indexOf(trace);
     if (at === place) return;
-    moveDataPlotTrace(circuit, box, at, place);
+    movePlotTrace(circuit, box, at, place);
     now.splice(place, 0, now.splice(at, 1)[0]);
   });
 }
@@ -63405,17 +63557,33 @@ const ownLeft = (draft) => draft.traces.filter((t) => t.index !== undefined && !
 
 /** The zoom shown on `box`'s axes, those it can show. */
 function applyZoom(box, zoom) {
+  if (box.plot.kind !== 'data') {
+    const { view: _view, ...rest } = box.plot;
+    box.plot = normalizePlot(zoom ? { ...rest, view: zoom } : rest);
+    return;
+  }
   for (const axis of ['x', 'y']) setDataPlotView(box, axis, zoom?.[axis] && !(box.plot[axis].scale === 'log' && zoom[axis][0] <= 0) ? zoom[axis] : null);
 }
+
+/** An analysis plot as the plot editor draws under its added traces. */
+const analysisBase = ({ extra: _extra, view: _view, ...rest }) => rest;
+
+/** The traces a plot's editor edits: a data plot's, or an analysis plot's added ones. */
+const editedTraces = (plot) => (plot.kind === 'data' ? plot.traces : plot.extra || [])
+  .map((trace, index) => ({ index, label: trace.label, color: trace.color, points: trace.points, removed: false }));
 
 /** The dialog on `text` (the file `name`): Place puts its plot on the
  *  drawing, or into `target` -- its traces replaced, or with `mode` 'add'
  *  the file's added to them (the plot's own shown with them, to edit too). */
 function openDataPlotDialog(text, name, target = null, { mode = 'replace' } = {}) {
-  const adding = mode === 'add' && target?.plot?.kind === 'data';
+  const adding = mode === 'add' && takesFileTraces(target);
+  // An analysis plot takes the file's traces in its own units.
+  const analysis = adding && target.plot.kind !== 'data';
+  const unitChoices = analysis ? fileUnits(target.plot) : { x: [], y: [] };
+  const units = { x: unitChoices.x[0]?.key || null, y: unitChoices.y[0]?.key || null };
   // The plot's own traces, when adding to it.
-  const own = adding ? target.plot.traces.map((trace, index) => ({ index, label: trace.label, color: trace.color, points: trace.points, removed: false })) : [];
-  const room = () => MAX_DATA_TRACES - own.filter((t) => !t.removed).length;
+  const own = adding ? editedTraces(target.plot) : [];
+  const room = () => (analysis ? MAX_PLOT_EXTRA : MAX_DATA_TRACES) - own.filter((t) => !t.removed).length;
   let options = {};
   let table = readTable(text);
   let x = table.x;
@@ -63429,6 +63597,7 @@ function openDataPlotDialog(text, name, target = null, { mode = 'replace' } = {}
   const status = el('p', { class: 'field-hint', 'aria-live': 'polite' });
   const place = el('button', { type: 'button', class: 'primary-action', text: adding ? 'Add to plot' : target ? 'Read into plot' : 'Place' });
   const plotEdit = plotEditor(draft, {
+    base: analysis ? analysisBase(target.plot) : null,
     onAxis: (axis) => { edited[axis] = true; },
     onRemove: (trace) => {
       if (trace.index !== undefined) trace.removed = true;
@@ -63442,12 +63611,15 @@ function openDataPlotDialog(text, name, target = null, { mode = 'replace' } = {}
   function update() {
     const before = new Map(draft.traces.filter((t) => t.index === undefined).map((t) => [t.column, t]));
     const added = y.map((column) => {
-      const [trace] = tableTraces(table, x, [column]);
-      if (!trace) return null;
+      let [trace] = tableTraces(table, x, [column]);
+      if (trace && analysis) [trace] = inPlotUnits(target.plot, [trace], units);
+      if (!trace || trace.points.length < 2) return null;
       const old = before.get(column);
       return { column, points: trace.points, label: old ? old.label : trace.label, color: old ? old.color : null };
     }).filter(Boolean);
-    const taken = new Set([...own, ...added].filter((t) => !t.removed).map((t) => t.color).filter(Boolean));
+    // Clear of the colors the plot uses: an analysis plot's own curves' too.
+    const theirs = analysis ? [...(target.plot.traces || []).map((t) => t.color), target.plot.color] : [];
+    const taken = new Set([...theirs, ...[...own, ...added].filter((t) => !t.removed).map((t) => t.color)].filter(Boolean));
     for (const trace of added) {
       if (trace.color) continue;
       trace.color = TRACE_COLORS.find((c) => !taken.has(c)) || TRACE_COLORS[0];
@@ -63527,6 +63699,9 @@ function openDataPlotDialog(text, name, target = null, { mode = 'replace' } = {}
           ` ${n}`,
         ])),
       ]),
+      // A response plot's units: the file's are read into them.
+      ...(unitChoices.x.length ? [select('X is in', 'data-plot-xunit', unitChoices.x.map((u) => [u.key, u.text]), units.x, (v) => { units.x = v; update(); })] : []),
+      ...(unitChoices.y.length ? [select('Y is in', 'data-plot-yunit', unitChoices.y.map((u) => [u.key, u.text]), units.y, (v) => { units.y = v; update(); })] : []),
     );
   }
 
@@ -63542,7 +63717,7 @@ function openDataPlotDialog(text, name, target = null, { mode = 'replace' } = {}
         // The plot's own traces as edited here, then the file's under them.
         applyDraft(editor.circuit, target, draft);
         const fresh = draft.traces.filter((t) => t.index === undefined);
-        if (fresh.length) appendDataPlotTraces(editor.circuit, target, fresh.map(({ label, color, points }) => ({ label, color, points })), { file: name });
+        if (fresh.length) appendPlotTraces(editor.circuit, target, fresh.map(({ label, color, points }) => ({ label, color, points })), { file: name });
         applyOrder(editor.circuit, target, draft, [...ownLeft(draft), ...fresh]);
         applyZoom(target, zoom);
         placed = { box: target, legend: editor.circuit.plotLegend(target) };
@@ -63596,16 +63771,14 @@ function openDataPlotDialog(text, name, target = null, { mode = 'replace' } = {}
   place.focus();
 }
 
-/** The settings of the data plot `box`. */
-function openDataPlotSettings(box) {
-  if (box?.plot?.kind !== 'data') return;
-  const draft = {
-    x: { ...box.plot.x },
-    y: { ...box.plot.y },
-    traces: box.plot.traces.map((trace, index) => ({ index, label: trace.label, color: trace.color, points: trace.points, removed: false })),
-  };
-  const dialog = el('dialog', { class: 'confirm-dialog data-plot-dialog', 'aria-label': 'Data plot settings' });
-  const plotEdit = plotEditor(draft);
+/** The settings of the plot `box`: a data plot's, or an analysis plot's
+ *  (the traces added to it from files, and its zoom). */
+function openPlotSettings(box) {
+  if (!takesFileTraces(box)) return;
+  const data = box.plot.kind === 'data';
+  const draft = { x: { ...box.plot.x }, y: { ...box.plot.y }, traces: editedTraces(box.plot) };
+  const dialog = el('dialog', { class: 'confirm-dialog data-plot-dialog', 'aria-label': 'Plot settings' });
+  const plotEdit = plotEditor(draft, { base: data ? null : analysisBase(box.plot) });
   const apply = () => {
     const zoom = plotEdit.zoom();
     const old = editor.circuit.plotLegend(box).map((label) => label.bbox());
@@ -63618,15 +63791,16 @@ function openDataPlotSettings(box) {
     // Renamed entries are measured again: the column keeps its left edge and top.
     const legend = editor.circuit.plotLegend(box);
     if (legend.length && old.length) alignLabelColumn(legend.map((label) => label.id), { left: Math.min(...old.map((r) => r.x)), top: Math.min(...old.map((r) => r.y)), gap: 0 });
-    logLine('updated the data plot');
+    logLine('updated the plot');
     render();
   };
+  const full = draft.traces.length >= (data ? MAX_DATA_TRACES : MAX_PLOT_EXTRA);
   dialog.append(
-    el('h2', { text: box.plot.file ? `Data plot from ${box.plot.file}` : 'Data plot' }),
+    el('h2', { text: data ? (box.plot.file ? `Data plot from ${box.plot.file}` : 'Data plot') : 'Plot settings' }),
     ...plotEdit.parts,
     el('div', { class: 'dialog-actions' }, [
-      el('button', { type: 'button', class: 'data-plot-add', text: 'Add file…', title: 'Add traces from another file', disabled: box.plot.traces.length >= MAX_DATA_TRACES, onclick: () => { dialog.close(); chooseDataFile(box, 'add'); } }),
-      el('button', { type: 'button', class: 'data-plot-reread', text: 'Replace file…', title: 'Replace the traces with a file\'s, keeping the plot\'s place, axes, and zoom', onclick: () => { dialog.close(); chooseDataFile(box); } }),
+      el('button', { type: 'button', class: 'data-plot-add', text: 'Add file…', title: 'Add traces from a file', disabled: full, onclick: () => { dialog.close(); chooseDataFile(box, 'add'); } }),
+      ...(data ? [el('button', { type: 'button', class: 'data-plot-reread', text: 'Replace file…', title: 'Replace the traces with a file\'s, keeping the plot\'s place, axes, and zoom', onclick: () => { dialog.close(); chooseDataFile(box); } })] : []),
       el('span', { class: 'dialog-actions-gap' }),
       el('button', { type: 'button', text: 'Cancel', onclick: () => dialog.close() }),
       el('button', { type: 'button', class: 'primary-action', text: 'Apply', onclick: apply }),
@@ -73292,7 +73466,8 @@ let axisPlacement, cycleSymmetryAxis, mirrorRecordedEdit, mountSymmetryAxis, syn
 let acceptArrangeSuggestion, dismissArrangeSuggestion, installArrangeSuggestions, mountArrangeSuggestion, noteDrawingEdit, noteDrawingReplaced, syncArrangeSuggestion; __bind(() => { ({ acceptArrangeSuggestion, dismissArrangeSuggestion, installArrangeSuggestions, mountArrangeSuggestion, noteDrawingEdit, noteDrawingReplaced, syncArrangeSuggestion } = __require("src/web/arrange-suggest.js")); });
 let shortNetsAtPlacedSolder, askNameForNewNetNameConflict; __bind(() => { ({ shortNetsAtPlacedSolder, askNameForNewNetNameConflict } = __require("src/web/net-names.js")); });
 let installRenumberUi; __bind(() => { ({ installRenumberUi } = __require("src/web/renumber-ui.js")); });
-let installDataPlotUi, openDataPlotSettings; __bind(() => { ({ installDataPlotUi, openDataPlotSettings } = __require("src/web/data-plot-ui.js")); });
+let installDataPlotUi, openPlotSettings; __bind(() => { ({ installDataPlotUi, openPlotSettings } = __require("src/web/data-plot-ui.js")); });
+let takesFileTraces; __bind(() => { ({ takesFileTraces } = __require("src/core/data-plot.js")); });
 let installArrangeFigures; __bind(() => { ({ installArrangeFigures } = __require("src/web/figure-annotate.js")); });
 let installCalculator, toggleCalculator; __bind(() => { ({ installCalculator, toggleCalculator } = __require("src/web/calculator-window.js")); });
 let installNotes, notesDocumentShown, renderNotesWindow, toggleNotes; __bind(() => { ({ installNotes, notesDocumentShown, renderNotesWindow, toggleNotes } = __require("src/web/notes-window.js")); });
@@ -73320,6 +73495,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -76066,19 +76242,21 @@ if (!mathFontReady) {
   document.fonts.load(MATH_FONT_PROBE).then(releaseMathMeasurement, releaseMathMeasurement);
 }
 
+/** What a double-click on a label opens: a plot's settings, else its text
+ *  in place. */
+function editLabelOpened(label) {
+  // A plot opens its settings (a Bode sketch has none): never its box's text.
+  if (label.plot) {
+    if (takesFileTraces(label)) openPlotSettings(label);
+  } else inlineEditLabel(label);
+}
+
 // A label's anchor is the center of its box, but for an aligned free
 // annotation the meaning is its aligned edge: analysis annotations are placed
 // flush with the figure's left edge. Re-measuring — a font change, new browser
 // metrics — then slides that edge by half the width change, which is what
 // makes a saved equation stack drift sideways when it is reopened. Box widths
 // are even cell multiples, so half a change stays on the grid.
-/** What a double-click on a label opens: a data plot's settings, else its
- *  text in place. */
-function editLabelOpened(label) {
-  if (label.plot?.kind === 'data') openDataPlotSettings(label);
-  else inlineEditLabel(label);
-}
-
 function keepAlignedEdge(label, before) {
   if (label.netId || label.owner) return; // anchored to a wire or a component
   // A plot's legend entry keeps its left edge, beside the plot.
@@ -78086,10 +78264,10 @@ function canvasMouseDown(ev) {
     }
     setSelection([]);
     setLabelSelection([annotationGeometry.id]);
-    // A data plot opens its settings on a double-click.
-    if (ev.detail >= 2 && annotationGeometry.plot?.kind === 'data') {
+    // A plot opens its settings on a double-click.
+    if (ev.detail >= 2 && annotationGeometry.plot) {
       render();
-      setTimeout(() => openDataPlotSettings(annotationGeometry), 0);
+      setTimeout(() => editLabelOpened(annotationGeometry), 0);
       return;
     }
     drag = { mode: 'labelmove', labelId: annotationGeometry.id, startClient, startWorld, startAnchors: new Map([[annotationGeometry.id, { x: annotationGeometry.anchor.x, y: annotationGeometry.anchor.y }]]), moved: false, committed: false, duplicate: false };
@@ -89135,7 +89313,8 @@ function writePlot(target, plot, shown, { identity = null } = {}) {
   const ids = [];
   const figure = identity && { ...identity, id: target?.figure?.id || newFigureId(circuit) };
   if (target) {
-    target.plot = normalizePlot(plot);
+    // Traces added from files stay through an update.
+    target.plot = normalizePlot(target.plot?.extra ? { ...plot, extra: target.plot.extra } : plot);
     // A plot from before figures is this tool's from now on.
     if (figure && !target.figure) target.figure = figure;
     for (const label of legendOf(target)) circuit.removeLabel(label.id);
@@ -89150,15 +89329,20 @@ function writePlot(target, plot, shown, { identity = null } = {}) {
   const noteShift = box.style.blackTraces ? -PLOT_LEGEND_SAMPLE_ROOM : 0;
   const shift = {};
   let y = top;
-  const add = (text, style, dx) => {
-    const label = circuit.addLabel({ text, math: true, parent: box.id, role: PLOT_LEGEND_ROLE, align: 'left', x: 0, y: 0, ...(style ? { style } : {}) });
+  const add = (text, style, dx, math = true) => {
+    const label = circuit.addLabel({ text, math, parent: box.id, role: PLOT_LEGEND_ROLE, align: 'left', x: 0, y: 0, ...(style ? { style } : {}) });
     const size = label.bbox();
     label.moveTo(snap(left + dx + size.w / 2), snap(y + size.h / 2));
     y = label.bbox().y + label.bbox().h;
     ids.push(label.id);
     if (dx) shift[label.id] = dx;
   };
-  shown.forEach((trace, index) => add(`$${trace.label}$`, { color: trace.color }, index < curves ? 0 : noteShift));
+  // The analysis's curves, then the traces added from files, then notes.
+  const extra = box.plot.extra || [];
+  const own = curves - extra.length;
+  shown.slice(0, own).forEach((trace) => add(`$${trace.label}$`, { color: trace.color }, 0));
+  extra.forEach((trace) => add(trace.label || ' ', { color: trace.color }, 0, false));
+  shown.slice(own).forEach((trace) => add(`$${trace.label}$`, { color: trace.color }, noteShift));
   return { box, ids, left, top, shift };
 }
 

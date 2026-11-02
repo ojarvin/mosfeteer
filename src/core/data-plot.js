@@ -10,7 +10,7 @@
 import { TRACE_COLORS } from './analysis/signal-flow.js';
 import { newFigureId, placeFigure, settlePlaced } from './figures.js';
 import { GRID, snap } from './grid.js';
-import { PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot } from './model.js';
+import { MAX_PLOT_EXTRA, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, plotCurveCount } from './model.js';
 import { COLOR_PALETTE, colorToken } from './style.js';
 import { MAX_DATA_TRACES, readTable, tableTraces } from './csv-data.js';
 
@@ -124,19 +124,75 @@ export function setDataPlotView(box, axis, range) {
   return true;
 }
 
-/** Rename or recolor trace `index` (from 0) of a data plot, its legend
- *  entry with it; a color is one of the palette's (its name or value).
- *  Returns whether anything changed. */
-export function setDataPlotTrace(circuit, box, index, { label, color } = {}) {
-  const plot = dataPlotOf(box);
-  const trace = plot.traces[index];
-  if (!trace) throw new Error(`no trace ${index + 1} (the plot has ${plot.traces.length})`);
+/** Kinds of analysis plot a file's traces can be added to (`plot.extra`). */
+const EXTRA_KINDS = new Set(['response', 'step', 'wave', 'swing', 'locus']);
+
+/**
+ * The traces a plot's editor changes: a data plot's own, or those added to
+ * an analysis plot from files (`extra`, drawn over the analysis's), with
+ * the index of the first one's legend entry and how many there may be.
+ */
+function editableTraces(box) {
+  const plot = box?.plot;
+  if (!plot) throw new Error(`"${box?.id}" is not a plot`);
+  if (plot.kind === 'data') return { key: 'traces', traces: plot.traces, offset: 0, max: MAX_DATA_TRACES, min: 1 };
+  if (!EXTRA_KINDS.has(plot.kind)) throw new Error(`"${box.id}" takes no traces from a file`);
+  const traces = plot.extra || [];
+  return { key: 'extra', traces, offset: plotCurveCount(plot) - traces.length, max: MAX_PLOT_EXTRA, min: 0 };
+}
+
+/**
+ * What a file's x and y mean on `plot`, for its traces to be read in the
+ * plot's own units: `[{ key, text, scale }]` per axis, the first each one's
+ * own. A response's x is an angular frequency (or f/fs), so a file in hertz
+ * is scaled by 2π; its magnitude is in dB, so a plain ratio is taken
+ * 20 log10.
+ */
+export function fileUnits(plot) {
+  if (plot?.kind !== 'response' || plot.axis === 'normalized') return { x: [], y: [] };
+  return {
+    x: [{ key: 'rad/s', text: 'rad/s' }, { key: 'Hz', text: 'Hz (×2π)' }],
+    y: plot.quantity === 'phase' ? [] : [{ key: 'dB', text: 'dB' }, { key: 'ratio', text: 'Ratio (20 log₁₀)' }],
+  };
+}
+
+/** `traces`' points read as `units` say ({ x: 'Hz', y: 'ratio' }, fileUnits) in `plot`'s own units. */
+export function inPlotUnits(plot, traces, units = {}) {
+  const sx = units.x === 'Hz' ? 2 * Math.PI : 1;
+  const ty = units.y === 'ratio' ? (v) => (v > 0 ? 20 * Math.log10(v) : NaN) : (v) => v;
+  if (sx === 1 && units.y !== 'ratio') return traces;
+  return traces.map((trace) => ({ ...trace, points: trace.points.map(([x, y]) => [x * sx, ty(y)]).filter(([, y]) => Number.isFinite(y)) }));
+}
+
+/** Whether `box` is a plot a file's traces can go on. */
+export function takesFileTraces(box) {
+  return box?.plot?.kind === 'data' || EXTRA_KINDS.has(box?.plot?.kind);
+}
+
+/** The legend entries a plot's editable traces have, after `offset`. */
+const ownEntries = (circuit, box, { offset, traces }) => circuit.plotLegend(box).slice(offset, offset + traces.length);
+
+/** Put `labels` last in the drawing's labels: the legend is read in their order. */
+function putLast(circuit, labels) {
+  for (const label of labels) {
+    circuit.labels.delete(label.id);
+    circuit.labels.set(label.id, label);
+  }
+}
+
+/** Rename or recolor trace `index` (from 0) of a plot (a data plot's, or
+ *  one added to an analysis plot), its legend entry with it; a color is one
+ *  of the palette's (its name or value). Returns whether anything changed. */
+export function setPlotTrace(circuit, box, index, { label, color } = {}) {
+  const own = editableTraces(box);
+  const trace = own.traces[index];
+  if (!trace) throw new Error(`no trace ${index + 1} (the plot has ${own.traces.length})`);
   const token = color === undefined ? null : colorToken(color);
   if (color !== undefined && !token) throw new Error(`a color is one of ${Object.keys(COLOR_PALETTE).join(', ')}`);
   const next = { ...trace, ...(label !== undefined ? { label: String(label).slice(0, 400) } : {}), ...(token ? { color: COLOR_PALETTE[token] } : {}) };
   if (next.label === trace.label && next.color === trace.color) return false;
-  box.plot = normalizePlot({ ...plot, traces: plot.traces.map((t, i) => (i === index ? next : t)) });
-  const entry = circuit.plotLegend(box)[index];
+  box.plot = normalizePlot({ ...box.plot, [own.key]: own.traces.map((t, i) => (i === index ? next : t)) });
+  const entry = ownEntries(circuit, box, own)[index];
   if (entry) {
     if (next.label !== trace.label) {
       // Its left edge stays beside the plot as its text grows or shrinks.
@@ -150,28 +206,25 @@ export function setDataPlotTrace(circuit, box, index, { label, color } = {}) {
   return true;
 }
 
-/** Move trace `from` (from 0) of a data plot to position `to`: a later trace
- *  draws over an earlier one. Its legend entry moves with it, the column
- *  stacked again in the new order from where it starts. Returns whether it
- *  moved. */
-export function moveDataPlotTrace(circuit, box, from, to) {
-  const plot = dataPlotOf(box);
-  const count = plot.traces.length;
+/** Move trace `from` (from 0) of a plot to position `to`: a later trace
+ *  draws over an earlier one. Its legend entry moves with it, those
+ *  entries stacked again in the new order from where they start. Returns
+ *  whether it moved. */
+export function movePlotTrace(circuit, box, from, to) {
+  const own = editableTraces(box);
+  const count = own.traces.length;
   for (const [n, i] of [['trace', from], ['position', to]]) if (!Number.isInteger(i) || i < 0 || i >= count) throw new Error(`no ${n} ${i + 1} (the plot has ${count})`);
   if (from === to) return false;
-  const order = plot.traces.map((_, i) => i);
+  const order = own.traces.map((_, i) => i);
   order.splice(to, 0, order.splice(from, 1)[0]);
-  box.plot = normalizePlot({ ...plot, traces: order.map((i) => plot.traces[i]) });
   const legend = circuit.plotLegend(box);
-  if (legend.length >= count) {
-    const left = Math.min(...legend.map((l) => l.bbox().x));
-    let top = Math.min(...legend.map((l) => l.bbox().y));
-    // The legend is read in the labels' order: theirs follows the traces'.
-    const moved = [...order.map((i) => legend[i]), ...legend.slice(count)];
-    for (const label of moved) {
-      circuit.labels.delete(label.id);
-      circuit.labels.set(label.id, label);
-    }
+  const entries = ownEntries(circuit, box, own);
+  box.plot = normalizePlot({ ...box.plot, [own.key]: order.map((i) => own.traces[i]) });
+  if (entries.length === count) {
+    const left = Math.min(...entries.map((l) => l.bbox().x));
+    let top = Math.min(...entries.map((l) => l.bbox().y));
+    const moved = order.map((i) => entries[i]);
+    putLast(circuit, [...moved, ...legend.slice(own.offset + count)]);
     for (const label of moved) {
       const size = label.bbox();
       label.moveTo(snap(left + size.w / 2), snap(top + size.h / 2));
@@ -181,15 +234,15 @@ export function moveDataPlotTrace(circuit, box, from, to) {
   return true;
 }
 
-/** Take trace `index` (from 0) off a data plot, and its legend entry. The
- *  last one stays. */
-export function removeDataPlotTrace(circuit, box, index) {
-  const plot = dataPlotOf(box);
-  if (!Number.isInteger(index) || index < 0 || index >= plot.traces.length) throw new Error(`no trace ${index + 1} (the plot has ${plot.traces.length})`);
-  if (plot.traces.length === 1) throw new Error('a plot keeps one trace at least');
-  const legend = circuit.plotLegend(box);
-  if (legend[index]) circuit.removeLabel(legend[index].id);
-  box.plot = normalizePlot({ ...plot, traces: plot.traces.filter((_, i) => i !== index) });
+/** Take trace `index` (from 0) off a plot, and its legend entry. A data
+ *  plot keeps one. */
+export function removePlotTrace(circuit, box, index) {
+  const own = editableTraces(box);
+  if (!Number.isInteger(index) || index < 0 || index >= own.traces.length) throw new Error(`no trace ${index + 1} (the plot has ${own.traces.length})`);
+  if (own.traces.length <= own.min) throw new Error('a plot keeps one trace at least');
+  const entry = ownEntries(circuit, box, own)[index];
+  if (entry) circuit.removeLabel(entry.id);
+  box.plot = normalizePlot({ ...box.plot, [own.key]: own.traces.filter((_, i) => i !== index) });
 }
 
 /** The names of the files a plot's traces came from, each once. */
@@ -198,25 +251,30 @@ function joinFiles(...names) {
   return files.join(', ').slice(0, 200);
 }
 
-/** Add `traces` ({ label, points, color? }) to a data plot, read from the
- *  file `file`, their legend entries under its others. A trace without a
- *  color takes one the plot does not use yet. Returns the new entries. */
-export function appendDataPlotTraces(circuit, box, traces, { file = '' } = {}) {
-  const plot = dataPlotOf(box);
+/** Add `traces` ({ label, points, color? }, in the plot's own units) to a
+ *  data plot or an analysis plot, read from the file `file`, their legend
+ *  entries under its others. A trace without a color takes one the plot
+ *  does not use yet. Returns the new entries. */
+export function appendPlotTraces(circuit, box, traces, { file = '' } = {}) {
+  const own = editableTraces(box);
+  const plot = box.plot;
   if (!traces.length) throw new Error('no trace to add');
-  if (plot.traces.length + traces.length > MAX_DATA_TRACES) throw new Error(`a plot has at most ${MAX_DATA_TRACES} traces (it has ${plot.traces.length})`);
-  const used = new Set(plot.traces.map((t) => t.color));
+  if (own.traces.length + traces.length > own.max) throw new Error(`a plot takes at most ${own.max} traces ${own.key === 'extra' ? 'from files ' : ''}(it has ${own.traces.length})`);
+  const used = new Set([...(plot.traces || []), ...own.traces].map((t) => t.color).concat(plot.color || []));
   const added = traces.map((trace) => {
     const color = trace.color || TRACE_COLORS.find((c) => !used.has(c)) || TRACE_COLORS[0];
     used.add(color);
     return { label: trace.label, color, points: trace.points };
   });
-  const next = normalizePlot({ ...plot, file: joinFiles(plot.file, file), traces: [...plot.traces, ...added] });
-  if (!next || next.traces.length !== plot.traces.length + added.length) throw new Error('a trace to add has no two points to plot');
+  const next = normalizePlot({ ...plot, ...(own.key === 'traces' ? { file: joinFiles(plot.file, file) } : {}), [own.key]: [...own.traces, ...added] });
+  if (!next || (next[own.key] || []).length !== own.traces.length + added.length) throw new Error('a trace to add has no two points to plot');
   const legend = circuit.plotLegend(box);
   const below = legend.length ? { x: Math.min(...legend.map((l) => l.bbox().x)), y: Math.max(...legend.map((l) => l.bbox().y + l.bbox().h)) } : null;
   box.plot = next;
-  return writeLegend(circuit, box, next.traces.slice(plot.traces.length), below);
+  const entries = writeLegend(circuit, box, next[own.key].slice(own.traces.length), below);
+  // Notes (an analysis plot's SNDR) stay after the curves' entries.
+  putLast(circuit, legend.slice(own.offset + own.traces.length));
+  return entries;
 }
 
 /** Replace a data plot's traces with `plot`'s (the file read again, or

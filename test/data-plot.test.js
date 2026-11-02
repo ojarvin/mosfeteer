@@ -138,7 +138,7 @@ test('dataplot --into adds a file\'s traces to a data plot, their legend entries
   assert.equal(third.text, 'Sim (V)');
   assert.equal(third.bbox().x, legend[0].bbox().x);
   assert.ok(third.bbox().y >= second.bbox().y + second.bbox().h);
-  assert.throws(() => runCommand(circuit, `annotation dataplot sim.csv --into R1`, io(files)), /is not a data plot/);
+  assert.throws(() => runCommand(circuit, `annotation dataplot sim.csv --into R1`, io(files)), /is not a plot that takes traces from a file/);
   for (let i = 0; i < 5; i++) runCommand(circuit, `annotation dataplot sim.csv --into ${box.id}`, io(files));
   assert.throws(() => runCommand(circuit, `annotation dataplot sim.csv --into ${box.id}`, io(files)), /at most 8 traces/);
 });
@@ -161,4 +161,34 @@ test('a data plot\'s trace moves to another place, a later one drawn on top, its
   assert.deepEqual(loaded.plotLegend(loaded.labels.get(box.id)).map((l) => l.text), ['Sim (V)', 'CH1 (V)', 'CH2 (V)']);
   assert.equal(runCommand(circuit, `annotation plottrace ${box.id} 1 --position 1`).mutated, false);
   assert.throws(() => runCommand(circuit, `annotation plottrace ${box.id} 1 --position 9`), /no position 9/);
+});
+
+test('a file\'s traces go on an analysis plot too, in its units, and stay through its edits', () => {
+  const circuit = new Circuit();
+  const box = circuit.addAnnotation('box', {
+    x: 0, y: 0, end: { x: 720, y: 440 }, style: { lineStyle: 'solid', blackTraces: true },
+    plot: { kind: 'response', axis: 'relative', range: { low: 0, high: 4 }, traces: [{ label: 'H', points: [{ f: 1, db: 0 }, { f: 1e4, db: -40 }] }] },
+  });
+  circuit.addLabel({ text: '$H$', math: true, parent: box.id, role: 'plot-legend', align: 'left', x: 800, y: 40 });
+  const files = { 'sim.csv': 'f (Hz),|H|\n1,1\n100,0.1\n' };
+  const out = runCommand(circuit, `annotation dataplot sim.csv --into ${box.id} --hz --ratio`, io(files));
+  assert.match(out.text, /added 1 trace from sim\.csv/);
+  assert.equal(box.plot.traces.length, 1);
+  const [sim] = box.plot.extra;
+  assert.equal(sim.label, '|H|');
+  assert.deepEqual(sim.points.map(([x, y]) => [Number(x.toFixed(4)), y]), [[6.2832, 0], [628.319, -20]]);
+  const legend = circuit.plotLegend(box);
+  assert.deepEqual(legend.map((l) => l.text), ['$H$', '|H|']);
+  // Its trace is the plot's first added one: renamed, recolored, moved, removed as a data plot's are.
+  runCommand(circuit, `annotation plottrace ${box.id} 1 --label Sim --color red`);
+  assert.deepEqual([box.plot.extra[0].label, box.plot.extra[0].color], ['Sim', '#df4d59']);
+  assert.equal(circuit.plotLegend(box)[1].text, 'Sim');
+  circuit.plotLegend(box)[1].setText('Simulated');
+  assert.equal(box.plot.extra[0].label, 'Simulated');
+  runCommand(circuit, `annotation plottrace ${box.id} 1 rm`);
+  assert.equal(box.plot.extra, undefined);
+  assert.deepEqual(circuit.plotLegend(box).map((l) => l.text), ['$H$']);
+  assert.throws(() => runCommand(circuit, `annotation dataplot sim.csv --into ${box.id} --hz`, io({ 'sim.csv': 'f\n1\n2\n' })), /no column of numbers|no two/);
+  const step = circuit.addAnnotation('box', { x: 0, y: 800, end: { x: 720, y: 1240 }, plot: { kind: 'step', unit: 't', range: { low: 0, high: 1 }, traces: [{ label: 'y', points: [{ t: 0, y: 0 }, { t: 1, y: 1 }] }] } });
+  assert.throws(() => runCommand(circuit, `annotation dataplot sim.csv --into ${step.id} --hz`, io(files)), /--hz is for a response plot/);
 });

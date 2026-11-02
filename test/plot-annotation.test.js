@@ -219,3 +219,31 @@ test('a data plot draws its traces on log or linear axes, leaving out what a log
   assert.equal(box.plot.kind, 'data');
   assert.match(svgString(circuit), /class="plot-annotation"[\s\S]*stroke="#ff0000"/);
 });
+
+test('an analysis plot keeps traces added from files and draws them over its own, in their colors or dashed on', async () => {
+  const { responseFigure, stepFigure, locusFigure } = await import('../src/core/bode-figure.js');
+  const response = normalizePlot({
+    kind: 'response', axis: 'relative', range: { low: 0, high: 3 },
+    traces: [{ label: 'H', color: '#3b74e0', points: [{ f: 1, db: 0 }, { f: 1000, db: -60 }] }],
+    extra: [{ label: 'sim', color: '#df4d59', points: [[-1, 3], [1, -1], [100, -41.234567891], [1000, -80]] }, { label: 'one', points: [[1, 0]] }],
+  });
+  // A response's added x is a positive frequency; a lone point is dropped.
+  assert.deepEqual(response.extra, [{ label: 'sim', color: '#df4d59', points: [[1, -1], [100, -41.2346], [1000, -80]] }]);
+  const figure = responseFigure(response, { width: 480, height: 260 });
+  const added = figure.items.filter((item) => item.role === 'curve' && item.trace === 1);
+  assert.equal(added.length, 1);
+  assert.equal(added[0].color, '#df4d59');
+  // Its values set the range too.
+  assert.ok(figure.ranges.db[0] <= -80);
+  const step = normalizePlot({ kind: 'step', unit: 't', range: { low: 0, high: 2 }, traces: [{ label: 'y', points: [{ t: 0, y: 0 }, { t: 2, y: 1 }] }], extra: [{ label: 's', points: [[0, 0], [1, 2]] }] });
+  assert.ok(stepFigure(step).items.some((item) => item.role === 'curve' && item.trace === 1));
+  const locus = normalizePlot({ kind: 'locus', label: 'H', parameter: 'k', points: [{ re: -1, im: 0, t: 0 }, { re: -1, im: 1, t: 1 }], extra: [{ label: 'm', points: [[-1, 0], [-1, 0.5]] }] });
+  assert.ok(locusFigure(locus).items.some((item) => item.type === 'path' && item.trace === 1));
+  // In black each added curve takes the next dash, and the legend counts it.
+  const { plotCurveCount } = await import('../src/core/model.js');
+  assert.equal(plotCurveCount(response), 2);
+  const circuit = new Circuit();
+  circuit.addAnnotation('box', { x: 0, y: 0, end: { x: 720, y: 440 }, plot: response, style: { lineStyle: 'solid', blackTraces: true } });
+  const dashed = [...svgString(circuit).matchAll(/<path d="[^"]*"[^>]*stroke-dasharray="([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(dashed.length >= 1, 'the added curve is dashed');
+});

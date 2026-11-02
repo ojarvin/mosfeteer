@@ -51,6 +51,6 @@ describe('plot export', { skip: browserSkip() }, () => {
     await h.evaluate(`${button('dialog[aria-label="Export plot data"]', 'Save')}.click()`);
     await h.until(`typeof window.__saved === 'string'`);
     assert.equal(await h.evaluate(`window.__saved`), 'ω (rad/s);H_1 (dB)\n1;0\n10;-3,5\n100;-20\n');
-    assert.equal(await h.evaluate(`!!document.querySelector('dialog[aria-label="Export plot data"]')`), false);
+    await h.until(`!document.querySelector('dialog[aria-label="Export plot data"]')`);
   });
 });

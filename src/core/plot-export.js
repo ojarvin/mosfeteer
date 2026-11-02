@@ -22,8 +22,20 @@ export function plainName(text) {
 
 const named = (trace, index, fallback = 'Trace') => plainName(trace.label) || `${fallback} ${index + 1}`;
 
-/** Each curve of `plot` as `{ name, columns, rows }`. */
+/** Each curve of `plot` as `{ name, columns, rows }`: its own, then
+ *  the traces added to it from files. */
 export function plotSeries(plot) {
+  const own = ownSeries(plot);
+  if (!own.length || !plot.extra) return own;
+  // An added trace's y is in the plot's own units: its curves' heading's.
+  const unit = plot.kind === 'response' ? (plot.quantity === 'phase' ? ' (°)' : plot.units === 'dBFS' ? ' (dBFS)' : ' (dB)') : plot.kind === 'swing' ? ' (dBFS)' : '';
+  return [...own, ...plot.extra.map((trace, i) => {
+    const name = named(trace, i, 'Added');
+    return { name, columns: plot.kind === 'locus' ? ['Re', 'Im'] : [own[0].columns[0], `${name}${unit}`], rows: trace.points.map(([x, y]) => [x, y]) };
+  })];
+}
+
+function ownSeries(plot) {
   if (!plot) return [];
   if (plot.kind === 'data') {
     const x = plainName(plot.x.label) || 'x';

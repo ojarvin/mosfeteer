@@ -1,5 +1,5 @@
 import { plotCsv, plotSeries } from './plot-export.js';
-import { appendDataPlotTraces, dataPlotFromText, moveDataPlotTrace, placeDataPlot, removeDataPlotTrace, setDataPlotAxis, setDataPlotTrace, setDataPlotView } from './data-plot.js';
+import { appendPlotTraces, dataPlotFromText, fileUnits, inPlotUnits, takesFileTraces, movePlotTrace, placeDataPlot, removePlotTrace, setDataPlotAxis, setPlotTrace, setDataPlotView } from './data-plot.js';
 import { analyzeSignalFlow, complexText } from './analysis/signal-flow.js';
 import { analyzeLogic } from './analysis/logic.js';
 import { Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld } from './model.js';
@@ -138,6 +138,8 @@ const FLAG_ARITY = {
   into: 1,
   traces: 1,
   position: 1,
+  hz: 0,
+  ratio: 0,
 };
 
 const SYNTHESIZE_USAGE = 'usage: synthesize logic IN ... OUT=VALUES ... [--style and-or|nand|or-and|nor] [--gates inverter,and,nand,or,nor] [--max-inputs 2|3] [--at X Y] [--print]';
@@ -569,12 +571,12 @@ export function commandHelp() {
     '  annotation join ID ID ...      - join line annotations that meet end to end or share a stretch into one line',
     '  annotation vertex-rm ID N      - remove vertex N (from 0) of a line or arrow',
     '  annotation plotcolors PLOT on|off - a plot\'s traces in their colors, or in black told apart by dash (a new plot\'s)',
-    '  annotation dataplot FILE [--x COL|row] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y | --into PLOT]',
-    '                                   - plot a CSV file\'s columns (by number or name), or add them to a data plot; unset options are guessed. The file is read, never kept',
+    '  annotation dataplot FILE [--x COL|row] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y | --into PLOT [--hz] [--ratio]]',
+    '                                   - plot a CSV file\'s columns (by number or name), or add them to a plot (an analysis\'s too; --hz: x in Hz, --ratio: a magnitude ratio, on a response); unset options are guessed. The file is read, never kept',
     '  annotation plotcsv PLOT [--traces N,N] [--sep comma|semicolon|tab] [--decimal point|comma] - any plot\'s numbers as CSV text (traces from 1)',
     '  annotation plotaxis PLOT x|y [--label TEXT] [--scale log|linear] - name a data plot\'s axis, or set its scale',
     '  annotation plotview PLOT x|y LOW HIGH|fit - zoom a data plot\'s axis, or fit it to the data',
-    '  annotation plottrace PLOT N rm|[--label TEXT] [--color COLOR] [--position M] - take trace N (from 1) off a data plot, rename it, color it from the palette (red, blue, ...), or move it to position M (a later trace draws on top)',
+    '  annotation plottrace PLOT N rm|[--label TEXT] [--color COLOR] [--position M] - take trace N (from 1) off a data plot (or one added to an analysis plot), rename it, color it from the palette (red, blue, ...), or move it to position M (a later trace draws on top)',
     '  annotation stack BOX N|off [--offset DX,DY] - N copies of a box\'s outline behind it, DX,DY apart (20,-20); wires between stacks repeat',
     '  list                           - list components',
     '  state                          - full JSON state',
@@ -1641,7 +1643,7 @@ function annotationCommand(circuit, pos, result, flags = {}, io) {
   }
   if (op === 'dataplot') {
     const file = pos[1];
-    if (!file || pos.length !== 2) throw new Error('usage: annotation dataplot FILE [--x COL] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y | --into PLOT]');
+    if (!file || pos.length !== 2) throw new Error('usage: annotation dataplot FILE [--x COL] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y | --into PLOT [--hz] [--ratio]]');
     if (!io?.readDataFile) throw new Error('dataplot reads a file: use the CLI, or Insert → Data plot… in the editor');
     const separators = { tab: '\t', semicolon: ';', comma: ',', space: ' ' };
     const decimals = { point: '.', comma: ',' };
@@ -1658,8 +1660,12 @@ function annotationCommand(circuit, pos, result, flags = {}, io) {
     });
     if (flags.into) {
       const box = circuit.labels.get(flags.into[0]);
-      if (box?.plot?.kind !== 'data') throw new Error(`"${flags.into[0]}" is not a data plot`);
-      appendDataPlotTraces(circuit, box, plot.traces.map(({ label, points }) => ({ label, points })), { file: plot.file });
+      if (!takesFileTraces(box)) throw new Error(`"${flags.into[0]}" is not a plot that takes traces from a file`);
+      const units = fileUnits(box.plot);
+      if (flags.hz && !units.x.length) throw new Error('--hz is for a response plot over frequency');
+      if (flags.ratio && !units.y.length) throw new Error('--ratio is for a response plot\'s magnitude');
+      const traces = inPlotUnits(box.plot, plot.traces.map(({ label, points }) => ({ label, points })), { x: flags.hz ? 'Hz' : null, y: flags.ratio ? 'ratio' : null });
+      appendPlotTraces(circuit, box, traces, { file: plot.file });
       return result(`added ${plot.traces.length} trace${plot.traces.length === 1 ? '' : 's'} from ${plot.file || file} to ${box.id}`, box.toJSON(), true);
     }
     const at = flags.at ? { x: Number(flags.at[0]), y: Number(flags.at[1]) } : null;
@@ -1708,15 +1714,15 @@ function annotationCommand(circuit, pos, result, flags = {}, io) {
     const usage = 'usage: annotation plottrace PLOT N rm|[--label TEXT] [--color COLOR] [--position M]';
     if (!box || !/^\d+$/.test(pos[2] || '')) throw new Error(usage);
     if (pos[3] === 'rm' && pos.length === 4) {
-      removeDataPlotTrace(circuit, box, Number(pos[2]) - 1);
+      removePlotTrace(circuit, box, Number(pos[2]) - 1);
       return result(`${box.id}: took off trace ${pos[2]}`, box.toJSON(), true);
     }
     if (pos.length !== 3 || (!flags.label && !flags.color && !flags.position)) throw new Error(usage);
     if (flags.position && !/^\d+$/.test(flags.position[0])) throw new Error(usage);
     let changed = false;
-    if (flags.label || flags.color) changed = setDataPlotTrace(circuit, box, Number(pos[2]) - 1, { label: flags.label?.[0], color: flags.color?.[0] });
+    if (flags.label || flags.color) changed = setPlotTrace(circuit, box, Number(pos[2]) - 1, { label: flags.label?.[0], color: flags.color?.[0] });
     if (flags.position) {
-      changed = moveDataPlotTrace(circuit, box, Number(pos[2]) - 1, Number(flags.position[0]) - 1) || changed;
+      changed = movePlotTrace(circuit, box, Number(pos[2]) - 1, Number(flags.position[0]) - 1) || changed;
       return result(`${box.id}: trace ${pos[2]} moved to ${flags.position[0]}`, box.toJSON(), changed);
     }
     return result(`${box.id}: trace ${pos[2]} "${box.plot.traces[Number(pos[2]) - 1].label}" ${box.plot.traces[Number(pos[2]) - 1].color}`, box.toJSON(), changed);

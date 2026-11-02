@@ -16,10 +16,10 @@
 import { element as el } from './dom.js';
 import { MAX_DATA_TRACES, readTable, tableTraces } from '../core/csv-data.js';
 import { TRACE_COLORS } from '../core/analysis/signal-flow.js';
-import { appendDataPlotTraces, moveDataPlotTrace, placeDataPlot, removeDataPlotTrace, replaceDataPlotTraces, setDataPlotAxis, setDataPlotTrace, setDataPlotView } from '../core/data-plot.js';
-import { MAX_DATA_POINTS, normalizePlot } from '../core/model.js';
+import { appendPlotTraces, fileUnits, inPlotUnits, movePlotTrace, placeDataPlot, removePlotTrace, replaceDataPlotTraces, setDataPlotAxis, setPlotTrace, setDataPlotView, takesFileTraces } from '../core/data-plot.js';
+import { MAX_DATA_POINTS, MAX_PLOT_EXTRA, normalizePlot } from '../core/model.js';
 import { COLOR_PALETTE } from '../core/style.js';
-import { dataSpec } from '../core/plot-spec.js';
+import { plotSpec } from '../core/plot-spec.js';
 import { createPlotView } from './plot-view.js';
 import { editor } from './editor-state.js';
 import { logLine } from './status-bar-ui.js';
@@ -110,19 +110,22 @@ function select(label, id, choices, value, onchange) {
  * in place. `onRemove(trace)` takes a trace off (by default it is marked
  * removed); `onAxis(axis)` hears an axis edited by hand; `onMove()` hears
  * the traces reordered (by default only the draft is). A later trace draws
- * over an earlier one. Returns its `parts`,
+ * over an earlier one. `base`, an analysis plot, makes the draft's traces
+ * those added to it from files: its axes are its own then, and it may keep
+ * none. Returns its `parts`,
  * `show()` to draw the draft again (after it changed from outside: also
  * `refresh()` for the fields), `plot()` the plot it shows with its zoom,
  * and `dispose()`.
  */
-function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null } = {}) {
+function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, base = null } = {}) {
   const view = createPlotView({ height: 260, wheel: 'always', className: 'data-plot-view' });
   const shown = () => draft.traces.filter((t) => !t.removed);
-  const bare = () => normalizePlot({ kind: 'data', x: draft.x, y: draft.y, traces: shown().map(({ label, color, points }) => ({ label, color, points })) });
+  const traces = () => shown().map(({ label, color, points }) => ({ label, color, points }));
+  const bare = () => (base ? normalizePlot({ ...base, extra: traces() }) : normalizePlot({ kind: 'data', x: draft.x, y: draft.y, traces: traces() }));
   const show = ({ keepZoom = true } = {}) => {
     const zoom = keepZoom ? view.zoom() : null;
     const plot = bare();
-    view.set(plot ? dataSpec(plot) : null);
+    view.set(plot ? plotSpec(plot) : null);
     if (zoom && plot) view.zoomTo(zoom);
   };
   const axes = el('div', { class: 'data-plot-columns' });
@@ -136,8 +139,8 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null }
         SCALES.map(([v, t]) => el('option', { value: v, text: t, selected: draft[axis].scale === v })))]),
   ]);
   const refresh = () => {
-    axes.replaceChildren(axisFields('x'), axisFields('y'));
-    const left = shown().length;
+    axes.replaceChildren(...(base ? [] : [axisFields('x'), axisFields('y')]));
+    const left = shown().length + (base ? 1 : 0);
     const visible = shown();
     // Swap with the next visible trace up or down the list.
     const move = (trace, step) => {
@@ -148,6 +151,10 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null }
       if (onMove) onMove();
       else { refresh(); show(); }
     };
+    if (base && !visible.length) {
+      traceList.replaceChildren(el('p', { class: 'field-hint', text: 'No traces from files. Add file… adds them.' }));
+      return;
+    }
     traceList.replaceChildren(...visible.map((trace, i) => {
       return el('div', { class: 'data-plot-trace' }, [
         el('button', { type: 'button', class: 'data-plot-trace-move', text: '↑', title: 'Move up', 'aria-label': `Move ${trace.label} up`, disabled: i === 0, onclick: () => move(trace, -1) }),
@@ -179,11 +186,12 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null }
 /** The edits the plot editor made to `box`'s own traces (`draft.traces`
  *  with an `index`) and axes, inside a commit. */
 function applyDraft(circuit, box, draft) {
-  for (const axis of ['x', 'y']) setDataPlotAxis(box, axis, { label: draft[axis].label, scale: draft[axis].scale });
+  // An analysis plot's axes are its own.
+  if (box.plot.kind === 'data') for (const axis of ['x', 'y']) setDataPlotAxis(box, axis, { label: draft[axis].label, scale: draft[axis].scale });
   const own = draft.traces.filter((trace) => trace.index !== undefined);
-  for (const trace of own) if (!trace.removed) setDataPlotTrace(circuit, box, trace.index, { label: trace.label, color: trace.color });
+  for (const trace of own) if (!trace.removed) setPlotTrace(circuit, box, trace.index, { label: trace.label, color: trace.color });
   // Last first, so the indices still hold.
-  for (const trace of [...own].sort((a, b) => b.index - a.index)) if (trace.removed) removeDataPlotTrace(circuit, box, trace.index);
+  for (const trace of [...own].sort((a, b) => b.index - a.index)) if (trace.removed) removePlotTrace(circuit, box, trace.index);
 }
 
 /** Put `box`'s traces in the draft's order. `current` is the draft traces
@@ -193,7 +201,7 @@ function applyOrder(circuit, box, draft, current) {
   draft.traces.filter((t) => !t.removed).forEach((trace, place) => {
     const at = now.indexOf(trace);
     if (at === place) return;
-    moveDataPlotTrace(circuit, box, at, place);
+    movePlotTrace(circuit, box, at, place);
     now.splice(place, 0, now.splice(at, 1)[0]);
   });
 }
@@ -203,17 +211,33 @@ const ownLeft = (draft) => draft.traces.filter((t) => t.index !== undefined && !
 
 /** The zoom shown on `box`'s axes, those it can show. */
 function applyZoom(box, zoom) {
+  if (box.plot.kind !== 'data') {
+    const { view: _view, ...rest } = box.plot;
+    box.plot = normalizePlot(zoom ? { ...rest, view: zoom } : rest);
+    return;
+  }
   for (const axis of ['x', 'y']) setDataPlotView(box, axis, zoom?.[axis] && !(box.plot[axis].scale === 'log' && zoom[axis][0] <= 0) ? zoom[axis] : null);
 }
+
+/** An analysis plot as the plot editor draws under its added traces. */
+const analysisBase = ({ extra: _extra, view: _view, ...rest }) => rest;
+
+/** The traces a plot's editor edits: a data plot's, or an analysis plot's added ones. */
+const editedTraces = (plot) => (plot.kind === 'data' ? plot.traces : plot.extra || [])
+  .map((trace, index) => ({ index, label: trace.label, color: trace.color, points: trace.points, removed: false }));
 
 /** The dialog on `text` (the file `name`): Place puts its plot on the
  *  drawing, or into `target` -- its traces replaced, or with `mode` 'add'
  *  the file's added to them (the plot's own shown with them, to edit too). */
 export function openDataPlotDialog(text, name, target = null, { mode = 'replace' } = {}) {
-  const adding = mode === 'add' && target?.plot?.kind === 'data';
+  const adding = mode === 'add' && takesFileTraces(target);
+  // An analysis plot takes the file's traces in its own units.
+  const analysis = adding && target.plot.kind !== 'data';
+  const unitChoices = analysis ? fileUnits(target.plot) : { x: [], y: [] };
+  const units = { x: unitChoices.x[0]?.key || null, y: unitChoices.y[0]?.key || null };
   // The plot's own traces, when adding to it.
-  const own = adding ? target.plot.traces.map((trace, index) => ({ index, label: trace.label, color: trace.color, points: trace.points, removed: false })) : [];
-  const room = () => MAX_DATA_TRACES - own.filter((t) => !t.removed).length;
+  const own = adding ? editedTraces(target.plot) : [];
+  const room = () => (analysis ? MAX_PLOT_EXTRA : MAX_DATA_TRACES) - own.filter((t) => !t.removed).length;
   let options = {};
   let table = readTable(text);
   let x = table.x;
@@ -227,6 +251,7 @@ export function openDataPlotDialog(text, name, target = null, { mode = 'replace'
   const status = el('p', { class: 'field-hint', 'aria-live': 'polite' });
   const place = el('button', { type: 'button', class: 'primary-action', text: adding ? 'Add to plot' : target ? 'Read into plot' : 'Place' });
   const plotEdit = plotEditor(draft, {
+    base: analysis ? analysisBase(target.plot) : null,
     onAxis: (axis) => { edited[axis] = true; },
     onRemove: (trace) => {
       if (trace.index !== undefined) trace.removed = true;
@@ -240,12 +265,15 @@ export function openDataPlotDialog(text, name, target = null, { mode = 'replace'
   function update() {
     const before = new Map(draft.traces.filter((t) => t.index === undefined).map((t) => [t.column, t]));
     const added = y.map((column) => {
-      const [trace] = tableTraces(table, x, [column]);
-      if (!trace) return null;
+      let [trace] = tableTraces(table, x, [column]);
+      if (trace && analysis) [trace] = inPlotUnits(target.plot, [trace], units);
+      if (!trace || trace.points.length < 2) return null;
       const old = before.get(column);
       return { column, points: trace.points, label: old ? old.label : trace.label, color: old ? old.color : null };
     }).filter(Boolean);
-    const taken = new Set([...own, ...added].filter((t) => !t.removed).map((t) => t.color).filter(Boolean));
+    // Clear of the colors the plot uses: an analysis plot's own curves' too.
+    const theirs = analysis ? [...(target.plot.traces || []).map((t) => t.color), target.plot.color] : [];
+    const taken = new Set([...theirs, ...[...own, ...added].filter((t) => !t.removed).map((t) => t.color)].filter(Boolean));
     for (const trace of added) {
       if (trace.color) continue;
       trace.color = TRACE_COLORS.find((c) => !taken.has(c)) || TRACE_COLORS[0];
@@ -325,6 +353,9 @@ export function openDataPlotDialog(text, name, target = null, { mode = 'replace'
           ` ${n}`,
         ])),
       ]),
+      // A response plot's units: the file's are read into them.
+      ...(unitChoices.x.length ? [select('X is in', 'data-plot-xunit', unitChoices.x.map((u) => [u.key, u.text]), units.x, (v) => { units.x = v; update(); })] : []),
+      ...(unitChoices.y.length ? [select('Y is in', 'data-plot-yunit', unitChoices.y.map((u) => [u.key, u.text]), units.y, (v) => { units.y = v; update(); })] : []),
     );
   }
 
@@ -340,7 +371,7 @@ export function openDataPlotDialog(text, name, target = null, { mode = 'replace'
         // The plot's own traces as edited here, then the file's under them.
         applyDraft(editor.circuit, target, draft);
         const fresh = draft.traces.filter((t) => t.index === undefined);
-        if (fresh.length) appendDataPlotTraces(editor.circuit, target, fresh.map(({ label, color, points }) => ({ label, color, points })), { file: name });
+        if (fresh.length) appendPlotTraces(editor.circuit, target, fresh.map(({ label, color, points }) => ({ label, color, points })), { file: name });
         applyOrder(editor.circuit, target, draft, [...ownLeft(draft), ...fresh]);
         applyZoom(target, zoom);
         placed = { box: target, legend: editor.circuit.plotLegend(target) };
@@ -394,16 +425,14 @@ export function openDataPlotDialog(text, name, target = null, { mode = 'replace'
   place.focus();
 }
 
-/** The settings of the data plot `box`. */
-export function openDataPlotSettings(box) {
-  if (box?.plot?.kind !== 'data') return;
-  const draft = {
-    x: { ...box.plot.x },
-    y: { ...box.plot.y },
-    traces: box.plot.traces.map((trace, index) => ({ index, label: trace.label, color: trace.color, points: trace.points, removed: false })),
-  };
-  const dialog = el('dialog', { class: 'confirm-dialog data-plot-dialog', 'aria-label': 'Data plot settings' });
-  const plotEdit = plotEditor(draft);
+/** The settings of the plot `box`: a data plot's, or an analysis plot's
+ *  (the traces added to it from files, and its zoom). */
+export function openPlotSettings(box) {
+  if (!takesFileTraces(box)) return;
+  const data = box.plot.kind === 'data';
+  const draft = { x: { ...box.plot.x }, y: { ...box.plot.y }, traces: editedTraces(box.plot) };
+  const dialog = el('dialog', { class: 'confirm-dialog data-plot-dialog', 'aria-label': 'Plot settings' });
+  const plotEdit = plotEditor(draft, { base: data ? null : analysisBase(box.plot) });
   const apply = () => {
     const zoom = plotEdit.zoom();
     const old = editor.circuit.plotLegend(box).map((label) => label.bbox());
@@ -416,15 +445,16 @@ export function openDataPlotSettings(box) {
     // Renamed entries are measured again: the column keeps its left edge and top.
     const legend = editor.circuit.plotLegend(box);
     if (legend.length && old.length) alignLabelColumn(legend.map((label) => label.id), { left: Math.min(...old.map((r) => r.x)), top: Math.min(...old.map((r) => r.y)), gap: 0 });
-    logLine('updated the data plot');
+    logLine('updated the plot');
     render();
   };
+  const full = draft.traces.length >= (data ? MAX_DATA_TRACES : MAX_PLOT_EXTRA);
   dialog.append(
-    el('h2', { text: box.plot.file ? `Data plot from ${box.plot.file}` : 'Data plot' }),
+    el('h2', { text: data ? (box.plot.file ? `Data plot from ${box.plot.file}` : 'Data plot') : 'Plot settings' }),
     ...plotEdit.parts,
     el('div', { class: 'dialog-actions' }, [
-      el('button', { type: 'button', class: 'data-plot-add', text: 'Add file…', title: 'Add traces from another file', disabled: box.plot.traces.length >= MAX_DATA_TRACES, onclick: () => { dialog.close(); chooseDataFile(box, 'add'); } }),
-      el('button', { type: 'button', class: 'data-plot-reread', text: 'Replace file…', title: 'Replace the traces with a file\'s, keeping the plot\'s place, axes, and zoom', onclick: () => { dialog.close(); chooseDataFile(box); } }),
+      el('button', { type: 'button', class: 'data-plot-add', text: 'Add file…', title: 'Add traces from a file', disabled: full, onclick: () => { dialog.close(); chooseDataFile(box, 'add'); } }),
+      ...(data ? [el('button', { type: 'button', class: 'data-plot-reread', text: 'Replace file…', title: 'Replace the traces with a file\'s, keeping the plot\'s place, axes, and zoom', onclick: () => { dialog.close(); chooseDataFile(box); } })] : []),
       el('span', { class: 'dialog-actions-gap' }),
       el('button', { type: 'button', text: 'Cancel', onclick: () => dialog.close() }),
       el('button', { type: 'button', class: 'primary-action', text: 'Apply', onclick: apply }),

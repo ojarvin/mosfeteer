@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { axisName, bodeSpecs, dataSpec, locusSpec, responseSpec, stepSpec, swingSpec, waveSpec } from '../src/core/plot-spec.js';
+import { axisName, bodeSpecs, dataSpec, locusSpec, plotSpec, responseSpec, stepSpec, swingSpec, waveSpec } from '../src/core/plot-spec.js';
 
 test('a response becomes a log-frequency plot with its band, markers, and a start trace', () => {
   const spec = responseSpec({
@@ -46,4 +46,13 @@ test('a data plot\'s spec keeps each axis\'s scale and name, and its traces as t
   assert.deepEqual(spec.series[0].points, [[1, 2], [10, 20]]);
   assert.deepEqual(spec.hlines, []);
   assert.notEqual(spec.key, dataSpec({ kind: 'data', x: { label: '', scale: 'log' }, y: { label: '', scale: 'linear' }, traces: [] }).key);
+});
+
+test('an analysis plot\'s spec draws the traces added from files over its own; a Bode sketch has none', () => {
+  const spec = plotSpec({ kind: 'response', axis: 'relative', range: { low: 0, high: 2 }, traces: [{ label: 'H', color: '#111111', points: [{ f: 1, db: 0 }, { f: 100, db: -40 }] }], extra: [{ label: 'sim', color: '#df4d59', points: [[1, 0], [100, -39]] }] });
+  assert.deepEqual(spec.series.map((s) => s.label), ['H', 'sim']);
+  assert.deepEqual(spec.series[1].points, [[1, 0], [100, -39]]);
+  const locus = plotSpec({ kind: 'locus', variable: 's', label: 'L', parameter: 'k', from: 0, to: 1, color: '#111111', points: [{ re: -1, im: 0, t: 0 }], current: [], extra: [{ label: 'm', color: '#df4d59', points: [[-1, 0], [-1, 1]] }] });
+  assert.equal(locus.series.at(-1).parametric, true);
+  assert.equal(plotSpec({ points: [] }), null);
 });

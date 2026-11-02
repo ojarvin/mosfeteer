@@ -102,6 +102,21 @@ function clipToPane(items, pane) {
   });
 }
 
+/** A plot's traces added from files (`plot.extra`, [x, y] in its own
+ *  units): each a curve placed by `x` and `y`, cut to the pane, numbered
+ *  after the plot's own `base` curves. */
+function extraPaths(plot, x, y, pane, base) {
+  const items = [];
+  (plot.extra || []).forEach((trace, k) => {
+    const points = trace.points.map(([px, py]) => ({ x: x(px), y: y(py) })).filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+    if (points.length > 1) items.push(...clipToPane([{ type: 'path', points, role: 'curve', color: trace.color, trace: base + k }], pane));
+  });
+  return items;
+}
+
+/** The y values of a plot's added traces, for the range it fits. */
+const extraValues = (plot) => (plot.extra || []).flatMap((trace) => trace.points.map((p) => p[1]));
+
 /** The ticks of a zoomed axis (plot-scale.js), about one per `room` px. */
 function zoomTicks(scale, low, high, length, room) {
   return axisTicks(scale, low, high, { target: Math.max(2, Math.round(length / room)) });
@@ -282,7 +297,7 @@ export function responseFigure(plot, { width = 480, height = 260, fontSize = 11 
   // A phase plot: degrees in steps of 45 (90, 180 on a wide range).
   const phase = plot.quantity === 'phase';
   // A background trace (a simulated spectrum) does not set the axis.
-  const values = plot.traces.filter((trace) => !trace.background).flatMap((trace) => trace.points.map((p) => p.db)).filter((db) => db > -1000 && Number.isFinite(db));
+  const values = [...plot.traces.filter((trace) => !trace.background).flatMap((trace) => trace.points.map((p) => p.db)), ...extraValues(plot)].filter((db) => db > -1000 && Number.isFinite(db));
   let [dbLow, dbHigh] = view.y || niceRange(values, phase ? 45 : 20, 0);
   const span = dbHigh - dbLow;
   const step = phase ? (span > 720 ? 180 : span > 360 ? 90 : 45) : span > 400 ? 100 : span > 200 ? 50 : span > 100 ? 40 : 20;
@@ -317,6 +332,7 @@ export function responseFigure(plot, { width = 480, height = 260, fontSize = 11 
     const samples = trace.points.filter((p) => Math.log10(p.f) >= low - 1e-9 && Math.log10(p.f) <= high + 1e-9).map((p) => ({ f: p.f, value: p.db }));
     for (const path of clippedPaths(samples, (s) => x(s.f), y, dbLow, dbHigh, trace.background ? 'spectrum' : 'curve')) items.push({ ...path, color: trace.color, trace: index });
   });
+  items.push(...extraPaths(plot, (f) => (f > 0 ? x(f) : NaN), (db) => pane.y + ((dbHigh - db) / (dbHigh - dbLow)) * pane.h, pane, plot.traces.length));
   // Marked frequencies (a loop's crossover, a Bode graph's corners), labeled
   // at the top; a label close to the one before goes a line lower.
   let previous = null;
@@ -360,7 +376,7 @@ export function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = 
   const view = plot.view || {};
   const [low, high] = view.x || [plot.range.low, plot.range.high];
   const x = (t) => pane.x + ((t - low) / (high - low || 1)) * pane.w;
-  const values = plot.traces.flatMap((trace) => trace.points.map((p) => p.y)).filter(Number.isFinite);
+  const values = [...plot.traces.flatMap((trace) => trace.points.map((p) => p.y)), ...extraValues(plot)].filter(Number.isFinite);
   const yTop = Math.max(0, ...values);
   const yBottom = Math.min(0, ...values);
   const span = yTop - yBottom || 1;
@@ -397,6 +413,7 @@ export function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = 
     });
     if (points.length > 1) items.push({ type: 'path', points, role: 'curve', color: trace.color, trace: index });
   });
+  items.push(...extraPaths(plot, x, (v) => pane.y + ((yHigh - v) / (yHigh - yLow)) * pane.h, pane, plot.traces.length));
   axisTitles(items, pane, em, {
     x: plot.unit === 'n' ? 'Sample n (t/T_{s})' : 'Time (s)',
     y: plot.kind === 'wave' ? 'Value (arb. units)' : 'Step response (arb. units)',
@@ -491,7 +508,7 @@ export function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } =
   const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
   const x = (a) => pane.x + ((a - low) / (high - low)) * pane.w;
   // The peaks fit in whole 10 dB steps; a loop blowing up runs off the top.
-  const values = plot.traces.flatMap((trace) => trace.points.map((p) => p.db)).filter((db) => Number.isFinite(db) && db > -200);
+  const values = [...plot.traces.flatMap((trace) => trace.points.map((p) => p.db)), ...extraValues(plot)].filter((db) => Number.isFinite(db) && db > -200);
   let [dbLow, dbHigh] = niceRange(values.length ? values : [-40, 0], 10, 0);
   dbHigh = Math.min(Math.max(dbHigh, 10), 40);
   dbLow = Math.min(dbLow, -10);
@@ -534,6 +551,7 @@ export function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } =
     const samples = trace.points.map((p) => ({ f: p.a, value: Number.isFinite(p.db) ? p.db : dbHigh + 100 }));
     for (const path of clippedPaths(samples, (s) => x(s.f), y, dbLow, dbHigh, 'curve')) items.push({ ...path, color: trace.color, trace: index });
   });
+  items.push(...extraPaths(plot, x, (db) => pane.y + ((dbHigh - db) / (dbHigh - dbLow)) * pane.h, pane, plot.traces.length));
   axisTitles(items, pane, em, { x: 'Input amplitude (dBFS)', y: 'Peak swing (dBFS)' });
   return { width, height, items: plot.view ? clipToPane(items, pane) : items, pane, ranges: { db: [dbLow, dbHigh] } };
 }
@@ -670,6 +688,8 @@ export function locusFigure(plot, { width = 480, height = 260, fontSize = 11 } =
     if (x(p.re) < pane.x || x(p.re) > pane.x + pane.w || y(p.im) < pane.y || y(p.im) > pane.y + pane.h) continue;
     items.push({ type: 'dot', x: x(p.re), y: y(p.im), r: 0.17 * em, color: plot.color, opacity: 0.2 + 0.8 * p.t, role: 'curve' });
   }
+  // Added traces as lines over the swept poles: [Re, Im] points.
+  items.push(...extraPaths(plot, x, y, pane, 1));
   const arm = 0.4 * em;
   for (const p of plot.current) {
     items.push({ type: 'line', x1: x(p.re) - arm, y1: y(p.im) - arm, x2: x(p.re) + arm, y2: y(p.im) + arm, role: 'marker' });

@@ -870,6 +870,10 @@ function plotAnnotationSvg(label, opacity = '') {
   const black = plotInBlack(label);
   const rank = new Map();
   (plot.traces || []).forEach((trace, index) => { if (!trace.background) rank.set(index, rank.size); });
+  // Added traces dash on after the plot's own curves (a root locus's is one).
+  const base = plot.traces ? plot.traces.length : 1;
+  const first = plot.traces ? rank.size : 1;
+  (plot.extra || []).forEach((_, k) => rank.set(base + k, first + k));
   const dashOf = (n) => PLOT_TRACE_DASHES[n % PLOT_TRACE_DASHES.length];
   const curve = (item) => {
     if (!black) return stroke(item.role, item.color ? escapeSvg(item.color) : color);

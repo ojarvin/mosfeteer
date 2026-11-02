@@ -152,7 +152,7 @@ describe('data plot', { skip: browserSkip() }, () => {
         this.dispatchEvent(new Event('change'));
       };
     })()`);
-    await h.evaluate(`${h.module('editor-state.js')}.then((s) => ${h.module('data-plot-ui.js')}.then((m) => m.openDataPlotSettings([...s.editor.circuit.labels.values()].find((l) => l.plot))))`);
+    await h.evaluate(`${h.module('editor-state.js')}.then((s) => ${h.module('data-plot-ui.js')}.then((m) => m.openPlotSettings([...s.editor.circuit.labels.values()].find((l) => l.plot))))`);
     await h.until(`!!document.querySelector('.data-plot-dialog[open]')`);
     await h.evaluate(`${button('.data-plot-dialog', 'Add file')}.click()`);
     await h.until(`!!document.querySelector('.data-plot-dialog[open] .plot-view svg path') && ${button('.data-plot-dialog', 'Add to plot')}`);
@@ -169,7 +169,7 @@ describe('data plot', { skip: browserSkip() }, () => {
 
   test('Plot settings… moves a trace down the list, to draw over the others, its legend entry with it', async () => {
     const before = await plot();
-    await h.evaluate(`${h.module('editor-state.js')}.then((s) => ${h.module('data-plot-ui.js')}.then((m) => m.openDataPlotSettings([...s.editor.circuit.labels.values()].find((l) => l.plot))))`);
+    await h.evaluate(`${h.module('editor-state.js')}.then((s) => ${h.module('data-plot-ui.js')}.then((m) => m.openPlotSettings([...s.editor.circuit.labels.values()].find((l) => l.plot))))`);
     await h.until(`!!document.querySelector('.data-plot-dialog[open] .data-plot-trace')`);
     await h.evaluate(`document.querySelector('.data-plot-trace-move[aria-label^="Move"][aria-label$="down"]').click()`);
     await h.evaluate(`${button('.data-plot-dialog', 'Apply')}.click()`);

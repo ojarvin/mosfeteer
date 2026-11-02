@@ -57,3 +57,11 @@ test('plotcsv gives a plot\'s numbers as CSV text, and says what is wrong', () =
   const plain = circuit.addAnnotation('box', { x: 0, y: 800, end: { x: 400, y: 1000 } });
   assert.throws(() => runCommand(circuit, `annotation plotcsv ${plain.id}`), /is not a plot/);
 });
+
+test('a plot\'s traces added from files export after its own, in its units', () => {
+  const plot = normalizePlot({ ...response(), extra: [{ label: 'sim', points: [[1, -0.5], [100, -19]] }] });
+  const series = plotSeries(plot);
+  assert.deepEqual(series.map((s) => s.name), ['V_OUT/V_IN', 'H_2', 'sim']);
+  assert.deepEqual(series[2].columns, ['ω (rad/s)', 'sim (dB)']);
+  assert.equal(plotCsv(plot, { traces: [2] }), 'ω (rad/s),sim (dB)\n1,-0.5\n100,-19\n');
+});
