@@ -125,7 +125,8 @@ columns separated by spaces (`src/core/csv-data.js`, `src/core/data-plot.js`,
 - An analysis plot (a response, step, waveform, swing, or root locus)
   takes traces from files too (`plot.extra`, `[x, y]` in its own units),
   drawn over its own curves and dashed on after them in black, their
-  legend entries after its curves'. Its **Plot settings…** (right-click,
+  legend entries after its curves' (and after a simulated spectrum's,
+  which has its own entry, gray in black). The plot's range holds them. Its **Plot settings…** (right-click,
   or a double-click anywhere on it) edits those traces and its zoom; its
   axes are the analysis's. Adding to a response reads x in rad/s or Hz
   (×2π) and a magnitude in dB or as a ratio (20 log10). Updating the plot

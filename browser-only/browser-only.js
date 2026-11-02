@@ -29550,6 +29550,7 @@ __exports.referenceMarkerNameConflicts = referenceMarkerNameConflicts;
 __exports.referenceMarkerIsLocal = referenceMarkerIsLocal;
 __exports.parseLabelRuns = parseLabelRuns;
 __exports.plotCurveCount = plotCurveCount;
+__exports.plotLegendCurves = plotLegendCurves;
 __exports.indentText = indentText;
 __exports.applyMarkup = applyMarkup;
 __exports.containedWireSegments = containedWireSegments;
@@ -29982,12 +29983,29 @@ const PLOT_LEGEND_ROLE = 'plot-legend';
  *  sample (render.js draws them there). */
 const PLOT_LEGEND_SAMPLE_ROOM = 3 * GRID;
 
-/** How many curves a plot draws, each named by a legend entry in order:
- *  its traces less a spectrum behind them, or its one curve, then the
- *  traces added from files (`extra`). Entries past them are notes (a
- *  simulated SNDR). */
+/** How many curves a plot draws, each named by a legend entry in order
+ *  (plotLegendCurves). Entries past them are notes (a simulated SNDR). */
 function plotCurveCount(plot) {
-  return (Array.isArray(plot?.traces) ? plot.traces.filter((trace) => !trace.background).length : 1) + (plot?.extra?.length || 0);
+  return plotLegendCurves(plot).length;
+}
+
+/**
+ * A plot's legend entries' curves, in the legend's order: its traces in
+ * front (or its one curve), then a simulated spectrum behind them, then
+ * the traces added from files (`extra`). Each is `{ trace, rank }`, `trace`
+ * its index among the plot's traces then its added ones and `rank` its
+ * dash in black, or `{ trace, spectrum: true }`.
+ */
+function plotLegendCurves(plot) {
+  const traces = Array.isArray(plot?.traces) ? plot.traces : null;
+  const indices = (background) => (traces || []).map((trace, index) => (!!trace.background === background ? index : -1)).filter((index) => index >= 0);
+  const front = traces ? indices(false) : [0];
+  const base = traces ? traces.length : 1;
+  return [
+    ...front.map((trace, rank) => ({ trace, rank })),
+    ...indices(true).map((trace) => ({ trace, spectrum: true })),
+    ...(plot?.extra || []).map((_, k) => ({ trace: base + k, rank: front.length + k })),
+  ];
 }
 /** How much wider than the metric estimate the browser draws math text
  *  (measured in Chromium): an unmeasured label's ink is taken so. */
@@ -39916,7 +39934,7 @@ let applyTransform, fmt, transformRect, transformToSvg; __bind(() => { ({ applyT
 let ceilGrid, floorGrid, GRID; __bind(() => { ({ ceilGrid, floorGrid, GRID } = __require("src/core/grid.js")); });
 let autoRoute; __bind(() => { ({ autoRoute } = __require("src/core/router.js")); });
 let TABLE_RULE_ROOM_EM, escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg; __bind(() => { ({ TABLE_RULE_ROOM_EM, escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } = __require("src/core/style.js")); });
-let INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, hasInlineMath, plotCurveCount, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters; __bind(() => { ({ INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, hasInlineMath, plotCurveCount, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } = __require("src/core/model.js")); });
+let INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, hasInlineMath, plotLegendCurves, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters; __bind(() => { ({ INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, hasInlineMath, plotLegendCurves, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } = __require("src/core/model.js")); });
 let TIMING_ARROWHEAD, arrowheadEnds, curvedArrowGeometry, defaultArrowhead, polylineArrowheads; __bind(() => { ({ TIMING_ARROWHEAD, arrowheadEnds, curvedArrowGeometry, defaultArrowhead, polylineArrowheads } = __require("src/core/line-style.js")); });
 let hiddenSupplyBarLabels, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js")); });
 let VALUE_TYPES, replacedNameLabels; __bind(() => { ({ VALUE_TYPES, replacedNameLabels } = __require("src/core/part-value.js")); });
@@ -40799,11 +40817,9 @@ function plotAnnotationSvg(label, opacity = '') {
   // spectrum behind them goes gray.
   const black = plotInBlack(label);
   const rank = new Map();
-  (plot.traces || []).forEach((trace, index) => { if (!trace.background) rank.set(index, rank.size); });
   // Added traces dash on after the plot's own curves (a root locus's is one).
-  const base = plot.traces ? plot.traces.length : 1;
-  const first = plot.traces ? rank.size : 1;
-  (plot.extra || []).forEach((_, k) => rank.set(base + k, first + k));
+  const legendCurves = plotLegendCurves(plot);
+  for (const curve of legendCurves) if (!curve.spectrum) rank.set(curve.trace, curve.rank);
   const dashOf = (n) => PLOT_TRACE_DASHES[n % PLOT_TRACE_DASHES.length];
   const curve = (item) => {
     if (!black) return stroke(item.role, item.color ? escapeSvg(item.color) : color);
@@ -40822,13 +40838,15 @@ function plotAnnotationSvg(label, opacity = '') {
   // In black, each curve's legend entry has its line before it, in the
   // room left for it there (a lone curve's too); notes after them none.
   const samples = black && label.circuit
-    ? label.circuit.plotLegend(label).slice(0, plotCurveCount(plot)).map((entry, n) => {
+    ? label.circuit.plotLegend(label).slice(0, legendCurves.length).map((entry, n) => {
       const b = entry.bbox();
       const cy = b.y + b.h / 2 - y;
       const x1 = b.x - PLOT_LEGEND_SAMPLE_ROOM + 10 - x;
       const x2 = b.x - 6 - x;
-      const dash = dashOf(n);
-      return `<line class="plot-legend-sample" x1="${fmt(x1)}" y1="${fmt(cy)}" x2="${fmt(x2)}" y2="${fmt(cy)}" ${stroke('curve')}${dash ? ` stroke-dasharray="${dash}"` : ''} stroke-linecap="butt"/>`;
+      // A spectrum's sample is gray, as its curve is.
+      const curve = legendCurves[n];
+      const look = curve.spectrum ? `${stroke('curve')} stroke-opacity="0.35"` : `${stroke('curve')}${dashOf(curve.rank) ? ` stroke-dasharray="${dashOf(curve.rank)}"` : ''}`;
+      return `<line class="plot-legend-sample" x1="${fmt(x1)}" y1="${fmt(cy)}" x2="${fmt(x2)}" y2="${fmt(cy)}" ${look} stroke-linecap="butt"/>`;
     }).join('')
     : '';
   // On its own paper (#fff takes the theme's paper), so the canvas grid
@@ -89358,10 +89376,13 @@ function writePlot(target, plot, shown, { identity = null } = {}) {
     ids.push(label.id);
     if (dx) shift[label.id] = dx;
   };
-  // The analysis's curves, then the traces added from files, then notes.
+  // The analysis's curves, then a simulated spectrum behind them, then the
+  // traces added from files, then notes.
   const extra = box.plot.extra || [];
-  const own = curves - extra.length;
+  const behind = (box.plot.traces || []).filter((trace) => trace.background);
+  const own = curves - extra.length - behind.length;
   shown.slice(0, own).forEach((trace) => add(`$${trace.label}$`, { color: trace.color }, 0));
+  behind.forEach((trace) => add(`$${trace.label}$`, { color: trace.color }, 0));
   extra.forEach((trace) => add(trace.label || ' ', { color: trace.color }, 0, false));
   shown.slice(own).forEach((trace) => add(`$${trace.label}$`, { color: trace.color }, noteShift));
   return { box, ids, left, top, shift };

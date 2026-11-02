@@ -2,7 +2,7 @@ import { applyTransform, fmt, transformRect, transformToSvg } from './geometry.j
 import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute } from './router.js';
 import { TABLE_RULE_ROOM_EM, escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } from './style.js';
-import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, hasInlineMath, plotCurveCount, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } from './model.js';
+import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, hasInlineMath, plotLegendCurves, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } from './model.js';
 import { TIMING_ARROWHEAD, arrowheadEnds, curvedArrowGeometry, defaultArrowhead, polylineArrowheads } from './line-style.js';
 import { hiddenSupplyBarLabels, supplyBars } from './supply-bars.js';
 import { VALUE_TYPES, replacedNameLabels } from './part-value.js';
@@ -869,11 +869,9 @@ function plotAnnotationSvg(label, opacity = '') {
   // spectrum behind them goes gray.
   const black = plotInBlack(label);
   const rank = new Map();
-  (plot.traces || []).forEach((trace, index) => { if (!trace.background) rank.set(index, rank.size); });
   // Added traces dash on after the plot's own curves (a root locus's is one).
-  const base = plot.traces ? plot.traces.length : 1;
-  const first = plot.traces ? rank.size : 1;
-  (plot.extra || []).forEach((_, k) => rank.set(base + k, first + k));
+  const legendCurves = plotLegendCurves(plot);
+  for (const curve of legendCurves) if (!curve.spectrum) rank.set(curve.trace, curve.rank);
   const dashOf = (n) => PLOT_TRACE_DASHES[n % PLOT_TRACE_DASHES.length];
   const curve = (item) => {
     if (!black) return stroke(item.role, item.color ? escapeSvg(item.color) : color);
@@ -892,13 +890,15 @@ function plotAnnotationSvg(label, opacity = '') {
   // In black, each curve's legend entry has its line before it, in the
   // room left for it there (a lone curve's too); notes after them none.
   const samples = black && label.circuit
-    ? label.circuit.plotLegend(label).slice(0, plotCurveCount(plot)).map((entry, n) => {
+    ? label.circuit.plotLegend(label).slice(0, legendCurves.length).map((entry, n) => {
       const b = entry.bbox();
       const cy = b.y + b.h / 2 - y;
       const x1 = b.x - PLOT_LEGEND_SAMPLE_ROOM + 10 - x;
       const x2 = b.x - 6 - x;
-      const dash = dashOf(n);
-      return `<line class="plot-legend-sample" x1="${fmt(x1)}" y1="${fmt(cy)}" x2="${fmt(x2)}" y2="${fmt(cy)}" ${stroke('curve')}${dash ? ` stroke-dasharray="${dash}"` : ''} stroke-linecap="butt"/>`;
+      // A spectrum's sample is gray, as its curve is.
+      const curve = legendCurves[n];
+      const look = curve.spectrum ? `${stroke('curve')} stroke-opacity="0.35"` : `${stroke('curve')}${dashOf(curve.rank) ? ` stroke-dasharray="${dashOf(curve.rank)}"` : ''}`;
+      return `<line class="plot-legend-sample" x1="${fmt(x1)}" y1="${fmt(cy)}" x2="${fmt(x2)}" y2="${fmt(cy)}" ${look} stroke-linecap="butt"/>`;
     }).join('')
     : '';
   // On its own paper (#fff takes the theme's paper), so the canvas grid

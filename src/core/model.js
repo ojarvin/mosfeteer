@@ -383,12 +383,29 @@ export const PLOT_LEGEND_ROLE = 'plot-legend';
  *  sample (render.js draws them there). */
 export const PLOT_LEGEND_SAMPLE_ROOM = 3 * GRID;
 
-/** How many curves a plot draws, each named by a legend entry in order:
- *  its traces less a spectrum behind them, or its one curve, then the
- *  traces added from files (`extra`). Entries past them are notes (a
- *  simulated SNDR). */
+/** How many curves a plot draws, each named by a legend entry in order
+ *  (plotLegendCurves). Entries past them are notes (a simulated SNDR). */
 export function plotCurveCount(plot) {
-  return (Array.isArray(plot?.traces) ? plot.traces.filter((trace) => !trace.background).length : 1) + (plot?.extra?.length || 0);
+  return plotLegendCurves(plot).length;
+}
+
+/**
+ * A plot's legend entries' curves, in the legend's order: its traces in
+ * front (or its one curve), then a simulated spectrum behind them, then
+ * the traces added from files (`extra`). Each is `{ trace, rank }`, `trace`
+ * its index among the plot's traces then its added ones and `rank` its
+ * dash in black, or `{ trace, spectrum: true }`.
+ */
+export function plotLegendCurves(plot) {
+  const traces = Array.isArray(plot?.traces) ? plot.traces : null;
+  const indices = (background) => (traces || []).map((trace, index) => (!!trace.background === background ? index : -1)).filter((index) => index >= 0);
+  const front = traces ? indices(false) : [0];
+  const base = traces ? traces.length : 1;
+  return [
+    ...front.map((trace, rank) => ({ trace, rank })),
+    ...indices(true).map((trace) => ({ trace, spectrum: true })),
+    ...(plot?.extra || []).map((_, k) => ({ trace: base + k, rank: front.length + k })),
+  ];
 }
 /** How much wider than the metric estimate the browser draws math text
  *  (measured in Chromium): an unmeasured label's ink is taken so. */

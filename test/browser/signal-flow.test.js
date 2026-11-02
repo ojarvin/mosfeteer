@@ -340,5 +340,9 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     await h.until(`${legend}.then((l) => l.some((t) => t.includes('SNDR')))`);
     const note = (await h.evaluate(legend)).find((text) => text.includes('SNDR'));
     assert.match(note, /^\$\\text\{SNDR −?[\d.]+ dB\}\n\\text\{at −20 dBFS\}\$$/);
+    // The spectrum has its entry, after the curves' and before the SNDR.
+    const entries = await h.evaluate(legend);
+    const spectrum = entries.indexOf('$\\text{simulated output}$');
+    assert.ok(spectrum > 0 && spectrum === entries.indexOf(note) - 1, entries.join(' | '));
   });
 });

@@ -1269,10 +1269,13 @@ function writePlot(target, plot, shown, { identity = null } = {}) {
     ids.push(label.id);
     if (dx) shift[label.id] = dx;
   };
-  // The analysis's curves, then the traces added from files, then notes.
+  // The analysis's curves, then a simulated spectrum behind them, then the
+  // traces added from files, then notes.
   const extra = box.plot.extra || [];
-  const own = curves - extra.length;
+  const behind = (box.plot.traces || []).filter((trace) => trace.background);
+  const own = curves - extra.length - behind.length;
   shown.slice(0, own).forEach((trace) => add(`$${trace.label}$`, { color: trace.color }, 0));
+  behind.forEach((trace) => add(`$${trace.label}$`, { color: trace.color }, 0));
   extra.forEach((trace) => add(trace.label || ' ', { color: trace.color }, 0, false));
   shown.slice(own).forEach((trace) => add(`$${trace.label}$`, { color: trace.color }, noteShift));
   return { box, ids, left, top, shift };

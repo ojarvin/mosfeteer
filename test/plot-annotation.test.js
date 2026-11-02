@@ -264,3 +264,25 @@ test('an analysis plot fits its added traces too: past its own range, on the dra
   assert.deepEqual(rangeWithExtra(step), [0, 3]);
   assert.ok(stepFigure(step).items.some((item) => item.role === 'number' && item.text === '3'));
 });
+
+test('a simulated spectrum behind a response has a legend entry after the curves, its sample gray', async () => {
+  const { plotLegendCurves, plotCurveCount } = await import('../src/core/model.js');
+  const plot = normalizePlot({
+    kind: 'response', axis: 'normalized', range: { low: -3, high: Math.log10(0.5) }, units: 'dBFS',
+    traces: [
+      { label: '\\text{simulated output}', color: '#7a7d85', background: true, points: [{ f: 0.001, db: -100 }, { f: 0.5, db: -40 }] },
+      { label: 'NTF', points: [{ f: 0.001, db: -80 }, { f: 0.5, db: 6 }] },
+    ],
+    extra: [{ label: 'sim', points: [[0.001, -70], [0.5, 0]] }],
+  });
+  assert.deepEqual(plotLegendCurves(plot), [{ trace: 1, rank: 0 }, { trace: 0, spectrum: true }, { trace: 2, rank: 1 }]);
+  assert.equal(plotCurveCount(plot), 3);
+  const circuit = new Circuit();
+  const box = circuit.addAnnotation('box', { x: 0, y: 0, end: { x: 720, y: 440 }, plot, style: { lineStyle: 'solid', blackTraces: true } });
+  for (const [i, text] of ['$NTF$', '$\\text{simulated output}$', 'sim'].entries()) circuit.addLabel({ text, math: text.startsWith('$'), parent: box.id, role: 'plot-legend', align: 'left', x: 880, y: 40 + 80 * i });
+  const samples = [...svgString(circuit).matchAll(/<line class="plot-legend-sample"[^>]*>/g)].map((m) => m[0]);
+  assert.equal(samples.length, 3);
+  assert.match(samples[1], /stroke-opacity="0.35"/);
+  assert.doesNotMatch(samples[0], /stroke-opacity/);
+  assert.match(samples[2], /stroke-dasharray/);
+});
