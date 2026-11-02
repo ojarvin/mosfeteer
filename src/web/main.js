@@ -3672,9 +3672,10 @@ function syncManagedRoute(net) {
  *  history once. Hand-drawn orthogonal or diagonal waypoints are preserved by
  *  Circuit#wireTo; topology growth never refreshes the existing net. */
 function wireRouteOptions(targetIdentity = null) {
+  // A pin joining a net the router drew lays it out fresh (Circuit#wireTo).
   const options = wire?.routeStyle === 'diagonal'
     ? { routeStyle: 'diagonal', allowDiagonal: true }
-    : { routeStyle: 'orthogonal', allowDiagonal: false };
+    : { routeStyle: 'orthogonal', allowDiagonal: false, freshJoin: true };
   if (targetIdentity) options.targetIdentity = targetIdentity;
   return options;
 }

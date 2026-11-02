@@ -239,9 +239,14 @@ test('moving a pair along its tail legs changes only those legs, and carries the
   circuit.addComponent('pmosb', { refdes: 'M1', x: 0, y: 0 });
   circuit.addComponent('pmosb', { refdes: 'M2', x: 480, y: 0, mirrorX: true });
   circuit.addComponent('pmos', { refdes: 'M3', x: 240, y: -360 });
-  circuit.connect('M3.d', 'M1.s', 'M2.s');
-  circuit.connect('M1.b', 'M3.d');
-  circuit.connect('M2.b', 'M3.d');
+  const tail = circuit.createWireNet({ branches: [
+    [{ x: 240, y: -280 }, { x: 240, y: -120 }],
+    [{ x: 0, y: -80 }, { x: 0, y: -120 }, { x: 240, y: -120 }],
+    [{ x: 480, y: -80 }, { x: 480, y: -120 }, { x: 240, y: -120 }],
+    [{ x: 240, y: -280 }, { x: 240, y: 0 }, { x: 0, y: 0 }],
+    [{ x: 240, y: -280 }, { x: 240, y: 0 }, { x: 480, y: 0 }],
+  ], junctions: [{ x: 240, y: -120 }, { x: 240, y: 0 }] });
+  for (const ref of ['M3.d', 'M1.s', 'M2.s', 'M1.b', 'M2.b']) circuit.connectTo(tail.id, ref);
   const reloaded = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
   reloaded.syncJunctionSolders();
   const net = reloaded.netOfTerminal({ comp: 'M3', term: 'd' });

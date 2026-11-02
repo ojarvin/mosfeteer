@@ -2856,6 +2856,29 @@ class LabelMap extends Map {
   }
 }
 
+/** A drawing's grid edges, one per cell step, as a set of keys. */
+function unitEdges(paths) {
+  const out = new Set();
+  for (const path of paths || []) {
+    for (let i = 1; i < path.length; i++) {
+      const a = path[i - 1];
+      const b = path[i];
+      if (a.x !== b.x && a.y !== b.y) return null;
+      const n = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y)) / GRID;
+      for (let k = 0; k < n; k++) {
+        const p = { x: a.x + ((b.x - a.x) * k) / n, y: a.y + ((b.y - a.y) * k) / n };
+        const q = { x: a.x + ((b.x - a.x) * (k + 1)) / n, y: a.y + ((b.y - a.y) * (k + 1)) / n };
+        out.add(p.x < q.x || (p.x === q.x && p.y < q.y) ? `${p.x},${p.y}|${q.x},${q.y}` : `${q.x},${q.y}|${p.x},${p.y}`);
+      }
+    }
+  }
+  return out;
+}
+
+function sameEdges(a, b) {
+  return !!a && !!b && a.size === b.size && [...a].every((e) => b.has(e));
+}
+
 export class Circuit {
   /** Any Map assigned (a selection's subset, a reloaded set) is kept as a
    *  LabelMap. */
@@ -4862,7 +4885,7 @@ export class Circuit {
       net.branches = null;
       net.route = null;
       net.junctions = []; // Fresh layout starts from terminal anchors only.
-      if (!this._layoutFresh(net, anchors, env)) {
+      if (!this._layoutFresh(net, net.anchorWorlds(), env)) {
         // A refresh is allowed to fail, but it must never erase a route that
         // was already valid merely because the new layout is unroutable.
         net.branches = previous.branches;
@@ -6689,6 +6712,27 @@ export class Circuit {
       : routed || direct;
     if (!newPath) throw new Error('unable to route wire safely');
 
+    // With `freshJoin` (the editor's clicks and strokes), a pin wired to a
+    // pin of a small net that is still the router's own drawing, by a leg
+    // the router chose, lays the grown net out fresh: the drawing is then
+    // the same whichever pin was wired first (a tail node is one centred
+    // tee). Hand-shaped geometry is kept and the leg appended.
+    const joined = [...new Set([srcNet, targetNet].filter(Boolean))];
+    const grown = new Set([...joined.flatMap((n) => n.terminals.map((t) => `${t.comp}.${t.term}`)), `${term.comp}.${term.term}`]);
+    let atPin = false;
+    for (const c of this.components.values()) {
+      for (const t of c.terminalDefs) {
+        const p = c.terminalWorld(t.name);
+        if (p.x === P.x && p.y === P.y) {
+          grown.add(`${c.refdes}.${t.name}`);
+          atPin = true;
+        }
+      }
+    }
+    const terminalCount = grown.size;
+    const relay = options?.freshJoin === true && atPin && joined.length > 0 && !allowDiagonal && terminalCount >= 3 && terminalCount <= 5 &&
+      this._legRouterMade(srcPos, P, waypoints, joined) && joined.every((n) => this._routerMade(n));
+
     const topology = this._snapshotNetTopology();
     let net;
     if (srcNet && targetNet && srcNet !== targetNet) {
@@ -6719,7 +6763,7 @@ export class Circuit {
     }
 
     // Existing paths are committed geometry. Adding a terminal appends only
-    // the newly routed branch; it never triggers a whole-net Steiner refresh.
+    // the newly routed branch; only a `relay` join (above) lays it out fresh.
 
     // Split any branch whose interior contains the meet point, preserving
     // segment styles and keeping arrowheads on the original endpoints.
@@ -6736,11 +6780,37 @@ export class Circuit {
       this._restoreNetTopology(topology);
       throw new Error('unable to route wire safely');
     }
+    if (relay) this.rerouteNet(net, 'refresh');
     this._syncReferenceMarkerNetName(net);
     this._syncInterfacePinLabels(net, { enforceName: true });
     this._inferCrossCoupling(new Set([net]));
     this.syncJunctionSolders();
     return net;
+  }
+
+  /** Whether a net's drawing is the router's own: plain orthogonal wire
+   *  that a fresh layout of its pins draws (for two pins, also the editor's
+   *  centred route between them, either way round). */
+  _routerMade(net) {
+    if (net.allowDiagonal || Object.keys(net.wireStyles || {}).length || net.terminals.length < 2) return false;
+    const anchors = net.terminalWorlds().filter(Boolean);
+    if (anchors.length !== net.terminals.length) return false;
+    const drawn = unitEdges(net.paths());
+    const env = this._netEnv(net.id);
+    const candidates = anchors.length === 2
+      ? [smartRoute(anchors[0], anchors[1], env), smartRoute(anchors[0], anchors[1], { ...env, preferMidpoint: true }),
+        smartRoute(anchors[1], anchors[0], { ...env, preferMidpoint: true })].filter(Boolean).map((path) => [path])
+      : [steinerBranches(anchors, env)];
+    return candidates.some((paths) => sameEdges(unitEdges(paths), drawn));
+  }
+
+  /** Whether a leg from `from` to `to` through `waypoints` is the route the
+   *  editor's draft suggests between them (no waypoints, or its centred route). */
+  _legRouterMade(from, to, waypoints, nets) {
+    if (!waypoints.length) return true;
+    const env = { ...this._netEnv(new Set(nets.map((n) => n.id))), allowDiagonal: false, preferMidpoint: true };
+    const route = smartRoute(from, to, env);
+    return !!route && sameEdges(unitEdges([[from, ...waypoints, to]]), unitEdges([route]));
   }
 
   /**

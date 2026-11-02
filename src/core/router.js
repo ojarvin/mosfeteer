@@ -553,7 +553,131 @@ export function steinerBranches(terminals, env = { rects: [], pins: new Map(), w
     }
     return reduceBranches(paths, unique);
   }
-  return branchesFromSegments(tree.segs, tree.graph, pts, env);
+  return branchesFromSegments(centreBars(tree.segs, tree.graph, env), tree.graph, pts, env);
+}
+
+/**
+ * Slide each bar of a Steiner tree to halfway between its legs. A bar is a
+ * straight run whose two ends turn into legs, with legs off both of its sides
+ * and no terminal on it, each leg running straight to a terminal; it moves to
+ * halfway between the nearest terminals on either side, so a tail node under a pair is a centred tee rather than the
+ * shortest tree's bar hugging the pair's pins. A bar moves only where every
+ * new edge is routable and the tree stays a tree. Returns the segment set.
+ */
+function centreBars(segs, graph, env) {
+  const cellOf = (v) => {
+    const p = graph.px(v);
+    return [p.x / GRID, p.y / GRID];
+  };
+  const key = (ax, ay, bx, by) => (ax < bx || (ax === bx && ay < by) ? `${ax},${ay}|${bx},${by}` : `${bx},${by}|${ax},${ay}`);
+  let edges = new Set();
+  for (const s of segs) {
+    const [a, b] = s.split('|').map(Number);
+    edges.add(key(...cellOf(a), ...cellOf(b)));
+  }
+  const terminals = new Set(graph.terminalIds.map((v) => cellOf(v).join(',')));
+
+  // One bar move, `horizontal` or not, in (u along the bar, w across it).
+  const moveOne = (horizontal) => {
+    const xy = (u, w) => (horizontal ? [u, w] : [w, u]);
+    const edge = (u1, w1, u2, w2) => key(...xy(u1, w1), ...xy(u2, w2));
+    const has = (u1, w1, u2, w2) => edges.has(edge(u1, w1, u2, w2));
+    const terminal = (u, w) => terminals.has(xy(u, w).join(','));
+    const rows = new Map();
+    for (const e of edges) {
+      const [[ax, ay], [bx, by]] = e.split('|').map((p) => p.split(',').map(Number));
+      const [au, aw] = horizontal ? [ax, ay] : [ay, ax];
+      const [bu, bw] = horizontal ? [bx, by] : [by, bx];
+      if (aw !== bw) continue;
+      if (!rows.has(aw)) rows.set(aw, []);
+      rows.get(aw).push(Math.min(au, bu));
+    }
+    for (const [w, starts] of rows) {
+      starts.sort((a, b) => a - b);
+      for (let i = 0; i < starts.length;) {
+        let j = i;
+        while (j + 1 < starts.length && starts[j + 1] === starts[j] + 1) j++;
+        const next = tryBar(starts[i], starts[j] + 1, w, { edge, has, terminal, xy });
+        if (next) {
+          edges = next;
+          return true;
+        }
+        i = j + 1;
+      }
+    }
+    return false;
+  };
+
+  const tryBar = (u0, u1, w, { edge, has, terminal, xy }) => {
+    const legs = [];
+    for (let u = u0; u <= u1; u++) {
+      if (terminal(u, w)) return null;
+      const up = has(u, w - 1, u, w);
+      const down = has(u, w, u, w + 1);
+      if (up && down) return null;
+      if ((u === u0 || u === u1) && !up && !down) return null;
+      if (!up && !down) continue;
+      const s = up ? -1 : 1;
+      // A leg runs straight on until a terminal, a turn, or a branch.
+      let end = w + s;
+      while (!terminal(u, end) && has(u, end, u, end + s) && !has(u - 1, end, u, end) && !has(u, end, u + 1, end)) end += s;
+      if (!terminal(u, end)) return null;
+      legs.push({ u, s, end });
+    }
+    const ups = legs.filter((leg) => leg.s < 0).map((leg) => leg.end);
+    const downs = legs.filter((leg) => leg.s > 0).map((leg) => leg.end);
+    if (!ups.length || !downs.length) return null;
+    const above = Math.max(...ups);
+    const below = Math.min(...downs);
+    if (below - above < 2) return null;
+    const target = Math.round((above + below) / 2);
+    if (target === w) return null;
+    const removed = new Set();
+    const added = [];
+    for (let u = u0; u < u1; u++) {
+      removed.add(edge(u, w, u + 1, w));
+      added.push([u, target, u + 1, target]);
+    }
+    for (const { u, end } of legs) {
+      for (let k = Math.min(w, end); k < Math.max(w, end); k++) removed.add(edge(u, k, u, k + 1));
+      for (let k = Math.min(target, end); k < Math.max(target, end); k++) added.push([u, k, u, k + 1]);
+    }
+    const next = new Set([...edges].filter((e) => !removed.has(e)));
+    for (const [ua, wa, ub, wb] of added) {
+      const e = edge(ua, wa, ub, wb);
+      if (next.has(e)) return null;
+      const [ax, ay] = xy(ua, wa);
+      const [bx, by] = xy(ub, wb);
+      if (edgeWeight({ x: ax * GRID, y: ay * GRID }, { x: bx * GRID, y: by * GRID }, env) === null) return null;
+      next.add(e);
+    }
+    // Still one tree over the same terminals: as many edges as vertices less one, all connected.
+    const adj = new Map();
+    for (const e of next) {
+      const [a, b] = e.split('|');
+      if (!adj.has(a)) adj.set(a, []);
+      if (!adj.has(b)) adj.set(b, []);
+      adj.get(a).push(b);
+      adj.get(b).push(a);
+    }
+    if (next.size !== adj.size - 1) return null;
+    const start = adj.keys().next().value;
+    const seen = new Set([start]);
+    const stack = [start];
+    while (stack.length) for (const n of adj.get(stack.pop())) if (!seen.has(n)) { seen.add(n); stack.push(n); }
+    if (seen.size !== adj.size || [...terminals].some((t) => !seen.has(t))) return null;
+    return next;
+  };
+
+  let moved = false;
+  for (let pass = 0; pass < 8 && (moveOne(true) || moveOne(false)); pass++) moved = true;
+  if (!moved) return segs;
+  const out = new Set();
+  for (const e of edges) {
+    const [[ax, ay], [bx, by]] = e.split('|').map((p) => p.split(',').map(Number));
+    out.add(segKey(graph.id(ax, ay), graph.id(bx, by)));
+  }
+  return out;
 }
 
 /** Compute the Steiner tree's segment set, growing the routing region until all

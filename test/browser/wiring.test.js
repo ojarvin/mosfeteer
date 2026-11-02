@@ -193,6 +193,38 @@ describe('wiring', { skip: browserSkip() }, () => {
     assert.deepEqual(await nets(), []);
   });
 
+  test('a tail node wired from one source draws the centred tee, by clicks or a stroke', async () => {
+    const pair = async () => {
+      for (const line of ['clear', 'add nmos M2 --at 0 -80', 'add nmos M3 --at 480 -80 --mirrorX', 'add nmos M1 --at 240 240']) await h.evaluate(`window.__run(${JSON.stringify(line)})`);
+      await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.fitView())`);
+    };
+    const tail = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => { const net = m.editor.circuit.netOfTerminal('M1.d'); return { terminals: net.terminals.length, junctions: net.junctions }; })`);
+    const want = { terminals: 3, junctions: [{ x: 240, y: 80 }] };
+    await pair();
+    await h.key('w');
+    // Across the pair's sources, then from M3's source down to the tail drain.
+    await clickAt(0, 0);
+    await clickAt(480, 0);
+    await clickAt(480, 0);
+    await clickAt(240, 160);
+    assert.deepEqual(await tail(), want);
+    await h.key('Escape');
+    await pair();
+    await h.key('w');
+    await h.key('Alt', { altKey: true });
+    try {
+      await strokeDrag('mouseMoved', 0, 0);
+      await strokeDrag('mousePressed', 0, 0);
+      for (const point of [[240, 10], [480, 0], [360, 80], [240, 160]]) await strokeDrag('mouseMoved', ...point);
+      await strokeDrag('mouseReleased', 240, 160);
+      await h.settle();
+    } finally {
+      await h.evaluate(`window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Alt', bubbles: true }))`);
+    }
+    assert.deepEqual(await tail(), want);
+    await h.key('Escape');
+  });
+
   test('Backspace mid-stroke lets go of the last pin the stroke caught', async () => {
     await unwiredOta();
     await h.key('w');

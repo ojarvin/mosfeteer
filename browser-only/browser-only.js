@@ -32456,6 +32456,29 @@ class LabelMap extends Map {
   }
 }
 
+/** A drawing's grid edges, one per cell step, as a set of keys. */
+function unitEdges(paths) {
+  const out = new Set();
+  for (const path of paths || []) {
+    for (let i = 1; i < path.length; i++) {
+      const a = path[i - 1];
+      const b = path[i];
+      if (a.x !== b.x && a.y !== b.y) return null;
+      const n = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y)) / GRID;
+      for (let k = 0; k < n; k++) {
+        const p = { x: a.x + ((b.x - a.x) * k) / n, y: a.y + ((b.y - a.y) * k) / n };
+        const q = { x: a.x + ((b.x - a.x) * (k + 1)) / n, y: a.y + ((b.y - a.y) * (k + 1)) / n };
+        out.add(p.x < q.x || (p.x === q.x && p.y < q.y) ? `${p.x},${p.y}|${q.x},${q.y}` : `${q.x},${q.y}|${p.x},${p.y}`);
+      }
+    }
+  }
+  return out;
+}
+
+function sameEdges(a, b) {
+  return !!a && !!b && a.size === b.size && [...a].every((e) => b.has(e));
+}
+
 class Circuit {
   /** Any Map assigned (a selection's subset, a reloaded set) is kept as a
    *  LabelMap. */
@@ -34462,7 +34485,7 @@ class Circuit {
       net.branches = null;
       net.route = null;
       net.junctions = []; // Fresh layout starts from terminal anchors only.
-      if (!this._layoutFresh(net, anchors, env)) {
+      if (!this._layoutFresh(net, net.anchorWorlds(), env)) {
         // A refresh is allowed to fail, but it must never erase a route that
         // was already valid merely because the new layout is unroutable.
         net.branches = previous.branches;
@@ -36289,6 +36312,27 @@ class Circuit {
       : routed || direct;
     if (!newPath) throw new Error('unable to route wire safely');
 
+    // With `freshJoin` (the editor's clicks and strokes), a pin wired to a
+    // pin of a small net that is still the router's own drawing, by a leg
+    // the router chose, lays the grown net out fresh: the drawing is then
+    // the same whichever pin was wired first (a tail node is one centred
+    // tee). Hand-shaped geometry is kept and the leg appended.
+    const joined = [...new Set([srcNet, targetNet].filter(Boolean))];
+    const grown = new Set([...joined.flatMap((n) => n.terminals.map((t) => `${t.comp}.${t.term}`)), `${term.comp}.${term.term}`]);
+    let atPin = false;
+    for (const c of this.components.values()) {
+      for (const t of c.terminalDefs) {
+        const p = c.terminalWorld(t.name);
+        if (p.x === P.x && p.y === P.y) {
+          grown.add(`${c.refdes}.${t.name}`);
+          atPin = true;
+        }
+      }
+    }
+    const terminalCount = grown.size;
+    const relay = options?.freshJoin === true && atPin && joined.length > 0 && !allowDiagonal && terminalCount >= 3 && terminalCount <= 5 &&
+      this._legRouterMade(srcPos, P, waypoints, joined) && joined.every((n) => this._routerMade(n));
+
     const topology = this._snapshotNetTopology();
     let net;
     if (srcNet && targetNet && srcNet !== targetNet) {
@@ -36319,7 +36363,7 @@ class Circuit {
     }
 
     // Existing paths are committed geometry. Adding a terminal appends only
-    // the newly routed branch; it never triggers a whole-net Steiner refresh.
+    // the newly routed branch; only a `relay` join (above) lays it out fresh.
 
     // Split any branch whose interior contains the meet point, preserving
     // segment styles and keeping arrowheads on the original endpoints.
@@ -36336,11 +36380,37 @@ class Circuit {
       this._restoreNetTopology(topology);
       throw new Error('unable to route wire safely');
     }
+    if (relay) this.rerouteNet(net, 'refresh');
     this._syncReferenceMarkerNetName(net);
     this._syncInterfacePinLabels(net, { enforceName: true });
     this._inferCrossCoupling(new Set([net]));
     this.syncJunctionSolders();
     return net;
+  }
+
+  /** Whether a net's drawing is the router's own: plain orthogonal wire
+   *  that a fresh layout of its pins draws (for two pins, also the editor's
+   *  centred route between them, either way round). */
+  _routerMade(net) {
+    if (net.allowDiagonal || Object.keys(net.wireStyles || {}).length || net.terminals.length < 2) return false;
+    const anchors = net.terminalWorlds().filter(Boolean);
+    if (anchors.length !== net.terminals.length) return false;
+    const drawn = unitEdges(net.paths());
+    const env = this._netEnv(net.id);
+    const candidates = anchors.length === 2
+      ? [smartRoute(anchors[0], anchors[1], env), smartRoute(anchors[0], anchors[1], { ...env, preferMidpoint: true }),
+        smartRoute(anchors[1], anchors[0], { ...env, preferMidpoint: true })].filter(Boolean).map((path) => [path])
+      : [steinerBranches(anchors, env)];
+    return candidates.some((paths) => sameEdges(unitEdges(paths), drawn));
+  }
+
+  /** Whether a leg from `from` to `to` through `waypoints` is the route the
+   *  editor's draft suggests between them (no waypoints, or its centred route). */
+  _legRouterMade(from, to, waypoints, nets) {
+    if (!waypoints.length) return true;
+    const env = { ...this._netEnv(new Set(nets.map((n) => n.id))), allowDiagonal: false, preferMidpoint: true };
+    const route = smartRoute(from, to, env);
+    return !!route && sameEdges(unitEdges([[from, ...waypoints, to]]), unitEdges([route]));
   }
 
   /**
@@ -43260,7 +43330,131 @@ function steinerBranches(terminals, env = { rects: [], pins: new Map(), wires: [
     }
     return reduceBranches(paths, unique);
   }
-  return branchesFromSegments(tree.segs, tree.graph, pts, env);
+  return branchesFromSegments(centreBars(tree.segs, tree.graph, env), tree.graph, pts, env);
+}
+
+/**
+ * Slide each bar of a Steiner tree to halfway between its legs. A bar is a
+ * straight run whose two ends turn into legs, with legs off both of its sides
+ * and no terminal on it, each leg running straight to a terminal; it moves to
+ * halfway between the nearest terminals on either side, so a tail node under a pair is a centred tee rather than the
+ * shortest tree's bar hugging the pair's pins. A bar moves only where every
+ * new edge is routable and the tree stays a tree. Returns the segment set.
+ */
+function centreBars(segs, graph, env) {
+  const cellOf = (v) => {
+    const p = graph.px(v);
+    return [p.x / GRID, p.y / GRID];
+  };
+  const key = (ax, ay, bx, by) => (ax < bx || (ax === bx && ay < by) ? `${ax},${ay}|${bx},${by}` : `${bx},${by}|${ax},${ay}`);
+  let edges = new Set();
+  for (const s of segs) {
+    const [a, b] = s.split('|').map(Number);
+    edges.add(key(...cellOf(a), ...cellOf(b)));
+  }
+  const terminals = new Set(graph.terminalIds.map((v) => cellOf(v).join(',')));
+
+  // One bar move, `horizontal` or not, in (u along the bar, w across it).
+  const moveOne = (horizontal) => {
+    const xy = (u, w) => (horizontal ? [u, w] : [w, u]);
+    const edge = (u1, w1, u2, w2) => key(...xy(u1, w1), ...xy(u2, w2));
+    const has = (u1, w1, u2, w2) => edges.has(edge(u1, w1, u2, w2));
+    const terminal = (u, w) => terminals.has(xy(u, w).join(','));
+    const rows = new Map();
+    for (const e of edges) {
+      const [[ax, ay], [bx, by]] = e.split('|').map((p) => p.split(',').map(Number));
+      const [au, aw] = horizontal ? [ax, ay] : [ay, ax];
+      const [bu, bw] = horizontal ? [bx, by] : [by, bx];
+      if (aw !== bw) continue;
+      if (!rows.has(aw)) rows.set(aw, []);
+      rows.get(aw).push(Math.min(au, bu));
+    }
+    for (const [w, starts] of rows) {
+      starts.sort((a, b) => a - b);
+      for (let i = 0; i < starts.length;) {
+        let j = i;
+        while (j + 1 < starts.length && starts[j + 1] === starts[j] + 1) j++;
+        const next = tryBar(starts[i], starts[j] + 1, w, { edge, has, terminal, xy });
+        if (next) {
+          edges = next;
+          return true;
+        }
+        i = j + 1;
+      }
+    }
+    return false;
+  };
+
+  const tryBar = (u0, u1, w, { edge, has, terminal, xy }) => {
+    const legs = [];
+    for (let u = u0; u <= u1; u++) {
+      if (terminal(u, w)) return null;
+      const up = has(u, w - 1, u, w);
+      const down = has(u, w, u, w + 1);
+      if (up && down) return null;
+      if ((u === u0 || u === u1) && !up && !down) return null;
+      if (!up && !down) continue;
+      const s = up ? -1 : 1;
+      // A leg runs straight on until a terminal, a turn, or a branch.
+      let end = w + s;
+      while (!terminal(u, end) && has(u, end, u, end + s) && !has(u - 1, end, u, end) && !has(u, end, u + 1, end)) end += s;
+      if (!terminal(u, end)) return null;
+      legs.push({ u, s, end });
+    }
+    const ups = legs.filter((leg) => leg.s < 0).map((leg) => leg.end);
+    const downs = legs.filter((leg) => leg.s > 0).map((leg) => leg.end);
+    if (!ups.length || !downs.length) return null;
+    const above = Math.max(...ups);
+    const below = Math.min(...downs);
+    if (below - above < 2) return null;
+    const target = Math.round((above + below) / 2);
+    if (target === w) return null;
+    const removed = new Set();
+    const added = [];
+    for (let u = u0; u < u1; u++) {
+      removed.add(edge(u, w, u + 1, w));
+      added.push([u, target, u + 1, target]);
+    }
+    for (const { u, end } of legs) {
+      for (let k = Math.min(w, end); k < Math.max(w, end); k++) removed.add(edge(u, k, u, k + 1));
+      for (let k = Math.min(target, end); k < Math.max(target, end); k++) added.push([u, k, u, k + 1]);
+    }
+    const next = new Set([...edges].filter((e) => !removed.has(e)));
+    for (const [ua, wa, ub, wb] of added) {
+      const e = edge(ua, wa, ub, wb);
+      if (next.has(e)) return null;
+      const [ax, ay] = xy(ua, wa);
+      const [bx, by] = xy(ub, wb);
+      if (edgeWeight({ x: ax * GRID, y: ay * GRID }, { x: bx * GRID, y: by * GRID }, env) === null) return null;
+      next.add(e);
+    }
+    // Still one tree over the same terminals: as many edges as vertices less one, all connected.
+    const adj = new Map();
+    for (const e of next) {
+      const [a, b] = e.split('|');
+      if (!adj.has(a)) adj.set(a, []);
+      if (!adj.has(b)) adj.set(b, []);
+      adj.get(a).push(b);
+      adj.get(b).push(a);
+    }
+    if (next.size !== adj.size - 1) return null;
+    const start = adj.keys().next().value;
+    const seen = new Set([start]);
+    const stack = [start];
+    while (stack.length) for (const n of adj.get(stack.pop())) if (!seen.has(n)) { seen.add(n); stack.push(n); }
+    if (seen.size !== adj.size || [...terminals].some((t) => !seen.has(t))) return null;
+    return next;
+  };
+
+  let moved = false;
+  for (let pass = 0; pass < 8 && (moveOne(true) || moveOne(false)); pass++) moved = true;
+  if (!moved) return segs;
+  const out = new Set();
+  for (const e of edges) {
+    const [[ax, ay], [bx, by]] = e.split('|').map((p) => p.split(',').map(Number));
+    out.add(segKey(graph.id(ax, ay), graph.id(bx, by)));
+  }
+  return out;
 }
 
 /** Compute the Steiner tree's segment set, growing the routing region until all
@@ -77389,9 +77583,10 @@ function syncManagedRoute(net) {
  *  history once. Hand-drawn orthogonal or diagonal waypoints are preserved by
  *  Circuit#wireTo; topology growth never refreshes the existing net. */
 function wireRouteOptions(targetIdentity = null) {
+  // A pin joining a net the router drew lays it out fresh (Circuit#wireTo).
   const options = wire?.routeStyle === 'diagonal'
     ? { routeStyle: 'diagonal', allowDiagonal: true }
-    : { routeStyle: 'orthogonal', allowDiagonal: false };
+    : { routeStyle: 'orthogonal', allowDiagonal: false, freshJoin: true };
   if (targetIdentity) options.targetIdentity = targetIdentity;
   return options;
 }

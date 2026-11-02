@@ -326,7 +326,9 @@ The model is topological; geometry is a route, not connectivity.
   Terminal escape directions are preferred. Cross-net collinear overlap is a
   Design Check error and is never auto-merged.
 - Fresh multi-terminal layouts may use the bounded Steiner router; topology
-  growth normally appends one branch and preserves existing geometry. Fixed or
+  growth normally appends one branch and preserves existing geometry (an
+  editor join to a small net the router drew lays it out fresh,
+  [`wiring-architecture.md`](wiring-architecture.md#automatic-routing)). Fixed or
   authored paths change only through an explicit edit, transform, reroute, or
   topology repair.
 - Moving, rotating, mirroring, or resizing components reroutes touched managed

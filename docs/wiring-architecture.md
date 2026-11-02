@@ -69,11 +69,21 @@ may compute an exact rectilinear Steiner minimum tree over a coarse-grid graph
 limits and cancellation behavior are in `router.js` and its tests; requests outside those limits fall back to the
 MST-of-shortest-paths approximation. Total length is the primary objective under
 hard body clearance, with terminal-direction and label preferences as tie-breaks;
-a three-way Y becomes one centered T-junction.
+a three-way Y becomes one centered T-junction. A bar of the tree with legs off
+both its sides, each running straight to a pin, then slides to halfway between
+those pins (`centreBars`), so a tail node under a pair is a tee whose bar sits
+halfway between the sources and the tail drain. A fresh layout routes between
+the pins only, never through the old junctions, so Tidy draws that tee however
+the net was drawn.
 
 During wire drawing, `smartRoute` is a live suggestion for the current draft.
 Committing that draft appends the chosen branch and preserves all prior
-managed paths. A wire interior is a valid endpoint; when multiple coincident
+managed paths, with one exception: a click or stroke that wires a pin to a pin
+of a net of up to five pins, by the route the draft suggests, when that net is
+still the router's own drawing (a fresh layout of its pins, or for two pins the
+draft's centred route), lays the grown net out fresh (`freshJoin` in
+`Circuit#wireTo`). The drawing is then the same whichever pin was wired first.
+A net with hand-shaped wire, styled segments, or diagonals keeps its drawing. A wire interior is a valid endpoint; when multiple coincident
 paths are possible, the selected branch identity is required and preserved
 through the join. Existing geometry otherwise changes only through an explicit
 wire edit, transform, reroute, or another operation whose purpose is to repair
