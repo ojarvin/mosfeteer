@@ -138,4 +138,33 @@ describe('data plot', { skip: browserSkip() }, () => {
     await h.evaluate(`${button('.data-plot-dialog', 'Cancel')}.click()`);
     await h.until(`!document.querySelector('.data-plot-dialog')`);
   });
+
+  test('Add file… adds another file\'s traces to the plot, under its legend, as one undo step', async () => {
+    const before = await plot();
+    await h.evaluate(`(() => {
+      const click = HTMLInputElement.prototype.click;
+      HTMLInputElement.prototype.click = function () {
+        if (this.type !== 'file') return click.call(this);
+        HTMLInputElement.prototype.click = click;
+        const files = new DataTransfer();
+        files.items.add(new File(['f,Sim\\n1,0.4\\n10000,0.04\\n'], 'sim.csv', { type: 'text/csv' }));
+        this.files = files.files;
+        this.dispatchEvent(new Event('change'));
+      };
+    })()`);
+    await h.evaluate(`${h.module('editor-state.js')}.then((s) => ${h.module('data-plot-ui.js')}.then((m) => m.openDataPlotSettings([...s.editor.circuit.labels.values()].find((l) => l.plot))))`);
+    await h.until(`!!document.querySelector('.data-plot-dialog[open]')`);
+    await h.evaluate(`${button('.data-plot-dialog', 'Add file')}.click()`);
+    await h.until(`!!document.querySelector('.data-plot-dialog[open] .plot-view svg path') && ${button('.data-plot-dialog', 'Add to plot')}`);
+    assert.deepEqual(await h.evaluate(`[...document.querySelectorAll('.data-plot-trace input[type="text"]')].map((i) => i.value)`), [...before.legend, 'Sim']);
+    await h.evaluate(`${button('.data-plot-dialog', 'Add to plot')}.click()`);
+    await h.until(`!document.querySelector('.data-plot-dialog')`);
+    const after = await plot();
+    assert.deepEqual(after.legend, [...before.legend, 'Sim']);
+    assert.equal(after.plot.file, 'messung.csv, sim.csv');
+    assert.deepEqual(after.plot.traces.at(-1).points, [[1, 0.4], [10000, 0.04]]);
+    await h.key('z', { ctrlKey: true });
+    assert.deepEqual((await plot()).legend, before.legend);
+  });
 });
+

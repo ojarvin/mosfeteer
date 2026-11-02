@@ -1,4 +1,4 @@
-import { dataPlotFromText, placeDataPlot, removeDataPlotTrace, setDataPlotAxis, setDataPlotTrace, setDataPlotView } from './data-plot.js';
+import { appendDataPlotTraces, dataPlotFromText, placeDataPlot, removeDataPlotTrace, setDataPlotAxis, setDataPlotTrace, setDataPlotView } from './data-plot.js';
 import { analyzeSignalFlow, complexText } from './analysis/signal-flow.js';
 import { analyzeLogic } from './analysis/logic.js';
 import { Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld } from './model.js';
@@ -134,6 +134,7 @@ const FLAG_ARITY = {
   yscale: 1,
   scale: 1,
   color: 1,
+  into: 1,
 };
 
 const SYNTHESIZE_USAGE = 'usage: synthesize logic IN ... OUT=VALUES ... [--style and-or|nand|or-and|nor] [--gates inverter,and,nand,or,nor] [--max-inputs 2|3] [--at X Y] [--print]';
@@ -565,8 +566,8 @@ export function commandHelp() {
     '  annotation join ID ID ...      - join line annotations that meet end to end or share a stretch into one line',
     '  annotation vertex-rm ID N      - remove vertex N (from 0) of a line or arrow',
     '  annotation plotcolors PLOT on|off - a plot\'s traces in their colors, or in black told apart by dash (a new plot\'s)',
-    '  annotation dataplot FILE [--x COL|row] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y]',
-    '                                   - plot a CSV file\'s columns (by number or name); unset options are guessed. The file is read, never kept',
+    '  annotation dataplot FILE [--x COL|row] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y | --into PLOT]',
+    '                                   - plot a CSV file\'s columns (by number or name), or add them to a data plot; unset options are guessed. The file is read, never kept',
     '  annotation plotaxis PLOT x|y [--label TEXT] [--scale log|linear] - name a data plot\'s axis, or set its scale',
     '  annotation plotview PLOT x|y LOW HIGH|fit - zoom a data plot\'s axis, or fit it to the data',
     '  annotation plottrace PLOT N rm|[--label TEXT] [--color COLOR] - take trace N (from 1) off a data plot, or rename it or color it from the palette (red, blue, ...)',
@@ -1636,7 +1637,7 @@ function annotationCommand(circuit, pos, result, flags = {}, io) {
   }
   if (op === 'dataplot') {
     const file = pos[1];
-    if (!file || pos.length !== 2) throw new Error('usage: annotation dataplot FILE [--x COL] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y]');
+    if (!file || pos.length !== 2) throw new Error('usage: annotation dataplot FILE [--x COL] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y | --into PLOT]');
     if (!io?.readDataFile) throw new Error('dataplot reads a file: use the CLI, or Insert → Data plot… in the editor');
     const separators = { tab: '\t', semicolon: ';', comma: ',', space: ' ' };
     const decimals = { point: '.', comma: ',' };
@@ -1651,6 +1652,12 @@ function annotationCommand(circuit, pos, result, flags = {}, io) {
       separator: separators[one('sep')], decimal: decimals[one('decimal')], ...(flags['no-header'] ? { header: false } : {}),
       xscale: one('xscale'), yscale: one('yscale'),
     });
+    if (flags.into) {
+      const box = circuit.labels.get(flags.into[0]);
+      if (box?.plot?.kind !== 'data') throw new Error(`"${flags.into[0]}" is not a data plot`);
+      appendDataPlotTraces(circuit, box, plot.traces.map(({ label, points }) => ({ label, points })), { file: plot.file });
+      return result(`added ${plot.traces.length} trace${plot.traces.length === 1 ? '' : 's'} from ${plot.file || file} to ${box.id}`, box.toJSON(), true);
+    }
     const at = flags.at ? { x: Number(flags.at[0]), y: Number(flags.at[1]) } : null;
     if (at && !(Number.isFinite(at.x) && Number.isFinite(at.y))) throw new Error('--at X Y takes two numbers');
     const { box } = placeDataPlot(circuit, plot, { at });

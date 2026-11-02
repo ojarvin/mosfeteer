@@ -23079,7 +23079,7 @@ __exports.parseArgs = parseArgs;
 __exports.evaluate = evaluate;
 __exports.commandHelp = commandHelp;
 __exports.runCommand = runCommand;
-let dataPlotFromText, placeDataPlot, removeDataPlotTrace, setDataPlotAxis, setDataPlotTrace, setDataPlotView; __bind(() => { ({ dataPlotFromText, placeDataPlot, removeDataPlotTrace, setDataPlotAxis, setDataPlotTrace, setDataPlotView } = __require("src/core/data-plot.js")); });
+let appendDataPlotTraces, dataPlotFromText, placeDataPlot, removeDataPlotTrace, setDataPlotAxis, setDataPlotTrace, setDataPlotView; __bind(() => { ({ appendDataPlotTraces, dataPlotFromText, placeDataPlot, removeDataPlotTrace, setDataPlotAxis, setDataPlotTrace, setDataPlotView } = __require("src/core/data-plot.js")); });
 let analyzeSignalFlow, complexText; __bind(() => { ({ analyzeSignalFlow, complexText } = __require("src/core/analysis/signal-flow.js")); });
 let analyzeLogic; __bind(() => { ({ analyzeLogic } = __require("src/core/analysis/logic.js")); });
 let Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld; __bind(() => { ({ Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld } = __require("src/core/model.js")); });
@@ -23252,6 +23252,7 @@ const FLAG_ARITY = {
   yscale: 1,
   scale: 1,
   color: 1,
+  into: 1,
 };
 
 const SYNTHESIZE_USAGE = 'usage: synthesize logic IN ... OUT=VALUES ... [--style and-or|nand|or-and|nor] [--gates inverter,and,nand,or,nor] [--max-inputs 2|3] [--at X Y] [--print]';
@@ -23683,8 +23684,8 @@ function commandHelp() {
     '  annotation join ID ID ...      - join line annotations that meet end to end or share a stretch into one line',
     '  annotation vertex-rm ID N      - remove vertex N (from 0) of a line or arrow',
     '  annotation plotcolors PLOT on|off - a plot\'s traces in their colors, or in black told apart by dash (a new plot\'s)',
-    '  annotation dataplot FILE [--x COL|row] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y]',
-    '                                   - plot a CSV file\'s columns (by number or name); unset options are guessed. The file is read, never kept',
+    '  annotation dataplot FILE [--x COL|row] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y | --into PLOT]',
+    '                                   - plot a CSV file\'s columns (by number or name), or add them to a data plot; unset options are guessed. The file is read, never kept',
     '  annotation plotaxis PLOT x|y [--label TEXT] [--scale log|linear] - name a data plot\'s axis, or set its scale',
     '  annotation plotview PLOT x|y LOW HIGH|fit - zoom a data plot\'s axis, or fit it to the data',
     '  annotation plottrace PLOT N rm|[--label TEXT] [--color COLOR] - take trace N (from 1) off a data plot, or rename it or color it from the palette (red, blue, ...)',
@@ -24754,7 +24755,7 @@ function annotationCommand(circuit, pos, result, flags = {}, io) {
   }
   if (op === 'dataplot') {
     const file = pos[1];
-    if (!file || pos.length !== 2) throw new Error('usage: annotation dataplot FILE [--x COL] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y]');
+    if (!file || pos.length !== 2) throw new Error('usage: annotation dataplot FILE [--x COL] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y | --into PLOT]');
     if (!io?.readDataFile) throw new Error('dataplot reads a file: use the CLI, or Insert → Data plot… in the editor');
     const separators = { tab: '\t', semicolon: ';', comma: ',', space: ' ' };
     const decimals = { point: '.', comma: ',' };
@@ -24769,6 +24770,12 @@ function annotationCommand(circuit, pos, result, flags = {}, io) {
       separator: separators[one('sep')], decimal: decimals[one('decimal')], ...(flags['no-header'] ? { header: false } : {}),
       xscale: one('xscale'), yscale: one('yscale'),
     });
+    if (flags.into) {
+      const box = circuit.labels.get(flags.into[0]);
+      if (box?.plot?.kind !== 'data') throw new Error(`"${flags.into[0]}" is not a data plot`);
+      appendDataPlotTraces(circuit, box, plot.traces.map(({ label, points }) => ({ label, points })), { file: plot.file });
+      return result(`added ${plot.traces.length} trace${plot.traces.length === 1 ? '' : 's'} from ${plot.file || file} to ${box.id}`, box.toJSON(), true);
+    }
     const at = flags.at ? { x: Number(flags.at[0]), y: Number(flags.at[1]) } : null;
     if (at && !(Number.isFinite(at.x) && Number.isFinite(at.y))) throw new Error('--at X Y takes two numbers');
     const { box } = placeDataPlot(circuit, plot, { at });
@@ -27182,6 +27189,7 @@ __exports.setDataPlotAxis = setDataPlotAxis;
 __exports.setDataPlotView = setDataPlotView;
 __exports.setDataPlotTrace = setDataPlotTrace;
 __exports.removeDataPlotTrace = removeDataPlotTrace;
+__exports.appendDataPlotTraces = appendDataPlotTraces;
 __exports.replaceDataPlotTraces = replaceDataPlotTraces;
 let TRACE_COLORS; __bind(() => { ({ TRACE_COLORS } = __require("src/core/analysis/signal-flow.js")); });
 let newFigureId, placeFigure, settlePlaced; __bind(() => { ({ newFigureId, placeFigure, settlePlaced } = __require("src/core/figures.js")); });
@@ -27350,6 +27358,33 @@ function removeDataPlotTrace(circuit, box, index) {
   const legend = circuit.plotLegend(box);
   if (legend[index]) circuit.removeLabel(legend[index].id);
   box.plot = normalizePlot({ ...plot, traces: plot.traces.filter((_, i) => i !== index) });
+}
+
+/** The names of the files a plot's traces came from, each once. */
+function joinFiles(...names) {
+  const files = [...new Set(names.flatMap((name) => String(name || '').split(', ')).filter(Boolean))];
+  return files.join(', ').slice(0, 200);
+}
+
+/** Add `traces` ({ label, points, color? }) to a data plot, read from the
+ *  file `file`, their legend entries under its others. A trace without a
+ *  color takes one the plot does not use yet. Returns the new entries. */
+function appendDataPlotTraces(circuit, box, traces, { file = '' } = {}) {
+  const plot = dataPlotOf(box);
+  if (!traces.length) throw new Error('no trace to add');
+  if (plot.traces.length + traces.length > MAX_DATA_TRACES) throw new Error(`a plot has at most ${MAX_DATA_TRACES} traces (it has ${plot.traces.length})`);
+  const used = new Set(plot.traces.map((t) => t.color));
+  const added = traces.map((trace) => {
+    const color = trace.color || TRACE_COLORS.find((c) => !used.has(c)) || TRACE_COLORS[0];
+    used.add(color);
+    return { label: trace.label, color, points: trace.points };
+  });
+  const next = normalizePlot({ ...plot, file: joinFiles(plot.file, file), traces: [...plot.traces, ...added] });
+  if (!next || next.traces.length !== plot.traces.length + added.length) throw new Error('a trace to add has no two points to plot');
+  const legend = circuit.plotLegend(box);
+  const below = legend.length ? { x: Math.min(...legend.map((l) => l.bbox().x)), y: Math.max(...legend.map((l) => l.bbox().y + l.bbox().h)) } : null;
+  box.plot = next;
+  return writeLegend(circuit, box, next.traces.slice(plot.traces.length), below);
 }
 
 /** Replace a data plot's traces with `plot`'s (the file read again, or
@@ -62973,8 +63008,8 @@ __exports.installDataPlotUi = installDataPlotUi;
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 let MAX_DATA_TRACES, readTable, tableTraces; __bind(() => { ({ MAX_DATA_TRACES, readTable, tableTraces } = __require("src/core/csv-data.js")); });
 let TRACE_COLORS; __bind(() => { ({ TRACE_COLORS } = __require("src/core/analysis/signal-flow.js")); });
-let placeDataPlot, removeDataPlotTrace, replaceDataPlotTraces, setDataPlotAxis, setDataPlotTrace, setDataPlotView; __bind(() => { ({ placeDataPlot, removeDataPlotTrace, replaceDataPlotTraces, setDataPlotAxis, setDataPlotTrace, setDataPlotView } = __require("src/core/data-plot.js")); });
-let normalizePlot; __bind(() => { ({ normalizePlot } = __require("src/core/model.js")); });
+let appendDataPlotTraces, placeDataPlot, removeDataPlotTrace, replaceDataPlotTraces, setDataPlotAxis, setDataPlotTrace, setDataPlotView; __bind(() => { ({ appendDataPlotTraces, placeDataPlot, removeDataPlotTrace, replaceDataPlotTraces, setDataPlotAxis, setDataPlotTrace, setDataPlotView } = __require("src/core/data-plot.js")); });
+let MAX_DATA_POINTS, normalizePlot; __bind(() => { ({ MAX_DATA_POINTS, normalizePlot } = __require("src/core/model.js")); });
 let COLOR_PALETTE; __bind(() => { ({ COLOR_PALETTE } = __require("src/core/style.js")); });
 let dataSpec; __bind(() => { ({ dataSpec } = __require("src/core/plot-spec.js")); });
 let createPlotView; __bind(() => { ({ createPlotView } = __require("src/web/plot-view.js")); });
@@ -62993,7 +63028,8 @@ let alignLabelColumn, commit, render, setLabelSelection, setSelection; __bind(()
  * (web/plot-view.js) -- each axis's name and scale, and each trace's name
  * and color or its removal. The plot keeps the zoom shown. The file is read
  * once: the design keeps the traces, never the file. Given a data plot, the
- * dialog reads a file into that plot instead (Read file…).
+ * dialog adds a file's traces to that plot (Add file…), the plot's own shown
+ * with them, or replaces them (Replace file…).
  */
 
 
@@ -63015,8 +63051,9 @@ const PREVIEW_ROWS = 8;
 const SEPARATORS = [[',', 'Comma'], [';', 'Semicolon'], ['\t', 'Tab'], [' ', 'Spaces']];
 
 /** Ask for a file, then open the dialog on it; `target` a data plot to
- *  read it into. */
-function chooseDataFile(target = null) {
+ *  read it into, `mode` 'add' to add its traces there rather than replace
+ *  them. */
+function chooseDataFile(target = null, mode = 'replace') {
   const input = el('input', { type: 'file', accept: '.csv,.tsv,.txt,.dat,.prn,text/csv,text/plain', hidden: true });
   input.addEventListener('change', async () => {
     const file = input.files?.[0];
@@ -63026,7 +63063,7 @@ function chooseDataFile(target = null) {
       logLine(`${file.name} is ${Math.round(file.size / 1e6)} MB; a data plot reads up to ${MAX_FILE_BYTES / 1e6} MB`, 'error');
       return;
     }
-    openDataPlotDialog(await file.text(), file.name, target);
+    openDataPlotDialog(await file.text(), file.name, target, { mode });
   }, { once: true });
   document.body.append(input);
   input.click();
@@ -63144,13 +63181,33 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {} } = {}) {
   };
 }
 
+/** The edits the plot editor made to `box`'s own traces (`draft.traces`
+ *  with an `index`) and axes, inside a commit. */
+function applyDraft(circuit, box, draft) {
+  for (const axis of ['x', 'y']) setDataPlotAxis(box, axis, { label: draft[axis].label, scale: draft[axis].scale });
+  const own = draft.traces.filter((trace) => trace.index !== undefined);
+  for (const trace of own) if (!trace.removed) setDataPlotTrace(circuit, box, trace.index, { label: trace.label, color: trace.color });
+  // Last first, so the indices still hold.
+  for (const trace of [...own].reverse()) if (trace.removed) removeDataPlotTrace(circuit, box, trace.index);
+}
+
+/** The zoom shown on `box`'s axes, those it can show. */
+function applyZoom(box, zoom) {
+  for (const axis of ['x', 'y']) setDataPlotView(box, axis, zoom?.[axis] && !(box.plot[axis].scale === 'log' && zoom[axis][0] <= 0) ? zoom[axis] : null);
+}
+
 /** The dialog on `text` (the file `name`): Place puts its plot on the
- *  drawing, or into `target`. */
-function openDataPlotDialog(text, name, target = null) {
+ *  drawing, or into `target` -- its traces replaced, or with `mode` 'add'
+ *  the file's added to them (the plot's own shown with them, to edit too). */
+function openDataPlotDialog(text, name, target = null, { mode = 'replace' } = {}) {
+  const adding = mode === 'add' && target?.plot?.kind === 'data';
+  // The plot's own traces, when adding to it.
+  const own = adding ? target.plot.traces.map((trace, index) => ({ index, label: trace.label, color: trace.color, points: trace.points, removed: false })) : [];
+  const room = () => MAX_DATA_TRACES - own.filter((t) => !t.removed).length;
   let options = {};
   let table = readTable(text);
   let x = table.x;
-  let y = table.y.slice(0, MAX_DATA_TRACES);
+  let y = table.y.slice(0, room());
   // What was edited by hand stays when the columns change.
   const edited = { x: false, y: false };
   const draft = { x: { label: '', scale: table.scale.x }, y: { label: '', scale: table.scale.y }, traces: [] };
@@ -63158,29 +63215,34 @@ function openDataPlotDialog(text, name, target = null) {
   const preview = el('div', { class: 'data-plot-table', role: 'region', 'aria-label': 'The first rows', tabindex: '0' });
   const columns = el('div', { class: 'data-plot-columns' });
   const status = el('p', { class: 'field-hint', 'aria-live': 'polite' });
-  const place = el('button', { type: 'button', class: 'primary-action', text: target ? 'Read into plot' : 'Place' });
+  const place = el('button', { type: 'button', class: 'primary-action', text: adding ? 'Add to plot' : target ? 'Read into plot' : 'Place' });
   const plotEdit = plotEditor(draft, {
     onAxis: (axis) => { edited[axis] = true; },
-    onRemove: (trace) => { y = y.filter((c) => c !== trace.column); update(); },
+    onRemove: (trace) => {
+      if (trace.index !== undefined) trace.removed = true;
+      else y = y.filter((c) => c !== trace.column);
+      update();
+    },
   });
 
   /** The traces of the columns picked, each keeping a name or color given it. */
   function update() {
-    const before = new Map(draft.traces.map((t) => [t.column, t]));
-    draft.traces = y.map((column) => {
+    const before = new Map(draft.traces.filter((t) => t.index === undefined).map((t) => [t.column, t]));
+    const added = y.map((column) => {
       const [trace] = tableTraces(table, x, [column]);
       if (!trace) return null;
       const old = before.get(column);
       return { column, points: trace.points, label: old ? old.label : trace.label, color: old ? old.color : null };
     }).filter(Boolean);
-    const taken = new Set(draft.traces.map((t) => t.color).filter(Boolean));
-    for (const trace of draft.traces) {
+    const taken = new Set([...own, ...added].filter((t) => !t.removed).map((t) => t.color).filter(Boolean));
+    for (const trace of added) {
       if (trace.color) continue;
       trace.color = TRACE_COLORS.find((c) => !taken.has(c)) || TRACE_COLORS[0];
       taken.add(trace.color);
     }
+    draft.traces = [...own, ...added];
     if (!edited.x) draft.x.label = x === null ? 'Row' : table.names[x];
-    if (!edited.y) draft.y.label = draft.traces.length === 1 ? draft.traces[0].label : '';
+    if (!edited.y) draft.y.label = added.length === 1 ? added[0].label : '';
     drawColumns();
     plotEdit.refresh();
     plotEdit.show();
@@ -63190,8 +63252,10 @@ function openDataPlotDialog(text, name, target = null) {
       status.textContent = table.numeric.length ? 'Choose a column with two rows of numbers or more.' : 'No column of numbers: check the separator and the rows before the data.';
       return;
     }
-    const points = plot.traces.reduce((sum, trace) => sum + trace.points.length, 0);
-    status.textContent = `${plot.traces.length} trace${plot.traces.length === 1 ? '' : 's'}, ${points} points kept from ${table.rows.length - table.skip} rows.`;
+    // The file's own traces: a plot added to has its others already.
+    const fresh = added.map((trace) => Math.min(trace.points.length, MAX_DATA_POINTS));
+    const points = fresh.reduce((sum, n) => sum + n, 0);
+    status.textContent = `${fresh.length} trace${fresh.length === 1 ? '' : 's'} from ${name}, ${points} points kept from ${table.rows.length - table.skip} rows.`;
   }
 
   const reread = (change) => {
@@ -63201,8 +63265,8 @@ function openDataPlotDialog(text, name, target = null) {
     // A new reading of the columns starts their choice over.
     if (before.names.length !== table.names.length || before.skip !== table.skip) {
       x = table.x;
-      y = table.y.slice(0, MAX_DATA_TRACES);
-      draft.traces = [];
+      y = table.y.slice(0, room());
+      draft.traces = own;
       if (!edited.x) draft.x.scale = table.scale.x;
       if (!edited.y) draft.y.scale = table.scale.y;
     }
@@ -63241,7 +63305,7 @@ function openDataPlotDialog(text, name, target = null) {
       el('fieldset', { class: 'data-plot-y' }, [
         el('legend', { text: 'Y columns' }),
         ...table.names.map((n, c) => el('label', {}, [
-          el('input', { type: 'checkbox', 'data-column': String(c), checked: y.includes(c), disabled: !numeric.has(c) || c === x || (!y.includes(c) && y.length >= MAX_DATA_TRACES),
+          el('input', { type: 'checkbox', 'data-column': String(c), checked: y.includes(c), disabled: !numeric.has(c) || c === x || (!y.includes(c) && y.length >= room()),
             onchange: (ev) => { y = ev.target.checked ? [...y, c].sort((a, b) => a - b) : y.filter((k) => k !== c); update(); } }),
           ` ${n}`,
         ])),
@@ -63252,10 +63316,19 @@ function openDataPlotDialog(text, name, target = null) {
   place.addEventListener('click', () => {
     const plot = plotEdit.plot({ file: name });
     if (!plot) return;
+    const zoom = plotEdit.zoom();
+    const old = target ? editor.circuit.plotLegend(target).map((label) => label.bbox()) : [];
     dialog.close();
     let placed = null;
     commit(() => {
-      if (target) {
+      if (adding) {
+        // The plot's own traces as edited here, then the file's under them.
+        applyDraft(editor.circuit, target, draft);
+        const fresh = draft.traces.filter((t) => t.index === undefined);
+        if (fresh.length) appendDataPlotTraces(editor.circuit, target, fresh.map(({ label, color, points }) => ({ label, color, points })), { file: name });
+        applyZoom(target, zoom);
+        placed = { box: target, legend: editor.circuit.plotLegend(target) };
+      } else if (target) {
         // Its axes, as edited here, and the zoom shown.
         const legend = replaceDataPlotTraces(editor.circuit, target, plot);
         for (const axis of ['x', 'y']) setDataPlotAxis(target, axis, plot[axis]);
@@ -63263,12 +63336,15 @@ function openDataPlotDialog(text, name, target = null) {
         placed = { box: target, legend };
       } else placed = placeDataPlot(editor.circuit, plot);
     });
-    // The legend's sizes are estimates until the browser measures them.
+    // The legend's sizes are estimates until the browser measures them;
+    // a plot's own column keeps its place.
     const legend = placed.legend;
-    if (legend.length) alignLabelColumn(legend.map((label) => label.id), { left: Math.min(...legend.map((l) => l.bbox().x)), top: Math.min(...legend.map((l) => l.bbox().y)), gap: 0 });
+    const column = old.length ? old : legend.map((l) => l.bbox());
+    if (legend.length) alignLabelColumn(legend.map((label) => label.id), { left: Math.min(...column.map((r) => r.x)), top: Math.min(...column.map((r) => r.y)), gap: 0 });
     setSelection([]);
     setLabelSelection([placed.box.id]);
-    logLine(target ? `read ${name} into the plot` : `plotted ${plot.traces.length} trace${plot.traces.length === 1 ? '' : 's'} from ${name}; drag to move it, its corners to resize`);
+    const count = draft.traces.filter((t) => t.index === undefined).length;
+    logLine(adding ? `added ${count} trace${count === 1 ? '' : 's'} from ${name} to the plot` : target ? `read ${name} into the plot` : `plotted ${plot.traces.length} trace${plot.traces.length === 1 ? '' : 's'} from ${name}; drag to move it, its corners to resize`);
     render();
   });
 
@@ -63281,7 +63357,7 @@ function openDataPlotDialog(text, name, target = null) {
   }
   const dialog = el('dialog', { class: 'confirm-dialog data-plot-dialog', 'aria-label': 'Data plot' });
   dialog.append(
-    el('h2', { text: target ? `Read ${name} into the plot` : `Data plot from ${name}` }),
+    el('h2', { text: adding ? `Add ${name} to the plot` : target ? `Read ${name} into the plot` : `Data plot from ${name}` }),
     el('h3', { class: 'data-plot-heading', text: 'File' }),
     form, preview, columns,
     el('h3', { class: 'data-plot-heading', text: 'Plot' }),
@@ -63317,12 +63393,8 @@ function openDataPlotSettings(box) {
     const old = editor.circuit.plotLegend(box).map((label) => label.bbox());
     dialog.close();
     commit(() => {
-      const circuit = editor.circuit;
-      for (const axis of ['x', 'y']) setDataPlotAxis(box, axis, { label: draft[axis].label, scale: draft[axis].scale });
-      for (const trace of draft.traces) if (!trace.removed) setDataPlotTrace(circuit, box, trace.index, { label: trace.label, color: trace.color });
-      // Last first, so the indices still hold.
-      for (const trace of [...draft.traces].reverse()) if (trace.removed) removeDataPlotTrace(circuit, box, trace.index);
-      for (const axis of ['x', 'y']) setDataPlotView(box, axis, zoom?.[axis] && !(box.plot[axis].scale === 'log' && zoom[axis][0] <= 0) ? zoom[axis] : null);
+      applyDraft(editor.circuit, box, draft);
+      applyZoom(box, zoom);
     });
     // Renamed entries are measured again: the column keeps its left edge and top.
     const legend = editor.circuit.plotLegend(box);
@@ -63334,7 +63406,8 @@ function openDataPlotSettings(box) {
     el('h2', { text: box.plot.file ? `Data plot from ${box.plot.file}` : 'Data plot' }),
     ...plotEdit.parts,
     el('div', { class: 'dialog-actions' }, [
-      el('button', { type: 'button', class: 'data-plot-reread', text: 'Read file…', title: 'Read a file into this plot, keeping its place, axes, and zoom', onclick: () => { dialog.close(); chooseDataFile(box); } }),
+      el('button', { type: 'button', class: 'data-plot-add', text: 'Add file…', title: 'Add traces from another file', disabled: box.plot.traces.length >= MAX_DATA_TRACES, onclick: () => { dialog.close(); chooseDataFile(box, 'add'); } }),
+      el('button', { type: 'button', class: 'data-plot-reread', text: 'Replace file…', title: 'Replace the traces with a file\'s, keeping the plot\'s place, axes, and zoom', onclick: () => { dialog.close(); chooseDataFile(box); } }),
       el('span', { class: 'dialog-actions-gap' }),
       el('button', { type: 'button', text: 'Cancel', onclick: () => dialog.close() }),
       el('button', { type: 'button', class: 'primary-action', text: 'Apply', onclick: apply }),

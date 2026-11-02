@@ -122,3 +122,23 @@ test('a data plot\'s legend entry renamed on its own renames its trace', () => {
   assert.equal(box.plot.traces[0].label, 'Channel 1');
   assert.equal(box.plot.traces[1].label, 'CH2 (V)');
 });
+
+test('dataplot --into adds a file\'s traces to a data plot, their legend entries under the others', () => {
+  const files = { 'runs/scope.csv': SCOPE, 'sim.csv': 'Time (s),Sim (V)\n0,0.15\n2e-6,0.25\n' };
+  const { circuit, box } = plotted(files);
+  runCommand(circuit, `annotation plotview ${box.id} x 0 1e-6`);
+  const legend = circuit.plotLegend(box);
+  const out = runCommand(circuit, `annotation dataplot sim.csv --into ${box.id}`, io(files));
+  assert.match(out.text, /added 1 trace from sim\.csv/);
+  assert.deepEqual(box.plot.traces.map((t) => t.label), ['CH1 (V)', 'CH2 (V)', 'Sim (V)']);
+  assert.equal(new Set(box.plot.traces.map((t) => t.color)).size, 3);
+  assert.equal(box.plot.file, 'scope.csv, sim.csv');
+  assert.deepEqual(box.plot.view, { x: [0, 1e-6] });
+  const [, second, third] = circuit.plotLegend(box);
+  assert.equal(third.text, 'Sim (V)');
+  assert.equal(third.bbox().x, legend[0].bbox().x);
+  assert.ok(third.bbox().y >= second.bbox().y + second.bbox().h);
+  assert.throws(() => runCommand(circuit, `annotation dataplot sim.csv --into R1`, io(files)), /is not a data plot/);
+  for (let i = 0; i < 5; i++) runCommand(circuit, `annotation dataplot sim.csv --into ${box.id}`, io(files));
+  assert.throws(() => runCommand(circuit, `annotation dataplot sim.csv --into ${box.id}`, io(files)), /at most 8 traces/);
+});

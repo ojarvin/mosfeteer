@@ -161,6 +161,33 @@ export function removeDataPlotTrace(circuit, box, index) {
   box.plot = normalizePlot({ ...plot, traces: plot.traces.filter((_, i) => i !== index) });
 }
 
+/** The names of the files a plot's traces came from, each once. */
+function joinFiles(...names) {
+  const files = [...new Set(names.flatMap((name) => String(name || '').split(', ')).filter(Boolean))];
+  return files.join(', ').slice(0, 200);
+}
+
+/** Add `traces` ({ label, points, color? }) to a data plot, read from the
+ *  file `file`, their legend entries under its others. A trace without a
+ *  color takes one the plot does not use yet. Returns the new entries. */
+export function appendDataPlotTraces(circuit, box, traces, { file = '' } = {}) {
+  const plot = dataPlotOf(box);
+  if (!traces.length) throw new Error('no trace to add');
+  if (plot.traces.length + traces.length > MAX_DATA_TRACES) throw new Error(`a plot has at most ${MAX_DATA_TRACES} traces (it has ${plot.traces.length})`);
+  const used = new Set(plot.traces.map((t) => t.color));
+  const added = traces.map((trace) => {
+    const color = trace.color || TRACE_COLORS.find((c) => !used.has(c)) || TRACE_COLORS[0];
+    used.add(color);
+    return { label: trace.label, color, points: trace.points };
+  });
+  const next = normalizePlot({ ...plot, file: joinFiles(plot.file, file), traces: [...plot.traces, ...added] });
+  if (!next || next.traces.length !== plot.traces.length + added.length) throw new Error('a trace to add has no two points to plot');
+  const legend = circuit.plotLegend(box);
+  const below = legend.length ? { x: Math.min(...legend.map((l) => l.bbox().x)), y: Math.max(...legend.map((l) => l.bbox().y + l.bbox().h)) } : null;
+  box.plot = next;
+  return writeLegend(circuit, box, next.traces.slice(plot.traces.length), below);
+}
+
 /** Replace a data plot's traces with `plot`'s (the file read again, or
  *  other columns), keeping its place, size, style, axes' names and scales,
  *  and zoom; its legend is written again where it was. */
