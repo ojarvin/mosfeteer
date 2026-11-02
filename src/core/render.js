@@ -11,7 +11,7 @@ import { closedSwitchHighlight, drawnNetPaths, switchState } from './beats.js';
 import { BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth } from './bus.js';
 import { TRANSFER_FUNCTION_TYPES } from './transfer-function.js';
 import { normalizePageGuide, pageGuideFrame } from './page-guide.js';
-import { bodeFigure, locusFigure, responseFigure, stepFigure, swingFigure } from './bode-figure.js';
+import { bodeFigure, dataFigure, locusFigure, responseFigure, stepFigure, swingFigure } from './bode-figure.js';
 import { mathRuns } from './math-text.js';
 import { joinSegments, stackOutline, stackedBoxes, wireEchoes } from './box-stack.js';
 
@@ -820,7 +820,7 @@ function legendInBlack(label, circuit) {
 /** A plot's text size (world units) in a box `height` tall: it scales with
  *  the box, within label sizes. */
 export function plotFontSize(plot, height) {
-  const response = ['response', 'swing', 'step', 'wave', 'locus'].includes(plot.kind);
+  const response = ['response', 'swing', 'step', 'wave', 'locus', 'data'].includes(plot.kind);
   return Math.max(18, Math.min(38, height / (response ? 10 : plot.phase ? 11 : 8)));
 }
 
@@ -835,13 +835,15 @@ function plotAnnotationSvg(label, opacity = '') {
   const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
   const w = Math.abs(b.x - a.x); const h = Math.abs(b.y - a.y);
   const plot = label.plot;
-  const response = ['response', 'swing', 'step', 'wave', 'locus'].includes(plot.kind);
+  const response = ['response', 'swing', 'step', 'wave', 'locus', 'data'].includes(plot.kind);
   const fontSize = plotFontSize(plot, h);
   // A response plot (signal-flow analysis) draws each trace in its color;
   // its traces' names are math labels beside it, children of the box.
   // An overloaded run (null) runs off the top.
   const figure = plot.kind === 'locus'
     ? locusFigure(plot, { width: w, height: h, fontSize })
+    : plot.kind === 'data'
+    ? dataFigure(plot, { width: w, height: h, fontSize })
     : plot.kind === 'step' || plot.kind === 'wave'
     ? stepFigure(plot, { width: w, height: h, fontSize })
     : plot.kind === 'swing'

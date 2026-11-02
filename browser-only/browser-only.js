@@ -21445,6 +21445,7 @@ __exports.bodeFigure = bodeFigure;
 __exports.cornerNames = cornerNames;
 __exports.responseFigure = responseFigure;
 __exports.stepFigure = stepFigure;
+__exports.dataFigure = dataFigure;
 __exports.swingFigure = swingFigure;
 __exports.plainTex = plainTex;
 __exports.swingOverload = swingOverload;
@@ -21452,7 +21453,7 @@ __exports.swingRunaway = swingRunaway;
 __exports.swingFullScale = swingFullScale;
 __exports.swingLimit = swingLimit;
 __exports.locusFigure = locusFigure;
-let axisTicks, logMinorGrid; __bind(() => { ({ axisTicks, logMinorGrid } = __require("src/core/plot-scale.js")); });
+let axisTicks, fitRange, logMinorGrid, toU; __bind(() => { ({ axisTicks, fitRange, logMinorGrid, toU } = __require("src/core/plot-scale.js")); });
 /**
  * The layout of a Bode sketch as plain drawing items in a box: lines, paths,
  * and short texts (with `_{}`/`^{}` markup). One layout, two renderers -- the
@@ -21857,6 +21858,68 @@ function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
     y: plot.kind === 'wave' ? 'Value (arb. units)' : 'Step response (arb. units)',
   });
   return { width, height, items: plot.view ? clipToPane(items, pane) : items, pane, ranges: { y: [yLow, yHigh] } };
+}
+
+/**
+ * A data plot (columns read from a file): each trace's points joined in
+ * file order, each axis linear or log as the plot says, fitted to the data
+ * unless the plot is zoomed (`view`). A log axis leaves out the points at or
+ * under zero. `plot`: `{ x: { label, scale }, y: { label, scale }, traces:
+ * [{ color, points: [[x, y]] }], view? }`.
+ */
+function dataFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
+  const items = [];
+  const em = fontSize;
+  const left = AXIS_LEFT_EM * em;
+  const right = 0.9 * em;
+  const top = 0.9 * em;
+  const bottom = AXIS_BOTTOM_EM * em;
+  const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
+  const xs = plot.x?.scale === 'log' ? 'log' : 'linear';
+  const ys = plot.y?.scale === 'log' ? 'log' : 'linear';
+  const curves = plot.traces.map((trace) => trace.points.map(([px, py]) => [toU(xs, px), toU(ys, py)])
+    .map(([u, v]) => (Number.isFinite(u) && Number.isFinite(v) ? [u, v] : null)));
+  const all = curves.flat().filter(Boolean);
+  const range = (view, scale, index) => (view ? view.map((v) => toU(scale, v)) : fitRange(all.map((p) => p[index]), { pad: index ? 0.05 : 0 }));
+  const [x0, x1] = range(plot.view?.x, xs, 0);
+  const [y0, y1] = range(plot.view?.y, ys, 1);
+  const x = (u) => pane.x + ((u - x0) / (x1 - x0 || 1)) * pane.w;
+  const y = (v) => pane.y + ((y1 - v) / (y1 - y0 || 1)) * pane.h;
+  items.push({ type: 'line', x1: pane.x, y1: pane.y, x2: pane.x, y2: pane.y + pane.h, role: 'axis' });
+  items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });
+  if (ys === 'linear' && y0 < 0 && y1 > 0) items.push({ type: 'line', x1: pane.x, y1: y(0), x2: pane.x + pane.w, y2: y(0), role: 'zero' });
+  const xTicks = zoomTicks(xs, x0, x1, pane.w, 6 * em);
+  const yTicks = zoomTicks(ys, y0, y1, pane.h, 2.5 * em);
+  // Faint lines through each decade of a log axis, under the numbered ones.
+  if (xs === 'log') {
+    for (const u of logMinorGrid(x0, x1, { ticks: xTicks.map((t) => t.u), length: pane.w, minDecade: 4 * em })) items.push({ type: 'line', x1: x(u), y1: pane.y, x2: x(u), y2: pane.y + pane.h, role: 'minor' });
+  }
+  if (ys === 'log') {
+    for (const u of logMinorGrid(y0, y1, { ticks: yTicks.map((t) => t.u), length: pane.h, minDecade: 3 * em })) items.push({ type: 'line', x1: pane.x, y1: y(u), x2: pane.x + pane.w, y2: y(u), role: 'minor' });
+  }
+  for (const tick of xTicks) {
+    items.push({ type: 'line', x1: x(tick.u), y1: pane.y, x2: x(tick.u), y2: pane.y + pane.h, role: 'grid' });
+    items.push({ type: 'text', x: x(tick.u), y: pane.y + pane.h + 1.3 * em, text: tick.text, anchor: 'middle', role: 'number' });
+  }
+  for (const tick of yTicks) {
+    items.push({ type: 'line', x1: pane.x, y1: y(tick.u), x2: pane.x + pane.w, y2: y(tick.u), role: 'grid' });
+    items.push({ type: 'text', x: pane.x - 0.45 * em, y: y(tick.u) + 0.36 * em, text: tick.text, anchor: 'end', role: 'number' });
+  }
+  curves.forEach((points, index) => {
+    // A point a log axis cannot show breaks the line there.
+    let current = [];
+    const flush = () => {
+      if (current.length > 1) items.push({ type: 'path', points: current, role: 'curve', color: plot.traces[index].color, trace: index });
+      current = [];
+    };
+    for (const p of points) {
+      if (!p) flush();
+      else current.push({ x: x(p[0]), y: y(p[1]) });
+    }
+    flush();
+  });
+  axisTitles(items, pane, em, { x: plot.x?.label || '', y: plot.y?.label || '' });
+  return { width, height, items: clipToPane(items, pane), pane, ranges: { x: [x0, x1], y: [y0, y1] } };
 }
 
 /** 1, 2, or 5 times a power of ten, near `rough`. */
@@ -28867,6 +28930,7 @@ __exports.normalizeImage = normalizeImage;
 __exports.normalizePictures = normalizePictures;
 __exports.normalizeTimingSpec = normalizeTimingSpec;
 __exports.normalizePlot = normalizePlot;
+__exports.thinDataPoints = thinDataPoints;
 __exports.diagonalDraftPath = diagonalDraftPath;
 __exports.analyzedCircuit = analyzedCircuit;
 let RAIL_NAMES, railNameKey; __bind(() => { ({ RAIL_NAMES, railNameKey } = __require("src/core/rail-names.js")); });
@@ -29996,6 +30060,7 @@ function normalizePlot(plot) {
   if (plot.kind === 'swing') return normalizeSwingPlot(plot);
   if (plot.kind === 'step' || plot.kind === 'wave') return normalizeStepPlot(plot);
   if (plot.kind === 'locus') return normalizeLocusPlot(plot);
+  if (plot.kind === 'data') return normalizeDataPlot(plot);
   const low = Number(plot.range?.low);
   const high = Number(plot.range?.high);
   const points = (Array.isArray(plot.points) ? plot.points : [])
@@ -30188,10 +30253,10 @@ function sourceOf(plot) {
 /** A plot's own axis limits, `view: { x: [low, high], y: [low, high] }` in
  *  its data's units (an x range of frequencies is positive): the zoom it
  *  was annotated at, kept through updates. Either axis may be left out. */
-function viewOf(plot, { positiveX = false } = {}) {
+function viewOf(plot, { positiveX = false, positiveY = false } = {}) {
   const pair = (v, positive) => (Array.isArray(v) && v.length === 2 && v.every(finite) && v[0] < v[1] && (!positive || v[0] > 0) ? [round(v[0], 9), round(v[1], 9)] : null);
   const x = pair(plot.view?.x, positiveX);
-  const y = pair(plot.view?.y, false);
+  const y = pair(plot.view?.y, positiveY);
   return x || y ? { view: { ...(x ? { x } : {}), ...(y ? { y } : {}) } } : {};
 }
 
@@ -30239,6 +30304,53 @@ function normalizeStepPlot(plot) {
   if (!traces.length) return null;
   // A waveform (the time-domain plot's) is drawn as a step response is, in time.
   return { kind: plot.kind === 'wave' ? 'wave' : 'step', unit: plot.unit === 'n' ? 'n' : 't', range: { low, high }, traces, ...viewOf(plot) };
+}
+
+/** The most points a data plot keeps of one trace (thinDataPoints). */
+const MAX_DATA_POINTS = 2000;
+
+/**
+ * At most `max` of a trace's points. Points in order along x are kept per
+ * stretch of x as their first, lowest, highest, and last, so peaks survive;
+ * points in no order (a loop, a scatter) are taken evenly.
+ */
+function thinDataPoints(points, max = MAX_DATA_POINTS) {
+  if (points.length <= max) return points;
+  const ordered = points.every((p, i) => !i || p[0] >= points[i - 1][0]);
+  if (!ordered) return Array.from({ length: max }, (_, i) => points[Math.round((i * (points.length - 1)) / (max - 1))]);
+  const buckets = Math.floor(max / 4);
+  const out = [];
+  for (let b = 0; b < buckets; b++) {
+    const slice = points.slice(Math.floor((b * points.length) / buckets), Math.floor(((b + 1) * points.length) / buckets));
+    if (!slice.length) continue;
+    let lowest = slice[0];
+    let highest = slice[0];
+    for (const p of slice) {
+      if (p[1] < lowest[1]) lowest = p;
+      if (p[1] > highest[1]) highest = p;
+    }
+    out.push(...[slice[0], lowest, highest, slice[slice.length - 1]].filter((p, i, all) => all.indexOf(p) === i).sort((p, q) => p[0] - q[0]));
+  }
+  return out;
+}
+
+/** A data plot (columns read from a file, csv-data.js): its traces as
+ *  [x, y] points to six digits, its axes' names and scales, the file's name
+ *  to read it again from. */
+function normalizeDataPlot(plot) {
+  const text = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
+  const axis = (a) => ({ label: text(a?.label, 200), scale: a?.scale === 'log' ? 'log' : 'linear' });
+  const traces = (Array.isArray(plot.traces) ? plot.traces : []).slice(0, 8).map((trace) => ({
+    label: text(trace?.label, 400),
+    color: /^#[0-9a-f]{6}$/i.test(trace?.color || '') ? trace.color : '#3b74e0',
+    points: thinDataPoints((Array.isArray(trace?.points) ? trace.points : [])
+      .filter((p) => Array.isArray(p) && finite(p[0]) && finite(p[1])).map((p) => [round(p[0], 6), round(p[1], 6)])),
+  })).filter((trace) => trace.points.length > 1);
+  if (!traces.length) return null;
+  const x = axis(plot.x);
+  const y = axis(plot.y);
+  const file = text(plot.file, 200);
+  return { kind: 'data', ...(file ? { file } : {}), x, y, traces, ...viewOf(plot, { positiveX: x.scale === 'log', positiveY: y.scale === 'log' }) };
 }
 
 /** A swing plot (signal-flow simulation): colored traces of each net's
@@ -36495,6 +36607,7 @@ __exports.MATH_WIDTH_DRAWN = MATH_WIDTH_DRAWN;
 __exports.INTERFACE_PIN_TYPES = INTERFACE_PIN_TYPES;
 __exports.MOS_ANALYSIS_TYPES = MOS_ANALYSIS_TYPES;
 __exports.MAX_IMAGE_DATA = MAX_IMAGE_DATA;
+__exports.MAX_DATA_POINTS = MAX_DATA_POINTS;
 __exports.LabelInstance = LabelInstance;
 __exports.ComponentInstance = ComponentInstance;
 __exports.Net = Net;
@@ -38967,7 +39080,7 @@ let closedSwitchHighlight, drawnNetPaths, switchState; __bind(() => { ({ closedS
 let BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth; __bind(() => { ({ BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth } = __require("src/core/bus.js")); });
 let TRANSFER_FUNCTION_TYPES; __bind(() => { ({ TRANSFER_FUNCTION_TYPES } = __require("src/core/transfer-function.js")); });
 let normalizePageGuide, pageGuideFrame; __bind(() => { ({ normalizePageGuide, pageGuideFrame } = __require("src/core/page-guide.js")); });
-let bodeFigure, locusFigure, responseFigure, stepFigure, swingFigure; __bind(() => { ({ bodeFigure, locusFigure, responseFigure, stepFigure, swingFigure } = __require("src/core/bode-figure.js")); });
+let bodeFigure, dataFigure, locusFigure, responseFigure, stepFigure, swingFigure; __bind(() => { ({ bodeFigure, dataFigure, locusFigure, responseFigure, stepFigure, swingFigure } = __require("src/core/bode-figure.js")); });
 let mathRuns; __bind(() => { ({ mathRuns } = __require("src/core/math-text.js")); });
 let joinSegments, stackOutline, stackedBoxes, wireEchoes; __bind(() => { ({ joinSegments, stackOutline, stackedBoxes, wireEchoes } = __require("src/core/box-stack.js")); });
 
@@ -39792,7 +39905,7 @@ function legendInBlack(label, circuit) {
 /** A plot's text size (world units) in a box `height` tall: it scales with
  *  the box, within label sizes. */
 function plotFontSize(plot, height) {
-  const response = ['response', 'swing', 'step', 'wave', 'locus'].includes(plot.kind);
+  const response = ['response', 'swing', 'step', 'wave', 'locus', 'data'].includes(plot.kind);
   return Math.max(18, Math.min(38, height / (response ? 10 : plot.phase ? 11 : 8)));
 }
 
@@ -39807,13 +39920,15 @@ function plotAnnotationSvg(label, opacity = '') {
   const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
   const w = Math.abs(b.x - a.x); const h = Math.abs(b.y - a.y);
   const plot = label.plot;
-  const response = ['response', 'swing', 'step', 'wave', 'locus'].includes(plot.kind);
+  const response = ['response', 'swing', 'step', 'wave', 'locus', 'data'].includes(plot.kind);
   const fontSize = plotFontSize(plot, h);
   // A response plot (signal-flow analysis) draws each trace in its color;
   // its traces' names are math labels beside it, children of the box.
   // An overloaded run (null) runs off the top.
   const figure = plot.kind === 'locus'
     ? locusFigure(plot, { width: w, height: h, fontSize })
+    : plot.kind === 'data'
+    ? dataFigure(plot, { width: w, height: h, fontSize })
     : plot.kind === 'step' || plot.kind === 'wave'
     ? stepFigure(plot, { width: w, height: h, fontSize })
     : plot.kind === 'swing'
@@ -41651,6 +41766,7 @@ function figureCaption(figure) {
   if (figure.kind === 'plot') {
     const plot = figure.labels.find((label) => label.plot)?.plot;
     if (plot?.kind === 'response' && plot.quantity === 'phase') return 'Phase response.';
+    if (plot?.kind === 'data') return plot.file ? `Data from ${plot.file}.` : 'Data.';
     return PLOT_CAPTIONS[plot?.kind] || 'Plot.';
   }
   return {
@@ -86087,7 +86203,7 @@ function renderDetail() {
     detailEl.appendChild(label.table
       ? detailHeader('Parts table', 'sizes and values')
       : label.plot
-      ? detailHeader(label.plot.kind === 'response' ? 'Response graph' : label.plot.kind === 'swing' ? 'Swing graph' : label.plot.kind === 'step' ? 'Step response' : label.plot.kind === 'locus' ? 'Root locus' : 'Bode sketch', 'plot')
+      ? detailHeader(label.plot.kind === 'response' ? 'Response graph' : label.plot.kind === 'swing' ? 'Swing graph' : label.plot.kind === 'step' ? 'Step response' : label.plot.kind === 'locus' ? 'Root locus' : label.plot.kind === 'data' ? 'Data plot' : 'Bode sketch', 'plot')
       : detailHeader(label.text || '(empty)', label.kind === 'label' ? '' : label.kind));
     const list = document.createElement('dl');
     list.className = 'detail-props';
@@ -87762,7 +87878,8 @@ function annotateCoefficients() {
  */
 async function updatePlots() {
   const circuit = editor.circuit;
-  const boxes = [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.plot);
+  // A data plot is its file's, never the analysis's.
+  const boxes = [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.plot && label.plot.kind !== 'data');
   if (!boxes.length) { logLine('No plots on the drawing to update.'); return; }
   if (flow().spectrum?.on) runSpectrum();
   if (boxes.some((box) => box.plot.kind === 'swing')) {

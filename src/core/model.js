@@ -1101,6 +1101,7 @@ export function normalizePlot(plot) {
   if (plot.kind === 'swing') return normalizeSwingPlot(plot);
   if (plot.kind === 'step' || plot.kind === 'wave') return normalizeStepPlot(plot);
   if (plot.kind === 'locus') return normalizeLocusPlot(plot);
+  if (plot.kind === 'data') return normalizeDataPlot(plot);
   const low = Number(plot.range?.low);
   const high = Number(plot.range?.high);
   const points = (Array.isArray(plot.points) ? plot.points : [])
@@ -1293,10 +1294,10 @@ function sourceOf(plot) {
 /** A plot's own axis limits, `view: { x: [low, high], y: [low, high] }` in
  *  its data's units (an x range of frequencies is positive): the zoom it
  *  was annotated at, kept through updates. Either axis may be left out. */
-function viewOf(plot, { positiveX = false } = {}) {
+function viewOf(plot, { positiveX = false, positiveY = false } = {}) {
   const pair = (v, positive) => (Array.isArray(v) && v.length === 2 && v.every(finite) && v[0] < v[1] && (!positive || v[0] > 0) ? [round(v[0], 9), round(v[1], 9)] : null);
   const x = pair(plot.view?.x, positiveX);
-  const y = pair(plot.view?.y, false);
+  const y = pair(plot.view?.y, positiveY);
   return x || y ? { view: { ...(x ? { x } : {}), ...(y ? { y } : {}) } } : {};
 }
 
@@ -1344,6 +1345,53 @@ function normalizeStepPlot(plot) {
   if (!traces.length) return null;
   // A waveform (the time-domain plot's) is drawn as a step response is, in time.
   return { kind: plot.kind === 'wave' ? 'wave' : 'step', unit: plot.unit === 'n' ? 'n' : 't', range: { low, high }, traces, ...viewOf(plot) };
+}
+
+/** The most points a data plot keeps of one trace (thinDataPoints). */
+export const MAX_DATA_POINTS = 2000;
+
+/**
+ * At most `max` of a trace's points. Points in order along x are kept per
+ * stretch of x as their first, lowest, highest, and last, so peaks survive;
+ * points in no order (a loop, a scatter) are taken evenly.
+ */
+export function thinDataPoints(points, max = MAX_DATA_POINTS) {
+  if (points.length <= max) return points;
+  const ordered = points.every((p, i) => !i || p[0] >= points[i - 1][0]);
+  if (!ordered) return Array.from({ length: max }, (_, i) => points[Math.round((i * (points.length - 1)) / (max - 1))]);
+  const buckets = Math.floor(max / 4);
+  const out = [];
+  for (let b = 0; b < buckets; b++) {
+    const slice = points.slice(Math.floor((b * points.length) / buckets), Math.floor(((b + 1) * points.length) / buckets));
+    if (!slice.length) continue;
+    let lowest = slice[0];
+    let highest = slice[0];
+    for (const p of slice) {
+      if (p[1] < lowest[1]) lowest = p;
+      if (p[1] > highest[1]) highest = p;
+    }
+    out.push(...[slice[0], lowest, highest, slice[slice.length - 1]].filter((p, i, all) => all.indexOf(p) === i).sort((p, q) => p[0] - q[0]));
+  }
+  return out;
+}
+
+/** A data plot (columns read from a file, csv-data.js): its traces as
+ *  [x, y] points to six digits, its axes' names and scales, the file's name
+ *  to read it again from. */
+function normalizeDataPlot(plot) {
+  const text = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
+  const axis = (a) => ({ label: text(a?.label, 200), scale: a?.scale === 'log' ? 'log' : 'linear' });
+  const traces = (Array.isArray(plot.traces) ? plot.traces : []).slice(0, 8).map((trace) => ({
+    label: text(trace?.label, 400),
+    color: /^#[0-9a-f]{6}$/i.test(trace?.color || '') ? trace.color : '#3b74e0',
+    points: thinDataPoints((Array.isArray(trace?.points) ? trace.points : [])
+      .filter((p) => Array.isArray(p) && finite(p[0]) && finite(p[1])).map((p) => [round(p[0], 6), round(p[1], 6)])),
+  })).filter((trace) => trace.points.length > 1);
+  if (!traces.length) return null;
+  const x = axis(plot.x);
+  const y = axis(plot.y);
+  const file = text(plot.file, 200);
+  return { kind: 'data', ...(file ? { file } : {}), x, y, traces, ...viewOf(plot, { positiveX: x.scale === 'log', positiveY: y.scale === 'log' }) };
 }
 
 /** A swing plot (signal-flow simulation): colored traces of each net's

@@ -433,6 +433,7 @@ function figureCaption(figure) {
   if (figure.kind === 'plot') {
     const plot = figure.labels.find((label) => label.plot)?.plot;
     if (plot?.kind === 'response' && plot.quantity === 'phase') return 'Phase response.';
+    if (plot?.kind === 'data') return plot.file ? `Data from ${plot.file}.` : 'Data.';
     return PLOT_CAPTIONS[plot?.kind] || 'Plot.';
   }
   return {

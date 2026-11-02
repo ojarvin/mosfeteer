@@ -1321,7 +1321,8 @@ function annotateCoefficients() {
  */
 async function updatePlots() {
   const circuit = editor.circuit;
-  const boxes = [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.plot);
+  // A data plot is its file's, never the analysis's.
+  const boxes = [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.plot && label.plot.kind !== 'data');
   if (!boxes.length) { logLine('No plots on the drawing to update.'); return; }
   if (flow().spectrum?.on) runSpectrum();
   if (boxes.some((box) => box.plot.kind === 'swing')) {

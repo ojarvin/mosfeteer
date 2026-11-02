@@ -11,7 +11,7 @@
  * corner, label, number. `zero` also marks the phase's multiples of 180°.
  */
 
-import { axisTicks, logMinorGrid } from './plot-scale.js';
+import { axisTicks, fitRange, logMinorGrid, toU } from './plot-scale.js';
 
 const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
 
@@ -402,6 +402,68 @@ export function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = 
     y: plot.kind === 'wave' ? 'Value (arb. units)' : 'Step response (arb. units)',
   });
   return { width, height, items: plot.view ? clipToPane(items, pane) : items, pane, ranges: { y: [yLow, yHigh] } };
+}
+
+/**
+ * A data plot (columns read from a file): each trace's points joined in
+ * file order, each axis linear or log as the plot says, fitted to the data
+ * unless the plot is zoomed (`view`). A log axis leaves out the points at or
+ * under zero. `plot`: `{ x: { label, scale }, y: { label, scale }, traces:
+ * [{ color, points: [[x, y]] }], view? }`.
+ */
+export function dataFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
+  const items = [];
+  const em = fontSize;
+  const left = AXIS_LEFT_EM * em;
+  const right = 0.9 * em;
+  const top = 0.9 * em;
+  const bottom = AXIS_BOTTOM_EM * em;
+  const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
+  const xs = plot.x?.scale === 'log' ? 'log' : 'linear';
+  const ys = plot.y?.scale === 'log' ? 'log' : 'linear';
+  const curves = plot.traces.map((trace) => trace.points.map(([px, py]) => [toU(xs, px), toU(ys, py)])
+    .map(([u, v]) => (Number.isFinite(u) && Number.isFinite(v) ? [u, v] : null)));
+  const all = curves.flat().filter(Boolean);
+  const range = (view, scale, index) => (view ? view.map((v) => toU(scale, v)) : fitRange(all.map((p) => p[index]), { pad: index ? 0.05 : 0 }));
+  const [x0, x1] = range(plot.view?.x, xs, 0);
+  const [y0, y1] = range(plot.view?.y, ys, 1);
+  const x = (u) => pane.x + ((u - x0) / (x1 - x0 || 1)) * pane.w;
+  const y = (v) => pane.y + ((y1 - v) / (y1 - y0 || 1)) * pane.h;
+  items.push({ type: 'line', x1: pane.x, y1: pane.y, x2: pane.x, y2: pane.y + pane.h, role: 'axis' });
+  items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });
+  if (ys === 'linear' && y0 < 0 && y1 > 0) items.push({ type: 'line', x1: pane.x, y1: y(0), x2: pane.x + pane.w, y2: y(0), role: 'zero' });
+  const xTicks = zoomTicks(xs, x0, x1, pane.w, 6 * em);
+  const yTicks = zoomTicks(ys, y0, y1, pane.h, 2.5 * em);
+  // Faint lines through each decade of a log axis, under the numbered ones.
+  if (xs === 'log') {
+    for (const u of logMinorGrid(x0, x1, { ticks: xTicks.map((t) => t.u), length: pane.w, minDecade: 4 * em })) items.push({ type: 'line', x1: x(u), y1: pane.y, x2: x(u), y2: pane.y + pane.h, role: 'minor' });
+  }
+  if (ys === 'log') {
+    for (const u of logMinorGrid(y0, y1, { ticks: yTicks.map((t) => t.u), length: pane.h, minDecade: 3 * em })) items.push({ type: 'line', x1: pane.x, y1: y(u), x2: pane.x + pane.w, y2: y(u), role: 'minor' });
+  }
+  for (const tick of xTicks) {
+    items.push({ type: 'line', x1: x(tick.u), y1: pane.y, x2: x(tick.u), y2: pane.y + pane.h, role: 'grid' });
+    items.push({ type: 'text', x: x(tick.u), y: pane.y + pane.h + 1.3 * em, text: tick.text, anchor: 'middle', role: 'number' });
+  }
+  for (const tick of yTicks) {
+    items.push({ type: 'line', x1: pane.x, y1: y(tick.u), x2: pane.x + pane.w, y2: y(tick.u), role: 'grid' });
+    items.push({ type: 'text', x: pane.x - 0.45 * em, y: y(tick.u) + 0.36 * em, text: tick.text, anchor: 'end', role: 'number' });
+  }
+  curves.forEach((points, index) => {
+    // A point a log axis cannot show breaks the line there.
+    let current = [];
+    const flush = () => {
+      if (current.length > 1) items.push({ type: 'path', points: current, role: 'curve', color: plot.traces[index].color, trace: index });
+      current = [];
+    };
+    for (const p of points) {
+      if (!p) flush();
+      else current.push({ x: x(p[0]), y: y(p[1]) });
+    }
+    flush();
+  });
+  axisTitles(items, pane, em, { x: plot.x?.label || '', y: plot.y?.label || '' });
+  return { width, height, items: clipToPane(items, pane), pane, ranges: { x: [x0, x1], y: [y0, y1] } };
 }
 
 /** 1, 2, or 5 times a power of ten, near `rough`. */

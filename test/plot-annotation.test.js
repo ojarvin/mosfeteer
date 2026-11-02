@@ -169,3 +169,53 @@ test('a lone curve has its line sample too; a note after the curves (an SNDR) ha
   assert.equal(name.anchor.x, at.name - 120);
   assert.equal(note.anchor.x, at.note, 'the note stays');
 });
+
+test('a data plot keeps its points to six digits, thinned past its limit, and its axes as given', async () => {
+  const { MAX_DATA_POINTS } = await import('../src/core/model.js');
+  const many = Array.from({ length: 10000 }, (_, i) => [i * 1e-9, i === 5000 ? 9 : Math.sin(i / 300)]);
+  const plot = normalizePlot({
+    kind: 'data', file: 'scope.csv', x: { label: 'Time (s)', scale: 'linear' }, y: { label: 'V', scale: 'bogus' },
+    traces: [{ label: 'CH1', color: '#ff0000', points: many }, { label: 'short', points: [[1, 2]] }, { label: 'CH2', points: [[0, 1 / 3], [1, 'x'], [2, 2]] }],
+    view: { x: [0, 5e-6], y: [-1, 0] },
+  });
+  assert.equal(plot.file, 'scope.csv');
+  assert.deepEqual(plot.y, { label: 'V', scale: 'linear' });
+  // A one-point trace is dropped, a point that is not a number too.
+  assert.deepEqual(plot.traces.map((t) => t.label), ['CH1', 'CH2']);
+  assert.deepEqual(plot.traces[1].points, [[0, 0.333333], [2, 2]]);
+  assert.equal(plot.traces[1].color, '#3b74e0');
+  // Thinned, in order, the spike kept.
+  const kept = plot.traces[0].points;
+  assert.ok(kept.length <= MAX_DATA_POINTS && kept.length > MAX_DATA_POINTS / 2, String(kept.length));
+  assert.ok(kept.some(([, v]) => v === 9));
+  assert.ok(kept.every((p, i) => !i || p[0] >= kept[i - 1][0]));
+  assert.deepEqual(plot.view, { x: [0, 5e-6], y: [-1, 0] });
+  // A log axis keeps only a positive view on it.
+  const log = normalizePlot({ kind: 'data', x: { scale: 'log' }, y: { scale: 'log' }, traces: [{ points: [[1, 1], [10, 100]] }], view: { x: [0, 10], y: [1, 100] } });
+  assert.deepEqual(log.view, { y: [1, 100] });
+  assert.equal(normalizePlot({ kind: 'data', traces: [] }), null);
+  assert.deepEqual(JSON.parse(JSON.stringify(plot)), plot);
+});
+
+test('a data plot draws its traces on log or linear axes, leaving out what a log axis cannot show', async () => {
+  const { dataFigure } = await import('../src/core/bode-figure.js');
+  const plot = normalizePlot({
+    kind: 'data', x: { label: 'f (Hz)', scale: 'log' }, y: { label: '|H|', scale: 'linear' },
+    traces: [{ label: 'a', color: '#ff0000', points: [[-1, 5], [1, 0], [10, -3], [100, -20], [1000, -40]] }],
+  });
+  const figure = dataFigure(plot, { width: 480, height: 260, fontSize: 11 });
+  const curves = figure.items.filter((item) => item.role === 'curve');
+  assert.equal(curves.length, 1);
+  assert.equal(curves[0].points.length, 4);
+  // The x axis fits the decades; the y axis is ticked in plain numbers.
+  assert.deepEqual(figure.ranges.x, [0, 3]);
+  const numbers = figure.items.filter((item) => item.role === 'number').map((item) => item.text);
+  assert.ok(numbers.includes('10^{2}') || numbers.includes('100'), numbers.join());
+  assert.ok(numbers.includes('-20'), numbers.join());
+  assert.deepEqual(figure.items.filter((item) => item.role === 'label').map((item) => item.text), ['f (Hz)', '|H|']);
+  // On the drawing: a plot like the others, its curve in the trace's color when colored.
+  const circuit = new Circuit();
+  const box = circuit.addAnnotation('box', { x: 0, y: 0, end: { x: 720, y: 440 }, plot, style: { lineStyle: 'solid' } });
+  assert.equal(box.plot.kind, 'data');
+  assert.match(svgString(circuit), /class="plot-annotation"[\s\S]*stroke="#ff0000"/);
+});

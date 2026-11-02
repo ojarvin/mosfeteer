@@ -487,7 +487,7 @@ export function renderDetail() {
     detailEl.appendChild(label.table
       ? detailHeader('Parts table', 'sizes and values')
       : label.plot
-      ? detailHeader(label.plot.kind === 'response' ? 'Response graph' : label.plot.kind === 'swing' ? 'Swing graph' : label.plot.kind === 'step' ? 'Step response' : label.plot.kind === 'locus' ? 'Root locus' : 'Bode sketch', 'plot')
+      ? detailHeader(label.plot.kind === 'response' ? 'Response graph' : label.plot.kind === 'swing' ? 'Swing graph' : label.plot.kind === 'step' ? 'Step response' : label.plot.kind === 'locus' ? 'Root locus' : label.plot.kind === 'data' ? 'Data plot' : 'Bode sketch', 'plot')
       : detailHeader(label.text || '(empty)', label.kind === 'label' ? '' : label.kind));
     const list = document.createElement('dl');
     list.className = 'detail-props';
