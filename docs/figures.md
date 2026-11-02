@@ -1,6 +1,6 @@
 # Figures
 
-What the tools put on the drawing is a **figure**: an analysis's plot, its
+What the tools put on the drawing is a **figure**: an analysis's plot, a data plot, its
 equations as a table, the signal-flow coefficients table, the kT/C noise table, the small-signal model, the
 timing diagram, a parts table. Code: `src/core/figures.js` (identity,
 listing, placement), `src/web/figure-annotate.js` (the tables); tests:
@@ -15,6 +15,7 @@ the same `figure: { id, kind, source, key }`, saved with the design
 | kind | source | drawn as |
 | --- | --- | --- |
 | `plot` | `small-signal`, `signal-flow`, `switched-cap` | a box with `plot` and its legend labels (`parent`); `key` its plot kind, quantity and role |
+| `plot` | `data` | a data plot: a box with `plot` (`kind: 'data'`) and its legend labels |
 | `equations` | `small-signal`, `signal-flow`, `switched-cap` | one math table label, one per tool |
 | `coefficients` | `signal-flow` | one math table label: headings, a rule, a row per coefficient (name, value) |
 | `noise` | `switched-cap` | one math table label: the kT/C calculator's numbers |
@@ -87,3 +88,35 @@ A table is one math label whose lines are TeX rows: `&` between columns,
 (`mathTableHtml` in `render.js`). `columns` (`l`, `c`, `r` each) aligns
 them, an em apart; without it they align as TeX's `align` does (right, then
 left, touching). It measures and saves its size as any math label does.
+
+## Data plots
+
+A data plot is columns of numbers read from a text file: CSV, TSV, or
+columns separated by spaces (`src/core/csv-data.js`, `src/core/data-plot.js`,
+`src/web/data-plot-ui.js`; tests `test/csv-data.test.js`,
+`test/data-plot.test.js`, `test/browser/data-plot.test.js`).
+
+- The file is read once and never kept. The plot keeps its traces as
+  `[x, y]` points to six digits, up to 8 traces of 2000 points (a longer
+  trace is thinned, keeping each stretch's lowest and highest point), each
+  axis's name and scale (`linear`, `log`), its zoom (`view`), and the
+  file's name.
+- Reading guesses the separator (tab, semicolon, comma, spaces), the
+  decimal sign (a comma when the separator is not one), and the rows
+  before the data; the last of those names the columns when it has a
+  name for each. Lines starting with `#`, `%`, or `//` are comments. A
+  cell is a number or a value with an SI suffix (`2.2k`); anything else
+  is a gap. The first column of numbers is x and the next ones are the
+  traces; a positive column over more than three decades is suggested a
+  log scale.
+- **More → Data plot…** chooses the file and shows the guesses, the first
+  rows, the columns, the scales, and the plot as it will be drawn; Place
+  packs it as a plot. `annotation dataplot FILE` does the same from the
+  CLI, which reads the file and sends it with the command.
+- **Plot settings…** (right-click, or double-click) sets each axis's name
+  and scale, each trace's name and color or its removal, and the zoom,
+  panned and zoomed in the window's plot; Apply is one undo step. **Read
+  file…** reads a file into the plot, keeping its place, axes, and zoom.
+  Commands: `annotation plotaxis`, `plotview`, `plottrace`.
+- Annotating and Update plots never touch a data plot.
+
