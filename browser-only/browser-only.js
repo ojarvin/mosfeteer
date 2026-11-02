@@ -23079,7 +23079,7 @@ __exports.parseArgs = parseArgs;
 __exports.evaluate = evaluate;
 __exports.commandHelp = commandHelp;
 __exports.runCommand = runCommand;
-let dataPlotFromText, placeDataPlot, removeDataPlotTrace, setDataPlotAxis, setDataPlotView; __bind(() => { ({ dataPlotFromText, placeDataPlot, removeDataPlotTrace, setDataPlotAxis, setDataPlotView } = __require("src/core/data-plot.js")); });
+let dataPlotFromText, placeDataPlot, removeDataPlotTrace, setDataPlotAxis, setDataPlotTrace, setDataPlotView; __bind(() => { ({ dataPlotFromText, placeDataPlot, removeDataPlotTrace, setDataPlotAxis, setDataPlotTrace, setDataPlotView } = __require("src/core/data-plot.js")); });
 let analyzeSignalFlow, complexText; __bind(() => { ({ analyzeSignalFlow, complexText } = __require("src/core/analysis/signal-flow.js")); });
 let analyzeLogic; __bind(() => { ({ analyzeLogic } = __require("src/core/analysis/logic.js")); });
 let Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld; __bind(() => { ({ Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld } = __require("src/core/model.js")); });
@@ -23251,6 +23251,7 @@ const FLAG_ARITY = {
   xscale: 1,
   yscale: 1,
   scale: 1,
+  color: 1,
 };
 
 const SYNTHESIZE_USAGE = 'usage: synthesize logic IN ... OUT=VALUES ... [--style and-or|nand|or-and|nor] [--gates inverter,and,nand,or,nor] [--max-inputs 2|3] [--at X Y] [--print]';
@@ -23686,7 +23687,7 @@ function commandHelp() {
     '                                   - plot a CSV file\'s columns (by number or name); unset options are guessed. The file is read, never kept',
     '  annotation plotaxis PLOT x|y [--label TEXT] [--scale log|linear] - name a data plot\'s axis, or set its scale',
     '  annotation plotview PLOT x|y LOW HIGH|fit - zoom a data plot\'s axis, or fit it to the data',
-    '  annotation plottrace PLOT N rm  - take trace N (from 1) off a data plot',
+    '  annotation plottrace PLOT N rm|[--label TEXT] [--color #RRGGBB] - take trace N (from 1) off a data plot, or rename or recolor it',
     '  annotation stack BOX N|off [--offset DX,DY] - N copies of a box\'s outline behind it, DX,DY apart (20,-20); wires between stacks repeat',
     '  list                           - list components',
     '  state                          - full JSON state',
@@ -24793,9 +24794,15 @@ function annotationCommand(circuit, pos, result, flags = {}, io) {
   }
   if (op === 'plottrace') {
     const box = circuit.labels.get(pos[1]);
-    if (!box || !/^\d+$/.test(pos[2] || '') || pos[3] !== 'rm' || pos.length !== 4) throw new Error('usage: annotation plottrace PLOT N rm');
-    removeDataPlotTrace(circuit, box, Number(pos[2]) - 1);
-    return result(`${box.id}: took off trace ${pos[2]}`, box.toJSON(), true);
+    const usage = 'usage: annotation plottrace PLOT N rm|[--label TEXT] [--color #RRGGBB]';
+    if (!box || !/^\d+$/.test(pos[2] || '')) throw new Error(usage);
+    if (pos[3] === 'rm' && pos.length === 4) {
+      removeDataPlotTrace(circuit, box, Number(pos[2]) - 1);
+      return result(`${box.id}: took off trace ${pos[2]}`, box.toJSON(), true);
+    }
+    if (pos.length !== 3 || (!flags.label && !flags.color)) throw new Error(usage);
+    const changed = setDataPlotTrace(circuit, box, Number(pos[2]) - 1, { label: flags.label?.[0], color: flags.color?.[0] });
+    return result(`${box.id}: trace ${pos[2]} "${box.plot.traces[Number(pos[2]) - 1].label}" ${box.plot.traces[Number(pos[2]) - 1].color}`, box.toJSON(), changed);
   }
   if (op === 'stack') {
     const box = circuit.labels.get(pos[1]);
@@ -27173,6 +27180,7 @@ __exports.dataPlotFromText = dataPlotFromText;
 __exports.placeDataPlot = placeDataPlot;
 __exports.setDataPlotAxis = setDataPlotAxis;
 __exports.setDataPlotView = setDataPlotView;
+__exports.setDataPlotTrace = setDataPlotTrace;
 __exports.removeDataPlotTrace = removeDataPlotTrace;
 __exports.replaceDataPlotTraces = replaceDataPlotTraces;
 let TRACE_COLORS; __bind(() => { ({ TRACE_COLORS } = __require("src/core/analysis/signal-flow.js")); });
@@ -27302,6 +27310,24 @@ function setDataPlotView(box, axis, range) {
   const next = normalizePlot({ ...plot, view });
   if (JSON.stringify(next) === JSON.stringify(plot)) return false;
   box.plot = next;
+  return true;
+}
+
+/** Rename or recolor trace `index` (from 0) of a data plot, its legend
+ *  entry with it. Returns whether anything changed. */
+function setDataPlotTrace(circuit, box, index, { label, color } = {}) {
+  const plot = dataPlotOf(box);
+  const trace = plot.traces[index];
+  if (!trace) throw new Error(`no trace ${index + 1} (the plot has ${plot.traces.length})`);
+  if (color !== undefined && !/^#[0-9a-f]{6}$/i.test(color)) throw new Error('a color is #rrggbb');
+  const next = { ...trace, ...(label !== undefined ? { label: String(label).slice(0, 400) } : {}), ...(color !== undefined ? { color: color.toLowerCase() } : {}) };
+  if (next.label === trace.label && next.color === trace.color) return false;
+  box.plot = normalizePlot({ ...plot, traces: plot.traces.map((t, i) => (i === index ? next : t)) });
+  const entry = circuit.plotLegend(box)[index];
+  if (entry) {
+    if (next.label !== trace.label) entry.setText(next.label || ' ');
+    entry.style = { ...entry.style, color: next.color };
+  }
   return true;
 }
 
@@ -39152,6 +39178,7 @@ __modules["src/core/plot-spec.js"] = function (__require, __exports) {
 __exports.axisName = axisName;
 __exports.responseSpec = responseSpec;
 __exports.stepSpec = stepSpec;
+__exports.dataSpec = dataSpec;
 __exports.swingSpec = swingSpec;
 __exports.locusSpec = locusSpec;
 __exports.bodeSpecs = bodeSpecs;
@@ -39227,6 +39254,20 @@ function stepSpec(plot) {
     })),
     vlines: [],
     hlines: [{ y: 0, role: 'zero' }],
+  };
+}
+
+/** A data plot (columns read from a file, core/data-plot.js), each axis
+ *  linear or log as it says. */
+function dataSpec(plot) {
+  return {
+    key: `data:${plot.x.scale}:${plot.y.scale}`,
+    title: 'Data',
+    x: { scale: plot.x.scale, label: plot.x.label },
+    y: { scale: plot.y.scale, label: plot.y.label },
+    series: plot.traces.map((trace) => ({ label: trace.label, color: trace.color, role: 'curve', points: trace.points.map(([x, y]) => [x, y]) })),
+    vlines: [],
+    hlines: plot.y.scale === 'linear' ? [{ y: 0, role: 'zero' }] : [],
   };
 }
 
@@ -60990,6 +61031,7 @@ let openArrangePicker; __bind(() => { ({ openArrangePicker } = __require("src/we
 let shortPlacementLabel; __bind(() => { ({ shortPlacementLabel } = __require("src/web/toolbar.js")); });
 let swapCandidates; __bind(() => { ({ swapCandidates } = __require("src/core/swap.js")); });
 let appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename; __bind(() => { ({ appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename } = __require("src/web/side-panel.js")); });
+let openDataPlotSettings; __bind(() => { ({ openDataPlotSettings } = __require("src/web/data-plot-ui.js")); });
 let busWidth, netNamesConnect; __bind(() => { ({ busWidth, netNamesConnect } = __require("src/core/bus.js")); });
 let STACK_DEFAULT, fanStacks; __bind(() => { ({ STACK_DEFAULT, fanStacks } = __require("src/core/box-stack.js")); });
 let handleStyleControlClick, selectionStyleState, styleDefaults, syncStyleControls, wireStyleValue; __bind(() => { ({ handleStyleControlClick, selectionStyleState, styleDefaults, syncStyleControls, wireStyleValue } = __require("src/web/style-controls.js")); });
@@ -61000,6 +61042,7 @@ let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); 
  * selection, style, switch, signal-flow, and small-signal submenus, and the
  * panel rows' renames it offers.
  */
+
 
 
 
@@ -61802,6 +61845,7 @@ function appendContextActions(menu, target) {
     if (target.value.kind === 'label') appendContextItem(group, 'Edit text…', later(() => inlineEditLabel(target.value)), { shortcut: 't' });
     const lines = selectedLines();
     if (target.value.kind === 'line' && lines.length > 1) appendContextItem(group, `Join ${lines.length} lines`, joinSelectedLines);
+    if (target.value.plot?.kind === 'data') appendContextItem(group, 'Plot settings…', later(() => openDataPlotSettings(target.value)));
     if (target.value.plot) appendPlotColorsItem(group, target.value);
     appendBoxStackMenu(group, target.value);
     appendBeatContextItems(group, target);
@@ -62903,11 +62947,14 @@ __exports.PASTED_IMAGE_TYPES = PASTED_IMAGE_TYPES;
 __modules["src/web/data-plot-ui.js"] = function (__require, __exports) {
 __exports.chooseDataFile = chooseDataFile;
 __exports.openDataPlotDialog = openDataPlotDialog;
+__exports.openDataPlotSettings = openDataPlotSettings;
 __exports.installDataPlotUi = installDataPlotUi;
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 let MAX_DATA_TRACES, readTable; __bind(() => { ({ MAX_DATA_TRACES, readTable } = __require("src/core/csv-data.js")); });
-let dataPlot, placeDataPlot, replaceDataPlotTraces; __bind(() => { ({ dataPlot, placeDataPlot, replaceDataPlotTraces } = __require("src/core/data-plot.js")); });
-let Circuit; __bind(() => { ({ Circuit } = __require("src/core/model.js")); });
+let dataPlot, placeDataPlot, removeDataPlotTrace, replaceDataPlotTraces, setDataPlotAxis, setDataPlotTrace, setDataPlotView; __bind(() => { ({ dataPlot, placeDataPlot, removeDataPlotTrace, replaceDataPlotTraces, setDataPlotAxis, setDataPlotTrace, setDataPlotView } = __require("src/core/data-plot.js")); });
+let Circuit, normalizePlot; __bind(() => { ({ Circuit, normalizePlot } = __require("src/core/model.js")); });
+let dataSpec; __bind(() => { ({ dataSpec } = __require("src/core/plot-spec.js")); });
+let createPlotView; __bind(() => { ({ createPlotView } = __require("src/web/plot-view.js")); });
 let svgString; __bind(() => { ({ svgString } = __require("src/core/render.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
@@ -62921,7 +62968,15 @@ let alignLabelColumn, commit, render, setLabelSelection, setSelection; __bind(()
  * the columns to plot, each axis's scale, and the plot as it will be drawn.
  * The file is read once: the design keeps the traces, never the file. Given
  * a data plot, the dialog reads a file into that plot instead (Reload).
+ *
+ * A data plot's settings (its right-click menu, or a double-click): each
+ * axis's name and scale, each trace's name and color or its removal, and
+ * the zoom, set by looking into the plot there -- drag pans, right-drag
+ * zooms to a box, Ctrl+wheel zooms (web/plot-view.js). Apply makes them one
+ * edit.
  */
+
+
 
 
 
@@ -63070,6 +63125,82 @@ function openDataPlotDialog(text, name, target = null) {
   document.body.append(dialog);
   dialog.showModal();
   place.focus();
+}
+
+/** The settings of the data plot `box`. */
+function openDataPlotSettings(box) {
+  if (box?.plot?.kind !== 'data') return;
+  const draft = {
+    x: { ...box.plot.x },
+    y: { ...box.plot.y },
+    traces: box.plot.traces.map((trace, index) => ({ index, label: trace.label, color: trace.color, removed: false })),
+  };
+  const dialog = el('dialog', { class: 'confirm-dialog data-plot-dialog', 'aria-label': 'Data plot settings' });
+  const view = createPlotView({ height: 260, wheel: 'always', className: 'data-plot-view' });
+  const shownPlot = () => normalizePlot({
+    ...box.plot, x: draft.x, y: draft.y, view: undefined,
+    traces: draft.traces.filter((t) => !t.removed).map((t) => ({ ...box.plot.traces[t.index], label: t.label, color: t.color })),
+  });
+  const show = ({ keepZoom = true } = {}) => {
+    const zoom = keepZoom ? view.zoom() : null;
+    view.set(dataSpec(shownPlot()));
+    if (zoom) view.zoomTo(zoom);
+  };
+  const axisFields = (axis) => el('fieldset', { class: 'data-plot-axis' }, [
+    el('legend', { text: axis === 'x' ? 'X axis' : 'Y axis' }),
+    el('label', { class: 'data-plot-field' }, [el('span', { text: 'Name' }),
+      el('input', { type: 'text', value: draft[axis].label, 'data-axis-label': axis, spellcheck: 'false', oninput: (ev) => { draft[axis].label = ev.target.value; show(); } })]),
+    el('label', { class: 'data-plot-field' }, [el('span', { text: 'Scale' }),
+      el('select', { 'data-axis-scale': axis, onchange: (ev) => { draft[axis].scale = ev.target.value; show({ keepZoom: false }); } },
+        [['linear', 'Linear'], ['log', 'Log']].map(([v, t]) => el('option', { value: v, text: t, selected: draft[axis].scale === v })))]),
+  ]);
+  const traceList = el('div', { class: 'data-plot-traces', role: 'group', 'aria-label': 'Traces' });
+  const drawTraces = () => {
+    const left = draft.traces.filter((t) => !t.removed).length;
+    traceList.replaceChildren(...draft.traces.filter((t) => !t.removed).map((trace) => el('div', { class: 'data-plot-trace' }, [
+      el('input', { type: 'color', value: trace.color, 'aria-label': `${trace.label}: color`, oninput: (ev) => { trace.color = ev.target.value; show(); } }),
+      el('input', { type: 'text', value: trace.label, 'aria-label': 'Trace name', spellcheck: 'false', oninput: (ev) => { trace.label = ev.target.value; show(); } }),
+      el('button', { type: 'button', class: 'data-plot-trace-remove', text: '×', title: 'Remove', 'aria-label': `Remove ${trace.label}`, disabled: left < 2, onclick: () => { trace.removed = true; drawTraces(); show(); } }),
+    ])));
+  };
+  const apply = () => {
+    const zoom = view.zoom();
+    dialog.close();
+    commit(() => {
+      const circuit = editor.circuit;
+      for (const axis of ['x', 'y']) setDataPlotAxis(box, axis, { label: draft[axis].label, scale: draft[axis].scale });
+      for (const trace of draft.traces) if (!trace.removed) setDataPlotTrace(circuit, box, trace.index, { label: trace.label, color: trace.color });
+      // Last first, so the indices still hold.
+      for (const trace of [...draft.traces].reverse()) if (trace.removed) removeDataPlotTrace(circuit, box, trace.index);
+      for (const axis of ['x', 'y']) setDataPlotView(box, axis, zoom?.[axis] && !(box.plot[axis].scale === 'log' && zoom[axis][0] <= 0) ? zoom[axis] : null);
+    });
+    logLine('updated the data plot');
+    render();
+  };
+  dialog.append(
+    el('h2', { text: box.plot.file ? `Data plot from ${box.plot.file}` : 'Data plot' }),
+    view.el,
+    el('p', { class: 'field-hint', text: 'Drag pans, right-drag zooms to a box, the wheel zooms, double-click fits. The plot on the drawing keeps this zoom.' }),
+    el('div', { class: 'data-plot-columns' }, [axisFields('x'), axisFields('y')]),
+    traceList,
+    el('div', { class: 'dialog-actions' }, [
+      el('button', { type: 'button', class: 'data-plot-reread', text: 'Read file…', title: 'Read a file into this plot, keeping its place, axes, and zoom', onclick: () => { dialog.close(); chooseDataFile(box); } }),
+      el('span', { class: 'dialog-actions-gap' }),
+      el('button', { type: 'button', text: 'Cancel', onclick: () => dialog.close() }),
+      el('button', { type: 'button', class: 'primary-action', text: 'Apply', onclick: apply }),
+    ]),
+  );
+  dialog.addEventListener('keydown', (event) => event.stopPropagation());
+  dialog.addEventListener('close', () => {
+    view.dispose();
+    dialog.remove();
+    canvasEl.focus({ preventScroll: true });
+  }, { once: true });
+  drawTraces();
+  document.body.append(dialog);
+  dialog.showModal();
+  show({ keepZoom: false });
+  if (box.plot.view) view.zoomTo(box.plot.view);
 }
 
 function installDataPlotUi() {
@@ -72720,7 +72851,7 @@ let axisPlacement, cycleSymmetryAxis, mirrorRecordedEdit, mountSymmetryAxis, syn
 let acceptArrangeSuggestion, dismissArrangeSuggestion, installArrangeSuggestions, mountArrangeSuggestion, noteDrawingEdit, noteDrawingReplaced, syncArrangeSuggestion; __bind(() => { ({ acceptArrangeSuggestion, dismissArrangeSuggestion, installArrangeSuggestions, mountArrangeSuggestion, noteDrawingEdit, noteDrawingReplaced, syncArrangeSuggestion } = __require("src/web/arrange-suggest.js")); });
 let shortNetsAtPlacedSolder, askNameForNewNetNameConflict; __bind(() => { ({ shortNetsAtPlacedSolder, askNameForNewNetNameConflict } = __require("src/web/net-names.js")); });
 let installRenumberUi; __bind(() => { ({ installRenumberUi } = __require("src/web/renumber-ui.js")); });
-let installDataPlotUi; __bind(() => { ({ installDataPlotUi } = __require("src/web/data-plot-ui.js")); });
+let installDataPlotUi, openDataPlotSettings; __bind(() => { ({ installDataPlotUi, openDataPlotSettings } = __require("src/web/data-plot-ui.js")); });
 let installArrangeFigures; __bind(() => { ({ installArrangeFigures } = __require("src/web/figure-annotate.js")); });
 let installCalculator, toggleCalculator; __bind(() => { ({ installCalculator, toggleCalculator } = __require("src/web/calculator-window.js")); });
 let installNotes, notesDocumentShown, renderNotesWindow, toggleNotes; __bind(() => { ({ installNotes, notesDocumentShown, renderNotesWindow, toggleNotes } = __require("src/web/notes-window.js")); });
@@ -79236,7 +79367,8 @@ canvasEl.addEventListener('dblclick', (ev) => {
   if (linkBubbleAt(clientToWorld(ev.clientX, ev.clientY))) return;
   const w = clientToWorld(ev.clientX, ev.clientY);
   const label = pickLabel(w);
-  if (label) inlineEditLabel(label);
+  if (label?.plot?.kind === 'data') openDataPlotSettings(label);
+  else if (label) inlineEditLabel(label);
   else {
     const wire = pickWire(w);
     const hit = pickAt(w) || (wire ? null : supplyBarHit(w));
@@ -84436,8 +84568,11 @@ function createPlotView({ height = 230, fill = false, aspect = null, maxHeight =
   let viewListener = onView;
 
   const scaleX = () => spec?.x.scale || 'linear';
+  const scaleY = () => spec?.y.scale || 'linear';
   const pane = () => ({ x: margin.left, y: margin.top, w: Math.max(10, size.w - margin.left - margin.right), h: Math.max(10, size.h - margin.top - margin.bottom) });
-  const uPoints = (series) => series.points.map(([x, y]) => [toU(scaleX(), x), y]).filter(([u]) => Number.isFinite(u));
+  // On a log y axis a value at or under zero is a gap.
+  const uY = (y) => (y === null || scaleY() === 'linear' ? y : y > 0 ? Math.log10(y) : null);
+  const uPoints = (series) => series.points.map(([x, y]) => [toU(scaleX(), x), uY(y)]).filter(([u]) => Number.isFinite(u));
 
   /** The view that shows all the data. */
   function autoView() {
@@ -84449,7 +84584,7 @@ function createPlotView({ height = 230, fill = false, aspect = null, maxHeight =
       .flatMap((s) => uPoints(s).filter(inX).map(([, y]) => y))
       .filter((y) => Number.isFinite(y) && (spec.y.floor === undefined || spec.y.floor === null || y > spec.y.floor));
     if (spec.y.symmetric) ys = ys.flatMap((y) => [y, -y]);
-    let yr = fitRange(ys, { step: spec.y.step, pad: 0.08, include: spec.y.include || [] });
+    let yr = fitRange(ys, { step: spec.y.step, pad: 0.08, include: (spec.y.include || []).map(uY) });
     if (Number.isFinite(spec.y.ceiling)) yr = [Math.min(yr[0], spec.y.ceiling - (spec.y.step || 1)), Math.min(yr[1], spec.y.ceiling)];
     let next = { x: [Math.min(...xs), Math.max(...xs)], y: yr };
     if (spec.equal) next = equalized(next, p);
@@ -84510,11 +84645,16 @@ function createPlotView({ height = 230, fill = false, aspect = null, maxHeight =
 
     const grid = svg('g', { class: 'plot-grid' });
     const xTicks = axisTicks(scaleX(), view.x[0], view.x[1], { target: Math.max(2, Math.round(p.w / 80)) });
-    const yTicks = axisTicks('linear', view.y[0], view.y[1], { target: Math.max(2, Math.round(p.h / 38)), step: spec.y.step });
+    const yTicks = axisTicks(scaleY(), view.y[0], view.y[1], { target: Math.max(2, Math.round(p.h / 38)), step: spec.y.step });
     // On a log axis, faint lines through each decade, without numbers.
     if (scaleX() === 'log') {
       for (const u of logMinorGrid(view.x[0], view.x[1], { ticks: xTicks.map((tick) => tick.u), length: p.w, minDecade: 40 })) {
         grid.append(svg('line', { x1: X(u), y1: p.y, x2: X(u), y2: p.y + p.h, class: 'role-grid faint' }));
+      }
+    }
+    if (scaleY() === 'log') {
+      for (const u of logMinorGrid(view.y[0], view.y[1], { ticks: yTicks.map((tick) => tick.u), length: p.h, minDecade: 30 })) {
+        grid.append(svg('line', { x1: p.x, y1: Y(u), x2: p.x + p.w, y2: Y(u), class: 'role-grid faint' }));
       }
     }
     for (const tick of xTicks) {
@@ -84531,8 +84671,9 @@ function createPlotView({ height = 230, fill = false, aspect = null, maxHeight =
 
     const body = svg('g', { 'clip-path': `url(#${clipId})` });
     for (const line of spec.hlines || []) {
-      if (line.y < view.y[0] || line.y > view.y[1]) continue;
-      body.append(svg('line', { x1: p.x, y1: Y(line.y), x2: p.x + p.w, y2: Y(line.y), class: `role-${line.role || 'zero'}` }));
+      const u = uY(line.y);
+      if (!Number.isFinite(u) || u < view.y[0] || u > view.y[1]) continue;
+      body.append(svg('line', { x1: p.x, y1: Y(u), x2: p.x + p.w, y2: Y(u), class: `role-${line.role || 'zero'}` }));
     }
     const marks = [];
     for (const line of spec.vlines || []) {
@@ -84592,17 +84733,17 @@ function createPlotView({ height = 230, fill = false, aspect = null, maxHeight =
     const u = atX(hover.px);
     const rows = [`${plain(spec.x.label) || 'x'} = ${readoutNumber(fromU(scaleX(), u))}`];
     const colors = [null];
-    if (spec.equal) rows.push(`${plain(spec.y.label) || 'y'} = ${readoutNumber(atY(hover.py))}`);
+    if (spec.equal) rows.push(`${plain(spec.y.label) || 'y'} = ${readoutNumber(fromU(scaleY(), atY(hover.py)))}`);
     else {
       for (const series of spec.series) {
         if (series.dots || series.parametric || series.role === 'band') continue;
         const y = valueAt(uPoints(series), u, { stairs: !!series.stairs });
         if (y === null || !Number.isFinite(y)) continue;
-        rows.push(`${plain(series.label) || plain(spec.y.label)}: ${readoutNumber(y)}`);
+        rows.push(`${plain(series.label) || plain(spec.y.label)}: ${readoutNumber(fromU(scaleY(), y))}`);
         colors.push(series.color || null);
         if (rows.length > 7) break;
       }
-      if (rows.length === 1) { rows.push(`${plain(spec.y.label) || 'y'} = ${readoutNumber(atY(hover.py))}`); colors.push(null); }
+      if (rows.length === 1) { rows.push(`${plain(spec.y.label) || 'y'} = ${readoutNumber(fromU(scaleY(), atY(hover.py)))}`); colors.push(null); }
     }
     readout.replaceChildren(...rows.map((text, i) => {
       const line = document.createElement('div');
@@ -84767,7 +84908,15 @@ function createPlotView({ height = 230, fill = false, aspect = null, maxHeight =
     },
     zoomed: () => !following,
     /** The zoomed view's limits in the data's units, `{ x, y }`; null when it shows it all. */
-    zoom: () => (spec && view && !following ? { x: view.x.map((u) => fromU(scaleX(), u)), y: [...view.y] } : null),
+    zoom: () => (spec && view && !following ? { x: view.x.map((u) => fromU(scaleX(), u)), y: view.y.map((u) => fromU(scaleY(), u)) } : null),
+    /** Zoom to `range` ({ x?, y? } in the data's units), the rest fitted; null fits it all. */
+    zoomTo(range) {
+      if (!spec) return;
+      if (!range || (!range.x && !range.y)) { fit({ quiet: true }); return; }
+      size = measure();
+      const auto = autoView();
+      setView({ x: range.x ? range.x.map((v) => toU(scaleX(), v)) : auto.x, y: range.y ? range.y.map((v) => toU(scaleY(), v)) : auto.y }, { record: false, quiet: true });
+    },
     /** The x range in view, in the data's units; null before anything is shown. */
     xRange: () => (spec && view ? view.x.map((u) => fromU(scaleX(), u)) : null),
     /** Hear each change of view made on this plot (not one set from outside). */

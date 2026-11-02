@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { axisName, bodeSpecs, locusSpec, responseSpec, stepSpec, swingSpec, waveSpec } from '../src/core/plot-spec.js';
+import { axisName, bodeSpecs, dataSpec, locusSpec, responseSpec, stepSpec, swingSpec, waveSpec } from '../src/core/plot-spec.js';
 
 test('a response becomes a log-frequency plot with its band, markers, and a start trace', () => {
   const spec = responseSpec({
@@ -38,4 +38,12 @@ test('a trace\'s TeX label reads as axis markup, subscripts and all', () => {
   assert.equal(axisName('\\frac{VOUT}{VIN}'), 'VOUT/VIN');
   assert.equal(axisName('Z_{out}(V_{OUT})'), 'Z_{out}(V_{OUT})');
   assert.equal(axisName('\\beta_{U1}'), 'β_{U1}');
+});
+
+test('a data plot\'s spec keeps each axis\'s scale and name, and its traces as they are', () => {
+  const spec = dataSpec({ kind: 'data', x: { label: 'f', scale: 'log' }, y: { label: 'V', scale: 'log' }, traces: [{ label: 'a', color: '#ff0000', points: [[1, 2], [10, 20]] }] });
+  assert.deepEqual([spec.x, spec.y], [{ scale: 'log', label: 'f' }, { scale: 'log', label: 'V' }]);
+  assert.deepEqual(spec.series[0].points, [[1, 2], [10, 20]]);
+  assert.deepEqual(spec.hlines, []);
+  assert.notEqual(spec.key, dataSpec({ kind: 'data', x: { label: '', scale: 'log' }, y: { label: '', scale: 'linear' }, traces: [] }).key);
 });

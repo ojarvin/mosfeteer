@@ -89,7 +89,7 @@ import { axisPlacement, cycleSymmetryAxis, mirrorRecordedEdit, mountSymmetryAxis
 import { acceptArrangeSuggestion, dismissArrangeSuggestion, installArrangeSuggestions, mountArrangeSuggestion, noteDrawingEdit, noteDrawingReplaced, syncArrangeSuggestion } from './arrange-suggest.js';
 import { shortNetsAtPlacedSolder, askNameForNewNetNameConflict } from './net-names.js';
 import { installRenumberUi } from './renumber-ui.js';
-import { installDataPlotUi } from './data-plot-ui.js';
+import { installDataPlotUi, openDataPlotSettings } from './data-plot-ui.js';
 import { installArrangeFigures } from './figure-annotate.js';
 import { installCalculator, toggleCalculator } from './calculator-window.js';
 import { installNotes, notesDocumentShown, renderNotesWindow, toggleNotes } from './notes-window.js';
@@ -6505,7 +6505,8 @@ canvasEl.addEventListener('dblclick', (ev) => {
   if (linkBubbleAt(clientToWorld(ev.clientX, ev.clientY))) return;
   const w = clientToWorld(ev.clientX, ev.clientY);
   const label = pickLabel(w);
-  if (label) inlineEditLabel(label);
+  if (label?.plot?.kind === 'data') openDataPlotSettings(label);
+  else if (label) inlineEditLabel(label);
   else {
     const wire = pickWire(w);
     const hit = pickAt(w) || (wire ? null : supplyBarHit(w));

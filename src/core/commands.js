@@ -1,4 +1,4 @@
-import { dataPlotFromText, placeDataPlot, removeDataPlotTrace, setDataPlotAxis, setDataPlotView } from './data-plot.js';
+import { dataPlotFromText, placeDataPlot, removeDataPlotTrace, setDataPlotAxis, setDataPlotTrace, setDataPlotView } from './data-plot.js';
 import { analyzeSignalFlow, complexText } from './analysis/signal-flow.js';
 import { analyzeLogic } from './analysis/logic.js';
 import { Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld } from './model.js';
@@ -133,6 +133,7 @@ const FLAG_ARITY = {
   xscale: 1,
   yscale: 1,
   scale: 1,
+  color: 1,
 };
 
 const SYNTHESIZE_USAGE = 'usage: synthesize logic IN ... OUT=VALUES ... [--style and-or|nand|or-and|nor] [--gates inverter,and,nand,or,nor] [--max-inputs 2|3] [--at X Y] [--print]';
@@ -568,7 +569,7 @@ export function commandHelp() {
     '                                   - plot a CSV file\'s columns (by number or name); unset options are guessed. The file is read, never kept',
     '  annotation plotaxis PLOT x|y [--label TEXT] [--scale log|linear] - name a data plot\'s axis, or set its scale',
     '  annotation plotview PLOT x|y LOW HIGH|fit - zoom a data plot\'s axis, or fit it to the data',
-    '  annotation plottrace PLOT N rm  - take trace N (from 1) off a data plot',
+    '  annotation plottrace PLOT N rm|[--label TEXT] [--color #RRGGBB] - take trace N (from 1) off a data plot, or rename or recolor it',
     '  annotation stack BOX N|off [--offset DX,DY] - N copies of a box\'s outline behind it, DX,DY apart (20,-20); wires between stacks repeat',
     '  list                           - list components',
     '  state                          - full JSON state',
@@ -1675,9 +1676,15 @@ function annotationCommand(circuit, pos, result, flags = {}, io) {
   }
   if (op === 'plottrace') {
     const box = circuit.labels.get(pos[1]);
-    if (!box || !/^\d+$/.test(pos[2] || '') || pos[3] !== 'rm' || pos.length !== 4) throw new Error('usage: annotation plottrace PLOT N rm');
-    removeDataPlotTrace(circuit, box, Number(pos[2]) - 1);
-    return result(`${box.id}: took off trace ${pos[2]}`, box.toJSON(), true);
+    const usage = 'usage: annotation plottrace PLOT N rm|[--label TEXT] [--color #RRGGBB]';
+    if (!box || !/^\d+$/.test(pos[2] || '')) throw new Error(usage);
+    if (pos[3] === 'rm' && pos.length === 4) {
+      removeDataPlotTrace(circuit, box, Number(pos[2]) - 1);
+      return result(`${box.id}: took off trace ${pos[2]}`, box.toJSON(), true);
+    }
+    if (pos.length !== 3 || (!flags.label && !flags.color)) throw new Error(usage);
+    const changed = setDataPlotTrace(circuit, box, Number(pos[2]) - 1, { label: flags.label?.[0], color: flags.color?.[0] });
+    return result(`${box.id}: trace ${pos[2]} "${box.plot.traces[Number(pos[2]) - 1].label}" ${box.plot.traces[Number(pos[2]) - 1].color}`, box.toJSON(), changed);
   }
   if (op === 'stack') {
     const box = circuit.labels.get(pos[1]);

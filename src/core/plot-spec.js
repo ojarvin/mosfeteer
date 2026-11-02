@@ -71,6 +71,20 @@ export function stepSpec(plot) {
   };
 }
 
+/** A data plot (columns read from a file, core/data-plot.js), each axis
+ *  linear or log as it says. */
+export function dataSpec(plot) {
+  return {
+    key: `data:${plot.x.scale}:${plot.y.scale}`,
+    title: 'Data',
+    x: { scale: plot.x.scale, label: plot.x.label },
+    y: { scale: plot.y.scale, label: plot.y.label },
+    series: plot.traces.map((trace) => ({ label: trace.label, color: trace.color, role: 'curve', points: trace.points.map(([x, y]) => [x, y]) })),
+    vlines: [],
+    hlines: plot.y.scale === 'linear' ? [{ y: 0, role: 'zero' }] : [],
+  };
+}
+
 /** Each net's peak against the input amplitude (the swing simulation). */
 export function swingSpec(plot) {
   const limit = swingLimit(plot.traces);

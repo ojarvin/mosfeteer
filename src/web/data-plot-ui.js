@@ -6,12 +6,20 @@
  * the columns to plot, each axis's scale, and the plot as it will be drawn.
  * The file is read once: the design keeps the traces, never the file. Given
  * a data plot, the dialog reads a file into that plot instead (Reload).
+ *
+ * A data plot's settings (its right-click menu, or a double-click): each
+ * axis's name and scale, each trace's name and color or its removal, and
+ * the zoom, set by looking into the plot there -- drag pans, right-drag
+ * zooms to a box, Ctrl+wheel zooms (web/plot-view.js). Apply makes them one
+ * edit.
  */
 
 import { element as el } from './dom.js';
 import { MAX_DATA_TRACES, readTable } from '../core/csv-data.js';
-import { dataPlot, placeDataPlot, replaceDataPlotTraces } from '../core/data-plot.js';
-import { Circuit } from '../core/model.js';
+import { dataPlot, placeDataPlot, removeDataPlotTrace, replaceDataPlotTraces, setDataPlotAxis, setDataPlotTrace, setDataPlotView } from '../core/data-plot.js';
+import { Circuit, normalizePlot } from '../core/model.js';
+import { dataSpec } from '../core/plot-spec.js';
+import { createPlotView } from './plot-view.js';
 import { svgString } from '../core/render.js';
 import { editor } from './editor-state.js';
 import { logLine } from './status-bar-ui.js';
@@ -155,6 +163,82 @@ export function openDataPlotDialog(text, name, target = null) {
   document.body.append(dialog);
   dialog.showModal();
   place.focus();
+}
+
+/** The settings of the data plot `box`. */
+export function openDataPlotSettings(box) {
+  if (box?.plot?.kind !== 'data') return;
+  const draft = {
+    x: { ...box.plot.x },
+    y: { ...box.plot.y },
+    traces: box.plot.traces.map((trace, index) => ({ index, label: trace.label, color: trace.color, removed: false })),
+  };
+  const dialog = el('dialog', { class: 'confirm-dialog data-plot-dialog', 'aria-label': 'Data plot settings' });
+  const view = createPlotView({ height: 260, wheel: 'always', className: 'data-plot-view' });
+  const shownPlot = () => normalizePlot({
+    ...box.plot, x: draft.x, y: draft.y, view: undefined,
+    traces: draft.traces.filter((t) => !t.removed).map((t) => ({ ...box.plot.traces[t.index], label: t.label, color: t.color })),
+  });
+  const show = ({ keepZoom = true } = {}) => {
+    const zoom = keepZoom ? view.zoom() : null;
+    view.set(dataSpec(shownPlot()));
+    if (zoom) view.zoomTo(zoom);
+  };
+  const axisFields = (axis) => el('fieldset', { class: 'data-plot-axis' }, [
+    el('legend', { text: axis === 'x' ? 'X axis' : 'Y axis' }),
+    el('label', { class: 'data-plot-field' }, [el('span', { text: 'Name' }),
+      el('input', { type: 'text', value: draft[axis].label, 'data-axis-label': axis, spellcheck: 'false', oninput: (ev) => { draft[axis].label = ev.target.value; show(); } })]),
+    el('label', { class: 'data-plot-field' }, [el('span', { text: 'Scale' }),
+      el('select', { 'data-axis-scale': axis, onchange: (ev) => { draft[axis].scale = ev.target.value; show({ keepZoom: false }); } },
+        [['linear', 'Linear'], ['log', 'Log']].map(([v, t]) => el('option', { value: v, text: t, selected: draft[axis].scale === v })))]),
+  ]);
+  const traceList = el('div', { class: 'data-plot-traces', role: 'group', 'aria-label': 'Traces' });
+  const drawTraces = () => {
+    const left = draft.traces.filter((t) => !t.removed).length;
+    traceList.replaceChildren(...draft.traces.filter((t) => !t.removed).map((trace) => el('div', { class: 'data-plot-trace' }, [
+      el('input', { type: 'color', value: trace.color, 'aria-label': `${trace.label}: color`, oninput: (ev) => { trace.color = ev.target.value; show(); } }),
+      el('input', { type: 'text', value: trace.label, 'aria-label': 'Trace name', spellcheck: 'false', oninput: (ev) => { trace.label = ev.target.value; show(); } }),
+      el('button', { type: 'button', class: 'data-plot-trace-remove', text: '×', title: 'Remove', 'aria-label': `Remove ${trace.label}`, disabled: left < 2, onclick: () => { trace.removed = true; drawTraces(); show(); } }),
+    ])));
+  };
+  const apply = () => {
+    const zoom = view.zoom();
+    dialog.close();
+    commit(() => {
+      const circuit = editor.circuit;
+      for (const axis of ['x', 'y']) setDataPlotAxis(box, axis, { label: draft[axis].label, scale: draft[axis].scale });
+      for (const trace of draft.traces) if (!trace.removed) setDataPlotTrace(circuit, box, trace.index, { label: trace.label, color: trace.color });
+      // Last first, so the indices still hold.
+      for (const trace of [...draft.traces].reverse()) if (trace.removed) removeDataPlotTrace(circuit, box, trace.index);
+      for (const axis of ['x', 'y']) setDataPlotView(box, axis, zoom?.[axis] && !(box.plot[axis].scale === 'log' && zoom[axis][0] <= 0) ? zoom[axis] : null);
+    });
+    logLine('updated the data plot');
+    render();
+  };
+  dialog.append(
+    el('h2', { text: box.plot.file ? `Data plot from ${box.plot.file}` : 'Data plot' }),
+    view.el,
+    el('p', { class: 'field-hint', text: 'Drag pans, right-drag zooms to a box, the wheel zooms, double-click fits. The plot on the drawing keeps this zoom.' }),
+    el('div', { class: 'data-plot-columns' }, [axisFields('x'), axisFields('y')]),
+    traceList,
+    el('div', { class: 'dialog-actions' }, [
+      el('button', { type: 'button', class: 'data-plot-reread', text: 'Read file…', title: 'Read a file into this plot, keeping its place, axes, and zoom', onclick: () => { dialog.close(); chooseDataFile(box); } }),
+      el('span', { class: 'dialog-actions-gap' }),
+      el('button', { type: 'button', text: 'Cancel', onclick: () => dialog.close() }),
+      el('button', { type: 'button', class: 'primary-action', text: 'Apply', onclick: apply }),
+    ]),
+  );
+  dialog.addEventListener('keydown', (event) => event.stopPropagation());
+  dialog.addEventListener('close', () => {
+    view.dispose();
+    dialog.remove();
+    canvasEl.focus({ preventScroll: true });
+  }, { once: true });
+  drawTraces();
+  document.body.append(dialog);
+  dialog.showModal();
+  show({ keepZoom: false });
+  if (box.plot.view) view.zoomTo(box.plot.view);
 }
 
 export function installDataPlotUi() {

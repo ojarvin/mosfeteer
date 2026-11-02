@@ -28,6 +28,7 @@ import { openArrangePicker } from './arrange-ui.js';
 import { shortPlacementLabel } from './toolbar.js';
 import { swapCandidates } from '../core/swap.js';
 import { appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename } from './side-panel.js';
+import { openDataPlotSettings } from './data-plot-ui.js';
 import { busWidth, netNamesConnect } from '../core/bus.js';
 import { STACK_DEFAULT, fanStacks } from '../core/box-stack.js';
 import { handleStyleControlClick, selectionStyleState, styleDefaults, syncStyleControls, wireStyleValue } from './style-controls.js';
@@ -805,6 +806,7 @@ function appendContextActions(menu, target) {
     if (target.value.kind === 'label') appendContextItem(group, 'Edit text…', later(() => inlineEditLabel(target.value)), { shortcut: 't' });
     const lines = selectedLines();
     if (target.value.kind === 'line' && lines.length > 1) appendContextItem(group, `Join ${lines.length} lines`, joinSelectedLines);
+    if (target.value.plot?.kind === 'data') appendContextItem(group, 'Plot settings…', later(() => openDataPlotSettings(target.value)));
     if (target.value.plot) appendPlotColorsItem(group, target.value);
     appendBoxStackMenu(group, target.value);
     appendBeatContextItems(group, target);

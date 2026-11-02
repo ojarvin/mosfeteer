@@ -6821,6 +6821,41 @@ details.analysis-options > * + * {
   border-radius: var(--radius-sm);
 }
 
+.data-plot-axis {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  padding: 4px 8px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.data-plot-axis legend {
+  padding: 0 4px;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+.data-plot-traces {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.data-plot-trace {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.data-plot-trace input[type="text"] { flex: 1; }
+.data-plot-trace input[type="color"] { width: 28px; height: 24px; padding: 0; border: 0; background: none; }
+
+.data-plot-dialog .plot-view { margin-bottom: 4px; }
+
+.dialog-actions-gap { flex: 1; }
+
 .renumber-dialog {
   width: min(38rem, calc(100vw - 32px));
 }

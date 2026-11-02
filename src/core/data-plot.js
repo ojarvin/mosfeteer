@@ -123,6 +123,24 @@ export function setDataPlotView(box, axis, range) {
   return true;
 }
 
+/** Rename or recolor trace `index` (from 0) of a data plot, its legend
+ *  entry with it. Returns whether anything changed. */
+export function setDataPlotTrace(circuit, box, index, { label, color } = {}) {
+  const plot = dataPlotOf(box);
+  const trace = plot.traces[index];
+  if (!trace) throw new Error(`no trace ${index + 1} (the plot has ${plot.traces.length})`);
+  if (color !== undefined && !/^#[0-9a-f]{6}$/i.test(color)) throw new Error('a color is #rrggbb');
+  const next = { ...trace, ...(label !== undefined ? { label: String(label).slice(0, 400) } : {}), ...(color !== undefined ? { color: color.toLowerCase() } : {}) };
+  if (next.label === trace.label && next.color === trace.color) return false;
+  box.plot = normalizePlot({ ...plot, traces: plot.traces.map((t, i) => (i === index ? next : t)) });
+  const entry = circuit.plotLegend(box)[index];
+  if (entry) {
+    if (next.label !== trace.label) entry.setText(next.label || ' ');
+    entry.style = { ...entry.style, color: next.color };
+  }
+  return true;
+}
+
 /** Take trace `index` (from 0) off a data plot, and its legend entry. The
  *  last one stays. */
 export function removeDataPlotTrace(circuit, box, index) {

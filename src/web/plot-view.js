@@ -108,8 +108,11 @@ export function createPlotView({ height = 230, fill = false, aspect = null, maxH
   let viewListener = onView;
 
   const scaleX = () => spec?.x.scale || 'linear';
+  const scaleY = () => spec?.y.scale || 'linear';
   const pane = () => ({ x: margin.left, y: margin.top, w: Math.max(10, size.w - margin.left - margin.right), h: Math.max(10, size.h - margin.top - margin.bottom) });
-  const uPoints = (series) => series.points.map(([x, y]) => [toU(scaleX(), x), y]).filter(([u]) => Number.isFinite(u));
+  // On a log y axis a value at or under zero is a gap.
+  const uY = (y) => (y === null || scaleY() === 'linear' ? y : y > 0 ? Math.log10(y) : null);
+  const uPoints = (series) => series.points.map(([x, y]) => [toU(scaleX(), x), uY(y)]).filter(([u]) => Number.isFinite(u));
 
   /** The view that shows all the data. */
   function autoView() {
@@ -121,7 +124,7 @@ export function createPlotView({ height = 230, fill = false, aspect = null, maxH
       .flatMap((s) => uPoints(s).filter(inX).map(([, y]) => y))
       .filter((y) => Number.isFinite(y) && (spec.y.floor === undefined || spec.y.floor === null || y > spec.y.floor));
     if (spec.y.symmetric) ys = ys.flatMap((y) => [y, -y]);
-    let yr = fitRange(ys, { step: spec.y.step, pad: 0.08, include: spec.y.include || [] });
+    let yr = fitRange(ys, { step: spec.y.step, pad: 0.08, include: (spec.y.include || []).map(uY) });
     if (Number.isFinite(spec.y.ceiling)) yr = [Math.min(yr[0], spec.y.ceiling - (spec.y.step || 1)), Math.min(yr[1], spec.y.ceiling)];
     let next = { x: [Math.min(...xs), Math.max(...xs)], y: yr };
     if (spec.equal) next = equalized(next, p);
@@ -182,11 +185,16 @@ export function createPlotView({ height = 230, fill = false, aspect = null, maxH
 
     const grid = svg('g', { class: 'plot-grid' });
     const xTicks = axisTicks(scaleX(), view.x[0], view.x[1], { target: Math.max(2, Math.round(p.w / 80)) });
-    const yTicks = axisTicks('linear', view.y[0], view.y[1], { target: Math.max(2, Math.round(p.h / 38)), step: spec.y.step });
+    const yTicks = axisTicks(scaleY(), view.y[0], view.y[1], { target: Math.max(2, Math.round(p.h / 38)), step: spec.y.step });
     // On a log axis, faint lines through each decade, without numbers.
     if (scaleX() === 'log') {
       for (const u of logMinorGrid(view.x[0], view.x[1], { ticks: xTicks.map((tick) => tick.u), length: p.w, minDecade: 40 })) {
         grid.append(svg('line', { x1: X(u), y1: p.y, x2: X(u), y2: p.y + p.h, class: 'role-grid faint' }));
+      }
+    }
+    if (scaleY() === 'log') {
+      for (const u of logMinorGrid(view.y[0], view.y[1], { ticks: yTicks.map((tick) => tick.u), length: p.h, minDecade: 30 })) {
+        grid.append(svg('line', { x1: p.x, y1: Y(u), x2: p.x + p.w, y2: Y(u), class: 'role-grid faint' }));
       }
     }
     for (const tick of xTicks) {
@@ -203,8 +211,9 @@ export function createPlotView({ height = 230, fill = false, aspect = null, maxH
 
     const body = svg('g', { 'clip-path': `url(#${clipId})` });
     for (const line of spec.hlines || []) {
-      if (line.y < view.y[0] || line.y > view.y[1]) continue;
-      body.append(svg('line', { x1: p.x, y1: Y(line.y), x2: p.x + p.w, y2: Y(line.y), class: `role-${line.role || 'zero'}` }));
+      const u = uY(line.y);
+      if (!Number.isFinite(u) || u < view.y[0] || u > view.y[1]) continue;
+      body.append(svg('line', { x1: p.x, y1: Y(u), x2: p.x + p.w, y2: Y(u), class: `role-${line.role || 'zero'}` }));
     }
     const marks = [];
     for (const line of spec.vlines || []) {
@@ -264,17 +273,17 @@ export function createPlotView({ height = 230, fill = false, aspect = null, maxH
     const u = atX(hover.px);
     const rows = [`${plain(spec.x.label) || 'x'} = ${readoutNumber(fromU(scaleX(), u))}`];
     const colors = [null];
-    if (spec.equal) rows.push(`${plain(spec.y.label) || 'y'} = ${readoutNumber(atY(hover.py))}`);
+    if (spec.equal) rows.push(`${plain(spec.y.label) || 'y'} = ${readoutNumber(fromU(scaleY(), atY(hover.py)))}`);
     else {
       for (const series of spec.series) {
         if (series.dots || series.parametric || series.role === 'band') continue;
         const y = valueAt(uPoints(series), u, { stairs: !!series.stairs });
         if (y === null || !Number.isFinite(y)) continue;
-        rows.push(`${plain(series.label) || plain(spec.y.label)}: ${readoutNumber(y)}`);
+        rows.push(`${plain(series.label) || plain(spec.y.label)}: ${readoutNumber(fromU(scaleY(), y))}`);
         colors.push(series.color || null);
         if (rows.length > 7) break;
       }
-      if (rows.length === 1) { rows.push(`${plain(spec.y.label) || 'y'} = ${readoutNumber(atY(hover.py))}`); colors.push(null); }
+      if (rows.length === 1) { rows.push(`${plain(spec.y.label) || 'y'} = ${readoutNumber(fromU(scaleY(), atY(hover.py)))}`); colors.push(null); }
     }
     readout.replaceChildren(...rows.map((text, i) => {
       const line = document.createElement('div');
@@ -439,7 +448,15 @@ export function createPlotView({ height = 230, fill = false, aspect = null, maxH
     },
     zoomed: () => !following,
     /** The zoomed view's limits in the data's units, `{ x, y }`; null when it shows it all. */
-    zoom: () => (spec && view && !following ? { x: view.x.map((u) => fromU(scaleX(), u)), y: [...view.y] } : null),
+    zoom: () => (spec && view && !following ? { x: view.x.map((u) => fromU(scaleX(), u)), y: view.y.map((u) => fromU(scaleY(), u)) } : null),
+    /** Zoom to `range` ({ x?, y? } in the data's units), the rest fitted; null fits it all. */
+    zoomTo(range) {
+      if (!spec) return;
+      if (!range || (!range.x && !range.y)) { fit({ quiet: true }); return; }
+      size = measure();
+      const auto = autoView();
+      setView({ x: range.x ? range.x.map((v) => toU(scaleX(), v)) : auto.x, y: range.y ? range.y.map((v) => toU(scaleY(), v)) : auto.y }, { record: false, quiet: true });
+    },
     /** The x range in view, in the data's units; null before anything is shown. */
     xRange: () => (spec && view ? view.x.map((u) => fromU(scaleX(), u)) : null),
     /** Hear each change of view made on this plot (not one set from outside). */

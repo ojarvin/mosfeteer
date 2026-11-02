@@ -99,3 +99,16 @@ test('a data plot read again keeps its place, axes, and zoom, and writes its leg
   assert.deepEqual(legend.map((l) => l.text), ['a', 'b', 'c']);
   assert.equal(legend[0].bbox().x, where.x);
 });
+
+test('a data plot\'s trace is renamed and recolored by command, its legend entry with it', () => {
+  const { circuit, box } = plotted();
+  const out = runCommand(circuit, `annotation plottrace ${box.id} 2 --label "Out" --color #AA0000`);
+  assert.equal(out.mutated, true);
+  assert.deepEqual([box.plot.traces[1].label, box.plot.traces[1].color], ['Out', '#aa0000']);
+  const entry = circuit.plotLegend(box)[1];
+  assert.deepEqual([entry.text, entry.style.color], ['Out', '#aa0000']);
+  assert.equal(runCommand(circuit, `annotation plottrace ${box.id} 2 --color #aa0000`).mutated, false);
+  assert.throws(() => runCommand(circuit, `annotation plottrace ${box.id} 2 --color red`), /a color is #rrggbb/);
+  assert.throws(() => runCommand(circuit, `annotation plottrace ${box.id} 5 --label x`), /no trace 5/);
+  assert.throws(() => runCommand(circuit, `annotation plottrace ${box.id} 2`), /usage: annotation plottrace/);
+});
