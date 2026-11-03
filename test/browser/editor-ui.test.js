@@ -35,6 +35,27 @@ describe('editor chrome', { skip: browserSkip() }, () => {
     await h.key('Escape');
   });
 
+  test('a menu entrance plays and lets go, so the glass behind its items blurs the drawing', async () => {
+    await h.open('amplifier');
+    await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+    try {
+      await h.until(`!document.documentElement.hasAttribute('data-reduce-motion')`);
+      const p = await at(0, -320);
+      await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
+      await h.tap(p.x, p.y, { button: 'right' });
+      await h.until(`!document.querySelector('.component-context-menu').hidden`);
+      const menu = `document.querySelector('.component-context-menu')`;
+      assert.ok(await h.evaluate(`${menu}.getAnimations({ subtree: true }).some((a) => a.animationName === 'context-menu-in')`), 'the entrance plays');
+      // Held at its end, an opacity animation would keep the menu a backdrop
+      // root, and the glass under its items would blur nothing.
+      await h.until(`${menu}.getAnimations({ subtree: true }).length === 0`);
+      assert.match(await h.evaluate(`getComputedStyle(${menu}, '::before').backdropFilter`), /blur/);
+      await h.key('Escape');
+    } finally {
+      await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+    }
+  });
+
   test('the insert tool is called Insert wherever it shows: its button, its mode, the analysis is Analysis', async () => {
     await h.open('amplifier');
     assert.equal(await h.evaluate(`document.getElementById('btn-mode-place').title`), 'Insert (i)');

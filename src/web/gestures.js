@@ -9,6 +9,7 @@
 
 import { applyTransform } from '../core/geometry.js';
 import { pointOnPath } from '../core/wiring.js';
+import { easeOut } from './easing.js';
 
 /** A press on a terminal of a multi-terminal part starts a wire when dragged.
  * Single-terminal parts (ground, supply, ports, markers) are mostly terminal,
@@ -283,21 +284,11 @@ export function wheelIntent(ev, scheme = 'mouse') {
   return scheme === 'trackpad' ? 'pan' : 'zoom';
 }
 
-/** Ease-out cubic for view animations. */
-export function easeOutCubic(t) {
-  const clamped = Math.min(1, Math.max(0, t));
-  return 1 - (1 - clamped) ** 3;
-}
-
-/** A quick start that settles softly: the view moves most of the way at
- *  once, so a short animation still reads, and lands without a bump. */
-function easeOutQuint(t) {
-  const clamped = Math.min(1, Math.max(0, t));
-  return 1 - (1 - clamped) ** 5;
-}
-
+/** The view `t` (0..1) of the way from `from` to `to`, eased out: it moves
+ *  most of the way at once, so a short animation still reads, and lands
+ *  without a bump. */
 export function lerpView(from, to, t) {
-  const k = easeOutQuint(t);
+  const k = easeOut(t);
   return {
     x: from.x + (to.x - from.x) * k,
     y: from.y + (to.y - from.y) * k,

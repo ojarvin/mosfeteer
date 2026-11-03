@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { getSymbol } from '../src/core/components/index.js';
 import { applyTransform } from '../src/core/geometry.js';
 import {
-  arrivalDirection, easeOutCubic, isPinDragCandidate, knifeCrossings, lerpView, quickAddPlacement,
+  arrivalDirection, isPinDragCandidate, knifeCrossings, lerpView, quickAddPlacement,
   pinJoinPoints, radialRingRadius, radialSector, segmentsIntersect, signalSpliceRotation, spliceCandidate, upstreamEnd, wheelIntent,
 } from '../src/web/gestures.js';
 import { Circuit } from '../src/core/model.js';
@@ -169,12 +169,10 @@ test('wheel intent follows the scroll scheme; pinch always zooms', () => {
 });
 
 test('view easing interpolates and clamps', () => {
-  assert.equal(easeOutCubic(0), 0);
-  assert.equal(easeOutCubic(1), 1);
-  assert.equal(easeOutCubic(2), 1);
   const mid = lerpView({ x: 0, y: 0, w: 100, h: 50 }, { x: 100, y: 100, w: 200, h: 100 }, 0.5);
   assert.ok(mid.x > 50 && mid.x < 100);
   assert.deepEqual(lerpView({ x: 0, y: 0, w: 1, h: 1 }, { x: 5, y: 6, w: 7, h: 8 }, 1), { x: 5, y: 6, w: 7, h: 8 });
+  assert.deepEqual(lerpView({ x: 0, y: 0, w: 1, h: 1 }, { x: 5, y: 6, w: 7, h: 8 }, 2), { x: 5, y: 6, w: 7, h: 8 });
 });
 
 test('knife strokes cross rectangles and polylines', async () => {

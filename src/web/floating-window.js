@@ -9,6 +9,7 @@
  */
 
 import { reducedMotion } from './motion.js';
+import { EASE_OUT, cssEase } from './easing.js';
 
 const PLACE_KEY = (key) => `mosfeteer.window.${key}`;
 const MARGIN = 8;
@@ -479,7 +480,7 @@ export function floatingWindow(el, { key, onClose, place = PLACE.topRight, resiz
     el.animate([
       { opacity: 0, transform: 'translateY(8px) scale(0.96)' },
       { opacity: 1, transform: 'none' },
-    ], { duration: 200, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' });
+    ], { duration: 200, easing: cssEase(EASE_OUT) });
   };
   return {
     place: () => {

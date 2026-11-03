@@ -1,4 +1,5 @@
 import { reducedMotion } from './motion.js';
+import { EASE_OUT, cssEase } from './easing.js';
 
 /** Keep the first frame covered until its document or Atlas drawings are ready. */
 let reveal = null;
@@ -11,7 +12,7 @@ export function revealStartup() {
   // Fading, it no longer stands in the way: what shows through takes input.
   cover.style.pointerEvents = 'none';
   reveal = cover.animate([{ opacity: 1 }, { opacity: 0 }], {
-    duration: reduced ? 0 : 700, easing: 'ease-out', fill: 'forwards',
+    duration: reduced ? 0 : 700, easing: cssEase(EASE_OUT), fill: 'forwards',
   }).finished.finally(() => cover.remove());
   return reveal;
 }

@@ -53942,7 +53942,8 @@ let linkArrow, linkCurve, linkDepths, linkGraph; __bind(() => { ({ linkArrow, li
 let ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, layoutAtlasShaped, neighborTile, rectsIntersect, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, layoutAtlasShaped, neighborTile, rectsIntersect, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing } = __require("src/web/atlas-layout.js")); });
 let DESK_ASPECT, arrangeAtlas; __bind(() => { ({ DESK_ASPECT, arrangeAtlas } = __require("src/web/atlas-arrange.js")); });
 let INDEX_CACHE, bakeTiles, cacheGet, cachePut, renderingKey, trimCache; __bind(() => { ({ INDEX_CACHE, bakeTiles, cacheGet, cachePut, renderingKey, trimCache } = __require("src/web/atlas-cache.js")); });
-let easeOutCubic, wheelIntent, lerpView; __bind(() => { ({ easeOutCubic, wheelIntent, lerpView } = __require("src/web/gestures.js")); });
+let wheelIntent, lerpView; __bind(() => { ({ wheelIntent, lerpView } = __require("src/web/gestures.js")); });
+let easeInOut, easeOut, easeSpring; __bind(() => { ({ easeInOut, easeOut, easeSpring } = __require("src/web/easing.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let addDocumentFiles, allowFolderAccess, renameDesign, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, saveCircuit, startNewDocument, deleteDocuments; __bind(() => { ({ addDocumentFiles, allowFolderAccess, renameDesign, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, saveCircuit, startNewDocument, deleteDocuments } = __require("src/web/document-session.js")); });
 let fittedView; __bind(() => { ({ fittedView } = __require("src/web/canvas-view.js")); });
@@ -53973,6 +53974,7 @@ let onAccentChange; __bind(() => { ({ onAccentChange } = __require("src/web/acce
  * leaving fly a design between the editor, at the screen, and its place on
  * the desk behind it (drawFlight).
  */
+
 
 
 
@@ -54707,7 +54709,7 @@ function draw() {
     const { lift, dim } = liftOf(tile.id);
     const placedRect = lifted(flatRect, tile.id);
     // Revealing, a design grows into its place from a little smaller.
-    const grow = 0.9 + 0.1 * easeOutBack(reveal);
+    const grow = 0.9 + 0.1 * easeSpring(reveal);
     const rect = reveal < 1 ? {
       x: placedRect.x + (placedRect.w * (1 - grow)) / 2, y: placedRect.y + (placedRect.h * (1 - grow)) / 2,
       w: placedRect.w * grow, h: placedRect.h * grow,
@@ -54953,12 +54955,6 @@ function tileReveal(tile) {
   const t = (performance.now() - state.revealAt - (state.revealOrder.delay.get(tile.id) ?? 0)) / REVEAL_MS;
   if (t < 1) requestDraw();
   return Math.max(0, Math.min(1, t));
-}
-
-/** Out past 1 and back: a small overshoot as a design settles. */
-function easeOutBack(t) {
-  const c = 1.4;
-  return 1 + (c + 1) * (t - 1) ** 3 + c * (t - 1) ** 2;
 }
 
 // ----- links -------------------------------------------------------------------
@@ -55767,7 +55763,7 @@ function arrangePending() {
 function motionProgress() {
   if (!state.motion) return 1;
   const t = Math.min(1, (performance.now() - state.motion.start) / ARRANGE_MS);
-  return t * t * (3 - 2 * t);
+  return easeInOut(t);
 }
 
 /** Where a tile is drawn now: on its way from its old place mid-rearrangement. */
@@ -56535,7 +56531,7 @@ function steer(goal) {
   flight.goal = goal;
   const from = flight.depth;
   const duration = flightMs(flight) * Math.max(0.3, Math.min(1, Math.abs(goal - from)));
-  const ease = goal === 0 ? settleEase : riseEase;
+  const ease = goal === 0 ? easeSpring : easeInOut;
   void animate(duration, (t) => {
     if (state.flight !== flight) return;
     flight.depth = from + (goal - from) * ease(t);
@@ -56557,19 +56553,6 @@ function flightRatio(flight) {
 
 /** A flight takes longer the farther it goes, so a long one does not rush. */
 const flightMs = (flight) => Math.round(Math.min(650, 400 + 60 * Math.log2(flightRatio(flight))));
-
-/** Away from the glass: it lets go gently, sweeps back, and settles onto the
- *  desk with a small bounce (a little past it, and back). */
-function settleEase(t) {
-  const x = t * t * (2 - t);
-  const c = 1.1;
-  return 1 + (c + 1) * (x - 1) ** 3 + c * (x - 1) ** 2;
-}
-
-/** Up to the glass: straight up from where it floats, slowing into place. */
-function riseEase(t) {
-  return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
-}
 
 /** The design has landed: it lies picked on the desk, and the desk rings. */
 function landFlight({ ripple = true } = {}) {
@@ -56706,7 +56689,7 @@ function drawRipple(ctx, palette) {
   for (const [delay, weight] of [[0, 1], [0.2, 0.55]]) {
     const local = (t - delay) / (1 - delay);
     if (local <= 0) continue;
-    const grow = reach * easeOutCubic(local);
+    const grow = reach * easeOut(local);
     const fade = (1 - local) ** 2;
     // The grid lit in a band behind the ring.
     ctx.save();
@@ -57293,7 +57276,7 @@ async function openTile(tile, { select = null } = {}) {
         const from = flight.screen;
         const to = rectInView(tile, exact);
         await animate(200, (t) => {
-          const e = easeOutCubic(t);
+          const e = easeOut(t);
           flight.screen = { x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e, w: from.w + (to.w - from.w) * e, h: from.h + (to.h - from.h) * e };
         });
       }
@@ -61321,6 +61304,7 @@ __exports.revealTime = revealTime;
 __exports.commitFeedbackSvg = commitFeedbackSvg;
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let componentShapeSvg, labelShapeSvg; __bind(() => { ({ componentShapeSvg, labelShapeSvg } = __require("src/core/render.js")); });
+let EASE_OUT; __bind(() => { ({ EASE_OUT } = __require("src/web/easing.js")); });
 /**
  * Commit feedback: what visibly "landed" between two committed documents.
  *
@@ -61329,6 +61313,7 @@ let componentShapeSvg, labelShapeSvg; __bind(() => { ({ componentShapeSvg, label
  * label edits, and console commands all get the same feedback without each
  * tool describing its own result. Undo/redo never call this.
  */
+
 
 
 
@@ -61560,7 +61545,7 @@ function labelTrace(label, boxClass) {
 /** How long a run takes to draw in, and its pace: the CSS animation of
  *  `.landing-reveal` (set inline from here, so the two agree). */
 const REVEAL_MS = 340;
-const REVEAL_EASE = [0.3, 0, 0.2, 1];
+const REVEAL_EASE = EASE_OUT;
 
 /** The time (ms) the reveal reaches `share` (0..1) of a run's length: the
  *  ease's cubic-bezier solved for that progress. */
@@ -66404,6 +66389,70 @@ function indexE24(value) {
 __exports.PER_DECADE = PER_DECADE;
 };
 
+__modules["src/web/easing.js"] = function (__require, __exports) {
+__exports.cubicBezier = cubicBezier;
+/**
+ * The app's one easing family, the same curves as the stylesheet's
+ * --ease-* tokens (test/style-tokens.test.js holds them equal):
+ *
+ * - out: expo out, quick start and a long soft landing. Entrances,
+ *   feedback, and the view settling.
+ * - in: expo in, its mirror. Exits.
+ * - inOut: expo in-out. Something already on screen moving A to B.
+ * - spring: out past the end and back. Things that pop.
+ */
+
+const EASE_OUT = [0.16, 1, 0.3, 1];
+const EASE_IN = [0.7, 0, 0.84, 0];
+const EASE_IN_OUT = [0.87, 0, 0.13, 1];
+const EASE_SPRING = [0.34, 1.56, 0.64, 1];
+
+/** The CSS `cubic-bezier()` of a curve, for `Element#animate`. */
+const cssEase = ([x1, y1, x2, y2]) => `cubic-bezier(${x1}, ${y1}, ${x2}, ${y2})`;
+
+/** A curve as a function of progress `t` (clamped to 0..1), as CSS draws it:
+ *  the bezier's x solved for `t`, its y at that point. */
+function cubicBezier([x1, y1, x2, y2]) {
+  const at = (a, b, s) => ((1 - 3 * b + 3 * a) * s + (3 * b - 6 * a)) * s * s + 3 * a * s;
+  const slope = (a, b, s) => 3 * (1 - 3 * b + 3 * a) * s * s + 2 * (3 * b - 6 * a) * s + 3 * a;
+  return (t) => {
+    const x = Math.min(1, Math.max(0, t));
+    if (x === 0 || x === 1) return x;
+    let s = x;
+    for (let i = 0; i < 8; i++) {
+      const d = slope(x1, x2, s);
+      if (Math.abs(d) < 1e-6) break;
+      s -= (at(x1, x2, s) - x) / d;
+    }
+    if (!(s >= 0 && s <= 1) || Math.abs(at(x1, x2, s) - x) > 1e-5) {
+      let lo = 0;
+      let hi = 1;
+      for (let i = 0; i < 40; i++) {
+        s = (lo + hi) / 2;
+        if (at(x1, x2, s) < x) lo = s;
+        else hi = s;
+      }
+    }
+    return at(y1, y2, s);
+  };
+}
+
+const easeOut = cubicBezier(EASE_OUT);
+const easeIn = cubicBezier(EASE_IN);
+const easeInOut = cubicBezier(EASE_IN_OUT);
+const easeSpring = cubicBezier(EASE_SPRING);
+
+__exports.EASE_OUT = EASE_OUT;
+__exports.EASE_IN = EASE_IN;
+__exports.EASE_IN_OUT = EASE_IN_OUT;
+__exports.EASE_SPRING = EASE_SPRING;
+__exports.cssEase = cssEase;
+__exports.easeOut = easeOut;
+__exports.easeIn = easeIn;
+__exports.easeInOut = easeInOut;
+__exports.easeSpring = easeSpring;
+};
+
 __modules["src/web/editor-state.js"] = function (__require, __exports) {
 /**
  * The editor's shared state, for the modules split out of main.js.
@@ -68139,6 +68188,7 @@ __exports.floatingWindowPosition = floatingWindowPosition;
 __exports.clearOfOthers = clearOfOthers;
 __exports.floatingWindow = floatingWindow;
 let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion.js")); });
+let EASE_OUT, cssEase; __bind(() => { ({ EASE_OUT, cssEase } = __require("src/web/easing.js")); });
 /**
  * Floating windows: the beats, the timing diagram editor, the small-signal
  * analysis, and reference windows float over the drawing, where the side
@@ -68148,6 +68198,7 @@ let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion
  * browser), inside the pane and clear of the tool rail -- or, docked, in
  * the side panel as one of its sections.
  */
+
 
 
 
@@ -68620,7 +68671,7 @@ function floatingWindow(el, { key, onClose, place = PLACE.topRight, resizable = 
     el.animate([
       { opacity: 0, transform: 'translateY(8px) scale(0.96)' },
       { opacity: 1, transform: 'none' },
-    ], { duration: 200, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' });
+    ], { duration: 200, easing: cssEase(EASE_OUT) });
   };
   return {
     place: () => {
@@ -68865,11 +68916,11 @@ __exports.upstreamEnd = upstreamEnd;
 __exports.signalSpliceRotation = signalSpliceRotation;
 __exports.pinHandleRadius = pinHandleRadius;
 __exports.wheelIntent = wheelIntent;
-__exports.easeOutCubic = easeOutCubic;
 __exports.lerpView = lerpView;
 __exports.pinJoinPoints = pinJoinPoints;
 let applyTransform; __bind(() => { ({ applyTransform } = __require("src/core/geometry.js")); });
 let pointOnPath; __bind(() => { ({ pointOnPath } = __require("src/core/wiring.js")); });
+let easeOut; __bind(() => { ({ easeOut } = __require("src/web/easing.js")); });
 /**
  * Pure geometry and decision helpers for pointer gestures.
  *
@@ -68878,6 +68929,7 @@ let pointOnPath; __bind(() => { ({ pointOnPath } = __require("src/core/wiring.js
  * the wire? which radial sector is the pointer in? which wire segments did a
  * knife stroke cross?) without touching the DOM or the model.
  */
+
 
 
 
@@ -69155,21 +69207,11 @@ function wheelIntent(ev, scheme = 'mouse') {
   return scheme === 'trackpad' ? 'pan' : 'zoom';
 }
 
-/** Ease-out cubic for view animations. */
-function easeOutCubic(t) {
-  const clamped = Math.min(1, Math.max(0, t));
-  return 1 - (1 - clamped) ** 3;
-}
-
-/** A quick start that settles softly: the view moves most of the way at
- *  once, so a short animation still reads, and lands without a bump. */
-function easeOutQuint(t) {
-  const clamped = Math.min(1, Math.max(0, t));
-  return 1 - (1 - clamped) ** 5;
-}
-
+/** The view `t` (0..1) of the way from `from` to `to`, eased out: it moves
+ *  most of the way at once, so a short animation still reads, and lands
+ *  without a bump. */
 function lerpView(from, to, t) {
-  const k = easeOutQuint(t);
+  const k = easeOut(t);
   return {
     x: from.x + (to.x - from.x) * k,
     y: from.y + (to.y - from.y) * k,
@@ -91194,6 +91236,8 @@ __modules["src/web/startup.js"] = function (__require, __exports) {
 __exports.revealStartup = revealStartup;
 __exports.opensOnAtlas = opensOnAtlas;
 let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion.js")); });
+let EASE_OUT, cssEase; __bind(() => { ({ EASE_OUT, cssEase } = __require("src/web/easing.js")); });
+
 
 
 /** Keep the first frame covered until its document or Atlas drawings are ready. */
@@ -91207,7 +91251,7 @@ function revealStartup() {
   // Fading, it no longer stands in the way: what shows through takes input.
   cover.style.pointerEvents = 'none';
   reveal = cover.animate([{ opacity: 1 }, { opacity: 0 }], {
-    duration: reduced ? 0 : 700, easing: 'ease-out', fill: 'forwards',
+    duration: reduced ? 0 : 700, easing: cssEase(EASE_OUT), fill: 'forwards',
   }).finished.finally(() => cover.remove());
   return reveal;
 }

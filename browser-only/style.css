@@ -89,12 +89,15 @@
   --scrim: rgba(0, 0, 0, 0.32);
   --scrollbar: rgba(128, 128, 128, 0.35);
   --scrollbar-hover: rgba(128, 128, 128, 0.6);
-  /* Motion: quick out, soft landing; a spring for things that pop; three
-     short times. Entrances that list several things stagger them a little
-     each (--stagger), so a group arrives as a group, not as one block. */
+  /* Motion: one expo family (src/web/easing.js has the same curves). Out,
+     quick and a soft landing, for entrances and feedback; in for exits;
+     in-out for a move across the screen; a spring for things that pop;
+     three short times. Entrances that list several things stagger them a
+     little each (--stagger), so a group arrives as a group, not as one block. */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.87, 0, 0.13, 1);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --ease-in: cubic-bezier(0.5, 0, 0.75, 0);
   --motion-fast: 90ms;
   --motion: 150ms;
   --motion-slow: 240ms;
@@ -164,7 +167,7 @@ body {
 }
 
 .startup-cover .boot-banner {
-  animation: startup-message 300ms 3s both;
+  animation: startup-message 300ms var(--ease-out) 3s both;
 }
 
 .startup-cover .boot-banner.error {
@@ -691,7 +694,7 @@ button:focus-visible {
    pulses twice and stays until something is typed. */
 .toolbar .circuit-picker:has(#circuit-name.needs-name) {
   box-shadow: 0 0 0 2px var(--accent);
-  animation: needs-name-pulse 0.6s ease-in-out 2;
+  animation: needs-name-pulse 0.6s var(--ease-in-out) 2;
 }
 
 @keyframes needs-name-pulse {
@@ -809,7 +812,7 @@ button:focus-visible {
   margin: 0 4px;
   border-radius: 50%;
   background: var(--warn);
-  animation: dirty-dot-in 180ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: dirty-dot-in 180ms var(--ease-spring);
 }
 
 @keyframes dirty-dot-in {
@@ -2917,7 +2920,7 @@ button.app-mark-button:active {
 
 /* The rapier lifts and tips toward the pointer, so the mark reads as a control. */
 .app-mark-button .app-mark-art {
-  transition: transform 180ms cubic-bezier(0.3, 1.4, 0.5, 1);
+  transition: transform 180ms var(--ease-spring);
 }
 
 .app-mark-button:hover .app-mark-art,
@@ -4609,7 +4612,7 @@ button.off {
 }
 
 :is(.mode-toolbar, .rail-flyout) .mode-control[aria-pressed="true"] .button-icon {
-  animation: tool-pop 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: tool-pop 260ms var(--ease-spring);
 }
 
 @keyframes tool-pop {
@@ -4840,7 +4843,7 @@ button.off {
   stroke-linecap: butt;
   stroke-linejoin: miter;
   stroke-dasharray: 1 1;
-  animation: landing-reveal 340ms cubic-bezier(0.3, 0, 0.2, 1) var(--landing-elapsed, 0ms) both;
+  animation: landing-reveal 340ms var(--ease-out) var(--landing-elapsed, 0ms) both;
 }
 
 /* A new solder dot (the drawing's own) hidden until its wire reaches it,
@@ -4863,7 +4866,7 @@ button.off {
   vector-effect: non-scaling-stroke;
   transform-box: fill-box;
   transform-origin: center;
-  animation: landing-ripple 360ms cubic-bezier(0.2, 0.7, 0.3, 1);
+  animation: landing-ripple 360ms var(--ease-out);
 }
 
 .landing-removed {
@@ -5216,7 +5219,7 @@ button.off {
   border-radius: var(--radius-pill);
   font: 600 var(--text-xs)/1 var(--font-mono);
   color: var(--text-dim);
-  animation: radial-hub-in 140ms var(--ease-out) both;
+  animation: radial-hub-in 140ms var(--ease-out) backwards;
   min-height: 0;
 }
 
@@ -5247,7 +5250,7 @@ button.off {
     translateY(calc(var(--radial-radius) * var(--radial-t) * -1))
     rotate(calc(var(--radial-sweep) * -1))
     scale(calc((0.45 + 0.55 * var(--radial-t)) * var(--radial-pop)));
-  animation: radial-item-in 300ms cubic-bezier(0.22, 1, 0.36, 1) var(--radial-delay, 0ms) both;
+  animation: radial-item-in 300ms var(--ease-out) var(--radial-delay, 0ms) both;
   transition: background-color 90ms var(--ease-out), color 90ms var(--ease-out), --radial-pop 90ms var(--ease-out);
 }
 
@@ -6354,8 +6357,8 @@ body.atlas-mode .editor-only {
 
 /* Reduced motion (motion.js): no zooms; the Atlas and the editor
    cross-fade, which is not motion. */
-:root[data-reduce-motion] .atlas { animation: none; transition: opacity 180ms ease-out; }
-:root[data-reduce-motion] .atlas.leaving { transition: opacity 180ms ease-in; }
+:root[data-reduce-motion] .atlas { animation: none; transition: opacity 180ms var(--ease-out); }
+:root[data-reduce-motion] .atlas.leaving { transition: opacity 180ms var(--ease-in); }
 
 .presenter {
   position: fixed;
@@ -6661,7 +6664,7 @@ details.analysis-options > * + * {
 /* A bubble grows out of its part, and shrinks back into it: the editor's
    pop-in motion. */
 .link-bubble.entering {
-  animation: link-bubble-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: link-bubble-in 320ms var(--ease-out) backwards;
 }
 
 .link-bubble.leaving {
@@ -7286,7 +7289,7 @@ details.analysis-options > * + * {
    transforms some of them already have. */
 [data-editor-edge],
 [data-atlas-edge] {
-  transition: translate 180ms cubic-bezier(0.4, 0, 0.2, 1), opacity 180ms var(--ease-out);
+  transition: translate 180ms var(--ease-in-out), opacity 180ms var(--ease-out);
 }
 
 body.chrome-instant [data-editor-edge],
@@ -8556,14 +8559,42 @@ body.chrome-away [data-editor-edge="right"] {
   from { opacity: 0; transform: translateY(5px); }
 }
 
+/* A menu never fades as a whole: an animated opacity on the glass, or on
+   anything over it, drops the blur until it ends, and held at its end
+   (fill forwards) for good. The frame comes in, the glass's tint and blur
+   grow from none, and the items rise in. The context menu's glass is a
+   layer under its items (::before), so its frame and glass are apart. */
 @keyframes menu-in {
-  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  from {
+    transform: translateY(-4px) scale(0.98);
+    border-color: transparent;
+    box-shadow: none;
+    background-color: transparent;
+    -webkit-backdrop-filter: blur(0) saturate(1);
+    backdrop-filter: blur(0) saturate(1);
+  }
 }
 
-.toolbar-menu:not([hidden]),
-.component-context-menu:not([hidden]) {
-  animation: menu-in var(--motion) var(--var(--ease-out)) both;
+@keyframes context-menu-in {
+  from { transform: translateY(-4px) scale(0.98); border-color: transparent; box-shadow: none; }
+}
+
+@keyframes glass-in {
+  from { background-color: transparent; -webkit-backdrop-filter: blur(0) saturate(1); backdrop-filter: blur(0) saturate(1); }
+}
+
+.toolbar-menu:not([hidden]) {
+  animation: menu-in var(--motion) var(--ease-out) backwards;
   transform-origin: top left;
+}
+
+.component-context-menu:not([hidden]) {
+  animation: context-menu-in var(--motion) var(--ease-out) backwards;
+  transform-origin: top left;
+}
+
+.component-context-menu:not([hidden])::before {
+  animation: glass-in var(--motion) var(--ease-out) backwards;
 }
 
 #document-menu:not([hidden]) {
@@ -8574,7 +8605,7 @@ body.chrome-away [data-editor-edge="right"] {
 .toolbar-menu:not([hidden]) > *,
 .component-context-menu:not([hidden]) > *,
 .component-context-menu:not([hidden]) .context-menu-group > * {
-  animation: rise-in var(--motion-slow) var(--var(--ease-out)) both;
+  animation: rise-in var(--motion-slow) var(--ease-out) backwards;
   animation-delay: calc(var(--i, 0) * var(--stagger));
 }
 
@@ -8592,7 +8623,7 @@ body.chrome-away [data-editor-edge="right"] {
 .signal-flow-results.arriving > *,
 #analysis-equation.arriving > .analysis-equation-group,
 .signal-flow-optimize-result.arriving > * {
-  animation: rise-in var(--motion-slow) var(--var(--ease-out)) both;
+  animation: rise-in var(--motion-slow) var(--ease-out) backwards;
   animation-delay: calc(var(--i, 0) * 40ms);
 }
 
@@ -8604,10 +8635,11 @@ body.chrome-away [data-editor-edge="right"] {
 
 /* A new calculator result slides in at the bottom. */
 .calculator-entry:last-child {
-  animation: rise-in var(--motion-slow) var(--ease-spring) both;
+  animation: rise-in var(--motion-slow) var(--ease-spring) backwards;
 }
 
 :root[data-reduce-motion] :is(.toolbar-menu, .component-context-menu, .calculator-entry),
+:root[data-reduce-motion] .component-context-menu::before,
 :root[data-reduce-motion] :is(.toolbar-menu, .component-context-menu, .context-menu-group) > *,
 :root[data-reduce-motion] :is(.signal-flow-results, #analysis-equation, .signal-flow-optimize-result) > * {
   animation: none;

@@ -9,6 +9,7 @@
 
 import { GRID } from '../core/grid.js';
 import { componentShapeSvg, labelShapeSvg } from '../core/render.js';
+import { EASE_OUT } from './easing.js';
 
 // A huge edit (select-all move, loading a template through a command) should
 // still acknowledge the commit without building thousands of SVG nodes.
@@ -237,7 +238,7 @@ function labelTrace(label, boxClass) {
 /** How long a run takes to draw in, and its pace: the CSS animation of
  *  `.landing-reveal` (set inline from here, so the two agree). */
 export const REVEAL_MS = 340;
-const REVEAL_EASE = [0.3, 0, 0.2, 1];
+const REVEAL_EASE = EASE_OUT;
 
 /** The time (ms) the reveal reaches `share` (0..1) of a run's length: the
  *  ease's cubic-bezier solved for that progress. */

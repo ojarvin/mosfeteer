@@ -29,7 +29,8 @@ import { linkArrow, linkCurve, linkDepths, linkGraph } from '../core/design-link
 import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, layoutAtlasShaped, neighborTile, rectsIntersect, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing } from './atlas-layout.js';
 import { DESK_ASPECT, arrangeAtlas } from './atlas-arrange.js';
 import { INDEX_CACHE, bakeTiles, cacheGet, cachePut, renderingKey, trimCache } from './atlas-cache.js';
-import { easeOutCubic, wheelIntent, lerpView } from './gestures.js';
+import { wheelIntent, lerpView } from './gestures.js';
+import { easeInOut, easeOut, easeSpring } from './easing.js';
 import { editor } from './editor-state.js';
 import {
   addDocumentFiles, allowFolderAccess, renameDesign, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, saveCircuit, startNewDocument,
@@ -747,7 +748,7 @@ function draw() {
     const { lift, dim } = liftOf(tile.id);
     const placedRect = lifted(flatRect, tile.id);
     // Revealing, a design grows into its place from a little smaller.
-    const grow = 0.9 + 0.1 * easeOutBack(reveal);
+    const grow = 0.9 + 0.1 * easeSpring(reveal);
     const rect = reveal < 1 ? {
       x: placedRect.x + (placedRect.w * (1 - grow)) / 2, y: placedRect.y + (placedRect.h * (1 - grow)) / 2,
       w: placedRect.w * grow, h: placedRect.h * grow,
@@ -993,12 +994,6 @@ function tileReveal(tile) {
   const t = (performance.now() - state.revealAt - (state.revealOrder.delay.get(tile.id) ?? 0)) / REVEAL_MS;
   if (t < 1) requestDraw();
   return Math.max(0, Math.min(1, t));
-}
-
-/** Out past 1 and back: a small overshoot as a design settles. */
-function easeOutBack(t) {
-  const c = 1.4;
-  return 1 + (c + 1) * (t - 1) ** 3 + c * (t - 1) ** 2;
 }
 
 // ----- links -------------------------------------------------------------------
@@ -1807,7 +1802,7 @@ function arrangePending() {
 function motionProgress() {
   if (!state.motion) return 1;
   const t = Math.min(1, (performance.now() - state.motion.start) / ARRANGE_MS);
-  return t * t * (3 - 2 * t);
+  return easeInOut(t);
 }
 
 /** Where a tile is drawn now: on its way from its old place mid-rearrangement. */
@@ -2575,7 +2570,7 @@ function steer(goal) {
   flight.goal = goal;
   const from = flight.depth;
   const duration = flightMs(flight) * Math.max(0.3, Math.min(1, Math.abs(goal - from)));
-  const ease = goal === 0 ? settleEase : riseEase;
+  const ease = goal === 0 ? easeSpring : easeInOut;
   void animate(duration, (t) => {
     if (state.flight !== flight) return;
     flight.depth = from + (goal - from) * ease(t);
@@ -2597,19 +2592,6 @@ function flightRatio(flight) {
 
 /** A flight takes longer the farther it goes, so a long one does not rush. */
 const flightMs = (flight) => Math.round(Math.min(650, 400 + 60 * Math.log2(flightRatio(flight))));
-
-/** Away from the glass: it lets go gently, sweeps back, and settles onto the
- *  desk with a small bounce (a little past it, and back). */
-function settleEase(t) {
-  const x = t * t * (2 - t);
-  const c = 1.1;
-  return 1 + (c + 1) * (x - 1) ** 3 + c * (x - 1) ** 2;
-}
-
-/** Up to the glass: straight up from where it floats, slowing into place. */
-function riseEase(t) {
-  return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
-}
 
 /** The design has landed: it lies picked on the desk, and the desk rings. */
 function landFlight({ ripple = true } = {}) {
@@ -2746,7 +2728,7 @@ function drawRipple(ctx, palette) {
   for (const [delay, weight] of [[0, 1], [0.2, 0.55]]) {
     const local = (t - delay) / (1 - delay);
     if (local <= 0) continue;
-    const grow = reach * easeOutCubic(local);
+    const grow = reach * easeOut(local);
     const fade = (1 - local) ** 2;
     // The grid lit in a band behind the ring.
     ctx.save();
@@ -3333,7 +3315,7 @@ async function openTile(tile, { select = null } = {}) {
         const from = flight.screen;
         const to = rectInView(tile, exact);
         await animate(200, (t) => {
-          const e = easeOutCubic(t);
+          const e = easeOut(t);
           flight.screen = { x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e, w: from.w + (to.w - from.w) * e, h: from.h + (to.h - from.h) * e };
         });
       }
