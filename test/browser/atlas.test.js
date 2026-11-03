@@ -135,6 +135,35 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
     assert.match(await hint(), /^Drag to move/);
   });
 
+  test('after z, Tab and the arrows zoom to each design they pick; after F they only pick', async () => {
+    await openDesk();
+    const pane = await h.evaluate(`(() => { const r = document.getElementById('atlas').getBoundingClientRect(); return { w: r.width, h: r.height }; })()`);
+    const picked = async () => (await snapshot()).tiles.find((t) => t.selected);
+    const settled = () => h.until(`${h.module('atlas.js')}.then((m) => { const a = m.atlasSnapshot(); return !!a && !a.busy; })`);
+    const fitted = (tile) => Math.max(tile.screen.w / pane.w, tile.screen.h / pane.h) > 0.6
+      && Math.abs(tile.screen.x + tile.screen.w / 2 - pane.w / 2) < pane.w * 0.1
+      && Math.abs(tile.screen.y + tile.screen.h / 2 - pane.h / 2) < pane.h * 0.15;
+    assert.ok(await pick('alpha'));
+    await atlasKey('z');
+    await settled();
+    assert.ok(fitted(await picked()), 'z zooms to the pick');
+    for (const key of ['Tab', 'Tab', 'ArrowLeft']) {
+      const before = (await picked()).name;
+      await atlasKey(key);
+      await settled();
+      const now = await picked();
+      assert.notEqual(now.name, before);
+      assert.ok(fitted(now), `${key} zooms to ${now.name}: ${JSON.stringify(now.screen)}`);
+    }
+    await atlasKey('f');
+    await settled();
+    const desk = (await snapshot()).view;
+    await atlasKey('Tab');
+    await settled();
+    assert.deepEqual((await snapshot()).view, desk, 'after F, Tab keeps the zoom');
+    await atlasKey('Escape');
+  });
+
   test("a link's beam ends exactly on the edge of the linked design's card", async () => {
     await openDesk();
     assert.ok(await pick('top'));

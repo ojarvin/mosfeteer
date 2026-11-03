@@ -210,7 +210,7 @@ folder on the Atlas does the same. Symbols view hides both buttons.
 | `Shift+L` | the listing (below), opened holding the keys, or closed |
 | Ctrl/Cmd+E | export the desk as one sheet |
 | Ctrl/Cmd+O | another workspace folder (browser-only: add files) |
-| `z` or Space | zoom to the picked design |
+| `z` or Space | zoom to the picked design; until the view moves, the arrows and Tab zoom to each design they pick |
 | `f` | fit the whole workspace |
 | `Shift+T` | arrange the desk by kinship, the same every time |
 | `+` / `-` | zoom about the middle |

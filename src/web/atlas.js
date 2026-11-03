@@ -2319,7 +2319,9 @@ function animate(duration, frame) {
 /** Animate the view to `target`. */
 function animateView(target, duration = 320) {
   const from = { ...state.view };
-  return animate(duration, (t) => { state.view = lerpView(from, target, t); });
+  const done = animate(duration, (t) => { state.view = lerpView(from, target, t); });
+  if (state.animation) state.animation.target = target;
+  return done;
 }
 
 /** Resolve after `count` frames: time for the editor behind to settle. */
@@ -2465,11 +2467,25 @@ function tileById(id) {
   return state.tiles.find((tile) => tile.id === id) || null;
 }
 
+/** Whether the view is (or is on its way to) the zoom to the picked design:
+ *  stepping to another then zooms to that one too. */
+function zoomedToPick() {
+  const zoomed = state.zoomed;
+  if (!zoomed || zoomed.id !== state.selected) return false;
+  if (state.animation && state.animation.target === zoomed.view) return true;
+  const view = state.view;
+  const near = (a, b) => Math.abs(a - b) <= zoomed.view.w * 1e-3;
+  return near(view.x, zoomed.view.x) && near(view.y, zoomed.view.y) && near(view.w, zoomed.view.w) && near(view.h, zoomed.view.h);
+}
+
 function focusTile(tile, { zoom = false } = {}) {
+  zoom ||= zoomedToPick();
   state.selected = tile.id;
   const { w, h } = paneSize();
   if (zoom) {
-    void animateView(viewFittingIn(tile, w, h, chromeInsets(), 0.1));
+    const view = viewFittingIn(tile, w, h, chromeInsets(), 0.1);
+    state.zoomed = { id: tile.id, view };
+    void animateView(view);
     return;
   }
   // Keep the pick and its caption in sight without changing the zoom,
