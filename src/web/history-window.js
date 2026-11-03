@@ -237,7 +237,7 @@ function row(entry) {
   const heading = el('div', { class: 'history-heading' }, [
     el('span', { class: `history-label${entry.pinned ? ' pinned' : ''}`, text: label(entry) }),
     el('span', { class: 'history-time', text: when(entry), title: exactTime(entry) }),
-    ...(current ? [el('span', { class: 'history-current', text: 'the file', title: 'The file holds this drawing now' })] : []),
+    ...(current ? [el('span', { class: 'history-current', text: 'current version', title: 'The file holds this drawing now' })] : []),
   ]);
   const actions = el('div', { class: 'history-actions' }, [
     el('button', { type: 'button', text: 'View', title: 'Show it in a reference window', onclick: () => view(entry) }),
