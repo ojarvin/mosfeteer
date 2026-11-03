@@ -55448,13 +55448,15 @@ function syncList() {
 }
 
 function placeListPanel() {
-  if (listPanelEl.hidden) return;
+  if (!listPanelEl || listPanelEl.hidden) return;
   // A row scrolled to stops below the header that stays on top, not under it.
   listPanelEl.style.scrollPaddingTop = `${listPanelEl.querySelector('thead')?.offsetHeight || 0}px`;
   listPanelEl.style.left = '0px';
+  // The layout width: while the panel scales in from its top left corner,
+  // its box is narrower than where it settles.
   const box = listPanelEl.getBoundingClientRect();
   const margin = 12;
-  const over = box.right - (window.innerWidth - margin);
+  const over = box.left + listPanelEl.offsetWidth - (window.innerWidth - margin);
   if (over > 0) listPanelEl.style.left = `${-Math.min(over, box.left - margin)}px`;
 }
 
@@ -57580,6 +57582,8 @@ function installAtlas() {
       requestDraw();
     }
   });
+  // The listing stays inside the window as the bar's buttons move.
+  document.querySelector('.toolbar')?.addEventListener('toolbarfit', placeListPanel);
   window.addEventListener('resize', () => {
     if (!state) return;
     state.pane = null;
@@ -93699,6 +93703,22 @@ function titleTextWidth() {
     + parseFloat(style.paddingLeft || '0') + parseFloat(style.paddingRight || '0');
 }
 
+/** How far `el`'s content runs past its box, in px (its scrollWidth less
+ *  its clientWidth). An open menu hangs below the bar: what of it spills
+ *  past the bar or a group is not counted. */
+function overflowOf(el) {
+  const over = el.scrollWidth - el.clientWidth;
+  if (over <= 1 || !el.querySelector('.toolbar-menu:not([hidden])')) return over;
+  const box = el.getBoundingClientRect();
+  let right = box.left + el.clientLeft;
+  for (const child of el.children) {
+    const { position, display } = getComputedStyle(child);
+    if (display === 'none' || position === 'absolute' || position === 'fixed') continue;
+    right = Math.max(right, child.getBoundingClientRect().right);
+  }
+  return right + parseFloat(getComputedStyle(el).paddingRight || '0') - (box.left + el.clientLeft + el.clientWidth);
+}
+
 function fitToolbar() {
   toolbarFitFrame = 0;
   if (!toolbarEl) return;
@@ -93709,15 +93729,17 @@ function fitToolbar() {
   const stage = chooseToolbarStage((count) => {
     toolbarEl.dataset.compact = toolbarStageTokens(count);
     return toolbarFits({
-      scrollWidth: toolbarEl.scrollWidth,
+      scrollWidth: toolbarEl.clientWidth + overflowOf(toolbarEl),
       clientWidth: toolbarEl.clientWidth,
       titleWidth: titleEl.getBoundingClientRect().width,
       titleTextWidth: wanted,
       spilled: [...toolbarEl.querySelectorAll(':scope > *, .toolbar-cluster, .circuit-picker')]
-        .some((group) => group.offsetParent && group.scrollWidth > group.clientWidth + 1),
+        .some((group) => group.offsetParent && overflowOf(group) > 1),
     });
   });
   toolbarEl.dataset.compact = toolbarStageTokens(stage);
+  // The menus hanging from the bar may have moved with its buttons.
+  toolbarEl.dispatchEvent(new Event('toolbarfit'));
 }
 
 function scheduleToolbarFit() {

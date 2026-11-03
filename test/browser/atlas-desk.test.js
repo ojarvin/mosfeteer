@@ -402,6 +402,42 @@ describe('a long Atlas listing scrolls with its keys', { skip: browserSkip() }, 
     await h.until(`document.getElementById('atlas-list-panel').hidden`);
     assert.equal(await h.evaluate(`document.activeElement.id`), 'atlas');
   });
+
+  test("open, it leaves the bar's buttons as they were and stays inside the window as the window changes", async () => {
+    if (!await h.evaluate(`${h.module('atlas.js')}.then((m) => !!m.atlasSnapshot())`)) await h.click('#app-mark');
+    await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !!s && !s.busy; })`, 10000);
+    if (await h.evaluate(`!document.getElementById('atlas-list-panel').hidden`)) await h.click('#atlas-list');
+    const compact = () => h.evaluate(`document.querySelector('.toolbar').dataset.compact`);
+    const inside = async () => {
+      // Measured where it settles: the open's scale-in is over.
+      await h.until(`document.getAnimations().every((a) => !a.effect?.target?.closest?.('#atlas-list-panel'))`, 5000);
+      const fit = await h.evaluate(`(() => { const r = document.getElementById('atlas-list-panel').getBoundingClientRect(); return { left: r.left, right: r.right, width: innerWidth }; })()`);
+      assert.ok(fit.left >= 0 && fit.right <= fit.width, JSON.stringify(fit));
+    };
+    const size = await h.evaluate(`({ width: innerWidth, height: innerHeight })`);
+    const resize = async (width) => {
+      await h.send('Emulation.setDeviceMetricsOverride', { width, height: size.height, deviceScaleFactor: 1, mobile: false });
+      await h.settle();
+    };
+    const before = await compact();
+    await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+    try {
+      await h.click('#atlas-list');
+      await h.settle();
+      assert.equal(await compact(), before, 'opening it condenses nothing');
+      await inside();
+      await resize(size.width - 300);
+      await inside();
+      await resize(size.width);
+      assert.equal(await compact(), before, 'wide again, the buttons are as before');
+      await inside();
+    } finally {
+      await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+      await resize(size.width);
+    }
+    await h.click('#atlas-list');
+    await h.until(`document.getElementById('atlas-list-panel').hidden`);
+  });
 });
 
 describe('Atlas hierarchy chain', { skip: browserSkip() }, () => {

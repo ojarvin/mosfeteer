@@ -1487,13 +1487,15 @@ function syncList() {
 }
 
 function placeListPanel() {
-  if (listPanelEl.hidden) return;
+  if (!listPanelEl || listPanelEl.hidden) return;
   // A row scrolled to stops below the header that stays on top, not under it.
   listPanelEl.style.scrollPaddingTop = `${listPanelEl.querySelector('thead')?.offsetHeight || 0}px`;
   listPanelEl.style.left = '0px';
+  // The layout width: while the panel scales in from its top left corner,
+  // its box is narrower than where it settles.
   const box = listPanelEl.getBoundingClientRect();
   const margin = 12;
-  const over = box.right - (window.innerWidth - margin);
+  const over = box.left + listPanelEl.offsetWidth - (window.innerWidth - margin);
   if (over > 0) listPanelEl.style.left = `${-Math.min(over, box.left - margin)}px`;
 }
 
@@ -3619,6 +3621,8 @@ export function installAtlas() {
       requestDraw();
     }
   });
+  // The listing stays inside the window as the bar's buttons move.
+  document.querySelector('.toolbar')?.addEventListener('toolbarfit', placeListPanel);
   window.addEventListener('resize', () => {
     if (!state) return;
     state.pane = null;
