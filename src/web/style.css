@@ -8576,8 +8576,14 @@ body.chrome-away [data-editor-edge="right"] {
 /* A menu never fades as a whole: an animated opacity on the glass, or on
    anything over it, drops the blur until it ends, and held at its end
    (fill forwards) for good. The frame comes in, the glass's tint and blur
-   grow from none, and the items rise in. The context menu's glass is a
-   layer under its items (::before), so its frame and glass are apart. */
+   grow from none, and the items rise in.
+
+   The context menu is panels all the way down: the menu and each submenu,
+   at any depth, is a panel with the one entrance, played as it opens. A
+   panel's glass is a layer under its items (::before), so its frame and
+   glass come in apart; a scrolling submenu's glass is its own. A panel's
+   items are its children and its groups' children; a submenu among them
+   is a panel, not an item, and never fades with them. */
 @keyframes menu-in {
   from {
     transform: translateY(-4px) scale(0.98);
@@ -8602,13 +8608,24 @@ body.chrome-away [data-editor-edge="right"] {
   transform-origin: top left;
 }
 
-.component-context-menu:not([hidden]) {
+.component-context-menu:not([hidden]),
+.component-context-menu .context-submenu:not(.context-submenu-scroll) {
   animation: context-menu-in var(--motion) var(--ease-out) backwards;
   transform-origin: top left;
 }
 
-.component-context-menu:not([hidden])::before {
+.component-context-menu:not([hidden])::before,
+.component-context-menu .context-submenu:not(.context-submenu-scroll)::before {
   animation: glass-in var(--motion) var(--ease-out) backwards;
+}
+
+.component-context-menu .context-submenu.context-submenu-scroll {
+  animation: menu-in var(--motion) var(--ease-out) backwards;
+  transform-origin: top left;
+}
+
+.component-context-menu.opens-left .context-submenu {
+  transform-origin: top right;
 }
 
 #document-menu:not([hidden]) {
@@ -8617,20 +8634,19 @@ body.chrome-away [data-editor-edge="right"] {
 
 /* Each item a beat after the one above it. */
 .toolbar-menu:not([hidden]) > *,
-.component-context-menu:not([hidden]) > *,
-.component-context-menu:not([hidden]) .context-menu-group > * {
+:is(.component-context-menu:not([hidden]), .component-context-menu .context-submenu, .component-context-menu .context-menu-group) > :not(.context-menu-group, .context-submenu) {
   animation: rise-in var(--motion-slow) var(--ease-out) backwards;
   animation-delay: calc(var(--i, 0) * var(--stagger));
 }
 
-:is(.toolbar-menu, .component-context-menu, .context-menu-group) > :nth-child(2) { --i: 1; }
-:is(.toolbar-menu, .component-context-menu, .context-menu-group) > :nth-child(3) { --i: 2; }
-:is(.toolbar-menu, .component-context-menu, .context-menu-group) > :nth-child(4) { --i: 3; }
-:is(.toolbar-menu, .component-context-menu, .context-menu-group) > :nth-child(5) { --i: 4; }
-:is(.toolbar-menu, .component-context-menu, .context-menu-group) > :nth-child(6) { --i: 5; }
-:is(.toolbar-menu, .component-context-menu, .context-menu-group) > :nth-child(7) { --i: 6; }
-:is(.toolbar-menu, .component-context-menu, .context-menu-group) > :nth-child(8) { --i: 7; }
-:is(.toolbar-menu, .component-context-menu, .context-menu-group) > :nth-child(n + 9) { --i: 8; }
+:is(.toolbar-menu, .component-context-menu, .context-submenu, .context-menu-group) > :nth-child(2) { --i: 1; }
+:is(.toolbar-menu, .component-context-menu, .context-submenu, .context-menu-group) > :nth-child(3) { --i: 2; }
+:is(.toolbar-menu, .component-context-menu, .context-submenu, .context-menu-group) > :nth-child(4) { --i: 3; }
+:is(.toolbar-menu, .component-context-menu, .context-submenu, .context-menu-group) > :nth-child(5) { --i: 4; }
+:is(.toolbar-menu, .component-context-menu, .context-submenu, .context-menu-group) > :nth-child(6) { --i: 5; }
+:is(.toolbar-menu, .component-context-menu, .context-submenu, .context-menu-group) > :nth-child(7) { --i: 6; }
+:is(.toolbar-menu, .component-context-menu, .context-submenu, .context-menu-group) > :nth-child(8) { --i: 7; }
+:is(.toolbar-menu, .component-context-menu, .context-submenu, .context-menu-group) > :nth-child(n + 9) { --i: 8; }
 
 /* Derived results: each card rises in after the one before -- once, as
    they arrive (motion.js arriving), not each time a slider redraws them. */
@@ -8656,6 +8672,11 @@ body.chrome-away [data-editor-edge="right"] {
 :root[data-reduce-motion] .component-context-menu::before,
 :root[data-reduce-motion] :is(.toolbar-menu, .component-context-menu, .context-menu-group) > *,
 :root[data-reduce-motion] :is(.signal-flow-results, #analysis-equation, .signal-flow-optimize-result) > * {
+  animation: none;
+}
+
+:root[data-reduce-motion] .component-context-menu *,
+:root[data-reduce-motion] .component-context-menu *::before {
   animation: none;
 }
 

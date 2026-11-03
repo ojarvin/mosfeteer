@@ -50,6 +50,14 @@ describe('editor chrome', { skip: browserSkip() }, () => {
       // root, and the glass under its items would blur nothing.
       await h.until(`${menu}.getAnimations({ subtree: true }).length === 0`);
       assert.match(await h.evaluate(`getComputedStyle(${menu}, '::before').backdropFilter`), /blur/);
+      // A submenu is a panel like the menu: it opens with the same entrance,
+      // its items rise in, and it never fades as one of its parent's items.
+      await h.evaluate(`[...${menu}.querySelectorAll('button')].find((b) => b.textContent.trim().startsWith('Select')).click()`);
+      await h.until(`!!${menu}.querySelector('.context-submenu.open')`);
+      const sub = `${menu}.querySelector('.context-submenu.open')`;
+      const played = await h.evaluate(`(() => { const s = ${sub}; const all = s.getAnimations({ subtree: true }); return { own: all.filter((a) => a.effect.target === s && !a.effect.pseudoElement).map((a) => a.animationName), glass: document.getAnimations().filter((a) => a.effect.target === s && a.effect.pseudoElement === '::before').map((a) => a.animationName), items: all.some((a) => a.effect.target !== s && a.animationName === 'rise-in') }; })()`);
+      assert.deepEqual(played, { own: ['context-menu-in'], glass: ['glass-in'], items: true });
+      await h.until(`${sub}.getAnimations({ subtree: true }).length === 0`);
       await h.key('Escape');
     } finally {
       await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });

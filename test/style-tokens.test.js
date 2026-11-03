@@ -53,5 +53,9 @@ test('a menu entrance never fades the glass or what holds it: the frame and blur
     assert.ok(body, name);
     assert.doesNotMatch(body, /opacity/, name);
   }
-  assert.match(css, /\.component-context-menu:not\(\[hidden\]\)::before \{\s*animation: glass-in /);
+  assert.match(css, /\.component-context-menu:not\(\[hidden\]\)::before,\s*\.component-context-menu \.context-submenu:not\(\.context-submenu-scroll\)::before \{\s*animation: glass-in /);
+  // Every submenu is a panel with the menu's entrance, never one of its parent's rising items.
+  assert.match(css, /\.component-context-menu:not\(\[hidden\]\),\s*\.component-context-menu \.context-submenu:not\(\.context-submenu-scroll\) \{\s*animation: context-menu-in /);
+  assert.match(css, /\.component-context-menu \.context-submenu\.context-submenu-scroll \{\s*animation: menu-in /);
+  assert.match(css, /> :not\(\.context-menu-group, \.context-submenu\) \{\s*animation: rise-in /);
 });
