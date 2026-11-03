@@ -38,7 +38,9 @@ Core keyboard vocabulary:
 | wire/insert | Enter commits, Escape cancels; `F3` toggles new-wire routing mode; `/` flips the draft corner; hold `Alt` for symmetric placement/copy or cursor snapping to the nearest terminal or free wire end while wiring; an `Alt`-drag in the Wire tool with no draft is a stroke that wires the pins it passes, routed on release as one undo entry; letting go of `Alt` mid-stroke lifts the pen, and going back over the last pin or `Backspace` lets it go (rules in [`wiring-architecture.md`](wiring-architecture.md#stroke-wiring)); a click on a free wire end (`Circuit#openWireEnds`) finishes a draft there like a terminal; a placed, moved, or copied part's pin that will join a pin, a free wire end, or (unconnected) a wire's middle on commit is ringed first (`pinJoinPoints`) |
 | pointer | drag from a multi-terminal pin wires (drop in space opens quick-add); a drag from a free wire end (`Circuit#openWireEnds`) draws on from it, any way (drop on a pin, a wire, or another free end joins it; in space the wire ends there); Ctrl/Cmd-drag copies a part, label, or annotation, or branches a wire; right-hold on paper, a pin, a part, or a wire for its radial menu (`src/web/radial-menu.js`: part palette, connect, swap, net), applied once on release, while a right-drag before the hold zooms to a box; Shift-drag in Delete is a knife that deletes every wire, part, and annotation it cuts; Space-drag pans; double-click paper inserts |
 
-The side panel docks beside the drawing; the beats, timing diagram,
+The side panel docks beside the drawing, toggled by the toolbar's panel
+button between the window group and Settings (a folded toolbar keeps it)
+or Shift+P; the beats, timing diagram,
 analysis, and reference windows are floating windows over it
 (`src/web/floating-window.js`): one title bar to drag, holding only its
 title, a dock button, and a close × at its right (its actions are in a
@@ -54,7 +56,7 @@ Each window has a default place (its `place` option, `PLACE` in
 `floating-window.js`): beats bottom center, the optimizer's run top center,
 history and reference windows top left (each further reference window a
 step lower and to the right), the calculator bottom left, the rest top
-right. A window not yet placed by hand opens clear of the windows already
+right, at the same margin from the right edge as from the top. A window not yet placed by hand opens clear of the windows already
 open (`clearOfOthers`): beside the one its place would cover (the plots
 beside the analysis), else a step down and left; one wider than half the
 drawing opens docked instead, until there is room to float it (a window

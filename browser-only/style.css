@@ -368,6 +368,7 @@ button:focus-visible {
 }
 
 .window-cluster .icon-button,
+.panel-cluster .icon-button,
 .settings-cluster .icon-button,
 .atlas-view-cluster .icon-button,
 .segmented .icon-button {
@@ -377,6 +378,7 @@ button:focus-visible {
 }
 
 .window-cluster .icon-button:hover,
+.panel-cluster .icon-button:hover,
 .atlas-view-cluster .icon-button:hover,
 .settings-cluster .icon-button:hover,
 .settings-cluster .icon-button[aria-expanded="true"],
@@ -385,11 +387,12 @@ button:focus-visible {
   background: var(--bg-hover);
 }
 
-/* One shared "on" look for every toggle button: the window toggles, and the canvas-corner panel toggles -- an accent icon on
-   a light accent tint. (A segmented control's choice is raised instead.) */
+/* One shared "on" look for every toggle button: the window and panel
+   toggles -- an accent icon on a light accent tint. (A segmented control's
+   choice is raised instead.) */
 .window-cluster .icon-button[aria-pressed="true"],
+.panel-cluster .icon-button[aria-pressed="true"],
 .atlas-view-cluster .icon-button[aria-pressed="true"],
-.canvas-panel-toggle[aria-pressed="true"],
 .bode-add-toggle[aria-pressed="true"],
 .signal-flow-entry-actions button[aria-pressed="true"] {
   color: var(--accent);
@@ -4703,34 +4706,7 @@ button.off {
 
 /* ----- panel toggles and drawer --------------------------------- */
 
-/* The canvas corner stacks the toggles of the right-docked panels, so the
-   control for each panel sits next to where it opens. */
-.canvas-panel-toggles {
-  position: absolute;
-  z-index: 5;
-  top: 8px;
-  right: 8px;
-  display: flex;
-  gap: 6px;
-}
-
-.canvas-panel-toggle {
-  width: 36px !important;
-  height: 36px;
-  border-radius: var(--radius-lg);
-  color: var(--text-dim);
-}
-
-.canvas-panel-toggle:hover {
-  color: var(--text);
-}
-
-.canvas-panel-toggle .button-icon {
-  width: 19px;
-  height: 19px;
-}
-
-/* A wide window docks the panel; the toggle (or P) can collapse it. */
+/* A wide window docks the panel; the toolbar's toggle (or Shift+P) can collapse it. */
 @media (min-width: 601px) {
   body.side-panel-collapsed .side-panel {
     display: none;
@@ -6431,7 +6407,6 @@ html.dark .presenter svg [fill="#fff"] { fill: var(--paper); }
 
 .panel-filter-row[hidden] { display: none; }
 
-.canvas-panel-toggles[hidden] { display: none; }
 
 .panel-filter-row input {
   flex: 1 1 auto;

@@ -7,6 +7,8 @@ test('a floating window goes where it was put, or its default place, and stays i
   const size = { w: 300, h: 200 };
   assert.deepEqual(floatingWindowPosition(pane, size, null, PLACE.bottomCenter), { x: 350, y: 388 });
   assert.deepEqual(floatingWindowPosition(pane, size, { x: 120, y: 40 }, PLACE.bottomCenter), { x: 120, y: 40 });
+  // Top right is as far from the right edge as from the top.
+  assert.deepEqual(floatingWindowPosition(pane, size, null, PLACE.topRight), { x: 692, y: 8 });
   // Dragged (or left, by a pane that shrank) past an edge, it is pulled back in.
   assert.deepEqual(floatingWindowPosition(pane, size, { x: 900, y: -50 }, PLACE.topRight), { x: 692, y: 8 });
   // A window bigger than the pane keeps its title bar in reach.

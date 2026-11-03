@@ -71,7 +71,7 @@ const CASCADE = 32;
 
 /** Default placements. */
 export const PLACE = Object.freeze({
-  topRight: (pane, size) => ({ x: pane.w - size.w - 52, y: MARGIN }),
+  topRight: (pane, size) => ({ x: pane.w - size.w - MARGIN, y: MARGIN }),
   topCenter: (pane, size) => ({ x: (pane.w - size.w) / 2, y: 56 }),
   bottomLeft: (pane, size) => ({ x: MARGIN, y: pane.h - size.h - 12 }),
   bottomCenter: (pane, size) => ({ x: (pane.w - size.w) / 2, y: pane.h - size.h - 12 }),

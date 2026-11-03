@@ -87,6 +87,23 @@ describe('floating windows', { skip: browserSkip() }, () => {
     await h.settle();
   });
 
+  test("the side panel's toggle sits between the window group and Settings, and only there", async () => {
+    await h.open('top');
+    await closeAll();
+    const order = await h.evaluate(`[...document.querySelectorAll('.toolbar > .toolbar-cluster')].filter((c) => c.offsetParent).map((c) => c.getAttribute('aria-label')).slice(-3)`);
+    assert.deepEqual(order, ['Windows', 'Panel', 'Settings']);
+    assert.equal(await h.evaluate(`document.querySelectorAll('button[aria-controls="side-panel"]').length`), 1, 'one toggle');
+    const visible = () => h.evaluate(`!document.body.classList.contains('side-panel-collapsed')`);
+    const pressed = () => h.evaluate(`document.getElementById('btn-side-panel').getAttribute('aria-pressed')`);
+    assert.equal(await visible(), true);
+    assert.equal(await pressed(), 'true');
+    await h.click('#btn-side-panel');
+    assert.equal(await visible(), false);
+    assert.equal(await pressed(), 'false');
+    await h.click('#btn-side-panel');
+    assert.equal(await visible(), true);
+  });
+
   test('a window opening where another is goes beside it; with too little room for it, it opens docked', async () => {
     await h.open('child');
     await closeAll();
