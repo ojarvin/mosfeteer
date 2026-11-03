@@ -92,8 +92,7 @@
   /* Motion: one expo family (src/web/easing.js has the same curves). Out,
      quick and a soft landing, for entrances and feedback; in for exits;
      in-out for a move across the screen; a spring for things that pop;
-     three short times. Entrances that list several things stagger them a
-     little each (--stagger), so a group arrives as a group, not as one block. */
+     three short times. */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
   --ease-in-out: cubic-bezier(0.87, 0, 0.13, 1);
@@ -101,7 +100,6 @@
   --motion-fast: 90ms;
   --motion: 150ms;
   --motion-slow: 240ms;
-  --stagger: 22ms;
   color-scheme: light;
   /* Native checkboxes/radios otherwise pick up the OS/browser accent color
      (which can be anything, including purple) instead of the app's own. */
@@ -8553,7 +8551,7 @@ body.chrome-away [data-editor-edge="right"] {
   cursor: default;
 }
 
-/* ----- Entrances: menus, results, and rows arrive, staggered ---------------- */
+/* ----- Entrances: menus, results, and rows arrive ----------------------------- */
 
 @keyframes rise-in {
   from { opacity: 0; transform: translateY(5px); }
@@ -8561,8 +8559,9 @@ body.chrome-away [data-editor-edge="right"] {
 
 /* A menu never fades as a whole: an animated opacity on the glass, or on
    anything over it, drops the blur until it ends, and held at its end
-   (fill forwards) for good. The frame comes in, the glass's tint and blur
-   grow from none, and the items rise in.
+   (fill forwards) for good. A menu opens as one piece, quickly: the
+   frame scales up from its corner, the glass's tint and blur grow from
+   none, and the items fade in together, all in --motion-fast.
 
    The context menu is panels all the way down: the menu and each submenu,
    at any depth, is a panel with the one entrance, played as it opens. A
@@ -8570,9 +8569,13 @@ body.chrome-away [data-editor-edge="right"] {
    glass come in apart; a scrolling submenu's glass is its own. A panel's
    items are its children and its groups' children; a submenu among them
    is a panel, not an item, and never fades with them. */
+@keyframes menu-item-in {
+  from { opacity: 0; }
+}
+
 @keyframes menu-in {
   from {
-    transform: translateY(-4px) scale(0.98);
+    transform: scale(0.96);
     border-color: transparent;
     box-shadow: none;
     background-color: transparent;
@@ -8582,7 +8585,7 @@ body.chrome-away [data-editor-edge="right"] {
 }
 
 @keyframes context-menu-in {
-  from { transform: translateY(-4px) scale(0.98); border-color: transparent; box-shadow: none; }
+  from { transform: scale(0.96); border-color: transparent; box-shadow: none; }
 }
 
 @keyframes glass-in {
@@ -8590,23 +8593,23 @@ body.chrome-away [data-editor-edge="right"] {
 }
 
 .toolbar-menu:not([hidden]) {
-  animation: menu-in var(--motion) var(--ease-out) backwards;
+  animation: menu-in var(--motion-fast) var(--ease-out) backwards;
   transform-origin: top left;
 }
 
 .component-context-menu:not([hidden]),
 .component-context-menu .context-submenu:not(.context-submenu-scroll) {
-  animation: context-menu-in var(--motion) var(--ease-out) backwards;
+  animation: context-menu-in var(--motion-fast) var(--ease-out) backwards;
   transform-origin: top left;
 }
 
 .component-context-menu:not([hidden])::before,
 .component-context-menu .context-submenu:not(.context-submenu-scroll)::before {
-  animation: glass-in var(--motion) var(--ease-out) backwards;
+  animation: glass-in var(--motion-fast) var(--ease-out) backwards;
 }
 
 .component-context-menu .context-submenu.context-submenu-scroll {
-  animation: menu-in var(--motion) var(--ease-out) backwards;
+  animation: menu-in var(--motion-fast) var(--ease-out) backwards;
   transform-origin: top left;
 }
 
@@ -8618,21 +8621,10 @@ body.chrome-away [data-editor-edge="right"] {
   transform-origin: top right;
 }
 
-/* Each item a beat after the one above it. */
 .toolbar-menu:not([hidden]) > *,
 :is(.component-context-menu:not([hidden]), .component-context-menu .context-submenu, .component-context-menu .context-menu-group) > :not(.context-menu-group, .context-submenu) {
-  animation: rise-in var(--motion-slow) var(--ease-out) backwards;
-  animation-delay: calc(var(--i, 0) * var(--stagger));
+  animation: menu-item-in var(--motion-fast) var(--ease-out) backwards;
 }
-
-:is(.toolbar-menu, .component-context-menu, .context-submenu, .context-menu-group) > :nth-child(2) { --i: 1; }
-:is(.toolbar-menu, .component-context-menu, .context-submenu, .context-menu-group) > :nth-child(3) { --i: 2; }
-:is(.toolbar-menu, .component-context-menu, .context-submenu, .context-menu-group) > :nth-child(4) { --i: 3; }
-:is(.toolbar-menu, .component-context-menu, .context-submenu, .context-menu-group) > :nth-child(5) { --i: 4; }
-:is(.toolbar-menu, .component-context-menu, .context-submenu, .context-menu-group) > :nth-child(6) { --i: 5; }
-:is(.toolbar-menu, .component-context-menu, .context-submenu, .context-menu-group) > :nth-child(7) { --i: 6; }
-:is(.toolbar-menu, .component-context-menu, .context-submenu, .context-menu-group) > :nth-child(8) { --i: 7; }
-:is(.toolbar-menu, .component-context-menu, .context-submenu, .context-menu-group) > :nth-child(n + 9) { --i: 8; }
 
 /* Derived results: each card rises in after the one before -- once, as
    they arrive (motion.js arriving), not each time a slider redraws them. */
