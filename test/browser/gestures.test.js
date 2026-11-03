@@ -108,11 +108,33 @@ describe('gestures', { skip: browserSkip() }, () => {
       return labels;
     };
     const paper = await h.evaluate(`${h.module('editor-state.js')}.then((m) => { const v = m.editor.view; return { x: Math.round((v.x + v.w * 0.9) / 40) * 40, y: Math.round((v.y + v.h * 0.85) / 40) * 40 }; })`);
-    assert.equal((await items(paper.x, paper.y)).length, 8, 'the paper: a part palette in eight places');
+    assert.deepEqual(await items(paper.x, paper.y), ['NMOS', 'Passives', 'Switches', 'Sources', 'Rails', 'Ports', 'Macros', 'PMOS'], 'the paper: a part palette in eight places');
     const pin = await items(-120, 0); // M1's gate
     for (const label of ['Supply', 'Ground', 'Port', 'Wire']) assert.ok(pin.some((t) => t.includes(label)), `${label} in ${pin}`);
     const wire = await items(200, -160);
     assert.ok(wire.some((t) => /Name net/.test(t)) && wire.some((t) => /Highlight/.test(t)), `${wire}`);
+  });
+
+  test('the palette groups parts by category: a dwell on Passives offers R, C, and L together', async () => {
+    const paper = await h.evaluate(`${h.module('editor-state.js')}.then((m) => { const v = m.editor.view; return { x: Math.round((v.x + v.w * 0.85) / 40) * 40, y: Math.round((v.y + v.h * 0.8) / 40) * 40 }; })`);
+    const ring = async (sector) => {
+      const p = await at(paper.x, paper.y);
+      await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
+      await h.mouse('mousePressed', p.x, p.y, { button: 'right' });
+      await h.until(`document.querySelectorAll('.radial-item').length === 8`);
+      const angle = (sector * Math.PI) / 4;
+      await h.mouse('mouseMoved', p.x + 60 * Math.sin(angle), p.y - 60 * Math.cos(angle), { button: 'right', buttons: 2 });
+      await h.until(`document.querySelector('.radial-hub')?.textContent !== 'Insert'`);
+      const labels = await h.evaluate(`[...document.querySelectorAll('.radial-item .radial-label')].map((i) => i.textContent)`);
+      await h.key('Escape');
+      await h.mouse('mouseReleased', p.x, p.y, { button: 'right' });
+      await h.settle();
+      await h.key('Escape');
+      return labels;
+    };
+    assert.deepEqual(await ring(1), ['R', 'C', 'L', 'Z', 'Diode', 'Var. R', 'Var. C', 'Var. L']);
+    assert.deepEqual(await ring(2), ['Open', 'Closed', 'Chopper']);
+    assert.deepEqual(await ring(6), ['Op-amp', 'Diff', 'CMFB', 'Gm', 'Gm CMFB', 'Comp.', 'Clk. comp.', 'ADC', 'DAC']);
   });
 
   test('a Ctrl-drag copies a part and leaves the clipboard as it was', async () => {

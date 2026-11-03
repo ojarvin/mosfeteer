@@ -64,15 +64,23 @@ const part = (type, label = shortPlacementLabel(type)) => ({
   run: () => beginPlacing(type),
 });
 
-// The palette keeps its places, so a flick learned once stays right.
+// The palette keeps its places, so a flick learned once stays right. Its
+// sectors follow the symbol categories (categories.js); a flick places
+// the first part, a dwell opens the rest.
 const PALETTE = [
   { ...part('nmos', 'NMOS'), children: [part('nmos', 'NMOS'), part('nmosb', 'NMOS bulk'), part('npn', 'NPN')] },
-  { ...part('resistor', 'R'), children: [part('resistor', 'R'), part('variable_resistor', 'Var. R'), part('impedance', 'Z')] },
-  { ...part('capacitor', 'C'), children: [part('capacitor', 'C'), part('variable_capacitor', 'Var. C'), part('inductor', 'L')] },
-  { ...part('current_source', 'I source'), children: [part('current_source', 'I'), part('voltage_source', 'V'), part('vccs', 'VCCS'), part('vcvs', 'VCVS')] },
+  { ...part('resistor', 'Passives'), children: [
+    part('resistor', 'R'), part('capacitor', 'C'), part('inductor', 'L'), part('impedance', 'Z'), part('diode', 'Diode'),
+    part('variable_resistor', 'Var. R'), part('variable_capacitor', 'Var. C'), part('variable_inductor', 'Var. L'),
+  ] },
+  { ...part('switch_open', 'Switches'), children: [part('switch_open', 'Open'), part('switch_closed', 'Closed'), part('chopper', 'Chopper')] },
+  { ...part('current_source', 'Sources'), children: [part('current_source', 'I'), part('voltage_source', 'V'), part('vccs', 'VCCS'), part('vcvs', 'VCVS')] },
   { ...part('ground', 'Rails'), children: [part('ground', 'Ground'), part('supply', 'Supply'), part('vcm', 'VCM')] },
-  { ...part('port', 'Port'), children: [part('input', 'In'), part('output', 'Out'), part('inputoutput', 'In/out'), part('port', 'Port')] },
-  { ...part('opamp', 'Op-amp'), children: [part('opamp', 'Op-amp'), part('opamp_diff', 'Diff'), part('opamp_diff_cmfb', 'CMFB'), part('gm', 'Gm'), part('comparator', 'Comp.')] },
+  { ...part('port', 'Ports'), children: [part('input', 'In'), part('output', 'Out'), part('inputoutput', 'In/out'), part('port', 'Port')] },
+  { ...part('opamp', 'Macros'), children: [
+    part('opamp', 'Op-amp'), part('opamp_diff', 'Diff'), part('opamp_diff_cmfb', 'CMFB'), part('gm', 'Gm'), part('gm_cmfb', 'Gm CMFB'),
+    part('comparator', 'Comp.'), part('comparator_clocked', 'Clk. comp.'), part('adc', 'ADC'), part('dac', 'DAC'),
+  ] },
   { ...part('pmos', 'PMOS'), children: [part('pmos', 'PMOS'), part('pmosb', 'PMOS bulk'), part('pnp', 'PNP')] },
 ];
 
