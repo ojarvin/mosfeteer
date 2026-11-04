@@ -27518,28 +27518,30 @@ function dataPlotFromText(text, { file = '', x, y, xscale, yscale, ...read } = {
 /**
  * Put `plot` on the drawing: a box packed clear of what is there
  * (figures.js) or at `at` (its top-left corner), drawn in black as a new
- * plot is, its legend beside it. Returns `{ box, legend }`; the browser
+ * plot is, its legend beside it (its labels TeX in the math font with
+ * `math`). Returns `{ box, legend }`; the browser
  * stacks the legend again once it has measured it.
  */
-function placeDataPlot(circuit, plot, { at = null } = {}) {
+function placeDataPlot(circuit, plot, { at = null, math = false } = {}) {
   const figure = { kind: 'plot', source: 'data', key: 'data', id: newFigureId(circuit) };
   const spot = at || placeFigure(circuit, 'plot', { size: { w: (BOX.w + 6) * GRID, h: BOX.h * GRID } });
   const x = snap(spot.x);
   const y = snap(spot.y);
   const box = circuit.addAnnotation('box', { x, y, end: { x: x + BOX.w * GRID, y: y + BOX.h * GRID }, plot, style: { lineStyle: 'solid', blackTraces: true }, figure });
   if (!at) settlePlaced(circuit, figure.id);
-  const legend = writeLegend(circuit, box, box.plot.traces);
+  const legend = writeLegend(circuit, box, box.plot.traces, null, { math });
   return { box, legend };
 }
 
 /** A legend for `traces` beside `box`, one label under another, past the
  *  room the line samples take in black. */
-function writeLegend(circuit, box, traces, at = null) {
+function writeLegend(circuit, box, traces, at = null, { math = false } = {}) {
   const frame = box.bbox();
   const left = at?.x ?? frame.x + frame.w + PLOT_LEGEND_SAMPLE_ROOM;
   let top = at?.y ?? frame.y;
   return traces.map((trace) => {
-    const label = circuit.addLabel({ text: trace.label || ' ', parent: box.id, role: PLOT_LEGEND_ROLE, align: 'left', x: 0, y: 0, style: { color: trace.color } });
+    // A label of TeX (`math`: a sweep's) in the math font, as an analysis plot's.
+    const label = circuit.addLabel({ text: math ? `$${trace.label}$` : trace.label || ' ', ...(math ? { math: true } : {}), parent: box.id, role: PLOT_LEGEND_ROLE, align: 'left', x: 0, y: 0, style: { color: trace.color } });
     const size = label.bbox();
     label.moveTo(snap(left + size.w / 2), snap(top + size.h / 2));
     top = label.bbox().y + label.bbox().h;
@@ -93149,35 +93151,52 @@ function measureList() {
 function sweepPlot() {
   if (!result?.points.some((p) => p.measures)) return null;
   const shown = new Set(shownMeasures());
-  const plain = (label) => label.replace(/\\text\{([^}]*)\}/g, '$1').replace(/\\ /g, ' ');
   const curves = (of, i, note = '') => measureList().filter(([key]) => shown.has(key)).map(([key, label], k) => ({
-    label: `${plain(label)}${note}`,
+    label: `${label}${note}`,
     color: TRACE_COLORS[(i + k) % TRACE_COLORS.length],
     points: of.points.filter((p) => Number.isFinite(p.measures?.[key])).map((p) => [p.x, p.measures[key]]),
   }));
-  // Held sweeps of the same coefficient first, each named by what differs since.
-  const now = api.resolvedWith({});
+  // Held sweeps of the same coefficient first, each named by what differs
+  // from the sweep shown (the numbers it ran at).
+  const now = result.values;
   const same = held.filter((h) => h.result.name === result.name);
+  // The live sweep names its own numbers for those its held ones name.
+  const named = same.flatMap((h) => heldChanges(h, now));
   const traces = [
     ...same.flatMap((h, n) => curves(h.result, shown.size * (n + 1), heldNote(h, now))),
-    ...curves(result, 0),
+    ...curves(result, 0, liveNote(now, named)),
   ].filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
-  return normalizePlot({ kind: 'data', x: { label: result.name, scale: result.log ? 'log' : 'linear' }, y: { label: 'dB', scale: 'linear' }, traces });
+  // The coefficient as an axis names it: a_r as a sub-scripted r.
+  return normalizePlot({ kind: 'data', x: { label: result.name.replace(/_([A-Za-z0-9]+)$/, '_{$1}'), scale: result.log ? 'log' : 'linear' }, y: { label: 'dB', scale: 'linear' }, traces });
 }
 
 /** A held sweep's note: the coefficients (but the swept one) and the
  *  amplitude it ran at that differ from now, or "held". */
 function heldNote(h, now) {
-  const notes = Object.entries(h.values).filter(([name, value]) => name !== h.result.name && Math.abs(value - (now[name] ?? 1)) > 1e-12 * Math.max(1, Math.abs(value))).map(([name, value]) => `${name} = ${Number(value.toPrecision(4))}`);
-  if (h.amplitude !== (Number(state().amplitude) || -6)) notes.push(`${h.amplitude} dBFS`);
-  return notes.length ? `, ${notes.join(', ')}` : ' (held)';
+  const notes = heldChanges(h, now).map((name) => (name === AMPLITUDE ? `${h.amplitude}\\ \\text{dBFS}` : `${name} = ${Number(h.values[name].toPrecision(4))}`));
+  return notes.length ? `,\\ ${notes.join(',\\ ')}` : '\\ \\text{(held)}';
+}
+
+const AMPLITUDE = '\0amplitude';
+
+/** What differs between a held sweep and now: coefficient names (but the
+ *  swept one), and AMPLITUDE for the input's. */
+function heldChanges(h, now) {
+  const names = Object.entries(h.values).filter(([name, value]) => name !== h.result.name && Math.abs(value - (now[name] ?? 1)) > 1e-12 * Math.max(1, Math.abs(value))).map(([name]) => name);
+  return h.amplitude !== result.amplitude ? [...names, AMPLITUDE] : names;
+}
+
+/** The live sweep's note: its numbers now for `names`. */
+function liveNote(now, names) {
+  const notes = [...new Set(names)].map((name) => (name === AMPLITUDE ? `${result.amplitude}\\ \\text{dBFS}` : `${name} = ${Number((now[name] ?? 1).toPrecision(4))}`));
+  return notes.length ? `,\\ ${notes.join(',\\ ')}` : '';
 }
 
 /** Hold the sweep shown: a copy that stays as the sliders and the next sweep move. */
 function holdSweep() {
   if (!result?.points.some((p) => p.measures) || running()) return;
-  held.push({ result, values: { ...api.resolvedWith({}) }, amplitude: Number(state().amplitude) || -6 });
+  held.push({ result, values: result.values, amplitude: result.amplitude });
   draw();
 }
 
@@ -93255,7 +93274,8 @@ function sweep() {
   if (!Number.isFinite(Number(settings.amplitude || -6))) { say('The amplitude is a number of dBFS.', true); return; }
   const id = ++run;
   const circuit = editor.circuit.toJSON();
-  result = { name, xs, points: [], signals: null, log };
+  // The numbers it runs at, for its name beside held sweeps.
+  result = { name, xs, points: [], signals: null, log, values: { ...api.resolvedWith({}) }, amplitude: Number(settings.amplitude || -6) };
   plotsBusy.set('sweep', true);
   parts.go.dataset.running = '1';
   parts.go.textContent = 'Stop';
@@ -93297,7 +93317,7 @@ function annotate() {
   const plot = sweepPlot();
   if (!plot) return;
   let placed = null;
-  commit(() => { placed = placeDataPlot(editor.circuit, plot); });
+  commit(() => { placed = placeDataPlot(editor.circuit, plot, { math: true }); });
   if (!placed) return;
   const legend = placed.legend;
   if (legend.length) alignLabelColumn(legend.map((label) => label.id), { left: Math.min(...legend.map((l) => l.bbox().x)), top: Math.min(...legend.map((l) => l.bbox().y)), gap: 0 });

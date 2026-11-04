@@ -61,28 +61,30 @@ export function dataPlotFromText(text, { file = '', x, y, xscale, yscale, ...rea
 /**
  * Put `plot` on the drawing: a box packed clear of what is there
  * (figures.js) or at `at` (its top-left corner), drawn in black as a new
- * plot is, its legend beside it. Returns `{ box, legend }`; the browser
+ * plot is, its legend beside it (its labels TeX in the math font with
+ * `math`). Returns `{ box, legend }`; the browser
  * stacks the legend again once it has measured it.
  */
-export function placeDataPlot(circuit, plot, { at = null } = {}) {
+export function placeDataPlot(circuit, plot, { at = null, math = false } = {}) {
   const figure = { kind: 'plot', source: 'data', key: 'data', id: newFigureId(circuit) };
   const spot = at || placeFigure(circuit, 'plot', { size: { w: (BOX.w + 6) * GRID, h: BOX.h * GRID } });
   const x = snap(spot.x);
   const y = snap(spot.y);
   const box = circuit.addAnnotation('box', { x, y, end: { x: x + BOX.w * GRID, y: y + BOX.h * GRID }, plot, style: { lineStyle: 'solid', blackTraces: true }, figure });
   if (!at) settlePlaced(circuit, figure.id);
-  const legend = writeLegend(circuit, box, box.plot.traces);
+  const legend = writeLegend(circuit, box, box.plot.traces, null, { math });
   return { box, legend };
 }
 
 /** A legend for `traces` beside `box`, one label under another, past the
  *  room the line samples take in black. */
-function writeLegend(circuit, box, traces, at = null) {
+function writeLegend(circuit, box, traces, at = null, { math = false } = {}) {
   const frame = box.bbox();
   const left = at?.x ?? frame.x + frame.w + PLOT_LEGEND_SAMPLE_ROOM;
   let top = at?.y ?? frame.y;
   return traces.map((trace) => {
-    const label = circuit.addLabel({ text: trace.label || ' ', parent: box.id, role: PLOT_LEGEND_ROLE, align: 'left', x: 0, y: 0, style: { color: trace.color } });
+    // A label of TeX (`math`: a sweep's) in the math font, as an analysis plot's.
+    const label = circuit.addLabel({ text: math ? `$${trace.label}$` : trace.label || ' ', ...(math ? { math: true } : {}), parent: box.id, role: PLOT_LEGEND_ROLE, align: 'left', x: 0, y: 0, style: { color: trace.color } });
     const size = label.bbox();
     label.moveTo(snap(left + size.w / 2), snap(top + size.h / 2));
     top = label.bbox().y + label.bbox().h;
