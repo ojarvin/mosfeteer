@@ -334,8 +334,10 @@ values: the band's SNDR and noise, the output tone, and the peaks of the
 integrators, the quantizers' inputs, and the output (dBFS). It runs on
 Sweep only; a point where the loop runs away has no values. Its settings
 and the measures shown are saved with the design
-(`Circuit#windows.sweep`); Annotate puts the measures shown on the drawing
-as a data plot.
+(`Circuit#windows.sweep`); Hold keeps a copy of the sweep shown, drawn
+with later sweeps of the same coefficient and named by the coefficients
+and amplitude that differ since (the window's, not saved; Clear held
+drops them); Annotate puts the measures shown on the drawing as a data plot.
 
 A new plot is drawn in black (`style.blackTraces`): its traces in its ink,
 told apart by dash (solid, dashed, dash-dot, dotted, then around again),

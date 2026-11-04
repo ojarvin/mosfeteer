@@ -274,10 +274,17 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     // Another measure checked joins the plot, saved with the design.
     await h.evaluate(`document.querySelectorAll('.plots-window .sweep-measures .net-pick input')[1].click()`);
     await h.until(`${h.module('editor-state.js')}.then((m) => JSON.stringify(m.editor.circuit.windows.sweep.measures) === JSON.stringify(['sndr', 'noise']))`);
+    // Held, it stays as k_2 moves and the sweep runs again, named by what differs.
+    await h.evaluate(`document.querySelector('.plots-window .sweep-hold').click()`);
+    await h.evaluate(`(() => { const f = document.querySelector('.signal-flow-coefficient[data-name="k_2"] .signal-flow-coefficient-value'); f.value = '1.5'; f.dispatchEvent(new Event('input', { bubbles: true })); f.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await h.evaluate(`document.querySelector('.plots-window .sweep-run').click()`);
+    await h.until(`!document.querySelector('.plots-window .sweep-run').dataset.running`, 30000);
     // Annotate puts it on the drawing as a data plot over k_1.
     await h.evaluate(`document.querySelector('.plots-window .sweep-annotate').click()`);
-    const plot = await h.evaluate(`${h.module('editor-state.js')}.then((m) => { const b = [...m.editor.circuit.labels.values()].find((l) => l.plot?.kind === 'data' && l.plot.x.label === 'k_1'); return b ? { traces: b.plot.traces.length, points: b.plot.traces[0].points.length } : null; })`);
-    assert.deepEqual(plot, { traces: 2, points: 5 });
+    const plot = await h.evaluate(`${h.module('editor-state.js')}.then((m) => { const b = [...m.editor.circuit.labels.values()].find((l) => l.plot?.kind === 'data' && l.plot.x.label === 'k_1'); return b ? { traces: b.plot.traces.map((t) => t.label), points: b.plot.traces[0].points.length } : null; })`);
+    assert.equal(plot.points, 5);
+    assert.equal(plot.traces.length, 4);
+    assert.match(plot.traces[0], /k_2 = 2/);
   });
 
   test('a coefficient typed as a ratio applies, again after a slider move, and is tabled as typed', async () => {

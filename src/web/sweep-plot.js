@@ -7,8 +7,10 @@
  * here, as the time plot's: the source the sine drives, its amplitude and
  * f/fs, and the samples a segment of its spectrum.
  *
- * It runs on Sweep only (each point is a full simulation). Annotate puts
- * the measures shown on the drawing as a data plot. What it sweeps, how,
+ * It runs on Sweep only (each point is a full simulation). Hold keeps a
+ * copy of the sweep shown, drawn with the next ones of the same
+ * coefficient and named by what differs since (the window's, not saved).
+ * Annotate puts the measures shown on the drawing as a data plot. What it sweeps, how,
  * and what it shows are saved with the design (`Circuit#windows.sweep`).
  */
 
@@ -35,6 +37,8 @@ let api = null; // { flow(), links(), resolvedWith(values), visible() } from sig
 let parts = null;
 let result = null; // { name, xs, points: [{ x, measures } | { x, overloaded } | { x, error }], signals, log }
 let run = 0; // the sweep running; a newer one (or another design) stops it
+// Held sweeps, drawn with the live one: { result, values (the sliders then), amplitude }.
+let held = [];
 let worker = null;
 
 const state = () => editor.circuit.windows.sweep || { measures: [] };
@@ -82,6 +86,8 @@ export function sweepSection() {
   const status = el('p', { class: 'field-hint sweep-status', 'aria-live': 'polite' });
   const measures = el('div', { class: 'time-nets sweep-measures' });
   const annotateButton = el('button', { type: 'button', class: 'sweep-annotate', text: 'Annotate', title: 'Put the sweep on the drawing', disabled: true, onclick: () => annotate() });
+  const holdButton = el('button', { type: 'button', class: 'sweep-hold', text: 'Hold', title: 'Hold', disabled: true, onclick: () => holdSweep() });
+  const clearButton = el('button', { type: 'button', class: 'sweep-clear', text: 'Clear held', disabled: true, onclick: () => { held = []; draw(); } });
   const node = el('div', { class: 'signal-flow-sweep', hidden: true }, [
     el('div', { class: 'signal-flow-swing-controls time-controls' }, [
       el('label', { text: 'Sweep' }), name,
@@ -97,9 +103,9 @@ export function sweepSection() {
     ]),
     plot.el,
     measures,
-    el('div', { class: 'time-actions' }, [status, annotateButton]),
+    el('div', { class: 'time-actions' }, [status, holdButton, clearButton, annotateButton]),
   ]);
-  parts = { el: node, plot, name, from, to, points, scale, input, amplitude, frequency, samples, go, status, measures, annotate: annotateButton };
+  parts = { el: node, plot, name, from, to, points, scale, input, amplitude, frequency, samples, go, status, measures, annotate: annotateButton, hold: holdButton, clear: clearButton };
   return node;
 }
 
@@ -152,13 +158,36 @@ function measureList() {
 function sweepPlot() {
   if (!result?.points.some((p) => p.measures)) return null;
   const shown = new Set(shownMeasures());
-  const traces = measureList().filter(([key]) => shown.has(key)).map(([key, label], i) => ({
-    label: label.replace(/\\text\{([^}]*)\}/g, '$1').replace(/\\ /g, ' '),
-    color: TRACE_COLORS[i % TRACE_COLORS.length],
-    points: result.points.filter((p) => Number.isFinite(p.measures?.[key])).map((p) => [p.x, p.measures[key]]),
-  })).filter((trace) => trace.points.length > 1);
+  const plain = (label) => label.replace(/\\text\{([^}]*)\}/g, '$1').replace(/\\ /g, ' ');
+  const curves = (of, i, note = '') => measureList().filter(([key]) => shown.has(key)).map(([key, label], k) => ({
+    label: `${plain(label)}${note}`,
+    color: TRACE_COLORS[(i + k) % TRACE_COLORS.length],
+    points: of.points.filter((p) => Number.isFinite(p.measures?.[key])).map((p) => [p.x, p.measures[key]]),
+  }));
+  // Held sweeps of the same coefficient first, each named by what differs since.
+  const now = api.resolvedWith({});
+  const same = held.filter((h) => h.result.name === result.name);
+  const traces = [
+    ...same.flatMap((h, n) => curves(h.result, shown.size * (n + 1), heldNote(h, now))),
+    ...curves(result, 0),
+  ].filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   return normalizePlot({ kind: 'data', x: { label: result.name, scale: result.log ? 'log' : 'linear' }, y: { label: 'dB', scale: 'linear' }, traces });
+}
+
+/** A held sweep's note: the coefficients (but the swept one) and the
+ *  amplitude it ran at that differ from now, or "held". */
+function heldNote(h, now) {
+  const notes = Object.entries(h.values).filter(([name, value]) => name !== h.result.name && Math.abs(value - (now[name] ?? 1)) > 1e-12 * Math.max(1, Math.abs(value))).map(([name, value]) => `${name} = ${Number(value.toPrecision(4))}`);
+  if (h.amplitude !== (Number(state().amplitude) || -6)) notes.push(`${h.amplitude} dBFS`);
+  return notes.length ? `, ${notes.join(', ')}` : ' (held)';
+}
+
+/** Hold the sweep shown: a copy that stays as the sliders and the next sweep move. */
+function holdSweep() {
+  if (!result?.points.some((p) => p.measures) || running()) return;
+  held.push({ result, values: { ...api.resolvedWith({}) }, amplitude: Number(state().amplitude) || -6 });
+  draw();
 }
 
 function draw() {
@@ -166,6 +195,8 @@ function draw() {
   const plot = sweepPlot();
   parts.plot.set(plot ? plotSpec(plot) : null);
   parts.annotate.disabled = !plot;
+  parts.hold.disabled = !plot || running();
+  parts.clear.disabled = !held.length;
   const shown = new Set(shownMeasures());
   const colors = new Map(measureList().filter(([key]) => shown.has(key)).map(([key], i) => [key, TRACE_COLORS[i % TRACE_COLORS.length]]));
   parts.measures.replaceChildren(result ? netPicker(measureList().map(([key, label]) => ({ key, label, checked: shown.has(key), color: colors.get(key) })), (key, on) => {
@@ -211,6 +242,7 @@ function finish() {
   plotsBusy.set('sweep', false);
   delete parts.go.dataset.running;
   parts.go.textContent = 'Sweep';
+  parts.hold.disabled = !sweepPlot();
 }
 
 /** Run the sweep: a run a value, in a worker thread where one starts,
@@ -299,6 +331,7 @@ export function installSweepPlot(deps) {
     worker?.terminate();
     worker = null;
     result = null;
+    held = [];
     if (parts) { finish(); parts.plot.set(null); say(''); }
   });
 }
