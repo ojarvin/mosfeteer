@@ -154,7 +154,8 @@ describe('data plot', { skip: browserSkip() }, () => {
     })()`);
     await h.evaluate(`${h.module('editor-state.js')}.then((s) => ${h.module('data-plot-ui.js')}.then((m) => m.openPlotSettings([...s.editor.circuit.labels.values()].find((l) => l.plot))))`);
     await h.until(`!!document.querySelector('.data-plot-dialog[open]')`);
-    await h.evaluate(`${button('.data-plot-dialog', 'Add file')}.click()`);
+    // The settings dialog is gone before the file's opens.
+    assert.equal(await h.evaluate(`(${button('.data-plot-dialog', 'Add file')}.click(), document.querySelectorAll('.data-plot-dialog').length)`), 0);
     await h.until(`!!document.querySelector('.data-plot-dialog[open] .plot-view svg path') && ${button('.data-plot-dialog', 'Add to plot')}`);
     assert.deepEqual(await h.evaluate(`[...document.querySelectorAll('.data-plot-trace input[type="text"]')].map((i) => i.value)`), [...before.legend, 'Sim']);
     await h.evaluate(`${button('.data-plot-dialog', 'Add to plot')}.click()`);
