@@ -1,5 +1,6 @@
 /** A part's options from its right-click menu, in a browser: a voltage
- *  source's waveform, a dither's shape, a sum's input signs. */
+ *  source's waveform, a dither's shape, a sum's input signs; a tone's
+ *  value edited in place. */
 
 import { describe, before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,7 +11,8 @@ import { runCommand } from '../../src/core/commands.js';
 function sources() {
   const circuit = new Circuit();
   for (const line of ['add voltage_source V1 --at 0 0', 'add current_source I1 --at 400 0', 'add dither DTH1 --at 0 400 --value "rect 0.5"',
-    'add gain K1 --at 400 400 --value k', 'add signal_sum S1 --at 800 400', 'connect DTH1.out K1.in', 'connect K1.out S1.w']) runCommand(circuit, line);
+    'add gain K1 --at 400 400 --value k', 'add signal_sum S1 --at 800 400', 'connect DTH1.out K1.in', 'connect K1.out S1.w',
+    'add tone TONE1 --at 0 800 --value "A_{ripple} f_{ripple}"']) runCommand(circuit, line);
   return circuit.toJSON();
 }
 
@@ -73,5 +75,19 @@ describe('source waveforms', { skip: browserSkip() }, () => {
     assert.deepEqual(await h.evaluate(`[...document.querySelectorAll('.context-submenu[aria-label="w input"] button')].map((b) => b.textContent.trim())`), ['Positive✓', 'Negative']);
     await h.evaluate(`[...document.querySelectorAll('.context-submenu[aria-label="w input"] button')].find((b) => b.textContent.trim() === 'Negative').click()`);
     assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.getComponent('S1').negativeInputs.has('w'))`), true);
+  });
+
+  test("a tone's value is edited in a box as wide as its text, over the small circle", async () => {
+    await h.key('Escape');
+    const p = await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.worldToClient(0, 800))`);
+    await h.tap(p.x, p.y);
+    await h.key('t');
+    await h.until(`!!document.querySelector('.tf-inline-editor')`);
+    const box = await h.evaluate(`(() => { const i = document.querySelector('.tf-inline-editor'); const c = document.querySelector('[data-ref="TONE1"]').getBoundingClientRect(); return { value: i.value, scroll: i.scrollWidth, client: i.clientWidth, circle: c.width }; })()`);
+    assert.equal(box.value, 'A_{ripple} f_{ripple}');
+    // One line, wider than the circle it sits on.
+    assert.ok(box.scroll <= box.client && box.client > box.circle, JSON.stringify(box));
+    await h.key('Escape');
+    await h.until(`!document.querySelector('.tf-inline-editor')`);
   });
 });

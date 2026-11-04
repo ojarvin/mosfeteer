@@ -12,7 +12,7 @@ import { SYMBOL_CATEGORY_RULES } from './components/categories.js';
 import { ComponentInstance, MOS_ANALYSIS_TYPES, REFERENCE_MARKER_TYPES, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerName } from './model.js';
 import { switchState } from './beats.js';
 import { PIN_RAIL_TYPES, railHang, railRotation } from './pin-rails.js';
-import { TRANSFER_FUNCTION_TYPES, parseDither, parseGain, parseLevels, readTransferFunction } from './transfer-function.js';
+import { TRANSFER_FUNCTION_TYPES, parseDither, parseGain, parseLevels, parseTone, readTransferFunction } from './transfer-function.js';
 
 /** Whether a value still reads for a signal-flow part of this type (a
  *  block's transfer function, a gain's or a sampler's one coefficient). */
@@ -20,6 +20,7 @@ function valueReads(type, value) {
   try {
     if (type === 'quantizer') parseLevels(value);
     else if (type === 'dither') parseDither(value);
+    else if (type === 'tone') parseTone(value);
     else if (type === 'gain' || type === 'sampler') parseGain(value);
     else if (TRANSFER_FUNCTION_TYPES[type]) readTransferFunction(value, TRANSFER_FUNCTION_TYPES[type]);
     return true;

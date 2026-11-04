@@ -37,7 +37,7 @@ Each wire is one signal. The parts are:
 - **Multiply junctions** `signal_multiply`: a gain. All inputs but one must
   be constants (a source set to *zero* or *constant*, wired straight to the
   junction); two signals multiplied have no transfer function and are
-  refused.
+  refused. The simulations multiply two sampled signals (see *Dither*).
 - **Sources** are the signals nothing in the diagram drives: an input
   port's, or any wire that is read (a named stub, say). Any signal can be
   the output. Names are shown as written (`OUT`, `V_{OUT}`).
@@ -342,11 +342,16 @@ delay has no step response here; a continuous input through a sampler
 steps in samples, its path's step response read before each t = nT and
 run through the sampled loop.
 
-**Simulated output spectrum** (magnitude view): one swing-simulation run at
+**Simulated output spectrum** (magnitude view, its **Simulation** section):
+one swing-simulation run at
 an amplitude and frequency of its own (the swing's source; the frequency made a whole number of
-cycles in each segment), Welch-averaged -- Hann-windowed 8192-sample
-segments overlapping by half over a 32768-sample record, seven averages --
-and drawn behind the analytic curves (`spectrum.js`). It runs again when
+cycles in each segment; f/fs 0 a constant input of the amplitude, DC), Welch-averaged -- Hann-windowed
+segments of 8192 samples (**Samples**: 4096 to 65536) overlapping by half
+over a record four segments long, seven averages -- run in a worker
+thread (`spectrum-run.js` in `optimize-worker.js`; in the page where none
+starts), and drawn behind the analytic curves (`spectrum.js`): averaged into about
+600 points on the log axis, a line's own bins kept, so a spur stays one
+narrow peak at any length. It runs again when
 the coefficients settle (a slider let go, a value typed), not on every
 tick. The graph is then one plot in the spectrum's units, dBFS per bin (a
 full-scale sine reads 0 dBFS; white noise its power in the window's noise
@@ -364,7 +369,8 @@ each quantizer at its measured gain (`analyzeSignalFlow`'s
 status line names the gains. The equations, the other views, and the
 optimizer keep the gain of 1. With every curve unticked the spectrum
 plots, and annotates, alone. With a band, the simulated
-SNDR and ENOB beside the predicted SQNR.
+SNDR and ENOB, and the band's noise in dBFS (every bin of the band but
+the tone's and DC's, against a full-scale sine), beside the predicted SQNR.
 
 **Dither** is a part of the diagram: a **dither source** (`dither`, value
 `rect 1` or `tri 0.5`: its shape and A, in full scale -- `rect 1` is
@@ -372,7 +378,8 @@ SNDR and ENOB beside the predicted SQNR.
 uniform over (-A, A) and `tri` triangular over (-A, A), the textbook
 continuous dithers, or `bin` two levels, +-A (one LFSR bit through a DAC,
 as dither is made in a circuit) and `tern` three, -A, 0, +A at 1/4, 1/2,
-1/4 (two such bits added); right-click → **Dither shape** picks the
+1/4 (two such bits added). A may be a coefficient (`tri a_d`).
+Right-click → **Dither shape** picks the
 shape and keeps A. A gain after it
 sets how much reaches the loop where it is wired (into the quantizer's
 sum, say): with the default +-FS the gain reads as the dither in full
@@ -391,6 +398,28 @@ NTF's prediction -- which dither of about a level step breaks up. A dither
 source starts as **Zero** among the sources (it is noise, not a signal);
 set it to Input for its own transfer function. The dither setting of
 designs from before dither sources (`flow.dither`) is no longer read.
+
+A **tone source** (`tone`, value `0.01 0.37`: its amplitude A in full
+scale and its f/fs, at most 0.5; 0 holds A, an offset) draws a sine, a
+value a sample, made a whole number of cycles in the window (in the
+spectrum, in each segment, so its products stay in their bins): an aggressor
+such as a reference's ripple. A and the f/fs may be coefficients (`a_r
+f_r`). A dither or tone source's coefficients get sliders as any
+coefficient does, and the optimizer holds them fixed unless set free.
+Otherwise a tone source is a dither source: a source in the transfer
+functions, **Zero** at first, sampled side only.
+
+A **product of two sampled signals** (a multiply junction with two or more
+inputs that are not constants, a dither or tone source's among them) is
+worked out in the simulations a sample at a time, in the order its inputs
+need it, as a quantizer is; one in a loop with no delay, or of continuous
+signals, is refused. A ripple r on a DAC's reference is drawn so: the
+feedback `c_1 V` as before, and beside it `V` times a tone source, through
+its own `c_1`, into the same sum; the tone's A is in full scale, so a
+ripple of eps is A = eps / FS. Its input mixes into sidebands at the
+tone +- the input, and the shaped noise near the tone folds into the
+band; the spectrum shows both. The transfer functions take the source as
+zero, so the product drops out and they stay the loop's own.
 
 **Root locus** (`locus.js`): a result's poles as one coefficient sweeps,
 logarithmically from a decade below its number to a decade above by default,

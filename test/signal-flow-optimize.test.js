@@ -574,3 +574,190 @@ test('binary and ternary dither: two and three levels', async () => {
   assert.deepEqual(levelsOf('bin 1'), [-2, 2]);
   assert.deepEqual(levelsOf('tern 1'), [-2, 0, 2]);
 });
+
+test('a tone source: a sine of amplitude A at its f/fs, a whole number of cycles in the window', async () => {
+  const { parseTone, toneValueText, parseDither } = await import('../src/core/transfer-function.js');
+  assert.deepEqual(parseTone('0.01 0.37'), { amplitude: 0.01, frequency: 0.37 });
+  assert.deepEqual(parseTone('sine ±1/2 FS at 1/8'), { amplitude: 0.5, frequency: 0.125 });
+  assert.equal(toneValueText(parseTone('sin 0.01 0.37')), '0.01 0.37');
+  assert.throws(() => parseTone('0.01'), /amplitude and an f\/fs/);
+  assert.throws(() => parseTone('0.01 0.6'), /f\/fs is from 0 to 0.5/);
+  assert.throws(() => parseDither('rect 1 0.2'), /shape and an amplitude/);
+  assert.throws(() => parseDither('sine 0.01 0.37'), /shape and an amplitude/);
+  // Full scale 2 (three levels): 0.5 is +-1.
+  const circuit = diagram(['add tone TONE1 --at 0 0 --value "0.5 0.1"', 'add gain KD --at 240 0 --value 1', 'add input U --at 240 400', 'add quantizer QZ1 --at 640 400 --value 3', 'add output V --at 640 0', 'add output W --at 1000 400',
+    'connect TONE1.out KD.in', 'connect KD.out V.p', 'connect U.p QZ1.in', 'connect QZ1.out W.p']);
+  // Its value drawn beside it as math, and stored as typed numbers.
+  assert.equal([...circuit.labels.values()].find((l) => l.owner === 'TONE1').text, '$\\pm 0.5\\text{ FS, }f = 0.1\\text{ }f_s$');
+  runCommand(circuit, 'value TONE1 "sine ±1/4 at 1/8"');
+  assert.equal(circuit.getComponent('TONE1').value, '0.25 0.125');
+  runCommand(circuit, 'value TONE1 "0.5 0.1"');
+  const sim = prepareSimulation(circuit, { values: {}, sources: {}, input: 'U', output: 'name:V', samples: 1024, warmup: 0 });
+  assert.ok(sim.ok, sim.error);
+  const v = sim.run(-60, { record: true }).samples;
+  const f = Math.round(0.1 * 1024) / 1024;
+  v.forEach((y, n) => assert.ok(Math.abs(y - Math.sin(2 * Math.PI * f * n)) < 1e-9, `${n}: ${y}`));
+});
+
+test('a multiply junction of two sampled signals simulates their product', () => {
+  const lines = ['add input U --at -400 0', 'add tone TONE1 --at -400 -400 --value "0.25 0.05"', 'add signal_multiply MUL1 --at 0 0', 'add output V --at 400 0',
+    'connect U.p MUL1.w', 'connect TONE1.out MUL1.n', 'connect MUL1.e V.p'];
+  const sim = prepareSimulation(diagram(lines), { values: {}, sources: {}, input: 'U', output: 'name:V', samples: 512, warmup: 0 });
+  assert.ok(sim.ok, sim.error);
+  const v = sim.run(0, { record: true }).samples;
+  const tone = Math.round(0.05 * 512) / 512;
+  v.forEach((y, n) => assert.ok(Math.abs(y - 0.25 * Math.sin(2 * Math.PI * tone * n) * Math.sin(2 * Math.PI * sim.frequency * n)) < 1e-9, `${n}: ${y}`));
+  // A constant source still scales it; the transfer functions take the tone as zero.
+  const scaled = prepareSimulation(diagram([...lines, 'add input G --at 0 -400', 'connect G.p MUL1.s']), { values: {}, sources: { G: { constant: '2' } }, input: 'U', output: 'name:V', samples: 512, warmup: 0 });
+  assert.ok(Math.abs(scaled.run(0, { record: true }).samples[7] - 2 * v[7]) < 1e-12);
+});
+
+test('a ripple on the DAC reference mixes the input into sidebands round the ripple', async () => {
+  // The modulator's first feedback is k_1 V (1 + r), drawn as k_1 V plus
+  // k_1 V r: r a tone at 0.01, the input at 1/256. In band the loop follows
+  // the input, so V r leaves sidebands of 0.5 * 0.1 / 2 at the tone +- the
+  // input. The transfer functions take the tone as zero, so they are the
+  // modulator's.
+  const { analyzeSignalFlow } = await import('../src/core/analysis/signal-flow.js');
+  const integrator = '"tf([0 1], [1 -1])"';
+  const ripple = (amplitude) => diagram(['add input U --at -1600 0', 'add signal_sum S1 --at -1200 0', `add tf_z H1 --at -800 0 --value ${integrator}`, 'add signal_sum S3 --at -400 0', `add tf_z H2 --at 0 0 --value ${integrator}`,
+    'add quantizer QZ1 --at 800 0', 'add output V --at 1200 0', 'add gain K1 --at -800 400 --rot 180 --value k_1', 'add gain K2 --at 0 400 --rot 180 --value k_2',
+    `add tone TONE1 --at 0 -800 --value "${amplitude} 0.01"`, 'add signal_multiply MUL1 --at 1200 -800', 'add gain KR --at 1600 -1200 --rot 270 --value k_1',
+    'connect U.p S1.w', 'connect S1.e H1.in', 'connect H1.out S3.w', 'connect S3.e H2.in', 'connect QZ1.out V.p', 'connect K1.out S1.s', 'connect K2.out S3.s', 'connect H2.out QZ1.in', 'connect V.p K1.in', 'connect V.p K2.in',
+    'connect TONE1.out MUL1.n', 'connect V.p MUL1.s', 'connect MUL1.e KR.in', 'connect KR.out S1.n'], [['S1', 's'], ['S3', 's'], ['S1', 'n']]);
+  const linear = (circuit) => analyzeSignalFlow(circuit, { output: 'V', sources: { U: 'input' } });
+  assert.ok(linear(ripple(0.1)).ok, linear(ripple(0.1)).error);
+  assert.deepEqual(linear(ripple(0.1)).entries.map((e) => e.equation), linear(modulator()).entries.map((e) => e.equation));
+  const amplitudeAt = (samples, cycles) => {
+    let re = 0;
+    let im = 0;
+    samples.forEach((y, n) => { re += y * Math.cos((2 * Math.PI * cycles * n) / samples.length); im -= y * Math.sin((2 * Math.PI * cycles * n) / samples.length); });
+    return (2 * Math.hypot(re, im)) / samples.length;
+  };
+  const options = { values: { k_1: 1, k_2: 2 }, sources: {}, input: 'U', output: 'name:V', samples: 4096 };
+  const sideband = (amplitude) => {
+    const sim = prepareSimulation(ripple(amplitude), options);
+    assert.ok(sim.ok, sim.error);
+    const v = sim.run(-6, { record: true }).samples;
+    return [41 - 16, 41 + 16].map((cycles) => amplitudeAt(v, cycles));
+  };
+  for (const level of sideband(0.1)) assert.ok(Math.abs(level - 0.025) < 0.005, `${level}`);
+  for (const level of sideband(1e-9)) assert.ok(level < 1e-3, `${level}`);
+});
+
+test('a product of continuous signals, or one in a loop with no delay, is refused', () => {
+  const loop = diagram(['add input U --at -400 0', 'add signal_sum S1 --at 0 0', 'add signal_multiply MUL1 --at 400 0', 'add tone TONE1 --at 400 -400 --value "0.1 0.1"', 'add output V --at 800 0',
+    'connect U.p S1.w', 'connect S1.e MUL1.w', 'connect TONE1.out MUL1.n', 'connect MUL1.e V.p', 'connect V.p S1.s']);
+  const looped = prepareSimulation(loop, { values: {}, sources: {}, input: 'U', output: 'name:V', samples: 256 });
+  assert.equal(looped.ok, false);
+  assert.match(looped.error, /MUL1 sits in a loop with no delay/);
+  const continuous = diagram(['add input U --at -800 0', 'add tf_s H1 --at -400 0 --value "1/s"', 'add signal_multiply MUL1 --at 0 0', 'add sampler SMP1 --at 400 0', 'add output V --at 800 0',
+    'connect U.p H1.in', 'connect H1.out MUL1.w', 'connect U.p MUL1.n', 'connect MUL1.e SMP1.in', 'connect SMP1.out V.p']);
+  const refused = prepareSimulation(continuous, { values: { T: 1 }, sources: {}, input: 'U', output: 'name:V', samples: 256 });
+  assert.equal(refused.ok, false);
+  assert.match(refused.error, /MUL1 multiplies two continuous signals/);
+});
+
+test('a tone or dither source\'s amplitude and f/fs may be coefficients: sliders, fixed in the search', async () => {
+  const { parseDither, parseTone, toneValueText } = await import('../src/core/transfer-function.js');
+  const { diagramSymbols } = await import('../src/core/analysis/signal-flow.js');
+  assert.deepEqual(parseTone('A_r f_r'), { amplitude: 'A_r', frequency: 'f_r' });
+  assert.deepEqual(parseDither('tri a_d'), { shape: 'tri', amplitude: 'a_d' });
+  assert.equal(toneValueText(parseTone('A_r 1/8')), 'A_r 0.125');
+  assert.deepEqual(diagramSymbols(diagram(['add dither DTH1 --at 0 0 --value "tri a_d"'])), ['a_d']);
+  const circuit = diagram(['add tone TONE1 --at 0 0 --value "A_r f_r"', 'add gain KD --at 240 0 --value 1', 'add input U --at 240 400', 'add quantizer QZ1 --at 640 400 --value 3', 'add output V --at 640 0', 'add output W --at 1000 400',
+    'connect TONE1.out KD.in', 'connect KD.out V.p', 'connect U.p QZ1.in', 'connect QZ1.out W.p']);
+  assert.deepEqual(diagramSymbols(circuit), ['A_r', 'f_r']);
+  const { fixed, free } = optimizationParameters(circuit, { values: { A_r: 0.5, f_r: 0.1 } });
+  assert.deepEqual(fixed, ['A_r', 'f_r']);
+  assert.deepEqual(free, []);
+  const run = (values) => prepareSimulation(circuit, { values, sources: {}, input: 'U', output: 'name:V', samples: 1024, warmup: 0 });
+  const v = run({ A_r: 0.5, f_r: 0.1 }).run(-60, { record: true }).samples;
+  const f = Math.round(0.1 * 1024) / 1024;
+  v.forEach((y, n) => assert.ok(Math.abs(y - Math.sin(2 * Math.PI * f * n)) < 1e-9, `${n}: ${y}`));
+  // At f/fs 0 the sine holds its amplitude; past 0.5 it is refused.
+  assert.ok(Array.from(run({ A_r: 0.5, f_r: 0 }).run(-60, { record: true }).samples).every((y) => Math.abs(y - 1) < 1e-12));
+  const refused = run({ A_r: 0.5, f_r: 0.7 });
+  assert.equal(refused.ok, false);
+  assert.match(refused.error, /TONE1: its f\/fs f_r is 0.7/);
+});
+
+test('an input at f/fs 0 is a constant of its amplitude; the band\'s noise reads in dBFS, the tone left out', async () => {
+  const { outputSpectrum, inBand } = await import('../src/core/analysis/spectrum.js');
+  const circuit = diagram(['add input U --at 0 0', 'add gain K1 --at 240 0 --value 1', 'add output V --at 640 0', 'add quantizer QZ1 --at 640 400 --value 2', 'add input E --at 240 400', 'add output W --at 1000 400',
+    'connect U.p K1.in', 'connect K1.out V.p', 'connect E.p QZ1.in', 'connect QZ1.out W.p']);
+  const sim = prepareSimulation(circuit, { values: {}, sources: {}, input: 'U', output: 'name:V', samples: 1024, frequency: 0 });
+  assert.equal(sim.frequency, 0);
+  const result = sim.run(-6, { record: true });
+  const level = 10 ** (-6 / 20);
+  assert.ok(Array.from(result.samples).every((y) => Math.abs(y - level) < 1e-12));
+  assert.ok(Math.abs(result.tone - level) < 1e-12);
+  // White noise of variance s^2 over a band of bw: s^2 bw / 0.5 of it, against a full-scale sine's power 1/2.
+  const random = seededRandom(3);
+  const n = 8192;
+  const sigma = 0.01;
+  const noise = Float64Array.from({ length: 4 * n }, () => sigma * Math.sqrt(12) * (random() - 0.5));
+  const tone = (f, a) => Float64Array.from(noise, (y, k) => y + a * (f ? Math.sin(2 * Math.PI * f * k) : 1));
+  const bw = 1 / 16;
+  const expected = 10 * Math.log10((sigma ** 2 * (bw / 0.5)) / 0.5);
+  for (const f of [0, 64 / n]) {
+    const measured = inBand(outputSpectrum(tone(f, 0.5), { segment: n }), f, [bw], { fullScale: 1 });
+    assert.ok(Math.abs(measured.noiseDb - expected) < 0.5, `${f}: ${measured.noiseDb} vs ${expected}`);
+    // The tone's power: 0.5^2 at DC, 0.5^2 / 2 as a sine.
+    const power = f ? 0.125 : 0.25;
+    assert.ok(Math.abs(measured.sndr - 10 * Math.log10(power / (sigma ** 2 * bw / 0.5))) < 0.5, `${f}: ${measured.sndr}`);
+  }
+});
+
+test('a dither source saved as a sine loads as a tone source', () => {
+  const saved = diagram(['add dither DTH1 --at 0 0 --value "tern 1"', 'add dither DTH2 --at 0 400 --value "rect 1"', 'add gain K1 --at 400 400 --value k_r', 'connect DTH2.out K1.in']).toJSON();
+  saved.components.find((c) => c.refdes === 'DTH2').value = 'sine a_r f_r';
+  const circuit = Circuit.fromJSON(saved);
+  assert.equal(circuit.getComponent('DTH1').type, 'dither');
+  assert.equal(circuit.getComponent('DTH2').type, 'tone');
+  assert.equal(circuit.getComponent('DTH2').value, 'a_r f_r');
+  assert.equal([...circuit.labels.values()].find((l) => l.owner === 'DTH2').text, '$\\pm a_r\\text{ FS, }f = f_r\\text{ }f_s$');
+});
+
+test('a tone source makes whole cycles in each spectrum segment, so its products stay in their bins', async () => {
+  const { outputSpectrum } = await import('../src/core/analysis/spectrum.js');
+  const circuit = diagram(['add tone TONE1 --at 0 0 --value "0.5 0.0317266"', 'add gain KD --at 240 0 --value 1', 'add input U --at 240 400', 'add quantizer QZ1 --at 640 400 --value 3', 'add output V --at 640 0', 'add output W --at 1000 400',
+    'connect TONE1.out KD.in', 'connect KD.out V.p', 'connect U.p QZ1.in', 'connect QZ1.out W.p']);
+  const segment = 1024;
+  const sim = prepareSimulation(circuit, { values: {}, sources: {}, input: 'U', output: 'name:V', samples: 4 * segment, segment });
+  const spectrum = outputSpectrum(sim.run(-60, { record: true }).samples, { segment });
+  // 32 cycles a segment (0.0317266 * 1024 = 32.5 rounds to 32): Hann's three bins hold it all.
+  const k = Math.round(0.0317266 * segment);
+  const total = spectrum.power.reduce((sum, p) => sum + p, 0);
+  const near = spectrum.power.slice(k - 1, k + 2).reduce((sum, p) => sum + p, 0);
+  assert.ok(near / total > 1 - 1e-9, `${near / total}`);
+});
+
+test('the plotted spectrum keeps a line narrow, however many bins each plotted point averages', async () => {
+  const { outputSpectrum, dbfsSpectrum, plotSpectrum } = await import('../src/core/analysis/spectrum.js');
+  const n = 65536;
+  const random = seededRandom(5);
+  // White noise and a spur at 2000 cycles a segment, 60 dB over the floor's bins.
+  const samples = Float64Array.from({ length: 4 * n }, (_, k) => 1e-3 * (random() - 0.5) + 0.1 * Math.sin((2 * Math.PI * 2000 * k) / n));
+  const raw = outputSpectrum(samples, { segment: n });
+  const plotted = plotSpectrum({ ...raw, points: dbfsSpectrum(raw, 1) }, 1 / 64);
+  const peak = plotted.reduce((best, p) => (p.db > best.db ? p : best));
+  assert.equal(peak.f, 2000 / n);
+  assert.ok(Math.abs(peak.db - 20 * Math.log10(0.1)) < 0.1, `${peak.db}`);
+  // Its neighbours on the plot are the window's bins, then the floor: no wide triangle.
+  const near = plotted.filter((p) => Math.abs(p.f - peak.f) < 8 / n && p.db > peak.db - 40);
+  assert.ok(near.length <= 3, JSON.stringify(near));
+  assert.ok(plotted.length < 1000, `${plotted.length}`);
+});
+
+test('a spectrum run takes and gives plain data, so it runs in a worker thread', async () => {
+  const { simulatedSpectrum } = await import('../src/core/analysis/spectrum-run.js');
+  const request = { circuit: modulator().toJSON(), options: { values: { k_1: 1, k_2: 2 }, sources: { U: 'input' }, input: 'U', output: 'name:V', frequency: 4 / 1024, samples: 4096, segment: 1024 }, amplitude: -20, segment: 1024 };
+  const result = simulatedSpectrum(structuredClone(request));
+  assert.ok(result.raw, result.error);
+  assert.equal(result.raw.n, 1024);
+  assert.equal(result.fullScale, 1);
+  assert.deepEqual(structuredClone(result).raw.power, result.raw.power);
+  assert.equal(result.quantizers[0].refdes, 'QZ1');
+  assert.match(simulatedSpectrum({ ...request, options: { ...request.options, input: 'NOPE' } }).error, /pick the source/);
+});

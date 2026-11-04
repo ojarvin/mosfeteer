@@ -9514,6 +9514,7 @@ __exports.createOptimizer = createOptimizer;
 __exports.runOptimization = runOptimization;
 let analyzeSignalFlow, bandEdges, diagramSymbols, numericRootsOf, responseAt, timingSymbols, withCoefficients; __bind(() => { ({ analyzeSignalFlow, bandEdges, diagramSymbols, numericRootsOf, responseAt, timingSymbols, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
 let prepareSimulation; __bind(() => { ({ prepareSimulation } = __require("src/core/analysis/simulate.js")); });
+let sourceNames; __bind(() => { ({ sourceNames } = __require("src/core/transfer-function.js")); });
 let evaluateCoefficientExpression, parseCoefficientLink, resolveCoefficients; __bind(() => { ({ evaluateCoefficientExpression, parseCoefficientLink, resolveCoefficients } = __require("src/core/analysis/coefficient-links.js")); });
 let createCmaes, seededRandom; __bind(() => { ({ createCmaes, seededRandom } = __require("src/core/analysis/cmaes.js")); });
 let POLE_MEASURES, normalizeOptimizeSetup; __bind(() => { ({ POLE_MEASURES, normalizeOptimizeSetup } = __require("src/core/analysis/optimize-setup.js")); });
@@ -9552,6 +9553,7 @@ let POLE_MEASURES, normalizeOptimizeSetup; __bind(() => { ({ POLE_MEASURES, norm
 
 
 
+
 const LOWEST_F = 1e-4;
 const NYQUIST = 0.5;
 // A miss of the stability or the analysis outweighs any spec's.
@@ -9571,14 +9573,17 @@ function failure(error) {
 
 /**
  * The coefficients the search moves: every one the diagram names that is
- * neither linked nor fixed (the timing -- samplers' periods, delays -- is
- * fixed unless set free). Each is `{ name, start, log, min, max, scale }`:
+ * neither linked nor fixed (the timing -- samplers' periods, delays -- and
+ * a dither or tone source's amplitude and f/fs are fixed unless set free). Each is `{ name, start, log, min, max, scale }`:
  * a coefficient that is not zero moves on a log scale, keeping its sign
  * (0.01 and 1 are as easy to reach from 0.1), a zero one linearly.
  */
 function optimizationParameters(circuit, { values = {}, links = {}, setup: rawSetup } = {}) {
   const setup = normalizeOptimizeSetup(rawSetup);
   const timing = new Set(timingSymbols(circuit));
+  // A dither or tone source's own amplitude and f/fs are what the loop
+  // meets, not what it is designed with: fixed unless set free, as the timing is.
+  for (const part of circuit.components.values()) for (const name of sourceNames(part)) timing.add(name);
   const free = [];
   const fixed = [];
   const linked = [];
@@ -15050,7 +15055,7 @@ let createRationalOps; __bind(() => { ({ createRationalOps } = __require("src/co
 let cancelCommonPolynomialFactor; __bind(() => { ({ cancelCommonPolynomialFactor } = __require("src/core/analysis/polynomial-gcd.js")); });
 let renderExpression; __bind(() => { ({ renderExpression } = __require("src/core/analysis/present.js")); });
 let bodeSketch, evaluateExpression, expressionSymbols, polynomialRoots; __bind(() => { ({ bodeSketch, evaluateExpression, expressionSymbols, polynomialRoots } = __require("src/core/analysis/bode.js")); });
-let TRANSFER_FUNCTION_TYPES, isBlockIn, parseGain, readTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, isBlockIn, parseGain, readTransferFunction } = __require("src/core/transfer-function.js")); });
+let TRANSFER_FUNCTION_TYPES, isBlockIn, parseGain, readTransferFunction, sourceNames; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, isBlockIn, parseGain, readTransferFunction, sourceNames } = __require("src/core/transfer-function.js")); });
 let analyzedCircuit, canonicalNetName; __bind(() => { ({ analyzedCircuit, canonicalNetName } = __require("src/core/model.js")); });
 let COLOR_PALETTE; __bind(() => { ({ COLOR_PALETTE } = __require("src/core/style.js")); });
 let samplePath; __bind(() => { ({ samplePath } = __require("src/core/analysis/sampling.js")); });
@@ -15086,8 +15091,8 @@ let chopperShortedNets; __bind(() => { ({ chopperShortedNets } = __require("src/
 
 const JUNCTIONS = new Set(['signal_sum', 'signal_multiply', 'gain']);
 const JUNCTION_INPUTS = ['n', 's', 'w'];
-// Parts that drive a signal from outside the diagram: an input port, a dither source.
-const SOURCE_TYPES = new Set(['input', 'dither']);
+// Parts that drive a signal from outside the diagram: an input port, a dither or tone source.
+const SOURCE_TYPES = new Set(['input', 'dither', 'tone']);
 // Parts that may sit on a signal wire without taking part in it.
 // A chopper is a short: the wires through it are one signal (signalFlowGraph).
 const PASSIVE_TYPES = new Set(['solder', 'output', 'port', 'inputoutput', 'chopper']);
@@ -15169,9 +15174,11 @@ function signalFlowGraph(circuit) {
     signal.driver = signal.drivers.length === 1 ? signal.drivers[0] : null;
     // A source: an input port, or a wire that is read but nothing drives.
     const port = signal.drivers.find((driver) => driver.source);
-    const ditherPart = port && circuit.components.get(port.comp)?.type === 'dither';
-    // A dither source's unnamed wire goes by the source, as math: DTH1 -> DTH_{1}.
-    if (ditherPart) sources.push({ id: port.comp, key: signal.key, name: signal.display === signal.netIds[0] ? port.comp.replace(/^([A-Za-z]+)_?(\d+)$/, '$1_{$2}') : signal.display, dither: true });
+    const sourceType = port && circuit.components.get(port.comp)?.type;
+    const ditherPart = sourceType === 'dither' || sourceType === 'tone';
+    // A dither or tone source's unnamed wire goes by the source, as math:
+    // DTH1 -> DTH_{1}. Both are `dither`: the simulations draw their values.
+    if (ditherPart) sources.push({ id: port.comp, key: signal.key, name: signal.display === signal.netIds[0] ? port.comp.replace(/^([A-Za-z]+)_?(\d+)$/, '$1_{$2}') : signal.display, dither: true, ...(sourceType === 'tone' ? { tone: true } : {}) });
     else if (port) sources.push({ id: port.comp, key: signal.key, name: signal.display });
     else if (!signal.drivers.length && signal.readers.length) sources.push({ id: signal.display, key: signal.key, name: signal.display });
     delete signal.drivers;
@@ -16732,7 +16739,7 @@ function ditherSymbols(circuit) {
   const { signals } = signalFlowGraph(circuit);
   const out = new Set();
   const list = [...signals.values()];
-  let frontier = list.filter((signal) => signal.driver?.source && circuit.components.get(signal.driver.comp)?.type === 'dither');
+  let frontier = list.filter((signal) => signal.driver?.source && ['dither', 'tone'].includes(circuit.components.get(signal.driver.comp)?.type));
   const seen = new Set();
   while (frontier.length) {
     const next = [];
@@ -16752,7 +16759,7 @@ function ditherSymbols(circuit) {
 }
 
 /** Every coefficient a diagram's parts name: its blocks' (a delay's T
- *  included), its gains', its samplers' periods. */
+ *  included), its gains', its samplers' periods, its dither and tone sources'. */
 function diagramSymbols(circuit) {
   const out = new Set();
   for (const component of circuit.components.values()) {
@@ -16761,6 +16768,8 @@ function diagramSymbols(circuit) {
         for (const name of resultSymbols(blockTransferFunction(component), TRANSFER_FUNCTION_TYPES[component.type])) out.add(name);
       } else if (component.type === 'gain' || component.type === 'sampler') {
         expressionSymbols(coefficientValue(parseGain(component.value || 'T')), 's', out);
+      } else if (component.type === 'dither' || component.type === 'tone') {
+        for (const name of sourceNames(component)) expressionSymbols(coefficientValue(name), 's', out);
       }
     } catch { /* a part that does not read names nothing */ }
   }
@@ -16859,7 +16868,7 @@ __exports.sweepAmplitudes = sweepAmplitudes;
 let blockTransferFunction, coefficientValue, delayTermsOf, denseCoefficients, hasDelays, mixedPeriods, signalDomains, signalFlowGraph, withCoefficients; __bind(() => { ({ blockTransferFunction, coefficientValue, delayTermsOf, denseCoefficients, hasDelays, mixedPeriods, signalDomains, signalFlowGraph, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
 let expm; __bind(() => { ({ expm } = __require("src/core/analysis/sampling.js")); });
 let evaluateExpression; __bind(() => { ({ evaluateExpression } = __require("src/core/analysis/bode.js")); });
-let TRANSFER_FUNCTION_TYPES, isBlockIn, parseDither, parseGain, parseLevels; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, isBlockIn, parseDither, parseGain, parseLevels } = __require("src/core/transfer-function.js")); });
+let TRANSFER_FUNCTION_TYPES, isBlockIn, parseDither, parseGain, parseLevels, parseTone; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, isBlockIn, parseDither, parseGain, parseLevels, parseTone } = __require("src/core/transfer-function.js")); });
 let analyzedCircuit, canonicalNetName; __bind(() => { ({ analyzedCircuit, canonicalNetName } = __require("src/core/model.js")); });
 let seededRandom; __bind(() => { ({ seededRandom } = __require("src/core/analysis/cmaes.js")); });
 let rationalMultiply; __bind(() => { ({ rationalMultiply } = __require("src/core/analysis/rational.js")); });
@@ -16881,7 +16890,10 @@ let rationalMultiply; __bind(() => { ({ rationalMultiply } = __require("src/core
  * end -- share it and it stays bounded), each edge at its delay (excess
  * loop delay included), the sampler reads just before
  * t = nT, and peaks are taken on a few sub-steps a period as well as at
- * every impulse.
+ * every impulse. A multiply junction of two sampled signals (a reference's
+ * ripple times the DAC's code, say) is no transfer function, so it is
+ * worked out a sample at a time, as a quantizer is, in the order its
+ * inputs need it.
  */
 
 
@@ -16959,6 +16971,8 @@ function matVec(M, x, out) {
  * constant holds it, the rest are zero), `input` (the source the sine
  * drives), `output` (a signal key for the output tone), `frequency` (f/fs
  * of the sine, made coherent with the window), `samples` (the window),
+ * `segment` (a whole number of cycles of each tone source in each run of
+ * this many samples: the spectrum's segment; the window by default),
  * `warmup`, `subSteps`. Dither is a dither source in the diagram: each
  * draws its own sequence, the same every run.
  * Returns `{ ok, fullScale, frequency, signals, run }`:
@@ -17019,10 +17033,18 @@ function prepareSimulation(circuit, options = {}) {
     }
     sourceValue.set(source.key, { driven: source === driven, constant });
   }
-  // Dither sources draw their numbers, whatever the analysis does with them.
+  // Dither and tone sources draw their values, whatever the analysis does
+  // with them; a tone is a sine among the shapes.
   for (const source of sources.filter((s) => s.dither)) {
     try {
-      sourceValue.set(source.key, { driven: false, constant: 0, dither: parseDither(circuit.components.get(source.id)?.value) });
+      // Its amplitude and f/fs at their numbers, when named.
+      const part = circuit.components.get(source.id);
+      const dither = part?.type === 'tone' ? { shape: 'sine', ...parseTone(part.value) } : parseDither(part?.value);
+      const at = (value) => (typeof value === 'string' ? num(value) : value);
+      const set = { ...dither, amplitude: at(dither.amplitude), ...(dither.shape === 'sine' ? { frequency: at(dither.frequency) } : {}) };
+      if (!(set.amplitude >= 0 && Number.isFinite(set.amplitude))) throw new Error(`its amplitude ${dither.amplitude} is ${set.amplitude}: it must be 0 or more`);
+      if (set.shape === 'sine' && !(set.frequency >= 0 && set.frequency <= 0.5)) throw new Error(`its f/fs ${dither.frequency} is ${set.frequency}: it must be from 0 to 0.5`);
+      sourceValue.set(source.key, { driven: false, constant: 0, dither: set });
     } catch (err) {
       return failure('bad-dither', `${source.id}: ${err.message}`);
     }
@@ -17031,7 +17053,8 @@ function prepareSimulation(circuit, options = {}) {
   const signalAt = (component, term) => [...signals.values()].find((signal) => signal.readers.some((r) => r.comp === component.refdes && r.term === term)) || null;
   const numeric = (component) => withCoefficients(blockTransferFunction(component), values);
   const gainOf = (component) => num(parseGain(component.value));
-  // A multiply junction: a gain of its constant inputs on its one signal.
+  // A multiply junction: a gain of its constant inputs on the signals it
+  // multiplies (a dither source's numbers among them).
   const multiplyOf = (component) => {
     let gain = 1;
     const varying = [];
@@ -17039,11 +17062,10 @@ function prepareSimulation(circuit, options = {}) {
       const signal = signalAt(component, term);
       if (!signal) continue;
       const source = sourceValue.get(signal.key);
-      if (source && !source.driven) gain *= source.constant;
+      if (source && !source.driven && !source.dither) gain *= source.constant;
       else varying.push(signal);
     }
-    if (varying.length > 1) throw new Error(`${component.refdes} multiplies two signals`);
-    return { gain, signal: varying[0] || null };
+    return { gain, signal: varying[0] || null, signals: varying };
   };
 
   const list = [...signals.values()];
@@ -17139,7 +17161,7 @@ function prepareSimulation(circuit, options = {}) {
     for (const [i, signal] of cont.entries()) {
       const source = sourceValue.get(signal.key);
       if (source) {
-        if (source.dither) throw new Error(`the dither on ${signal.display} feeds continuous signals: a dither source draws a number a sample, so wire it into a sum after the sampler, not through a sampler of its own`);
+        if (source.dither) throw new Error(`the ${circuit.components.get(signal.driver?.comp)?.type === 'tone' ? 'tone' : 'dither'} on ${signal.display} feeds continuous signals: it draws a value a sample, so wire it into a sum after the sampler, not through a sampler of its own`);
         if (source.driven) Hc[i][OSC_S] = 1;
         else Hc[i][ONE] = source.constant;
         continue;
@@ -17160,7 +17182,8 @@ function prepareSimulation(circuit, options = {}) {
       else if (component.type === 'signal_sum') {
         for (const term of JUNCTION_INPUTS) feed(component.negativeInputs?.has(term) ? -1 : 1, signalAt(component, term));
       } else if (component.type === 'signal_multiply') {
-        const { gain, signal: from } = multiplyOf(component);
+        const { gain, signal: from, signals: varying } = multiplyOf(component);
+        if (varying.length > 1) throw new Error(`${component.refdes} multiplies two continuous signals: multiply them after the sampler`);
         feed(gain, from);
       } else if (component.type === 'quantizer') {
         throw new Error(`${component.refdes} rounds a continuous signal: put a sampler before it`);
@@ -17188,10 +17211,18 @@ function prepareSimulation(circuit, options = {}) {
     return failure('unsimulatable', `${err.message.includes(':') ? '' : 'an H(z) block '}${err.message}`);
   }
   const discreteSources = disc.filter((s) => sourceValue.has(s.key));
+  // Sampled products of two or more signals, each worked out a sample at a time.
+  const products = disc.map((signal) => {
+    const component = signal.driver && !signal.driver.source ? circuit.components.get(signal.driver.comp) : null;
+    if (component?.type !== 'signal_multiply') return null;
+    const { gain, signals: inputs } = multiplyOf(component);
+    return inputs.length > 1 ? { component, out: signal.key, gain, inputs: inputs.map((input) => input.key) } : null;
+  }).filter(Boolean);
   const pSampler = new Map(samplers.map((c, k) => [c.refdes, k]));
   const pSource = new Map(discreteSources.map((s, k) => [s.key, samplers.length + k]));
   const pQuant = new Map(quantizers.map((c, k) => [c.refdes, samplers.length + discreteSources.length + k]));
-  const pSize = samplers.length + discreteSources.length + quantizers.length;
+  const pProduct = new Map(products.map((product, k) => [product.out, samplers.length + discreteSources.length + quantizers.length + k]));
+  const pSize = samplers.length + discreteSources.length + quantizers.length + products.length;
   const Gd = zero(disc.length, disc.length);
   const Hd = zero(disc.length, md + pSize);
   try {
@@ -17210,6 +17241,7 @@ function prepareSimulation(circuit, options = {}) {
       else if (component.type === 'signal_sum') {
         for (const term of JUNCTION_INPUTS) feed(component.negativeInputs?.has(term) ? -1 : 1, signalAt(component, term));
       } else if (component.type === 'signal_multiply') {
+        if (pProduct.has(signal.key)) { Hd[i][md + pProduct.get(signal.key)] = 1; continue; }
         const { gain, signal: from } = multiplyOf(component);
         feed(gain, from);
       }
@@ -17219,27 +17251,34 @@ function prepareSimulation(circuit, options = {}) {
   }
   const Md = solveLoop(Gd, Hd);
   if (!Md) return failure('algebraic-loop', 'a sampled loop with no delay has a gain of exactly 1');
-  // Quantizers in the order their inputs need them; one that needs its own
-  // output (no delay round its loop) cannot be rounded.
+  // Quantizers and products in the order their inputs need them; one that
+  // needs its own output (no delay round its loop) cannot be worked out.
+  const rowOf = (key) => (key && di.has(key) ? Md[di.get(key)] : null);
+  const nodes = [
+    ...quantizers.map((q) => ({ refdes: q.refdes, levels: levels.get(q.refdes), rows: [rowOf(signalAt(q, 'in')?.key)], p: md + pQuant.get(q.refdes) })),
+    ...products.map((product) => ({ refdes: product.component.refdes, product: true, gain: product.gain, rows: product.inputs.map(rowOf), p: md + pProduct.get(product.out) })),
+  ];
   const order = [];
-  const pending = new Set(quantizers);
+  const pending = new Set(nodes);
   while (pending.size) {
-    const ready = [...pending].find((q) => {
-      const input = signalAt(q, 'in');
-      if (!input || !di.has(input.key)) return true;
-      const row = Md[di.get(input.key)];
-      return [...pending].every((other) => Math.abs(row[md + pQuant.get(other.refdes)]) < 1e-12);
-    });
-    if (!ready) return failure('delay-free-loop', `${[...pending][0].refdes} sits in a loop with no delay: its input needs its own output`);
-    order.push({ refdes: ready.refdes, levels: levels.get(ready.refdes), row: signalAt(ready, 'in') && di.has(signalAt(ready, 'in').key) ? Md[di.get(signalAt(ready, 'in').key)] : null, p: md + pQuant.get(ready.refdes) });
+    const ready = [...pending].find((node) => node.rows.every((row) => !row || [...pending].every((other) => Math.abs(row[other.p]) < 1e-12)));
+    if (!ready) {
+      const stuck = [...pending][0];
+      return failure('delay-free-loop', `${stuck.refdes} sits in a loop with no delay: ${stuck.product ? 'its inputs need' : 'its input needs'} its own output`);
+    }
+    order.push(ready);
     pending.delete(ready);
   }
+  const rounding = order.filter((node) => !node.product);
 
   // ----- the continuous dynamics, F, and the period's segments.
   const window = Math.max(64, Math.round(options.samples || 4096));
   const warmup = Math.max(0, Math.round(options.warmup ?? window / 4));
-  const cycles = Math.max(1, Math.round((options.frequency || 1 / 256) * window));
+  // f/fs 0 is a constant input (DC) of the amplitude.
+  const cycles = options.frequency === 0 ? 0 : Math.max(1, Math.round((options.frequency || 1 / 256) * window));
   const frequency = cycles / window;
+  // A tone source's cycles are whole in each segment the spectrum averages.
+  const coherent = Math.max(1, Math.round(options.segment || window));
   const omega = (2 * Math.PI * frequency) / T;
   const F = zero(size, size);
   for (const block of blocks) {
@@ -17343,6 +17382,8 @@ function prepareSimulation(circuit, options = {}) {
     const magnitudes = wanted.length ? signalList.map((_, i) => (wanted.includes(i) ? new Float64Array(window) : null)) : null;
     const leveled = magnitudes ? wanted.filter((i) => i >= 0 && i < signalList.length) : [];
     const amplitude = fullScale * 10 ** (amplitudeDb / 20);
+    // At DC the sine holds its peak: the amplitude itself.
+    if (frequency === 0) phase = Math.PI / 2;
     let X = new Float64Array(size);
     let next = new Float64Array(size);
     // The oscillator's pair is (A cos, A sin) of the sine's phase.
@@ -17369,15 +17410,24 @@ function prepareSimulation(circuit, options = {}) {
       const { shape } = sourceValue.get(key).dither;
       const a = sourceValue.get(key).dither.amplitude * fullScale;
       const draw = seededRandom(0xd17e + 7919 * i);
-      // rect and tri continuous; bin a coin (+-A), tern two coins halved (-A, 0, +A).
+      // rect and tri continuous; bin a coin (+-A), tern two coins halved (-A, 0, +A);
+      // a tone's sine at its f/fs, made a whole number of cycles in the window.
       const coin = () => (draw() < 0.5 ? -1 : 1);
+      if (shape === 'sine') {
+        // At f/fs 0 it holds its amplitude: a constant (an offset).
+        const set = sourceValue.get(key).dither.frequency;
+        if (set === 0) return [key, () => a];
+        const f = Math.max(1, Math.round(set * coherent)) / coherent;
+        let k = 0;
+        return [key, () => a * Math.sin(2 * Math.PI * f * k++)];
+      }
       return [key, shape === 'rect' ? () => a * (2 * draw() - 1)
         : shape === 'tri' ? () => a * (draw() - draw())
           : shape === 'bin' ? () => a * coin()
             : () => (a * (coin() + coin())) / 2];
     }));
     // Each quantizer's output against its input, for its effective gain.
-    const fits = order.map(() => ({ vy: 0, vv: 0, yy: 0 }));
+    const fits = new Map(rounding.map((node) => [node, { vy: 0, vv: 0, yy: 0 }]));
     // A state a thousand times full scale: the loop has run away.
     const limit = 1e3 * fullScale;
     const track = (measuring) => {
@@ -17395,12 +17445,18 @@ function prepareSimulation(circuit, options = {}) {
       }
       state.set(xd, 0);
       state.set(p, md);
-      for (const [k, q] of order.entries()) {
-        const y = q.row ? dot(q.row, state) : 0;
-        state[q.p] = quantize(y, q.levels);
+      for (const node of order) {
+        if (node.product) {
+          let v = node.gain;
+          for (const row of node.rows) v *= row ? dot(row, state) : 0;
+          state[node.p] = v;
+          continue;
+        }
+        const y = node.rows[0] ? dot(node.rows[0], state) : 0;
+        state[node.p] = quantize(y, node.levels);
         if (measuring) {
-          const fit = fits[k];
-          fit.vy += y * state[q.p]; fit.vv += y * y; fit.yy += state[q.p] ** 2;
+          const fit = fits.get(node);
+          fit.vy += y * state[node.p]; fit.vv += y * y; fit.yy += state[node.p] ** 2;
         }
       }
       matVec(Md, state, Yd);
@@ -17460,10 +17516,10 @@ function prepareSimulation(circuit, options = {}) {
     for (let i = 0; i < m + md; i++) {
       if (halves[1][i] > 2 * fullScale && halves[1][i] > 2 * halves[0][i]) return { peaks: Array.from(peaks), tone: null, overloaded: true, ...wavesOut() };
     }
-    const tone = outputIndex >= 0 ? (2 * Math.hypot(re, im)) / window : null;
+    const tone = outputIndex >= 0 ? ((frequency === 0 ? 1 : 2) * Math.hypot(re, im)) / window : null;
     // y = k v + e, k by least squares: e is then uncorrelated with v.
-    const quantizerFits = order.map((q, k) => {
-      const { vy, vv, yy } = fits[k];
+    const quantizerFits = rounding.map((q) => {
+      const { vy, vv, yy } = fits.get(q);
       const gain = vv > 0 ? vy / vv : 1;
       return { refdes: q.refdes, levels: q.levels, gain, errorVariance: Math.max(0, yy - gain * vy) / window };
     });
@@ -17785,6 +17841,39 @@ function withAliases(solved, system) {
 
 };
 
+__modules["src/core/analysis/spectrum-run.js"] = function (__require, __exports) {
+__exports.simulatedSpectrum = simulatedSpectrum;
+let Circuit; __bind(() => { ({ Circuit } = __require("src/core/model.js")); });
+let prepareSimulation; __bind(() => { ({ prepareSimulation } = __require("src/core/analysis/simulate.js")); });
+let outputSpectrum; __bind(() => { ({ outputSpectrum } = __require("src/core/analysis/spectrum.js")); });
+/**
+ * One simulated spectrum run, as the Plots window's spectrum asks it: in a
+ * worker thread (web/optimize-worker.js) or, where none can start, in the
+ * page. Everything it takes and gives is plain data, so it crosses to a
+ * worker and back.
+ */
+
+
+
+
+
+/** One run of `options` (prepareSimulation's) at `amplitude` dBFS, and its
+ *  output's spectrum in segments of `segment`: `{ raw, quantizers,
+ *  fullScale, frequency }`, or `{ error }`, or `{ overloaded }`. */
+function simulatedSpectrum({ circuit, options, amplitude, segment }) {
+  try {
+    const sim = prepareSimulation(Circuit.fromJSON(circuit), options);
+    if (!sim.ok) return { error: sim.error };
+    const run = sim.run(amplitude, { record: true });
+    if (run.overloaded || !run.samples) return { overloaded: !!run.overloaded, fullScale: sim.fullScale, frequency: sim.frequency };
+    return { raw: outputSpectrum(run.samples, { segment, variance: 1 / 3 }), quantizers: run.quantizers, fullScale: sim.fullScale, frequency: sim.frequency };
+  } catch (error) {
+    return { error: error.message };
+  }
+}
+
+};
+
 __modules["src/core/analysis/spectrum.js"] = function (__require, __exports) {
 __exports.outputSpectrum = outputSpectrum;
 __exports.dbfsSpectrum = dbfsSpectrum;
@@ -17880,29 +17969,40 @@ function dbfsOffset(spectrum, fullScale, { noise, amplitude }) {
 /**
  * The simulated SNDR in band: the tone's bins (the input frequency, a Hann
  * window spreading it over three either side) against every other bin of
- * the band. `band` `{ f0, bw }` as bandEdges reads it; returns `{ sndr, enob }`
- * or null.
+ * the band (a tone at DC, f/fs 0, its power the DC's square). `band`
+ * `{ f0, bw }` as bandEdges reads it; returns `{ sndr, enob, noiseDb }`
+ * (`noiseDb` the band's noise, the tone left out, in dBFS of a sine of
+ * amplitude `fullScale`; `sndr` null with no tone), or null.
  */
-function inBand(spectrum, frequency, edges) {
+function inBand(spectrum, frequency, edges, { fullScale = 1 } = {}) {
   if (!spectrum || !edges.length) return null;
-  const { power, n } = spectrum;
+  const { power, n, w2 } = spectrum;
   const [f1, f2] = edges.length === 2 ? edges : [0, edges[0]];
   const tone = Math.round(frequency * n);
   let signal = 0;
   let noise = 0;
-  for (let k = Math.max(1, Math.ceil(f1 * n)); k <= Math.min(n / 2, Math.floor(f2 * n)); k++) {
-    if (Math.abs(k - tone) <= 3) signal += power[k];
+  for (let k = Math.max(tone ? 1 : 0, Math.ceil(f1 * n)); k <= Math.min(n / 2, Math.floor(f2 * n)); k++) {
+    // A tone at DC: its bins either side counted twice, the mirrored half,
+    // so its power is the DC's square as a sine's is half its amplitude's.
+    if (Math.abs(k - tone) <= 3) signal += tone || !k ? power[k] : 2 * power[k];
     // DC and the window's spread of it are not noise.
     else if (k > 2) noise += power[k];
   }
-  if (!(signal > 0) || !(noise > 0)) return null;
-  const sndr = 10 * Math.log10(signal / noise);
-  return { sndr, enob: (sndr - 1.76) / 6.02 };
+  if (!(noise > 0)) return null;
+  // The noise's power against a full-scale sine's (the one-sided bins of
+  // white noise sum to n w2 sigma^2 / 2, of a sine n w2 A^2 / 4).
+  const noiseDb = 10 * Math.log10((4 * noise) / (n * w2 * fullScale ** 2));
+  if (!(signal > 0)) return { sndr: null, enob: null, noiseDb };
+  const sndr = 10 * Math.log10(tone ? signal / noise : signal / (2 * noise));
+  return { sndr, enob: (sndr - 1.76) / 6.02, noiseDb };
 }
 
 /**
  * A spectrum for a log-frequency plot: averaged into about `bins` bins a
- * plot can draw (the floor reads as its mean), the tone's own bins kept.
+ * plot can draw (the floor reads as its mean), the tone's own bins kept,
+ * and so are a line's -- a bin 10 dB over its bin's median, with the
+ * window's spread of it -- so a spur stays one narrow peak however many
+ * samples the run has.
  */
 function plotSpectrum(spectrum, frequency, { bins = 600 } = {}) {
   if (!spectrum) return [];
@@ -17913,10 +18013,22 @@ function plotSpectrum(spectrum, frequency, { bins = 600 } = {}) {
   const out = [];
   let bucket = [];
   let edge = low;
+  const power = (p) => 10 ** (p.db / 10);
   const flush = () => {
     if (!bucket.length) return;
-    const mean = bucket.reduce((sum, p) => sum + 10 ** (p.db / 10), 0) / bucket.length;
-    out.push({ f: bucket[Math.floor(bucket.length / 2)].f, db: 10 * Math.log10(mean) });
+    const sorted = bucket.map(power).sort((x, y) => x - y);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    // A line's bins (each over the median by 10 dB, and three either side) drawn as they are.
+    const line = new Set();
+    if (bucket.length > 3) {
+      bucket.forEach((p, i) => {
+        if (power(p) > 10 * median) for (let j = Math.max(0, i - 3); j <= Math.min(bucket.length - 1, i + 3); j++) line.add(j);
+      });
+    }
+    const floor = bucket.filter((_, i) => !line.has(i));
+    if (floor.length) out.push({ f: floor[Math.floor(floor.length / 2)].f, db: 10 * Math.log10(floor.reduce((sum, p) => sum + power(p), 0) / floor.length) });
+    for (const i of [...line].sort((x, y) => x - y)) out.push(bucket[i]);
+    if (line.size) out.sort((x, y) => x.f - y.f);
     bucket = [];
   };
   for (const [index, point] of points.entries()) {
@@ -25150,7 +25262,7 @@ const SYMBOL_CATEGORY_RULES = [
   // Block-diagram drawing parts; the signal-flow analysis reads only the
   // next group's.
   ['Block diagram', /^(block|filter_(lpf|hpf|bpf|notch)|oscillator)$/],
-  ['Signal flow', /^(signal_(sum|multiply)|tf_(s|z|dac|dac_rz|delay|zdelay)|gain|sampler|quantizer|dither)$/],
+  ['Signal flow', /^(signal_(sum|multiply)|tf_(s|z|dac|dac_rz|delay|zdelay)|gain|sampler|quantizer|dither|tone)$/],
 ];
 
 /** Block-diagram and signal-flow parts: the router keeps two cells of room
@@ -25700,7 +25812,7 @@ let switch_open, switch_closed; __bind(() => { ({ switch_open, switch_closed } =
 let block; __bind(() => { ({ block } = __require("src/core/components/block.js")); });
 let chopper; __bind(() => { ({ chopper } = __require("src/core/components/chopper.js")); });
 let mux2; __bind(() => { ({ mux2 } = __require("src/core/components/mux.js")); });
-let signal_sum, signal_multiply, oscillator, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, tf_dac, tf_dac_rz, tf_delay, tf_zdelay, gain, sampler, quantizer, dither; __bind(() => { ({ signal_sum, signal_multiply, oscillator, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, tf_dac, tf_dac_rz, tf_delay, tf_zdelay, gain, sampler, quantizer, dither } = __require("src/core/components/signal-flow.js")); });
+let signal_sum, signal_multiply, oscillator, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, tf_dac, tf_dac_rz, tf_delay, tf_zdelay, gain, sampler, quantizer, dither, tone; __bind(() => { ({ signal_sum, signal_multiply, oscillator, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, tf_dac, tf_dac_rz, tf_delay, tf_zdelay, gain, sampler, quantizer, dither, tone } = __require("src/core/components/signal-flow.js")); });
 
 
 
@@ -25830,6 +25942,7 @@ const symbolTypes = {
   sampler,
   quantizer,
   dither,
+  tone,
 };
 
 /** Ordered list of type names (for palettes / docs). */
@@ -26749,7 +26862,7 @@ const sampler = defineSymbol({
 /**
  * A dither source: random numbers into a sampled signal, one a sample --
  * rectangular (uniform over +-A) or triangular (two uniforms added, over
- * +-A, peaking at 0). Its value is the shape and A in full scale (`rect 1`
+ * +-A, peaking at 0), or two or three levels. Its value is the shape and A in full scale (`rect 1`
  * is +-FS, the largest quantizer's N - 1), drawn beside it; how much
  * reaches the loop is a gain after it, a
  * coefficient like any other. The transfer functions take it as a source
@@ -26772,6 +26885,32 @@ const dither = defineSymbol({
   refPos: null,
   labelOffset: null,
   defaultValue: 'rect 1',
+  allowFloatingTerminals: true,
+});
+
+/**
+ * A tone source: a sine into a sampled signal, one value a sample -- an
+ * aggressor such as a reference's ripple. Its value is the amplitude A in
+ * full scale and the f/fs (`0.01 0.37`), each a number or a coefficient,
+ * drawn beside it. As a dither source, the transfer functions take it as a
+ * source and the simulations draw its values.
+ */
+const tone = defineSymbol({
+  type: 'tone',
+  description: 'Tone source (a sine)',
+  refPrefix: 'TONE',
+  terminals: [
+    { name: 'out', x: 40, y: 0, direction: 'output', signalRole: 'output', dir: { x: 1, y: 0 } },
+  ],
+  bbox: { x: -40, y: -40, w: 80, h: 80 },
+  graphics: [
+    { kind: 'circle', cx: 0, cy: 0, r: 40, style: 'emph' },
+    { kind: 'path', d: 'M -24 0 C -16 -24 -8 -24 0 0 C 8 24 16 24 24 0', style: 'symbol', fill: 'none' },
+  ],
+  textPos: null,
+  refPos: null,
+  labelOffset: null,
+  defaultValue: '0.01 0.1',
   allowFloatingTerminals: true,
 });
 
@@ -26819,6 +26958,7 @@ __exports.tf_zdelay = tf_zdelay;
 __exports.gain = gain;
 __exports.sampler = sampler;
 __exports.dither = dither;
+__exports.tone = tone;
 __exports.quantizer = quantizer;
 };
 
@@ -29592,7 +29732,7 @@ let LABEL_FONT_SIZES, TABLE_RULE_ROOM_EM, labelFontSize, strokeWidth; __bind(() 
 let cloneLiteralPath, clonePath, crossNetOverlaps, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments; __bind(() => { ({ cloneLiteralPath, clonePath, crossNetOverlaps, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } = __require("src/core/wiring.js")); });
 let curvedArrowGeometry, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue, timingBreakGeometry; __bind(() => { ({ curvedArrowGeometry, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue, timingBreakGeometry } = __require("src/core/line-style.js")); });
 let SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey; __bind(() => { ({ SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } = __require("src/core/beats.js")); });
-let TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, parseDither, parseGain, parseLevels, readTransferFunction, transferFunctionDisplay, transferFunctionLines; __bind(() => { ({ TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, parseDither, parseGain, parseLevels, readTransferFunction, transferFunctionDisplay, transferFunctionLines } = __require("src/core/transfer-function.js")); });
+let TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, parseDither, parseGain, parseLevels, parseTone, readTransferFunction, toneValueText, transferFunctionDisplay, transferFunctionLines; __bind(() => { ({ TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, parseDither, parseGain, parseLevels, parseTone, readTransferFunction, toneValueText, transferFunctionDisplay, transferFunctionLines } = __require("src/core/transfer-function.js")); });
 let normalizePartsTable, partsTableLayout; __bind(() => { ({ normalizePartsTable, partsTableLayout } = __require("src/core/parts-table.js")); });
 let normalizeFigure; __bind(() => { ({ normalizeFigure } = __require("src/core/figures.js")); });
 let fanStacks, normalizeStack, segmentEnters, stackRects, stackedBoxes, wireEchoes; __bind(() => { ({ fanStacks, normalizeStack, segmentEnters, stackRects, stackedBoxes, wireEchoes } = __require("src/core/box-stack.js")); });
@@ -33006,8 +33146,13 @@ class Circuit {
     if (!variable) return null;
     const quantizer = component.type === 'quantizer';
     const dither = component.type === 'dither';
-    const ditherTex = () => { const { shape, amplitude } = parseDither(component.value); return `\\text{${shape}} \\pm ${Number(amplitude.toPrecision(6))}\\,\\text{FS}`; };
-    const text = `$${quantizer ? `N = ${component.value}` : dither ? ditherTex() : gain ? gainDisplay(component.value) : transferFunctionDisplay(component.value, variable)}$`;
+    const tone = component.type === 'tone';
+    // A number to six digits, a coefficient as written; the spaces in text,
+    // which keeps them, so a name (amp) stays apart from FS.
+    const sourceTex = (v) => (typeof v === 'string' ? v : Number(v.toPrecision(6)));
+    const ditherTex = () => { const { shape, amplitude } = parseDither(component.value); return `\\text{${shape}} \\pm ${sourceTex(amplitude)}\\text{ FS}`; };
+    const toneTex = () => { const { amplitude, frequency } = parseTone(component.value); return `\\pm ${sourceTex(amplitude)}\\text{ FS, }f = ${sourceTex(frequency)}\\text{ }f_s`; };
+    const text = `$${quantizer ? `N = ${component.value}` : dither ? ditherTex() : tone ? toneTex() : gain ? gainDisplay(component.value) : transferFunctionDisplay(component.value, variable)}$`;
     // A gain's short coefficient sits inside its triangle (centered on its
     // centroid, the part's origin); a longer one beside it, by one rule in
     // world terms: above a triangle the signal crosses horizontally, to the
@@ -33017,7 +33162,7 @@ class Circuit {
     // Inside a triangle, every coefficient is set a size smaller, so a signed
     // name (-g_1) clears the edges as a plain one (b_1) does.
     // A sampler's period and a quantizer's levels always go beside it.
-    const sampler = component.type === 'sampler' || quantizer || dither;
+    const sampler = component.type === 'sampler' || quantizer || dither || tone;
     const inside = gain && !sampler && gainFitsInside(component.value);
     const width = inside ? 'thin' : 'normal';
     if (gain && !inside) {
@@ -33381,6 +33526,7 @@ class Circuit {
     if (TRANSFER_FUNCTION_TYPES[c.type] || isCoefficientBlock(c)) {
       if (c.type === 'quantizer') value = String(parseLevels(value));
       else if (c.type === 'dither') value = ditherValueText(parseDither(value));
+      else if (c.type === 'tone') value = toneValueText(parseTone(value));
       else if (isCoefficientBlock(c)) parseGain(value);
       else readTransferFunction(value, TRANSFER_FUNCTION_TYPES[c.type]);
       c.value = String(value).trim();
@@ -37204,9 +37350,11 @@ class Circuit {
     }
     circuit._loading = true;
     for (const c of data.components) {
-      circuit.addComponent(c.type, {
+      // A dither source drawn as a sine (`sine a_r f_r`) is a tone source.
+      const sineDither = c.type === 'dither' && /^\s*(sine|sin|tone)\b/i.test(String(c.value ?? ''));
+      circuit.addComponent(sineDither ? 'tone' : c.type, {
         refdes: c.refdes,
-        value: c.value,
+        value: sineDither ? String(c.value).trim().replace(/^(sine|sin|tone)\s*/i, '') : c.value,
         x: c.transform.x,
         y: c.transform.y,
         rotation: c.transform.rotation,
@@ -45605,7 +45753,7 @@ let SYMBOL_CATEGORY_RULES; __bind(() => { ({ SYMBOL_CATEGORY_RULES } = __require
 let ComponentInstance, MOS_ANALYSIS_TYPES, REFERENCE_MARKER_TYPES, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerName; __bind(() => { ({ ComponentInstance, MOS_ANALYSIS_TYPES, REFERENCE_MARKER_TYPES, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerName } = __require("src/core/model.js")); });
 let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js")); });
 let PIN_RAIL_TYPES, railHang, railRotation; __bind(() => { ({ PIN_RAIL_TYPES, railHang, railRotation } = __require("src/core/pin-rails.js")); });
-let TRANSFER_FUNCTION_TYPES, parseDither, parseGain, parseLevels, readTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, parseDither, parseGain, parseLevels, readTransferFunction } = __require("src/core/transfer-function.js")); });
+let TRANSFER_FUNCTION_TYPES, parseDither, parseGain, parseLevels, parseTone, readTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, parseDither, parseGain, parseLevels, parseTone, readTransferFunction } = __require("src/core/transfer-function.js")); });
 let MOS_SIZE_OFFSET, MOS_SIZE_TYPES; __bind(() => { ({ MOS_SIZE_OFFSET, MOS_SIZE_TYPES } = __require("src/core/mos-size.js")); });
 let WAVEFORM_TYPES; __bind(() => { ({ WAVEFORM_TYPES } = __require("src/core/components/current.js")); });
 /**
@@ -45630,6 +45778,7 @@ function valueReads(type, value) {
   try {
     if (type === 'quantizer') parseLevels(value);
     else if (type === 'dither') parseDither(value);
+    else if (type === 'tone') parseTone(value);
     else if (type === 'gain' || type === 'sampler') parseGain(value);
     else if (TRANSFER_FUNCTION_TYPES[type]) readTransferFunction(value, TRANSFER_FUNCTION_TYPES[type]);
     return true;
@@ -48065,6 +48214,8 @@ __modules["src/core/transfer-function.js"] = function (__require, __exports) {
 __exports.isTransferFunction = isTransferFunction;
 __exports.isCoefficientBlock = isCoefficientBlock;
 __exports.parseDither = parseDither;
+__exports.parseTone = parseTone;
+__exports.sourceNames = sourceNames;
 __exports.parseLevels = parseLevels;
 __exports.isSignalBlock = isSignalBlock;
 __exports.parseGain = parseGain;
@@ -48123,7 +48274,7 @@ function isTransferFunction(component) {
 /** A part whose value is one coefficient, drawn as math: a gain's k, a
  *  sampler's period T. */
 function isCoefficientBlock(component) {
-  return component?.type === 'gain' || component?.type === 'sampler' || component?.type === 'quantizer' || component?.type === 'dither';
+  return component?.type === 'gain' || component?.type === 'sampler' || component?.type === 'quantizer' || component?.type === 'dither' || component?.type === 'tone';
 }
 
 /**
@@ -48133,31 +48284,76 @@ function isCoefficientBlock(component) {
  * `tern 1` (three levels, -A, 0, +A at 1/4, 1/2, 1/4: two such bits added;
  * `ternary`),
  * A a positive number in full scale (1 is +-FS, N - 1 of the largest
- * quantizer; `1/2` too; a `±` and a trailing `FS` are read past). Returns
- * `{ shape: 'rect' | 'tri', amplitude }`.
+ * quantizer; `1/2` too; a `±` and a trailing `FS` are read past), or a
+ * coefficient (`tri a_d`), its number set as any other's. Returns
+ * `{ shape, amplitude }`, A a number or the coefficient's name as written.
  */
 function parseDither(text) {
-  const words = String(text ?? '').toLowerCase().replace(/±|\+\/-|\+-/g, ' ').replace(/[,()=]/g, ' ').split(/\s+/).filter(Boolean);
   let shape = 'rect';
-  let amplitude = null;
-  for (const word of words) {
-    if (/^(rect|rectangular|uniform|rnd)$/.test(word)) shape = 'rect';
-    else if (/^(tri|triangular|tpdf)$/.test(word)) shape = 'tri';
-    else if (/^(bin|binary|2-level|two-level|1-bit)$/.test(word)) shape = 'bin';
-    else if (/^(tern|ternary|3-level|three-level)$/.test(word)) shape = 'tern';
-    else if (/^(a|amplitude|fs)$/.test(word)) continue;
-    else {
-      const match = word.match(/^(\d*\.?\d+(?:e[-+]?\d+)?)(?:\/(\d*\.?\d+))?$/);
-      if (!match || amplitude !== null) throw new Error('a dither source is a shape and an amplitude: rect 1, tri 0.5, bin 1, tern 1');
-      amplitude = Number(match[1]) / (match[2] ? Number(match[2]) : 1);
-    }
+  const numbers = [];
+  for (const word of sourceWords(text)) {
+    const lower = word.toLowerCase();
+    if (/^(rect|rectangular|uniform|rnd)$/.test(lower)) shape = 'rect';
+    else if (/^(tri|triangular|tpdf)$/.test(lower)) shape = 'tri';
+    else if (/^(bin|binary|2-level|two-level|1-bit)$/.test(lower)) shape = 'bin';
+    else if (/^(tern|ternary|3-level|three-level)$/.test(lower)) shape = 'tern';
+    else if (/^(amplitude|fs)$/.test(lower)) continue;
+    else numbers.push(sourceNumber(word, 'a dither source is a shape and an amplitude: rect 1, tri 0.5, bin 1, tern 1, tri a_d'));
   }
-  if (!(amplitude > 0) || !Number.isFinite(amplitude)) throw new Error('a dither source needs an amplitude above 0: rect 1, tri 0.5');
+  if (numbers.length > 1) throw new Error('a dither source is a shape and an amplitude: rect 1, tri 0.5, bin 1, tern 1, tri a_d');
+  const [amplitude] = numbers;
+  if (typeof amplitude !== 'string' && !(amplitude > 0 && Number.isFinite(amplitude))) throw new Error('a dither source needs an amplitude above 0: rect 1, tri 0.5');
   return { shape, amplitude };
 }
 
-/** A dither source's value as stored: `rect 1`. */
-const ditherValueText = ({ shape, amplitude }) => `${shape} ${Number(amplitude.toPrecision(12))}`;
+/**
+ * A tone source's value: its amplitude A in full scale and its f/fs, `0.01
+ * 0.37` (f/fs at most 0.5; 0 holds A, an offset), each a number (`1/8`
+ * too) or a coefficient (`a_r f_r`); a leading `sine`, a `±`, `FS`, `at`
+ * and `f/fs` are read past. Returns `{ amplitude, frequency }`, each a
+ * number or the coefficient's name as written.
+ */
+function parseTone(text) {
+  const usage = 'a tone source is an amplitude and an f/fs: 0.01 0.37, a_r f_r';
+  const numbers = [];
+  for (const word of sourceWords(text)) {
+    if (/^(sine|sin|tone|amplitude|fs|f\/fs|at)$/i.test(word)) continue;
+    numbers.push(sourceNumber(word, usage));
+  }
+  if (numbers.length !== 2) throw new Error(usage);
+  const [amplitude, frequency] = numbers;
+  if (typeof amplitude !== 'string' && !(amplitude >= 0 && Number.isFinite(amplitude))) throw new Error('a tone source needs an amplitude of 0 or more: 0.01 0.37');
+  if (typeof frequency !== 'string' && !(frequency >= 0 && frequency <= 0.5)) throw new Error('a tone source\'s f/fs is from 0 to 0.5: 0.01 0.37');
+  return { amplitude, frequency };
+}
+
+const sourceWords = (text) => String(text ?? '').replace(/±|\+\/-|\+-/g, ' ').replace(/[,()=]/g, ' ').split(/\s+/).filter(Boolean);
+
+/** A source's number as typed (0.5, 1/2, 1e-3) or a coefficient's name (a_r, A_{r}). */
+function sourceNumber(word, usage) {
+  if (/^[A-Za-z][A-Za-z0-9]*(?:_(?:\{[A-Za-z0-9]+\}|[A-Za-z0-9]+))?$/.test(word)) return word;
+  const match = word.match(/^(\d*\.?\d+(?:e[-+]?\d+)?)(?:\/(\d*\.?\d+))?$/i);
+  if (!match) throw new Error(usage);
+  return Number(match[1]) / (match[2] ? Number(match[2]) : 1);
+}
+
+const sourceText = (value) => (typeof value === 'string' ? value : Number(value.toPrecision(12)));
+
+/** A dither source's value as stored: `rect 1`, `tri a_d`. */
+const ditherValueText = ({ shape, amplitude }) => `${shape} ${sourceText(amplitude)}`;
+
+/** A tone source's value as stored: `0.01 0.37`, `a_r f_r`. */
+const toneValueText = ({ amplitude, frequency }) => `${sourceText(amplitude)} ${sourceText(frequency)}`;
+
+/** A dither or tone source's coefficients: the names its value gives. */
+function sourceNames(component) {
+  try {
+    const parsed = component?.type === 'tone' ? parseTone(component.value) : component?.type === 'dither' ? parseDither(component.value) : {};
+    return [parsed.amplitude, parsed.frequency].filter((v) => typeof v === 'string');
+  } catch {
+    return [];
+  }
+}
 
 /** A quantizer's level count: a whole number of at least 2. */
 function parseLevels(text) {
@@ -48519,6 +48715,7 @@ __exports.TRANSFER_FUNCTION_TYPES = TRANSFER_FUNCTION_TYPES;
 __exports.isBlockIn = isBlockIn;
 __exports.TRANSFER_FUNCTION_ROLE = TRANSFER_FUNCTION_ROLE;
 __exports.ditherValueText = ditherValueText;
+__exports.toneValueText = toneValueText;
 };
 
 __modules["src/core/window-state.js"] = function (__require, __exports) {
@@ -50022,6 +50219,41 @@ function installAlignPanel() {
 __exports.ALIGN_SOURCE_HINT = ALIGN_SOURCE_HINT;
 };
 
+__modules["src/web/analysis-busy.js"] = function (__require, __exports) {
+__exports.deriving = deriving;
+let afterPaint, busyIndicator; __bind(() => { ({ afterPaint, busyIndicator } = __require("src/web/busy-indicator.js")); });
+/**
+ * The analysis window's busy dots (busy-indicator.js), beside its title
+ * while a Derive runs, whichever mode's: `deriving(work)` shows them, runs
+ * `work` once they are on screen, and leaves them up a moment past a quick
+ * one, so a Derive reads as one even when it is fast.
+ */
+
+
+
+const SHOWN_AT_LEAST = 250; // ms
+
+const busy = busyIndicator({ label: 'Deriving' });
+let pending = 0;
+
+/** Run a Derive's `work` with the dots shown. */
+function deriving(work) {
+  if (!busy.el.isConnected) document.getElementById('analysis-dialog-title')?.after(busy.el);
+  const run = ++pending;
+  busy.set('derive', true);
+  const shown = performance.now();
+  afterPaint(() => {
+    try {
+      work();
+    } finally {
+      // A newer Derive keeps them up until it is done.
+      setTimeout(() => { if (run === pending) busy.set('derive', false); }, Math.max(0, SHOWN_AT_LEAST - (performance.now() - shown)));
+    }
+  });
+}
+
+};
+
 __modules["src/web/analysis-options.js"] = function (__require, __exports) {
 __exports.analysisNoiseRequest = analysisNoiseRequest;
 __exports.analysisOptionDefaults = analysisOptionDefaults;
@@ -50407,12 +50639,14 @@ let floatingWindow; __bind(() => { ({ floatingWindow } = __require("src/web/floa
 let refreshModelWindow, showModelWindow; __bind(() => { ({ refreshModelWindow, showModelWindow } = __require("src/web/reference-window.js")); });
 let showPlots; __bind(() => { ({ showPlots } = __require("src/web/plots-window.js")); });
 let arriving; __bind(() => { ({ arriving } = __require("src/web/motion.js")); });
+let deriving; __bind(() => { ({ deriving } = __require("src/web/analysis-busy.js")); });
 /**
  * The small-signal analysis dock: its form and remembered settings, running
  * the analysis, the equations, log, netlist, and model tabs, picking a
  * target on the canvas, and annotating results into the drawing. The form's
  * option rules are in analysis-options.js and analysis-state.js.
  */
+
 
 
 
@@ -51672,60 +51906,63 @@ function installAnalysisUi() {
     }
     releaseUnlistedGroundMarks(parseAnalysisList(analysisAcGrounds?.value));
     persistAnalysisForm();
-    const formOptions = analysisFormOptions();
-    const devices = analysisDeviceOptions();
-    const noise = analysisNoiseRequest(formOptions);
-    const loopElement = analysisLoopElement?.value.trim();
-    const request = {
-      ...formOptions,
-      ...(noise ? { noise } : {}),
-      ...(loopElement ? { loopGain: { at: loopElement }, sketchRatios: editor.circuit.analysisValues?.bode || {} } : {}),
-      ...(Object.keys(devices).length ? { devices } : {}),
-      input,
-      output,
-      acGrounds: parseAnalysisList(analysisAcGrounds?.value),
-    };
-    let report;
-    try {
-      report = adaptCombinedReport(analyzeSmallSignalV2(editor.circuit, request), { nameSubexpressions: formOptions.nameSubexpressions });
-      report.analysisOptions = {
+    // The dots beside the title, then the solve.
+    deriving(() => {
+      const formOptions = analysisFormOptions();
+      const devices = analysisDeviceOptions();
+      const noise = analysisNoiseRequest(formOptions);
+      const loopElement = analysisLoopElement?.value.trim();
+      const request = {
         ...formOptions,
-        devices,
-        dominantPoleApplied: formOptions.dominantPole
-          && report.assumptions?.includes('dominant-pole approximation'),
+        ...(noise ? { noise } : {}),
+        ...(loopElement ? { loopGain: { at: loopElement }, sketchRatios: editor.circuit.analysisValues?.bode || {} } : {}),
+        ...(Object.keys(devices).length ? { devices } : {}),
+        input,
+        output,
+        acGrounds: parseAnalysisList(analysisAcGrounds?.value),
       };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      report = adaptCombinedReport({ ok: false, error: `analysis failed: ${message}` });
-    }
-    // The Bode tab's curves: the same model in numbers, from a copy of the
-    // drawing as it is now (the sliders re-solve it; later edits wait for the
-    // next Analyze, as the equations do). It plots even when the equations
-    // are too large to derive.
-    try {
-      report.numericModel = numericSmallSignal(Circuit.fromJSON(JSON.parse(JSON.stringify(editor.circuit.toJSON()))), request);
-    } catch (error) {
-      report.numericModel = { ok: false, error: error instanceof Error ? error.message : String(error) };
-    }
-    // A loop gain too large to keep its symbols, broken at a terminal or a
-    // net: in numbers too, so its curve follows the sliders.
-    if (report.reports?.loop?.numeric && request.loopGain?.at) {
+      let report;
       try {
-        report.loopNumericModel = numericLoopGain(Circuit.fromJSON(JSON.parse(JSON.stringify(editor.circuit.toJSON()))), request);
+        report = adaptCombinedReport(analyzeSmallSignalV2(editor.circuit, request), { nameSubexpressions: formOptions.nameSubexpressions });
+        report.analysisOptions = {
+          ...formOptions,
+          devices,
+          dominantPoleApplied: formOptions.dominantPole
+            && report.assumptions?.includes('dominant-pole approximation'),
+        };
       } catch (error) {
-        report.loopNumericModel = { ok: false, error: error instanceof Error ? error.message : String(error) };
+        const message = error instanceof Error ? error.message : String(error);
+        report = adaptCombinedReport({ ok: false, error: `analysis failed: ${message}` });
       }
-    }
-    latestAnalysisReport = report;
-    analysisReportRevision = editor.modelRevision;
-    const stale = document.getElementById('analysis-stale');
-    if (stale) stale.hidden = true;
-    renderAnalysisResult(report);
-    arriving(analysisEquation);
-    requestAnimationFrame(() => analysisResult?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
-    logLine(report.complete ? 'derived the selected transfer functions and the input and output impedances' : 'some requested analyses are unavailable', report.complete ? 'status' : 'error');
-    for (const { title, result } of report.equationEntries || []) logLine(`${title}: ${result.equation}`, 'status');
-    for (const assumption of report.assumptions || []) logLine(`Assumption: ${assumption}`, 'status');
+      // The Bode tab's curves: the same model in numbers, from a copy of the
+      // drawing as it is now (the sliders re-solve it; later edits wait for the
+      // next Analyze, as the equations do). It plots even when the equations
+      // are too large to derive.
+      try {
+        report.numericModel = numericSmallSignal(Circuit.fromJSON(JSON.parse(JSON.stringify(editor.circuit.toJSON()))), request);
+      } catch (error) {
+        report.numericModel = { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
+      // A loop gain too large to keep its symbols, broken at a terminal or a
+      // net: in numbers too, so its curve follows the sliders.
+      if (report.reports?.loop?.numeric && request.loopGain?.at) {
+        try {
+          report.loopNumericModel = numericLoopGain(Circuit.fromJSON(JSON.parse(JSON.stringify(editor.circuit.toJSON()))), request);
+        } catch (error) {
+          report.loopNumericModel = { ok: false, error: error instanceof Error ? error.message : String(error) };
+        }
+      }
+      latestAnalysisReport = report;
+      analysisReportRevision = editor.modelRevision;
+      const stale = document.getElementById('analysis-stale');
+      if (stale) stale.hidden = true;
+      renderAnalysisResult(report);
+      arriving(analysisEquation);
+      requestAnimationFrame(() => analysisResult?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
+      logLine(report.complete ? 'derived the selected transfer functions and the input and output impedances' : 'some requested analyses are unavailable', report.complete ? 'status' : 'error');
+      for (const { title, result } of report.equationEntries || []) logLine(`${title}: ${result.equation}`, 'status');
+      for (const assumption of report.assumptions || []) logLine(`Assumption: ${assumption}`, 'status');
+    });
   });
 
   analysisInput?.addEventListener('change', () => {
@@ -59945,6 +60182,50 @@ function bodeSnapshot() {
     // The magnitude's and the phase's x view: one axis, so always the same.
     xRanges: graphs ? [graphs.magnitude.xRange(), graphs.phase.xRange()] : null,
   };
+}
+
+};
+
+__modules["src/web/busy-indicator.js"] = function (__require, __exports) {
+__exports.busyIndicator = busyIndicator;
+__exports.afterPaint = afterPaint;
+let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
+/**
+ * A busy indicator: three dots at a triangle's corners, each in turn
+ * crossing the line through the other two, while some work runs -- beside
+ * a window's title (the Plots window's, the analysis window's, the run
+ * window's). The dots move by transform alone (style.css), so the browser
+ * keeps them going even while a simulation holds the page's thread.
+ */
+
+
+
+/**
+ * A new indicator, hidden until busy. `set(key, on)` marks one piece of
+ * work (`'spectrum'`, `'swing'`) running or done; the dots show while any
+ * is running, so overlapping work needs no counting. Returns `{ el, set,
+ * busy() }`.
+ */
+function busyIndicator({ label = 'Simulating' } = {}) {
+  const node = el('span', { class: 'busy-dots', role: 'status', 'aria-label': label, title: label, hidden: true }, [
+    el('span'), el('span'), el('span'),
+  ]);
+  const running = new Set();
+  return {
+    el: node,
+    set(key, on) {
+      if (on) running.add(key);
+      else running.delete(key);
+      node.hidden = !running.size;
+    },
+    busy: () => running.size > 0,
+  };
+}
+
+/** Run `work` once the page has painted: what was just shown (the dots)
+ *  is on screen before work that holds the thread starts. */
+function afterPaint(work) {
+  requestAnimationFrame(() => setTimeout(work, 0));
 }
 
 };
@@ -72074,7 +72355,7 @@ let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js"
 let setSharedLabel, sharedLabelPeers; __bind(() => { ({ setSharedLabel, sharedLabelPeers } = __require("src/core/shared-labels.js")); });
 let MOS_SIZE_ROLE, formatMosSize, parseMosSize; __bind(() => { ({ MOS_SIZE_ROLE, formatMosSize, parseMosSize } = __require("src/core/mos-size.js")); });
 let PART_VALUE_ROLE; __bind(() => { ({ PART_VALUE_ROLE } = __require("src/core/part-value.js")); });
-let TRANSFER_FUNCTION_TYPES, isCoefficientBlock, isSignalBlock, parseDither, parseGain, parseLevels, readTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, isCoefficientBlock, isSignalBlock, parseDither, parseGain, parseLevels, readTransferFunction } = __require("src/core/transfer-function.js")); });
+let TRANSFER_FUNCTION_TYPES, isCoefficientBlock, isSignalBlock, parseDither, parseGain, parseLevels, parseTone, readTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, isCoefficientBlock, isSignalBlock, parseDither, parseGain, parseLevels, parseTone, readTransferFunction } = __require("src/core/transfer-function.js")); });
 let setPartValue; __bind(() => { ({ setPartValue } = __require("src/core/part-moves.js")); });
 let labelFontSize; __bind(() => { ({ labelFontSize } = __require("src/core/style.js")); });
 let snap; __bind(() => { ({ snap } = __require("src/core/grid.js")); });
@@ -72147,7 +72428,9 @@ function inlineEditSchematicBlock(component) {
   if (transfer) input.title = component.type === 'quantizer'
     ? 'The number of levels N (2 is single-bit; levels at the odd or even integers up to N - 1). Enter applies, Esc cancels.'
     : component.type === 'dither'
-    ? 'The shape and the amplitude A in full scale: rect 1 (uniform over +-FS), tri 0.5 (triangular over +-FS/2), bin 1 (two levels, +-FS: an LFSR bit), or tern 1 (three levels, -FS, 0, +FS). Scale it into the loop with a gain after it. Enter applies, Esc cancels.'
+    ? 'The shape and the amplitude A in full scale: rect 1 (uniform over +-FS), tri 0.5 (triangular over +-FS/2), bin 1 (two levels, +-FS: an LFSR bit), or tern 1 (three levels, -FS, 0, +FS); A may be a coefficient (tri a_d). Scale it into the loop with a gain after it. Enter applies, Esc cancels.'
+    : component.type === 'tone'
+    ? 'The amplitude A in full scale and the f/fs: 0.01 0.37 (+-FS/100 at f/fs 0.37; f/fs 0 is an offset), each a number or a coefficient (a_r f_r). Enter applies, Esc cancels.'
     : component.type === 'sampler'
     ? 'The sampling period: a number or a symbol (T, T_s, 1). Enter applies, Esc cancels.'
     : component.type === 'gain'
@@ -72157,21 +72440,42 @@ function inlineEditSchematicBlock(component) {
     : 'tf([num], [den]) or a gain, coefficients highest power of s first. Enter applies, Esc cancels.';
   input.style.position = 'fixed';
   input.style.zIndex = '30';
-  // Covers the block at the current zoom and pan, repositioned on every repaint.
+  // Covers the block at the current zoom and pan, repositioned on every
+  // repaint. A one-line value (a gain's, a source's) is never narrower than
+  // its text: the box grows about the part's center as it is typed.
+  const oneLine = isCoefficientBlock(component);
+  const measure = oneLine ? document.createElement('canvas').getContext('2d') : null;
   input.relayout = () => {
     const paneRect = pane.getBoundingClientRect();
     const box = component.bboxWorld();
-    input.style.left = `${paneRect.left + ((box.x - editor.view.x) / editor.view.w) * paneRect.width}px`;
-    input.style.top = `${paneRect.top + ((box.y - editor.view.y) / editor.view.h) * paneRect.height}px`;
-    input.style.width = `${(box.w / editor.view.w) * paneRect.width}px`;
-    input.style.height = `${(box.h / editor.view.h) * paneRect.height}px`;
+    let width = (box.w / editor.view.w) * paneRect.width;
+    let height = (box.h / editor.view.h) * paneRect.height;
+    if (measure && input.isConnected) {
+      const style = getComputedStyle(input);
+      measure.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+      width = Math.max(width, measure.measureText(`${input.value}MM`).width + 12);
+      height = Math.max(height, parseFloat(style.fontSize) * 2);
+    }
+    const centerX = paneRect.left + ((box.x + box.w / 2 - editor.view.x) / editor.view.w) * paneRect.width;
+    const centerY = paneRect.top + ((box.y + box.h / 2 - editor.view.y) / editor.view.h) * paneRect.height;
+    input.style.left = `${centerX - width / 2}px`;
+    input.style.top = `${centerY - height / 2}px`;
+    input.style.width = `${width}px`;
+    input.style.height = `${height}px`;
+    // A box taller than its line holds the line in its middle.
+    if (measure) input.style.paddingTop = input.isConnected ? `${Math.max(0, (height - parseFloat(getComputedStyle(input).lineHeight || 0)) / 2 - 2)}px` : '';
   };
   input.relayout();
   input.style.textAlign = 'center';
   input.style.resize = 'none';
-  input.style.whiteSpace = 'pre-wrap';
+  input.style.whiteSpace = oneLine ? 'nowrap' : 'pre-wrap';
+  if (oneLine) input.style.fontSize = '15px';
   input.style.overflow = 'hidden';
   document.body.appendChild(input);
+  if (oneLine) {
+    input.relayout();
+    input.addEventListener('input', () => input.relayout());
+  }
   editor.inlineInput = input;
   input.focus({ preventScroll: true });
   input.select();
@@ -72188,6 +72492,7 @@ function inlineEditSchematicBlock(component) {
         try {
           if (component.type === 'quantizer') parseLevels(text);
           else if (component.type === 'dither') parseDither(text);
+          else if (component.type === 'tone') parseTone(text);
           else if (isCoefficientBlock(component)) parseGain(text);
           else readTransferFunction(text, TRANSFER_FUNCTION_TYPES[component.type]);
         } catch (err) {
@@ -73573,6 +73878,7 @@ let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 let annotateMathFigure; __bind(() => { ({ annotateMathFigure } = __require("src/web/figure-annotate.js")); });
 let registerAnnotations; __bind(() => { ({ registerAnnotations } = __require("src/web/annotate-menu.js")); });
+let deriving; __bind(() => { ({ deriving } = __require("src/web/analysis-busy.js")); });
 /**
  * The analysis window's logic mode: a drawing of gates, multiplexers,
  * tri-states, flip-flops, and latches as its truth table -- a state
@@ -73583,6 +73889,7 @@ let registerAnnotations; __bind(() => { ({ registerAnnotations } = __require("sr
  * saved with the design. Annotate puts the table, or the equations, on the
  * drawing.
  */
+
 
 
 
@@ -73668,7 +73975,12 @@ function renderSignals() {
   );
 }
 
+/** Derive, with the analysis window's busy dots up while it runs. */
 function derive() {
+  deriving(deriveNow);
+}
+
+function deriveNow() {
   const result = analyzed();
   latest = { revision: editor.modelRevision, result };
   renderResult();
@@ -83515,6 +83827,7 @@ let prepareSimulation; __bind(() => { ({ prepareSimulation } = __require("src/co
 let symbolText; __bind(() => { ({ symbolText } = __require("src/core/analysis/present.js")); });
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
+let startWorker; __bind(() => { ({ startWorker } = __require("src/web/worker-thread.js")); });
 /**
  * The signal-flow mode's coefficient optimizer (core/analysis/optimize.js):
  * a section under the coefficients where each coefficient is set free or
@@ -83530,6 +83843,7 @@ let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
  * finds is what can be built. The setup is saved with the document
  * (`analysisValues.flow.optimize`).
  */
+
 
 
 
@@ -84103,19 +84417,6 @@ function fractionsTable(result) {
 
 // ----- the run --------------------------------------------------------------------------
 
-/** A worker thread: from its module beside the page, or -- opened from a
- *  file, where no worker script may load -- from the browser-only bundle's
- *  own source, run with the worker as its entry (a blob). Null when neither
- *  can start. */
-let workerUrl = null;
-function startWorker() {
-  if (location.protocol !== 'file:') return new Worker('optimize-worker.js', { type: 'module' });
-  const bundle = globalThis.__MOSFETEER_BUNDLE;
-  if (!bundle) return null;
-  workerUrl ||= URL.createObjectURL(new Blob([`(${bundle})("src/web/optimize-worker.js");`], { type: 'text/javascript' }));
-  return new Worker(workerUrl);
-}
-
 /** Score batches in worker threads; null where workers cannot run, and the
  *  run scores in this thread instead. */
 async function workerPool(circuitJson, problem) {
@@ -84395,6 +84696,7 @@ let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); 
 let PLACE, floatingWindow; __bind(() => { ({ PLACE, floatingWindow } = __require("src/web/floating-window.js")); });
 let createPlotView; __bind(() => { ({ createPlotView } = __require("src/web/plot-view.js")); });
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
+let busyIndicator; __bind(() => { ({ busyIndicator } = __require("src/web/busy-indicator.js")); });
 /**
  * The window a coefficient search runs in (optimize-ui.js: the optimizer
  * and the rounding): one small floating window over the drawing, so it is
@@ -84405,6 +84707,7 @@ let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
  * window leaves the run going; its progress then shows in the analysis
  * window again (`onClose`).
  */
+
 
 
 
@@ -84431,10 +84734,14 @@ function openRunWindow({ title, plotAt, onStop, onClose = () => {} }) {
   const plotView = createPlotView({ height: 220, fill: true });
   const plot = el('div', { class: 'run-window-plot' }, [plotView.el]);
   const legend = el('p', { class: 'field-hint run-window-legend', text: 'Gray: where it started. Color: the best so far.' });
+  // The dots beside the title while the search runs.
+  const busy = busyIndicator({ label: 'Running' });
+  busy.set('run', true);
   const stop = el('button', { type: 'button', class: 'run-window-stop', text: 'Stop', onclick: () => (finished ? dispose() : onStop()) });
   const dialog = el('section', { class: 'floating-window run-window', 'aria-labelledby': 'run-window-title' }, [
     el('header', { class: 'floating-window-header' }, [
       el('h2', { id: 'run-window-title', class: 'floating-window-title', text: title }),
+      busy.el,
       el('button', { type: 'button', class: 'floating-window-close', 'aria-label': `Close the ${title.toLowerCase()} window`, title: 'Close', text: '×' }),
     ]),
     el('div', { class: 'run-window-body' }, [plot, legend, bar, status]),
@@ -84472,6 +84779,7 @@ function openRunWindow({ title, plotAt, onStop, onClose = () => {} }) {
     best(values) { draw(values); },
     done(text, error = false) {
       finished = true;
+      busy.set('run', false);
       status.textContent = text;
       status.classList.toggle('analysis-error', error);
       bar.value = 1;
@@ -84486,13 +84794,17 @@ function openRunWindow({ title, plotAt, onStop, onClose = () => {} }) {
 __modules["src/web/optimize-worker.js"] = function (__require, __exports) {
 let Circuit; __bind(() => { ({ Circuit } = __require("src/core/model.js")); });
 let prepareObjective, scoreRequest; __bind(() => { ({ prepareObjective, scoreRequest } = __require("src/core/analysis/optimize.js")); });
+let simulatedSpectrum; __bind(() => { ({ simulatedSpectrum } = __require("src/core/analysis/spectrum-run.js")); });
 /**
- * A worker thread for the coefficient optimizer (optimize-ui.js): it
- * rebuilds the diagram from its JSON, prepares the objective once
- * (core/analysis/optimize.js), and scores each batch of coefficient
- * numbers it is sent (the quick test, or the long one for `{ verify }`),
- * so the editor stays responsive while it searches.
+ * A worker thread for the coefficient optimizer (optimize-ui.js) and the
+ * simulated spectrum (signal-flow-ui.js), so the editor stays responsive
+ * while they run. For the optimizer it rebuilds the diagram from its JSON,
+ * prepares the objective once (core/analysis/optimize.js), and scores each
+ * batch of coefficient numbers it is sent (the quick test, or the long one
+ * for `{ verify }`). For `spectrum` it simulates the diagram once and takes
+ * its output's spectrum (core/analysis/spectrum-run.js).
  */
+
 
 
 
@@ -84517,6 +84829,8 @@ self.addEventListener('message', ({ data }) => {
       }
     });
     self.postMessage({ type: 'scores', id: data.id, scores });
+  } else if (data.type === 'spectrum') {
+    self.postMessage({ type: 'spectrum', id: data.id, ...simulatedSpectrum(data) });
   }
 });
 
@@ -86219,6 +86533,7 @@ __exports.setPlotsMode = setPlotsMode;
 let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 let floatingWindow; __bind(() => { ({ floatingWindow } = __require("src/web/floating-window.js")); });
+let busyIndicator; __bind(() => { ({ busyIndicator } = __require("src/web/busy-indicator.js")); });
 /**
  * The Plots window: the analysis's plots in a floating window of their own,
  * beside the analysis window that sets them up. It shows the view of the
@@ -86234,7 +86549,10 @@ let floatingWindow; __bind(() => { ({ floatingWindow } = __require("src/web/floa
 
 
 
+
 let win = null; // { el, body, chrome }
+// The dots beside the title while a view simulates: `plotsBusy.set(key, on)`.
+const plotsBusy = busyIndicator();
 // The views, by analysis mode ('signal-flow', 'circuit'), and the mode shown.
 const views = new Map();
 let mode = 'signal-flow';
@@ -86246,7 +86564,7 @@ function build() {
   const close = el('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the plots', title: 'Close (Shift+W)', text: '×' });
   const body = el('div', { class: 'plots-body' }, current().view ? [current().view] : []);
   const node = el('section', { class: 'floating-window plots-window', 'aria-labelledby': 'plots-title', hidden: true }, [
-    el('header', { class: 'floating-window-header' }, [el('h2', { id: 'plots-title', class: 'floating-window-title', text: 'Plots' }), close]),
+    el('header', { class: 'floating-window-header' }, [el('h2', { id: 'plots-title', class: 'floating-window-title', text: 'Plots' }), plotsBusy.el, close]),
     body,
   ]);
   node.addEventListener('keydown', (ev) => {
@@ -86316,6 +86634,7 @@ function setPlotsMode(next) {
   if (plotsShown()) current().shown();
 }
 
+__exports.plotsBusy = plotsBusy;
 };
 
 __modules["src/web/radial-menu.js"] = function (__require, __exports) {
@@ -88547,10 +88866,11 @@ let locusSpec, responseSpec, stepSpec, swingSpec; __bind(() => { ({ locusSpec, r
 let createPlotView, linkPlots; __bind(() => { ({ createPlotView, linkPlots } = __require("src/web/plot-view.js")); });
 let arriving; __bind(() => { ({ arriving } = __require("src/web/motion.js")); });
 let installTimePlot, runTime, timeChanged, timePlotUpdate, timeSection; __bind(() => { ({ installTimePlot, runTime, timeChanged, timePlotUpdate, timeSection } = __require("src/web/time-plot.js")); });
-let installPlotsWindow, offerPlots, plotsShown, setPlotsMode, showPlots; __bind(() => { ({ installPlotsWindow, offerPlots, plotsShown, setPlotsMode, showPlots } = __require("src/web/plots-window.js")); });
+let installPlotsWindow, offerPlots, plotsBusy, plotsShown, setPlotsMode, showPlots; __bind(() => { ({ installPlotsWindow, offerPlots, plotsBusy, plotsShown, setPlotsMode, showPlots } = __require("src/web/plots-window.js")); });
+let afterPaint; __bind(() => { ({ afterPaint } = __require("src/web/busy-indicator.js")); });
 let stepPlot; __bind(() => { ({ stepPlot } = __require("src/core/analysis/step.js")); });
 let locusPlot, locusSteps, rootLocus; __bind(() => { ({ locusPlot, locusSteps, rootLocus } = __require("src/core/analysis/locus.js")); });
-let dbfsOffset, dbfsSpectrum, inBand, outputSpectrum, plotSpectrum; __bind(() => { ({ dbfsOffset, dbfsSpectrum, inBand, outputSpectrum, plotSpectrum } = __require("src/core/analysis/spectrum.js")); });
+let dbfsOffset, dbfsSpectrum, inBand, plotSpectrum; __bind(() => { ({ dbfsOffset, dbfsSpectrum, inBand, plotSpectrum } = __require("src/core/analysis/spectrum.js")); });
 let prepareSimulation, sweepAmplitudes; __bind(() => { ({ prepareSimulation, sweepAmplitudes } = __require("src/core/analysis/simulate.js")); });
 let PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, parseLabelRuns; __bind(() => { ({ PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, parseLabelRuns } = __require("src/core/model.js")); });
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
@@ -88569,6 +88889,9 @@ let fractionText; __bind(() => { ({ fractionText } = __require("src/core/analysi
 let normalizeBand; __bind(() => { ({ normalizeBand } = __require("src/core/analysis/optimize-setup.js")); });
 let el, onFieldCommit; __bind(() => { ({ element: el, onFieldCommit } = __require("src/web/dom.js")); });
 let netPicker; __bind(() => { ({ netPicker } = __require("src/web/net-picker.js")); });
+let deriving; __bind(() => { ({ deriving } = __require("src/web/analysis-busy.js")); });
+let startWorker; __bind(() => { ({ startWorker } = __require("src/web/worker-thread.js")); });
+let simulatedSpectrum; __bind(() => { ({ simulatedSpectrum } = __require("src/core/analysis/spectrum-run.js")); });
 /**
  * The analysis window's signal-flow mode (core/analysis/signal-flow.js): for a
  * block diagram rather than a circuit. A switch at the top of the window
@@ -88587,6 +88910,10 @@ let netPicker; __bind(() => { ({ netPicker } = __require("src/web/net-picker.js"
  * drawing with its legend, Annotate equations the equations, and Annotate
  * coefficients the coefficients' numbers as a table.
  */
+
+
+
+
 
 
 
@@ -88803,7 +89130,7 @@ function fillForm() {
   // Every source starts as an input: each gets its own transfer function
   // (superposition holds the others at zero for it).
   for (const source of sources) {
-    // A dither source is noise, not a signal: zero unless set to input.
+    // A dither or tone source is an aggressor, not the signal: zero unless set to input.
     const value = flow().sources[source.id] ?? (source.dither ? 'zero' : 'input');
     flow().sources[source.id] = value;
     const kind = typeof value === 'object' ? 'constant' : value;
@@ -88823,7 +89150,7 @@ function fillForm() {
     const name = el('span', { class: 'signal-flow-source-name', text: source.name });
     // A quantizer's error source: E_{QZ1}, as math.
     if (source.quantizer) { name.innerHTML = texToMathML(source.name); name.title = `${source.id}'s quantization error (its linear model: a gain of 1 plus this)`; }
-    if (source.dither) { name.innerHTML = texToMathML(source.name); name.title = `${source.id}'s dither: as an input here; the simulations draw its numbers`; }
+    if (source.dither) { name.innerHTML = texToMathML(source.name); name.title = source.tone ? `${source.id}'s tone: as an input here; the simulations draw its sine` : `${source.id}'s dither: as an input here; the simulations draw its numbers`; }
     table.append(el('div', { class: 'signal-flow-source' }, [name, select, constant]));
   }
   const problems = section.querySelector('.signal-flow-issues');
@@ -88851,6 +89178,8 @@ function clearResults() {
   loop = null;
   spectrum = null;
   swingRun++; // a sweep still running stops
+  spectrumRun++; // and a spectrum waiting to run
+  for (const key of ['swing', 'spectrum']) plotsBusy.set(key, false);
   swing = null;
   swingShown = null;
   resetOptimize();
@@ -89142,6 +89471,7 @@ function swingFrequency() {
 /** Sweep the amplitude, one run a frame, drawing as it goes; resolves
  *  when it is done (or overtaken by a newer sweep). */
 function runSwing() {
+  plotsBusy.set('swing', true);
   return new Promise((resolve) => sweepSwing(resolve));
 }
 
@@ -89162,6 +89492,7 @@ function sweepSwing(done) {
     status.textContent = sim.error;
     status.classList.add('analysis-error');
     renderSwing();
+    plotsBusy.set('swing', false);
     done(null);
     return;
   }
@@ -89193,7 +89524,10 @@ function sweepSwing(done) {
       : `Full scale ${sim.fullScale}; sine at f/fs = ${Number(sim.frequency.toPrecision(4))}, ${Math.round(sim.frequency * 4096)} cycles in 4096 samples.${swing.points.find((p) => p.overloaded) ? ` Overloads from ${swing.points.find((p) => p.overloaded).a} dBFS.` : ''}`;
     renderSwing();
     if (index < amplitudes.length) requestAnimationFrame(step);
-    else done(swing);
+    else {
+      plotsBusy.set('swing', false);
+      done(swing);
+    }
   };
   step();
 }
@@ -89485,73 +89819,153 @@ const graphPlot = (list, view = graphView(), detail = null) => {
 
 let spectrum = null; // { points (plotted), raw, frequency, amplitude } or { error }
 
-/** The checkbox and amplitude for the spectrum, and what it measured in band. */
+// The spectrum's record: segments of 8192 samples (or as set) overlapping
+// by half, Welch-averaged over a record four segments long (seven averages).
+const SPECTRUM_SEGMENTS = [4096, 8192, 16384, 32768, 65536];
+const SPECTRUM_SEGMENT = 8192;
+const SPECTRUM_AVERAGES = 4;
+const spectrumSegment = () => (SPECTRUM_SEGMENTS.includes(Number(flow().spectrum?.samples)) ? Number(flow().spectrum.samples) : SPECTRUM_SEGMENT);
+
+/** The input's f/fs for the spectrum: as typed, 0 a constant input (DC);
+ *  blank, inside the band. */
+function spectrumFrequency(text) {
+  return String(text ?? '').trim() && fraction(text) === 0 ? 0 : testFrequency(text);
+}
+
+/** The spectrum's simulation, a section of its own: on or off, its input,
+ *  its length, and what it measured in band. */
 function spectrumControls() {
   const settings = flow().spectrum || {};
   const check = el('input', { type: 'checkbox', 'aria-label': 'Simulated output spectrum' });
   check.checked = !!settings.on;
   const amplitude = el('input', { type: 'text', class: 'signal-flow-band-field', value: settings.amplitude ?? '-6', 'aria-label': 'Sine amplitude, dBFS' });
-  const frequency = el('input', { type: 'text', class: 'signal-flow-band-field signal-flow-test-frequency signal-flow-spectrum-frequency', value: settings.frequency ?? '', 'aria-label': 'Sine frequency, f/fs', title: 'The sine\'s frequency as f/fs (1/256, 0.004); blank: inside the signal band set above' });
+  const frequency = el('input', { type: 'text', class: 'signal-flow-band-field signal-flow-test-frequency signal-flow-spectrum-frequency', value: settings.frequency ?? '', 'aria-label': 'Sine frequency, f/fs', title: 'Input f/fs (1/256, 0.004; 0 for DC); blank: in the band' });
+  const samples = el('select', { class: 'signal-flow-spectrum-samples', 'aria-label': 'Samples per segment', title: 'Samples per FFT segment; the run is four segments' },
+    SPECTRUM_SEGMENTS.map((n) => el('option', { value: String(n), text: String(n) })));
+  samples.value = String(spectrumSegment());
   const save = () => {
-    flow().spectrum = { on: check.checked, amplitude: amplitude.value.trim() || '-6', ...(frequency.value.trim() ? { frequency: frequency.value.trim() } : {}) };
+    flow().spectrum = {
+      on: check.checked,
+      amplitude: amplitude.value.trim() || '-6',
+      ...(frequency.value.trim() ? { frequency: frequency.value.trim() } : {}),
+      ...(Number(samples.value) !== SPECTRUM_SEGMENT ? { samples: Number(samples.value) } : {}),
+    };
     markSettingsChanged();
     runSpectrum();
   };
   check.addEventListener('change', save);
+  samples.addEventListener('change', save);
   onFieldCommit(amplitude, save);
   onFieldCommit(frequency, save);
   const fallback = testFrequency('');
   frequency.placeholder = `${Number(fallback.toPrecision(3))}`;
-  return el('div', { class: 'signal-flow-band signal-flow-spectrum' }, [
-    el('label', { class: 'signal-flow-spectrum-toggle' }, [check, el('span', { text: 'Simulated output spectrum at' })]), amplitude, el('label', { text: 'dBFS, f/fs' }), frequency,
-    el('span', { class: 'field-hint signal-flow-spectrum-status', text: spectrumStatus() }),
+  return el('fieldset', { class: 'analysis-approximations signal-flow-spectrum' }, [
+    el('legend', { text: 'Simulation' }),
+    el('div', { class: 'signal-flow-band' }, [
+      el('label', { class: 'signal-flow-spectrum-toggle' }, [check, el('span', { text: 'Output spectrum' })]),
+      el('label', { text: 'Input' }), amplitude, el('label', { text: 'dBFS at f/fs' }), frequency,
+      el('label', { text: 'Samples' }), samples,
+    ]),
+    el('p', { class: 'field-hint signal-flow-spectrum-status', text: spectrumStatus() }),
   ]);
 }
 
 function spectrumStatus() {
   if (!spectrum) return '';
   if (spectrum.error) return spectrum.error;
-  const measured = inBand(spectrum.raw, spectrum.frequency, bandEdges(editor.circuit.analysisValues.band));
+  const measured = inBand(spectrum.raw, spectrum.frequency, bandEdges(editor.circuit.analysisValues.band), { fullScale: spectrum.fullScale });
   const averaged = `${spectrum.raw.averages} averages of ${spectrum.raw.n} samples`;
   const gains = (spectrum.quantizers || []).map((q) => `${q.refdes} gain ${Number(q.gain.toPrecision(3))}`).join(', ');
   const curves = gains ? `; curves at ${gains}` : '';
-  return measured ? `SNDR ${measured.sndr.toFixed(1)} dB in band (ENOB ${measured.enob.toFixed(1)}); ${averaged}${curves}` : `${averaged}; set a band for its SNDR${curves}`;
+  if (!measured) return `${averaged}; set a band for its SNDR${curves}`;
+  const sndr = measured.sndr === null ? '' : `SNDR ${measured.sndr.toFixed(1)} dB (ENOB ${measured.enob.toFixed(1)}), `;
+  return `In band: ${sndr}noise ${measured.noiseDb.toFixed(1)} dBFS; ${averaged}${curves}`;
 }
 
-// The spectrum's record: 8192-sample segments overlapping by half, Welch-
-// averaged over a record four segments long (seven averages).
-const SPECTRUM_SEGMENT = 8192;
-const SPECTRUM_AVERAGES = 4;
+let spectrumRun = 0; // the latest run asked for: an older one waiting is dropped
 
-/** Simulate one run with the swing's source and frequency, and take its output's spectrum. */
+let spectrumWorker = null; // a worker thread (worker-thread.js), kept between runs
+let spectrumWorkerBusy = false;
+
+/** Simulate the spectrum in a worker thread, the windows free meanwhile;
+ *  where none can start, in this one once the busy dots are on screen.
+ *  The latest ask wins: a run still going for an older one is stopped. */
 function runSpectrum() {
   const settings = flow().spectrum || {};
+  const run = ++spectrumRun;
   if (!settings.on || !hasQuantizer()) {
+    plotsBusy.set('spectrum', false);
     spectrum = null;
     renderGraph();
     return;
   }
+  plotsBusy.set('spectrum', true);
+  const request = spectrumRequest();
+  const finish = (result) => {
+    if (run !== spectrumRun) return;
+    plotsBusy.set('spectrum', false);
+    showSpectrum(request, result);
+  };
+  if (request.error) { finish(request); return; }
+  if (spectrumWorkerBusy) { spectrumWorker.terminate(); spectrumWorker = null; }
+  spectrumWorker ||= startWorker();
+  if (!spectrumWorker) {
+    afterPaint(() => { if (run === spectrumRun) finish(simulatedSpectrum(request)); });
+    return;
+  }
+  spectrumWorkerBusy = true;
+  spectrumWorker.onmessage = ({ data }) => {
+    if (data.type !== 'spectrum' || data.id !== run) return;
+    spectrumWorkerBusy = false;
+    finish(data);
+  };
+  spectrumWorker.onerror = (ev) => {
+    // A worker that cannot run: this thread takes the run, and the next ones.
+    ev.preventDefault?.();
+    spectrumWorker?.terminate();
+    spectrumWorker = null;
+    spectrumWorkerBusy = false;
+    if (run === spectrumRun) finish(simulatedSpectrum(request));
+  };
+  spectrumWorker.postMessage({ type: 'spectrum', id: run, ...request });
+}
+
+/** What one spectrum run simulates, from the settings and the sliders:
+ *  the diagram's JSON and prepareSimulation's options (spectrum-run.js
+ *  `simulatedSpectrum`), or `{ error }`. */
+function spectrumRequest() {
+  const settings = flow().spectrum || {};
   const amplitude = Number(settings.amplitude ?? -6);
+  if (!Number.isFinite(amplitude)) return { error: 'the amplitude is a number of dBFS' };
   const numbers = resolved();
   const values = Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, numbers[name] ?? 1]));
   const { sources } = signalFlowGraph(editor.circuit);
   const input = plots.querySelector('.signal-flow-swing-source')?.value || flow().swingInput || sources.find((s) => !s.quantizer && !s.dither)?.id;
   // A whole number of cycles in each averaged segment, so the tone sits in its bins.
-  const frequency = Math.max(1, Math.round(testFrequency(settings.frequency) * SPECTRUM_SEGMENT)) / SPECTRUM_SEGMENT;
-  const sim = prepareSimulation(editor.circuit, { values, sources: flow().sources, input, output: flow().output, frequency, samples: SPECTRUM_AVERAGES * SPECTRUM_SEGMENT });
-  if (!sim.ok) spectrum = { error: sim.error };
-  else if (!Number.isFinite(amplitude)) spectrum = { error: 'the amplitude is a number of dBFS' };
+  const segment = spectrumSegment();
+  const typed = spectrumFrequency(settings.frequency);
+  const frequency = typed === 0 ? 0 : Math.max(1, Math.round(typed * segment)) / segment;
+  return {
+    circuit: editor.circuit.toJSON(),
+    options: { values, sources: flow().sources, input, output: flow().output, frequency, samples: SPECTRUM_AVERAGES * segment, segment },
+    amplitude,
+    segment,
+    numbers,
+  };
+}
+
+/** A run's spectrum on the graph, behind the curves solved again at each
+ *  quantizer's measured gain. */
+function showSpectrum(request, result) {
+  const { raw, quantizers = [] } = result;
+  if (result.error) spectrum = { error: result.error };
+  else if (!raw) spectrum = { error: result.overloaded ? `the loop runs away at ${request.amplitude} dBFS` : 'no output to take the spectrum of' };
   else {
-    const run = sim.run(amplitude, { record: true });
-    const raw = run.overloaded || !run.samples ? null : outputSpectrum(run.samples, { segment: SPECTRUM_SEGMENT, variance: 1 / 3 });
     // The linear model again, each quantizer at its measured gain.
-    const quantizers = raw ? run.quantizers : [];
     const linear = quantizers.length
-      ? analyzeSignalFlow(editor.circuit, { output: flow().output, sources: flow().sources, values: numbers, quantizerGains: Object.fromEntries(quantizers.map((q) => [q.refdes, Number(q.gain.toPrecision(6))])) })
+      ? analyzeSignalFlow(editor.circuit, { output: flow().output, sources: flow().sources, values: request.numbers, quantizerGains: Object.fromEntries(quantizers.map((q) => [q.refdes, Number(q.gain.toPrecision(6))])) })
       : null;
-    spectrum = raw
-      ? { raw, points: plotSpectrum({ ...raw, points: dbfsSpectrum(raw, sim.fullScale) }, sim.frequency), frequency: sim.frequency, amplitude, fullScale: sim.fullScale, quantizers, linear }
-      : { error: run.overloaded ? `the loop runs away at ${amplitude} dBFS` : 'no output to take the spectrum of' };
+    spectrum = { raw, points: plotSpectrum({ ...raw, points: dbfsSpectrum(raw, result.fullScale) }, result.frequency), frequency: result.frequency, amplitude: request.amplitude, fullScale: result.fullScale, quantizers, linear };
   }
   redrawGraphPlot();
   const status = plots.querySelector('.signal-flow-spectrum-status');
@@ -90054,7 +90468,12 @@ function rootRow(label, roots, variable, at = '') {
   ]);
 }
 
+/** Derive, with the analysis window's busy dots up while it runs. */
 function derive() {
+  deriving(deriveNow);
+}
+
+function deriveNow() {
   latest = analyzeSignalFlow(editor.circuit, { output: flow().output, sources: flow().sources, values: resolved() });
   derivedRevision = editor.modelRevision;
   section.querySelector('.signal-flow-stale').hidden = true;
@@ -92114,6 +92533,7 @@ let el, onFieldCommit; __bind(() => { ({ element: el, onFieldCommit } = __requir
 let annotateMathFigure; __bind(() => { ({ annotateMathFigure } = __require("src/web/figure-annotate.js")); });
 let registerAnnotations; __bind(() => { ({ registerAnnotations } = __require("src/web/annotate-menu.js")); });
 let bodeGraphActions; __bind(() => { ({ bodeGraphActions } = __require("src/web/bode-actions.js")); });
+let deriving; __bind(() => { ({ deriving } = __require("src/web/analysis-busy.js")); });
 /**
  * The analysis window's switched-capacitor mode: a drawn SC circuit's exact
  * H(z) (core/analysis/switched-cap.js), beside the circuit and signal-flow
@@ -92126,6 +92546,7 @@ let bodeGraphActions; __bind(() => { ({ bodeGraphActions } = __require("src/web/
  * or phase over f/f_s, a legend to show or take off each, Annotate graph to
  * put it on the drawing.
  */
+
 
 
 
@@ -92331,7 +92752,12 @@ function renderValues({ force = false } = {}) {
 
 // ----- deriving --------------------------------------------------------------------------
 
+/** Derive, with the analysis window's busy dots up while it runs. */
 function derive() {
+  deriving(deriveNow);
+}
+
+function deriveNow() {
   const s = settings();
   const ports = { input: s.input || undefined, output: s.output || undefined, readout: s.readout || undefined };
   const result = analyzeSwitchedCap(editor.circuit, { ...ports, noise: !!s.noise });
@@ -93085,6 +93511,7 @@ __exports.installTimePlot = installTimePlot;
 let prepareSimulation; __bind(() => { ({ prepareSimulation } = __require("src/core/analysis/simulate.js")); });
 let TRACE_COLORS, diagramSymbols, hasSignalFlow, signalFlowGraph; __bind(() => { ({ TRACE_COLORS, diagramSymbols, hasSignalFlow, signalFlowGraph } = __require("src/core/analysis/signal-flow.js")); });
 let swingTestFrequency; __bind(() => { ({ swingTestFrequency } = __require("src/core/analysis/optimize.js")); });
+let plotsBusy; __bind(() => { ({ plotsBusy } = __require("src/web/plots-window.js")); });
 let thinSeries; __bind(() => { ({ thinSeries } = __require("src/core/plot-scale.js")); });
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 let netPicker; __bind(() => { ({ netPicker } = __require("src/web/net-picker.js")); });
@@ -93110,6 +93537,7 @@ let createPlotView; __bind(() => { ({ createPlotView } = __require("src/web/plot
  * it is on screen. What it shows and how it drives the diagram are saved
  * with the design (`Circuit#windows.scope`).
  */
+
 
 
 
@@ -93203,7 +93631,9 @@ function shownKeys(sim) {
 
 function schedule() {
   clearTimeout(timer);
-  if (api?.visible()) timer = setTimeout(runTime, 60);
+  plotsBusy.set('time', !!api?.visible());
+  if (!api?.visible()) return;
+  timer = setTimeout(runTime, 60);
 }
 
 /**
@@ -93250,8 +93680,13 @@ function simulateTime(keys = null) {
   return { sim, result, samples, amplitude, series };
 }
 
-/** Run the diagram and draw what it gives (the view on screen). */
+/** Run the diagram and draw what it gives (the view on screen); the busy
+ *  dots go once it has. */
 function runTime() {
+  try { drawTime(); } finally { plotsBusy.set('time', false); }
+}
+
+function drawTime() {
   if (!parts || !api?.visible()) return;
   const say = (text, error = false) => { parts.status.textContent = text; parts.status.classList.toggle('analysis-error', error); };
   const run = simulateTime();
@@ -94562,7 +94997,7 @@ const PLACEMENT_LABELS = {
   signal_sum: 'Sum junction', signal_multiply: 'Multiply junction',
   comparator: 'Comparator', comparator_clocked: 'Clocked comparator',
   filter_lpf: 'Low-pass filter', filter_hpf: 'High-pass filter', filter_bpf: 'Band-pass filter', filter_notch: 'Notch filter', oscillator: 'Oscillator',
-  tf_s: 'Transfer function H(s)', tf_z: 'Transfer function H(z)', tf_dac: 'DAC, z to s (NRZ pulse: zero-order hold)', tf_dac_rz: 'DAC, z to s (RZ pulse: half-period hold)', tf_delay: 'Delay e^-sT', tf_zdelay: 'Delay z^-1', gain: 'Gain', sampler: 'Sampler, s to z (ideal: no hold)', quantizer: 'Quantizer (N levels)', dither: 'Dither',
+  tf_s: 'Transfer function H(s)', tf_z: 'Transfer function H(z)', tf_dac: 'DAC, z to s (NRZ pulse: zero-order hold)', tf_dac_rz: 'DAC, z to s (RZ pulse: half-period hold)', tf_delay: 'Delay e^-sT', tf_zdelay: 'Delay z^-1', gain: 'Gain', sampler: 'Sampler, s to z (ideal: no hold)', quantizer: 'Quantizer (N levels)', dither: 'Dither', tone: 'Tone',
 };
 
 const PLACEMENT_ALIASES = {
@@ -94628,6 +95063,7 @@ const PLACEMENT_ALIASES = {
   filter_notch: ['notch', 'band stop', 'bandstop', 'band reject', 'filter', 'signal flow'],
   gain: ['gain', 'amplifier', 'coefficient', 'scale', 'triangle', 'signal flow'],
   dither: ['dither', 'noise', 'random', 'source', 'tpdf', 'rpdf', 'sigma delta', 'signal flow'],
+  tone: ['tone', 'sine', 'ripple', 'spur', 'aggressor', 'source', 'sigma delta', 'signal flow'],
   quantizer: ['quantizer', 'adc', 'comparator', 'levels', 'single-bit', 'multibit', 'sigma delta', 'signal flow'],
   sampler: ['sampler', 'sample', 'switch', 'ideal sampler', 'adc', 's to z', 'continuous-time', 'sigma delta', 'signal flow'],
   tf_s: ['tf', 'transfer function', 'laplace', 's-domain', 'gain', 'integrator', 'block', 'signal flow'],
@@ -95698,6 +96134,35 @@ function queryWireHitIndex(index, raw, snapped, tolerance) {
   // when the raw pointer is not near any wire.
   const rawHits = measure(raw);
   return rawHits.length ? rawHits : measure(snapped);
+}
+
+};
+
+__modules["src/web/worker-thread.js"] = function (__require, __exports) {
+__exports.startWorker = startWorker;
+/**
+ * Worker threads (optimize-worker.js) for work that would hold the page:
+ * the optimizer's scoring, the simulated spectrum. From the module beside
+ * the page, or -- opened from a file, where no worker script may load --
+ * from the browser-only bundle's own source, run with the worker as its
+ * entry (a blob).
+ */
+
+let workerUrl = null;
+
+/** A new worker thread, or null where none can start (the work then runs
+ *  in this thread). */
+function startWorker() {
+  if (typeof Worker === 'undefined') return null;
+  try {
+    if (location.protocol !== 'file:') return new Worker('optimize-worker.js', { type: 'module' });
+    const bundle = globalThis.__MOSFETEER_BUNDLE;
+    if (!bundle) return null;
+    workerUrl ||= URL.createObjectURL(new Blob([`(${bundle})("src/web/optimize-worker.js");`], { type: 'text/javascript' }));
+    return new Worker(workerUrl);
+  } catch {
+    return null;
+  }
 }
 
 };

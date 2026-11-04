@@ -25,10 +25,11 @@ import { locusSpec, responseSpec, stepSpec, swingSpec } from '../core/plot-spec.
 import { createPlotView, linkPlots } from './plot-view.js';
 import { arriving } from './motion.js';
 import { installTimePlot, runTime, timeChanged, timePlotUpdate, timeSection } from './time-plot.js';
-import { installPlotsWindow, offerPlots, plotsShown, setPlotsMode, showPlots } from './plots-window.js';
+import { installPlotsWindow, offerPlots, plotsBusy, plotsShown, setPlotsMode, showPlots } from './plots-window.js';
+import { afterPaint } from './busy-indicator.js';
 import { stepPlot } from '../core/analysis/step.js';
 import { locusPlot, locusSteps, rootLocus } from '../core/analysis/locus.js';
-import { dbfsOffset, dbfsSpectrum, inBand, outputSpectrum, plotSpectrum } from '../core/analysis/spectrum.js';
+import { dbfsOffset, dbfsSpectrum, inBand, plotSpectrum } from '../core/analysis/spectrum.js';
 import { prepareSimulation, sweepAmplitudes } from '../core/analysis/simulate.js';
 import { PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, parseLabelRuns } from '../core/model.js';
 import { texToMathML } from '../core/render.js';
@@ -47,6 +48,9 @@ import { fractionText } from '../core/analysis/rounding.js';
 import { normalizeBand } from '../core/analysis/optimize-setup.js';
 import { element as el, onFieldCommit } from './dom.js';
 import { netPicker } from './net-picker.js';
+import { deriving } from './analysis-busy.js';
+import { startWorker } from './worker-thread.js';
+import { simulatedSpectrum } from '../core/analysis/spectrum-run.js';
 
 // Devices the small-signal analysis models: a drawing with any opens in it.
 const CIRCUIT_TYPES = /^(nmos|pmos|nmosb|pmosb|npn|pnp|resistor|capacitor|inductor|current_source|voltage_source|vccs|vcvs|impedance|opamp|opamp_diff|opamp_diff_cmfb|gm|gm_cmfb|diode)$/;
@@ -232,7 +236,7 @@ function fillForm() {
   // Every source starts as an input: each gets its own transfer function
   // (superposition holds the others at zero for it).
   for (const source of sources) {
-    // A dither source is noise, not a signal: zero unless set to input.
+    // A dither or tone source is an aggressor, not the signal: zero unless set to input.
     const value = flow().sources[source.id] ?? (source.dither ? 'zero' : 'input');
     flow().sources[source.id] = value;
     const kind = typeof value === 'object' ? 'constant' : value;
@@ -252,7 +256,7 @@ function fillForm() {
     const name = el('span', { class: 'signal-flow-source-name', text: source.name });
     // A quantizer's error source: E_{QZ1}, as math.
     if (source.quantizer) { name.innerHTML = texToMathML(source.name); name.title = `${source.id}'s quantization error (its linear model: a gain of 1 plus this)`; }
-    if (source.dither) { name.innerHTML = texToMathML(source.name); name.title = `${source.id}'s dither: as an input here; the simulations draw its numbers`; }
+    if (source.dither) { name.innerHTML = texToMathML(source.name); name.title = source.tone ? `${source.id}'s tone: as an input here; the simulations draw its sine` : `${source.id}'s dither: as an input here; the simulations draw its numbers`; }
     table.append(el('div', { class: 'signal-flow-source' }, [name, select, constant]));
   }
   const problems = section.querySelector('.signal-flow-issues');
@@ -280,6 +284,8 @@ function clearResults() {
   loop = null;
   spectrum = null;
   swingRun++; // a sweep still running stops
+  spectrumRun++; // and a spectrum waiting to run
+  for (const key of ['swing', 'spectrum']) plotsBusy.set(key, false);
   swing = null;
   swingShown = null;
   resetOptimize();
@@ -571,6 +577,7 @@ function swingFrequency() {
 /** Sweep the amplitude, one run a frame, drawing as it goes; resolves
  *  when it is done (or overtaken by a newer sweep). */
 function runSwing() {
+  plotsBusy.set('swing', true);
   return new Promise((resolve) => sweepSwing(resolve));
 }
 
@@ -591,6 +598,7 @@ function sweepSwing(done) {
     status.textContent = sim.error;
     status.classList.add('analysis-error');
     renderSwing();
+    plotsBusy.set('swing', false);
     done(null);
     return;
   }
@@ -622,7 +630,10 @@ function sweepSwing(done) {
       : `Full scale ${sim.fullScale}; sine at f/fs = ${Number(sim.frequency.toPrecision(4))}, ${Math.round(sim.frequency * 4096)} cycles in 4096 samples.${swing.points.find((p) => p.overloaded) ? ` Overloads from ${swing.points.find((p) => p.overloaded).a} dBFS.` : ''}`;
     renderSwing();
     if (index < amplitudes.length) requestAnimationFrame(step);
-    else done(swing);
+    else {
+      plotsBusy.set('swing', false);
+      done(swing);
+    }
   };
   step();
 }
@@ -914,73 +925,153 @@ const graphPlot = (list, view = graphView(), detail = null) => {
 
 let spectrum = null; // { points (plotted), raw, frequency, amplitude } or { error }
 
-/** The checkbox and amplitude for the spectrum, and what it measured in band. */
+// The spectrum's record: segments of 8192 samples (or as set) overlapping
+// by half, Welch-averaged over a record four segments long (seven averages).
+const SPECTRUM_SEGMENTS = [4096, 8192, 16384, 32768, 65536];
+const SPECTRUM_SEGMENT = 8192;
+const SPECTRUM_AVERAGES = 4;
+const spectrumSegment = () => (SPECTRUM_SEGMENTS.includes(Number(flow().spectrum?.samples)) ? Number(flow().spectrum.samples) : SPECTRUM_SEGMENT);
+
+/** The input's f/fs for the spectrum: as typed, 0 a constant input (DC);
+ *  blank, inside the band. */
+function spectrumFrequency(text) {
+  return String(text ?? '').trim() && fraction(text) === 0 ? 0 : testFrequency(text);
+}
+
+/** The spectrum's simulation, a section of its own: on or off, its input,
+ *  its length, and what it measured in band. */
 function spectrumControls() {
   const settings = flow().spectrum || {};
   const check = el('input', { type: 'checkbox', 'aria-label': 'Simulated output spectrum' });
   check.checked = !!settings.on;
   const amplitude = el('input', { type: 'text', class: 'signal-flow-band-field', value: settings.amplitude ?? '-6', 'aria-label': 'Sine amplitude, dBFS' });
-  const frequency = el('input', { type: 'text', class: 'signal-flow-band-field signal-flow-test-frequency signal-flow-spectrum-frequency', value: settings.frequency ?? '', 'aria-label': 'Sine frequency, f/fs', title: 'The sine\'s frequency as f/fs (1/256, 0.004); blank: inside the signal band set above' });
+  const frequency = el('input', { type: 'text', class: 'signal-flow-band-field signal-flow-test-frequency signal-flow-spectrum-frequency', value: settings.frequency ?? '', 'aria-label': 'Sine frequency, f/fs', title: 'Input f/fs (1/256, 0.004; 0 for DC); blank: in the band' });
+  const samples = el('select', { class: 'signal-flow-spectrum-samples', 'aria-label': 'Samples per segment', title: 'Samples per FFT segment; the run is four segments' },
+    SPECTRUM_SEGMENTS.map((n) => el('option', { value: String(n), text: String(n) })));
+  samples.value = String(spectrumSegment());
   const save = () => {
-    flow().spectrum = { on: check.checked, amplitude: amplitude.value.trim() || '-6', ...(frequency.value.trim() ? { frequency: frequency.value.trim() } : {}) };
+    flow().spectrum = {
+      on: check.checked,
+      amplitude: amplitude.value.trim() || '-6',
+      ...(frequency.value.trim() ? { frequency: frequency.value.trim() } : {}),
+      ...(Number(samples.value) !== SPECTRUM_SEGMENT ? { samples: Number(samples.value) } : {}),
+    };
     markSettingsChanged();
     runSpectrum();
   };
   check.addEventListener('change', save);
+  samples.addEventListener('change', save);
   onFieldCommit(amplitude, save);
   onFieldCommit(frequency, save);
   const fallback = testFrequency('');
   frequency.placeholder = `${Number(fallback.toPrecision(3))}`;
-  return el('div', { class: 'signal-flow-band signal-flow-spectrum' }, [
-    el('label', { class: 'signal-flow-spectrum-toggle' }, [check, el('span', { text: 'Simulated output spectrum at' })]), amplitude, el('label', { text: 'dBFS, f/fs' }), frequency,
-    el('span', { class: 'field-hint signal-flow-spectrum-status', text: spectrumStatus() }),
+  return el('fieldset', { class: 'analysis-approximations signal-flow-spectrum' }, [
+    el('legend', { text: 'Simulation' }),
+    el('div', { class: 'signal-flow-band' }, [
+      el('label', { class: 'signal-flow-spectrum-toggle' }, [check, el('span', { text: 'Output spectrum' })]),
+      el('label', { text: 'Input' }), amplitude, el('label', { text: 'dBFS at f/fs' }), frequency,
+      el('label', { text: 'Samples' }), samples,
+    ]),
+    el('p', { class: 'field-hint signal-flow-spectrum-status', text: spectrumStatus() }),
   ]);
 }
 
 function spectrumStatus() {
   if (!spectrum) return '';
   if (spectrum.error) return spectrum.error;
-  const measured = inBand(spectrum.raw, spectrum.frequency, bandEdges(editor.circuit.analysisValues.band));
+  const measured = inBand(spectrum.raw, spectrum.frequency, bandEdges(editor.circuit.analysisValues.band), { fullScale: spectrum.fullScale });
   const averaged = `${spectrum.raw.averages} averages of ${spectrum.raw.n} samples`;
   const gains = (spectrum.quantizers || []).map((q) => `${q.refdes} gain ${Number(q.gain.toPrecision(3))}`).join(', ');
   const curves = gains ? `; curves at ${gains}` : '';
-  return measured ? `SNDR ${measured.sndr.toFixed(1)} dB in band (ENOB ${measured.enob.toFixed(1)}); ${averaged}${curves}` : `${averaged}; set a band for its SNDR${curves}`;
+  if (!measured) return `${averaged}; set a band for its SNDR${curves}`;
+  const sndr = measured.sndr === null ? '' : `SNDR ${measured.sndr.toFixed(1)} dB (ENOB ${measured.enob.toFixed(1)}), `;
+  return `In band: ${sndr}noise ${measured.noiseDb.toFixed(1)} dBFS; ${averaged}${curves}`;
 }
 
-// The spectrum's record: 8192-sample segments overlapping by half, Welch-
-// averaged over a record four segments long (seven averages).
-const SPECTRUM_SEGMENT = 8192;
-const SPECTRUM_AVERAGES = 4;
+let spectrumRun = 0; // the latest run asked for: an older one waiting is dropped
 
-/** Simulate one run with the swing's source and frequency, and take its output's spectrum. */
+let spectrumWorker = null; // a worker thread (worker-thread.js), kept between runs
+let spectrumWorkerBusy = false;
+
+/** Simulate the spectrum in a worker thread, the windows free meanwhile;
+ *  where none can start, in this one once the busy dots are on screen.
+ *  The latest ask wins: a run still going for an older one is stopped. */
 function runSpectrum() {
   const settings = flow().spectrum || {};
+  const run = ++spectrumRun;
   if (!settings.on || !hasQuantizer()) {
+    plotsBusy.set('spectrum', false);
     spectrum = null;
     renderGraph();
     return;
   }
+  plotsBusy.set('spectrum', true);
+  const request = spectrumRequest();
+  const finish = (result) => {
+    if (run !== spectrumRun) return;
+    plotsBusy.set('spectrum', false);
+    showSpectrum(request, result);
+  };
+  if (request.error) { finish(request); return; }
+  if (spectrumWorkerBusy) { spectrumWorker.terminate(); spectrumWorker = null; }
+  spectrumWorker ||= startWorker();
+  if (!spectrumWorker) {
+    afterPaint(() => { if (run === spectrumRun) finish(simulatedSpectrum(request)); });
+    return;
+  }
+  spectrumWorkerBusy = true;
+  spectrumWorker.onmessage = ({ data }) => {
+    if (data.type !== 'spectrum' || data.id !== run) return;
+    spectrumWorkerBusy = false;
+    finish(data);
+  };
+  spectrumWorker.onerror = (ev) => {
+    // A worker that cannot run: this thread takes the run, and the next ones.
+    ev.preventDefault?.();
+    spectrumWorker?.terminate();
+    spectrumWorker = null;
+    spectrumWorkerBusy = false;
+    if (run === spectrumRun) finish(simulatedSpectrum(request));
+  };
+  spectrumWorker.postMessage({ type: 'spectrum', id: run, ...request });
+}
+
+/** What one spectrum run simulates, from the settings and the sliders:
+ *  the diagram's JSON and prepareSimulation's options (spectrum-run.js
+ *  `simulatedSpectrum`), or `{ error }`. */
+function spectrumRequest() {
+  const settings = flow().spectrum || {};
   const amplitude = Number(settings.amplitude ?? -6);
+  if (!Number.isFinite(amplitude)) return { error: 'the amplitude is a number of dBFS' };
   const numbers = resolved();
   const values = Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, numbers[name] ?? 1]));
   const { sources } = signalFlowGraph(editor.circuit);
   const input = plots.querySelector('.signal-flow-swing-source')?.value || flow().swingInput || sources.find((s) => !s.quantizer && !s.dither)?.id;
   // A whole number of cycles in each averaged segment, so the tone sits in its bins.
-  const frequency = Math.max(1, Math.round(testFrequency(settings.frequency) * SPECTRUM_SEGMENT)) / SPECTRUM_SEGMENT;
-  const sim = prepareSimulation(editor.circuit, { values, sources: flow().sources, input, output: flow().output, frequency, samples: SPECTRUM_AVERAGES * SPECTRUM_SEGMENT });
-  if (!sim.ok) spectrum = { error: sim.error };
-  else if (!Number.isFinite(amplitude)) spectrum = { error: 'the amplitude is a number of dBFS' };
+  const segment = spectrumSegment();
+  const typed = spectrumFrequency(settings.frequency);
+  const frequency = typed === 0 ? 0 : Math.max(1, Math.round(typed * segment)) / segment;
+  return {
+    circuit: editor.circuit.toJSON(),
+    options: { values, sources: flow().sources, input, output: flow().output, frequency, samples: SPECTRUM_AVERAGES * segment, segment },
+    amplitude,
+    segment,
+    numbers,
+  };
+}
+
+/** A run's spectrum on the graph, behind the curves solved again at each
+ *  quantizer's measured gain. */
+function showSpectrum(request, result) {
+  const { raw, quantizers = [] } = result;
+  if (result.error) spectrum = { error: result.error };
+  else if (!raw) spectrum = { error: result.overloaded ? `the loop runs away at ${request.amplitude} dBFS` : 'no output to take the spectrum of' };
   else {
-    const run = sim.run(amplitude, { record: true });
-    const raw = run.overloaded || !run.samples ? null : outputSpectrum(run.samples, { segment: SPECTRUM_SEGMENT, variance: 1 / 3 });
     // The linear model again, each quantizer at its measured gain.
-    const quantizers = raw ? run.quantizers : [];
     const linear = quantizers.length
-      ? analyzeSignalFlow(editor.circuit, { output: flow().output, sources: flow().sources, values: numbers, quantizerGains: Object.fromEntries(quantizers.map((q) => [q.refdes, Number(q.gain.toPrecision(6))])) })
+      ? analyzeSignalFlow(editor.circuit, { output: flow().output, sources: flow().sources, values: request.numbers, quantizerGains: Object.fromEntries(quantizers.map((q) => [q.refdes, Number(q.gain.toPrecision(6))])) })
       : null;
-    spectrum = raw
-      ? { raw, points: plotSpectrum({ ...raw, points: dbfsSpectrum(raw, sim.fullScale) }, sim.frequency), frequency: sim.frequency, amplitude, fullScale: sim.fullScale, quantizers, linear }
-      : { error: run.overloaded ? `the loop runs away at ${amplitude} dBFS` : 'no output to take the spectrum of' };
+    spectrum = { raw, points: plotSpectrum({ ...raw, points: dbfsSpectrum(raw, result.fullScale) }, result.frequency), frequency: result.frequency, amplitude: request.amplitude, fullScale: result.fullScale, quantizers, linear };
   }
   redrawGraphPlot();
   const status = plots.querySelector('.signal-flow-spectrum-status');
@@ -1483,7 +1574,12 @@ function rootRow(label, roots, variable, at = '') {
   ]);
 }
 
+/** Derive, with the analysis window's busy dots up while it runs. */
 function derive() {
+  deriving(deriveNow);
+}
+
+function deriveNow() {
   latest = analyzeSignalFlow(editor.circuit, { output: flow().output, sources: flow().sources, values: resolved() });
   derivedRevision = editor.modelRevision;
   section.querySelector('.signal-flow-stale').hidden = true;

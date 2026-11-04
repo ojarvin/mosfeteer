@@ -13,6 +13,7 @@ import { canvasEl } from './elements.js';
 import { PLACE, floatingWindow } from './floating-window.js';
 import { createPlotView } from './plot-view.js';
 import { element as el } from './dom.js';
+import { busyIndicator } from './busy-indicator.js';
 
 
 let open = null;
@@ -34,10 +35,14 @@ export function openRunWindow({ title, plotAt, onStop, onClose = () => {} }) {
   const plotView = createPlotView({ height: 220, fill: true });
   const plot = el('div', { class: 'run-window-plot' }, [plotView.el]);
   const legend = el('p', { class: 'field-hint run-window-legend', text: 'Gray: where it started. Color: the best so far.' });
+  // The dots beside the title while the search runs.
+  const busy = busyIndicator({ label: 'Running' });
+  busy.set('run', true);
   const stop = el('button', { type: 'button', class: 'run-window-stop', text: 'Stop', onclick: () => (finished ? dispose() : onStop()) });
   const dialog = el('section', { class: 'floating-window run-window', 'aria-labelledby': 'run-window-title' }, [
     el('header', { class: 'floating-window-header' }, [
       el('h2', { id: 'run-window-title', class: 'floating-window-title', text: title }),
+      busy.el,
       el('button', { type: 'button', class: 'floating-window-close', 'aria-label': `Close the ${title.toLowerCase()} window`, title: 'Close', text: '×' }),
     ]),
     el('div', { class: 'run-window-body' }, [plot, legend, bar, status]),
@@ -75,6 +80,7 @@ export function openRunWindow({ title, plotAt, onStop, onClose = () => {} }) {
     best(values) { draw(values); },
     done(text, error = false) {
       finished = true;
+      busy.set('run', false);
       status.textContent = text;
       status.classList.toggle('analysis-error', error);
       bar.value = 1;

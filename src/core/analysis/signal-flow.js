@@ -21,7 +21,7 @@ import { createRationalOps } from './algebra-ops.js';
 import { cancelCommonPolynomialFactor } from './polynomial-gcd.js';
 import { renderExpression } from './present.js';
 import { bodeSketch, evaluateExpression, expressionSymbols, polynomialRoots } from './bode.js';
-import { TRANSFER_FUNCTION_TYPES, isBlockIn, parseGain, readTransferFunction } from '../transfer-function.js';
+import { TRANSFER_FUNCTION_TYPES, isBlockIn, parseGain, readTransferFunction, sourceNames } from '../transfer-function.js';
 import { analyzedCircuit, canonicalNetName } from '../model.js';
 import { COLOR_PALETTE } from '../style.js';
 import { samplePath } from './sampling.js';
@@ -29,8 +29,8 @@ import { chopperShortedNets } from './shared.js';
 
 const JUNCTIONS = new Set(['signal_sum', 'signal_multiply', 'gain']);
 const JUNCTION_INPUTS = ['n', 's', 'w'];
-// Parts that drive a signal from outside the diagram: an input port, a dither source.
-const SOURCE_TYPES = new Set(['input', 'dither']);
+// Parts that drive a signal from outside the diagram: an input port, a dither or tone source.
+const SOURCE_TYPES = new Set(['input', 'dither', 'tone']);
 // Parts that may sit on a signal wire without taking part in it.
 // A chopper is a short: the wires through it are one signal (signalFlowGraph).
 const PASSIVE_TYPES = new Set(['solder', 'output', 'port', 'inputoutput', 'chopper']);
@@ -112,9 +112,11 @@ export function signalFlowGraph(circuit) {
     signal.driver = signal.drivers.length === 1 ? signal.drivers[0] : null;
     // A source: an input port, or a wire that is read but nothing drives.
     const port = signal.drivers.find((driver) => driver.source);
-    const ditherPart = port && circuit.components.get(port.comp)?.type === 'dither';
-    // A dither source's unnamed wire goes by the source, as math: DTH1 -> DTH_{1}.
-    if (ditherPart) sources.push({ id: port.comp, key: signal.key, name: signal.display === signal.netIds[0] ? port.comp.replace(/^([A-Za-z]+)_?(\d+)$/, '$1_{$2}') : signal.display, dither: true });
+    const sourceType = port && circuit.components.get(port.comp)?.type;
+    const ditherPart = sourceType === 'dither' || sourceType === 'tone';
+    // A dither or tone source's unnamed wire goes by the source, as math:
+    // DTH1 -> DTH_{1}. Both are `dither`: the simulations draw their values.
+    if (ditherPart) sources.push({ id: port.comp, key: signal.key, name: signal.display === signal.netIds[0] ? port.comp.replace(/^([A-Za-z]+)_?(\d+)$/, '$1_{$2}') : signal.display, dither: true, ...(sourceType === 'tone' ? { tone: true } : {}) });
     else if (port) sources.push({ id: port.comp, key: signal.key, name: signal.display });
     else if (!signal.drivers.length && signal.readers.length) sources.push({ id: signal.display, key: signal.key, name: signal.display });
     delete signal.drivers;
@@ -1675,7 +1677,7 @@ export function ditherSymbols(circuit) {
   const { signals } = signalFlowGraph(circuit);
   const out = new Set();
   const list = [...signals.values()];
-  let frontier = list.filter((signal) => signal.driver?.source && circuit.components.get(signal.driver.comp)?.type === 'dither');
+  let frontier = list.filter((signal) => signal.driver?.source && ['dither', 'tone'].includes(circuit.components.get(signal.driver.comp)?.type));
   const seen = new Set();
   while (frontier.length) {
     const next = [];
@@ -1695,7 +1697,7 @@ export function ditherSymbols(circuit) {
 }
 
 /** Every coefficient a diagram's parts name: its blocks' (a delay's T
- *  included), its gains', its samplers' periods. */
+ *  included), its gains', its samplers' periods, its dither and tone sources'. */
 export function diagramSymbols(circuit) {
   const out = new Set();
   for (const component of circuit.components.values()) {
@@ -1704,6 +1706,8 @@ export function diagramSymbols(circuit) {
         for (const name of resultSymbols(blockTransferFunction(component), TRANSFER_FUNCTION_TYPES[component.type])) out.add(name);
       } else if (component.type === 'gain' || component.type === 'sampler') {
         expressionSymbols(coefficientValue(parseGain(component.value || 'T')), 's', out);
+      } else if (component.type === 'dither' || component.type === 'tone') {
+        for (const name of sourceNames(component)) expressionSymbols(coefficientValue(name), 's', out);
       }
     } catch { /* a part that does not read names nothing */ }
   }

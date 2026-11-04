@@ -16,13 +16,16 @@
  * end -- share it and it stays bounded), each edge at its delay (excess
  * loop delay included), the sampler reads just before
  * t = nT, and peaks are taken on a few sub-steps a period as well as at
- * every impulse.
+ * every impulse. A multiply junction of two sampled signals (a reference's
+ * ripple times the DAC's code, say) is no transfer function, so it is
+ * worked out a sample at a time, as a quantizer is, in the order its
+ * inputs need it.
  */
 
 import { blockTransferFunction, coefficientValue, delayTermsOf, denseCoefficients, hasDelays, mixedPeriods, signalDomains, signalFlowGraph, withCoefficients } from './signal-flow.js';
 import { expm } from './sampling.js';
 import { evaluateExpression } from './bode.js';
-import { TRANSFER_FUNCTION_TYPES, isBlockIn, parseDither, parseGain, parseLevels } from '../transfer-function.js';
+import { TRANSFER_FUNCTION_TYPES, isBlockIn, parseDither, parseGain, parseLevels, parseTone } from '../transfer-function.js';
 import { analyzedCircuit, canonicalNetName } from '../model.js';
 import { seededRandom } from './cmaes.js';
 import { rationalMultiply } from './rational.js';
@@ -94,6 +97,8 @@ function matVec(M, x, out) {
  * constant holds it, the rest are zero), `input` (the source the sine
  * drives), `output` (a signal key for the output tone), `frequency` (f/fs
  * of the sine, made coherent with the window), `samples` (the window),
+ * `segment` (a whole number of cycles of each tone source in each run of
+ * this many samples: the spectrum's segment; the window by default),
  * `warmup`, `subSteps`. Dither is a dither source in the diagram: each
  * draws its own sequence, the same every run.
  * Returns `{ ok, fullScale, frequency, signals, run }`:
@@ -154,10 +159,18 @@ export function prepareSimulation(circuit, options = {}) {
     }
     sourceValue.set(source.key, { driven: source === driven, constant });
   }
-  // Dither sources draw their numbers, whatever the analysis does with them.
+  // Dither and tone sources draw their values, whatever the analysis does
+  // with them; a tone is a sine among the shapes.
   for (const source of sources.filter((s) => s.dither)) {
     try {
-      sourceValue.set(source.key, { driven: false, constant: 0, dither: parseDither(circuit.components.get(source.id)?.value) });
+      // Its amplitude and f/fs at their numbers, when named.
+      const part = circuit.components.get(source.id);
+      const dither = part?.type === 'tone' ? { shape: 'sine', ...parseTone(part.value) } : parseDither(part?.value);
+      const at = (value) => (typeof value === 'string' ? num(value) : value);
+      const set = { ...dither, amplitude: at(dither.amplitude), ...(dither.shape === 'sine' ? { frequency: at(dither.frequency) } : {}) };
+      if (!(set.amplitude >= 0 && Number.isFinite(set.amplitude))) throw new Error(`its amplitude ${dither.amplitude} is ${set.amplitude}: it must be 0 or more`);
+      if (set.shape === 'sine' && !(set.frequency >= 0 && set.frequency <= 0.5)) throw new Error(`its f/fs ${dither.frequency} is ${set.frequency}: it must be from 0 to 0.5`);
+      sourceValue.set(source.key, { driven: false, constant: 0, dither: set });
     } catch (err) {
       return failure('bad-dither', `${source.id}: ${err.message}`);
     }
@@ -166,7 +179,8 @@ export function prepareSimulation(circuit, options = {}) {
   const signalAt = (component, term) => [...signals.values()].find((signal) => signal.readers.some((r) => r.comp === component.refdes && r.term === term)) || null;
   const numeric = (component) => withCoefficients(blockTransferFunction(component), values);
   const gainOf = (component) => num(parseGain(component.value));
-  // A multiply junction: a gain of its constant inputs on its one signal.
+  // A multiply junction: a gain of its constant inputs on the signals it
+  // multiplies (a dither source's numbers among them).
   const multiplyOf = (component) => {
     let gain = 1;
     const varying = [];
@@ -174,11 +188,10 @@ export function prepareSimulation(circuit, options = {}) {
       const signal = signalAt(component, term);
       if (!signal) continue;
       const source = sourceValue.get(signal.key);
-      if (source && !source.driven) gain *= source.constant;
+      if (source && !source.driven && !source.dither) gain *= source.constant;
       else varying.push(signal);
     }
-    if (varying.length > 1) throw new Error(`${component.refdes} multiplies two signals`);
-    return { gain, signal: varying[0] || null };
+    return { gain, signal: varying[0] || null, signals: varying };
   };
 
   const list = [...signals.values()];
@@ -274,7 +287,7 @@ export function prepareSimulation(circuit, options = {}) {
     for (const [i, signal] of cont.entries()) {
       const source = sourceValue.get(signal.key);
       if (source) {
-        if (source.dither) throw new Error(`the dither on ${signal.display} feeds continuous signals: a dither source draws a number a sample, so wire it into a sum after the sampler, not through a sampler of its own`);
+        if (source.dither) throw new Error(`the ${circuit.components.get(signal.driver?.comp)?.type === 'tone' ? 'tone' : 'dither'} on ${signal.display} feeds continuous signals: it draws a value a sample, so wire it into a sum after the sampler, not through a sampler of its own`);
         if (source.driven) Hc[i][OSC_S] = 1;
         else Hc[i][ONE] = source.constant;
         continue;
@@ -295,7 +308,8 @@ export function prepareSimulation(circuit, options = {}) {
       else if (component.type === 'signal_sum') {
         for (const term of JUNCTION_INPUTS) feed(component.negativeInputs?.has(term) ? -1 : 1, signalAt(component, term));
       } else if (component.type === 'signal_multiply') {
-        const { gain, signal: from } = multiplyOf(component);
+        const { gain, signal: from, signals: varying } = multiplyOf(component);
+        if (varying.length > 1) throw new Error(`${component.refdes} multiplies two continuous signals: multiply them after the sampler`);
         feed(gain, from);
       } else if (component.type === 'quantizer') {
         throw new Error(`${component.refdes} rounds a continuous signal: put a sampler before it`);
@@ -323,10 +337,18 @@ export function prepareSimulation(circuit, options = {}) {
     return failure('unsimulatable', `${err.message.includes(':') ? '' : 'an H(z) block '}${err.message}`);
   }
   const discreteSources = disc.filter((s) => sourceValue.has(s.key));
+  // Sampled products of two or more signals, each worked out a sample at a time.
+  const products = disc.map((signal) => {
+    const component = signal.driver && !signal.driver.source ? circuit.components.get(signal.driver.comp) : null;
+    if (component?.type !== 'signal_multiply') return null;
+    const { gain, signals: inputs } = multiplyOf(component);
+    return inputs.length > 1 ? { component, out: signal.key, gain, inputs: inputs.map((input) => input.key) } : null;
+  }).filter(Boolean);
   const pSampler = new Map(samplers.map((c, k) => [c.refdes, k]));
   const pSource = new Map(discreteSources.map((s, k) => [s.key, samplers.length + k]));
   const pQuant = new Map(quantizers.map((c, k) => [c.refdes, samplers.length + discreteSources.length + k]));
-  const pSize = samplers.length + discreteSources.length + quantizers.length;
+  const pProduct = new Map(products.map((product, k) => [product.out, samplers.length + discreteSources.length + quantizers.length + k]));
+  const pSize = samplers.length + discreteSources.length + quantizers.length + products.length;
   const Gd = zero(disc.length, disc.length);
   const Hd = zero(disc.length, md + pSize);
   try {
@@ -345,6 +367,7 @@ export function prepareSimulation(circuit, options = {}) {
       else if (component.type === 'signal_sum') {
         for (const term of JUNCTION_INPUTS) feed(component.negativeInputs?.has(term) ? -1 : 1, signalAt(component, term));
       } else if (component.type === 'signal_multiply') {
+        if (pProduct.has(signal.key)) { Hd[i][md + pProduct.get(signal.key)] = 1; continue; }
         const { gain, signal: from } = multiplyOf(component);
         feed(gain, from);
       }
@@ -354,27 +377,34 @@ export function prepareSimulation(circuit, options = {}) {
   }
   const Md = solveLoop(Gd, Hd);
   if (!Md) return failure('algebraic-loop', 'a sampled loop with no delay has a gain of exactly 1');
-  // Quantizers in the order their inputs need them; one that needs its own
-  // output (no delay round its loop) cannot be rounded.
+  // Quantizers and products in the order their inputs need them; one that
+  // needs its own output (no delay round its loop) cannot be worked out.
+  const rowOf = (key) => (key && di.has(key) ? Md[di.get(key)] : null);
+  const nodes = [
+    ...quantizers.map((q) => ({ refdes: q.refdes, levels: levels.get(q.refdes), rows: [rowOf(signalAt(q, 'in')?.key)], p: md + pQuant.get(q.refdes) })),
+    ...products.map((product) => ({ refdes: product.component.refdes, product: true, gain: product.gain, rows: product.inputs.map(rowOf), p: md + pProduct.get(product.out) })),
+  ];
   const order = [];
-  const pending = new Set(quantizers);
+  const pending = new Set(nodes);
   while (pending.size) {
-    const ready = [...pending].find((q) => {
-      const input = signalAt(q, 'in');
-      if (!input || !di.has(input.key)) return true;
-      const row = Md[di.get(input.key)];
-      return [...pending].every((other) => Math.abs(row[md + pQuant.get(other.refdes)]) < 1e-12);
-    });
-    if (!ready) return failure('delay-free-loop', `${[...pending][0].refdes} sits in a loop with no delay: its input needs its own output`);
-    order.push({ refdes: ready.refdes, levels: levels.get(ready.refdes), row: signalAt(ready, 'in') && di.has(signalAt(ready, 'in').key) ? Md[di.get(signalAt(ready, 'in').key)] : null, p: md + pQuant.get(ready.refdes) });
+    const ready = [...pending].find((node) => node.rows.every((row) => !row || [...pending].every((other) => Math.abs(row[other.p]) < 1e-12)));
+    if (!ready) {
+      const stuck = [...pending][0];
+      return failure('delay-free-loop', `${stuck.refdes} sits in a loop with no delay: ${stuck.product ? 'its inputs need' : 'its input needs'} its own output`);
+    }
+    order.push(ready);
     pending.delete(ready);
   }
+  const rounding = order.filter((node) => !node.product);
 
   // ----- the continuous dynamics, F, and the period's segments.
   const window = Math.max(64, Math.round(options.samples || 4096));
   const warmup = Math.max(0, Math.round(options.warmup ?? window / 4));
-  const cycles = Math.max(1, Math.round((options.frequency || 1 / 256) * window));
+  // f/fs 0 is a constant input (DC) of the amplitude.
+  const cycles = options.frequency === 0 ? 0 : Math.max(1, Math.round((options.frequency || 1 / 256) * window));
   const frequency = cycles / window;
+  // A tone source's cycles are whole in each segment the spectrum averages.
+  const coherent = Math.max(1, Math.round(options.segment || window));
   const omega = (2 * Math.PI * frequency) / T;
   const F = zero(size, size);
   for (const block of blocks) {
@@ -478,6 +508,8 @@ export function prepareSimulation(circuit, options = {}) {
     const magnitudes = wanted.length ? signalList.map((_, i) => (wanted.includes(i) ? new Float64Array(window) : null)) : null;
     const leveled = magnitudes ? wanted.filter((i) => i >= 0 && i < signalList.length) : [];
     const amplitude = fullScale * 10 ** (amplitudeDb / 20);
+    // At DC the sine holds its peak: the amplitude itself.
+    if (frequency === 0) phase = Math.PI / 2;
     let X = new Float64Array(size);
     let next = new Float64Array(size);
     // The oscillator's pair is (A cos, A sin) of the sine's phase.
@@ -504,15 +536,24 @@ export function prepareSimulation(circuit, options = {}) {
       const { shape } = sourceValue.get(key).dither;
       const a = sourceValue.get(key).dither.amplitude * fullScale;
       const draw = seededRandom(0xd17e + 7919 * i);
-      // rect and tri continuous; bin a coin (+-A), tern two coins halved (-A, 0, +A).
+      // rect and tri continuous; bin a coin (+-A), tern two coins halved (-A, 0, +A);
+      // a tone's sine at its f/fs, made a whole number of cycles in the window.
       const coin = () => (draw() < 0.5 ? -1 : 1);
+      if (shape === 'sine') {
+        // At f/fs 0 it holds its amplitude: a constant (an offset).
+        const set = sourceValue.get(key).dither.frequency;
+        if (set === 0) return [key, () => a];
+        const f = Math.max(1, Math.round(set * coherent)) / coherent;
+        let k = 0;
+        return [key, () => a * Math.sin(2 * Math.PI * f * k++)];
+      }
       return [key, shape === 'rect' ? () => a * (2 * draw() - 1)
         : shape === 'tri' ? () => a * (draw() - draw())
           : shape === 'bin' ? () => a * coin()
             : () => (a * (coin() + coin())) / 2];
     }));
     // Each quantizer's output against its input, for its effective gain.
-    const fits = order.map(() => ({ vy: 0, vv: 0, yy: 0 }));
+    const fits = new Map(rounding.map((node) => [node, { vy: 0, vv: 0, yy: 0 }]));
     // A state a thousand times full scale: the loop has run away.
     const limit = 1e3 * fullScale;
     const track = (measuring) => {
@@ -530,12 +571,18 @@ export function prepareSimulation(circuit, options = {}) {
       }
       state.set(xd, 0);
       state.set(p, md);
-      for (const [k, q] of order.entries()) {
-        const y = q.row ? dot(q.row, state) : 0;
-        state[q.p] = quantize(y, q.levels);
+      for (const node of order) {
+        if (node.product) {
+          let v = node.gain;
+          for (const row of node.rows) v *= row ? dot(row, state) : 0;
+          state[node.p] = v;
+          continue;
+        }
+        const y = node.rows[0] ? dot(node.rows[0], state) : 0;
+        state[node.p] = quantize(y, node.levels);
         if (measuring) {
-          const fit = fits[k];
-          fit.vy += y * state[q.p]; fit.vv += y * y; fit.yy += state[q.p] ** 2;
+          const fit = fits.get(node);
+          fit.vy += y * state[node.p]; fit.vv += y * y; fit.yy += state[node.p] ** 2;
         }
       }
       matVec(Md, state, Yd);
@@ -595,10 +642,10 @@ export function prepareSimulation(circuit, options = {}) {
     for (let i = 0; i < m + md; i++) {
       if (halves[1][i] > 2 * fullScale && halves[1][i] > 2 * halves[0][i]) return { peaks: Array.from(peaks), tone: null, overloaded: true, ...wavesOut() };
     }
-    const tone = outputIndex >= 0 ? (2 * Math.hypot(re, im)) / window : null;
+    const tone = outputIndex >= 0 ? ((frequency === 0 ? 1 : 2) * Math.hypot(re, im)) / window : null;
     // y = k v + e, k by least squares: e is then uncorrelated with v.
-    const quantizerFits = order.map((q, k) => {
-      const { vy, vv, yy } = fits[k];
+    const quantizerFits = rounding.map((q) => {
+      const { vy, vv, yy } = fits.get(q);
       const gain = vv > 0 ? vy / vv : 1;
       return { refdes: q.refdes, levels: q.levels, gain, errorVariance: Math.max(0, yy - gain * vy) / window };
     });

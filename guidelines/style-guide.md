@@ -210,6 +210,7 @@ mirror flag to override that default.
 | signal_sum / signal_multiply | `n`, `s`, `w` inputs and `e` output on the circle at the four cardinal directions | 80×80 signal-flow operator with a 40-unit-radius circle; sum uses a plus mark, multiply uses a × mark, unused terminals do not fail Design Check, and negative routed inputs carry a non-selectable `−` label one cell outward on the pin-entry side |
 | sampler | `in` (left) `out` (right) | a sampling switch in a 160×160 footprint: leads to x=±40, an arm from the pivot at (-40,0) rising 40° (the input lead and the arm one stroke in the wire's ink, so the pivot is one mitred corner of the wire's width), and an arc arrow round the pivot across the arm, its filled head toward the contact; its value is the period (`T`), an owned math label three cells above (horizontal flow) or right (vertical), in world terms |
 | dither | `out` (right, on the circle) | a source circle r = 40 with a noise squiggle inside; its shape and amplitude in full scale are an owned math label `tri ± 0.5 FS` three cells above (horizontal flow) or right (vertical) |
+| tone | `out` (right, on the circle) | a source circle r = 40 with one sine period inside; its amplitude and f/fs are an owned math label `± 0.01 FS, f = 0.37 f_s`, placed as a dither's |
 | quantizer | `in` (left) `out` (right) | a block-diagram box x:-80..80, y:-80..80 with a four-step staircase inside; its level count is an owned math label `N = 2` three cells above (horizontal flow) or right (vertical) |
 
 Notes:

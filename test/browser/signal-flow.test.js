@@ -317,7 +317,12 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
   test('an annotated spectrum has its legend entry, and its SNDR stays in the window', async () => {
     await openAnalysis('modulator');
     await h.evaluate(`${h.module('editor-state.js')}.then((m) => { m.editor.circuit.analysisValues.band = { bw: 0.01 }; })`);
-    await derive();
+    // Derive puts the analysis window's busy dots beside its title until it is done.
+    const deriving = `document.querySelector('#analysis-dialog .floating-window-header .busy-dots')`;
+    assert.equal(await h.evaluate(`(() => { document.querySelector('.signal-flow-derive').click(); return ${deriving}.hidden; })()`), false);
+    assert.equal(await h.evaluate(`${deriving}.getAttribute('aria-label')`), 'Deriving');
+    await h.until(`${deriving}.hidden`);
+    await h.settle();
     await tab('Magnitude');
     // The spectrum on, at -20 dBFS (the loop runs away at -6), as its checkbox turns it on.
     await h.until(`!!document.querySelector('.plots-window .signal-flow-spectrum-toggle input')`);
@@ -325,6 +330,17 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     await h.until(`/SNDR/.test(document.querySelector('.plots-window .signal-flow-spectrum-status')?.textContent || '')`, 20000);
     // The curves over it are drawn at each quantizer's measured gain, as it says.
     assert.match(await h.evaluate(`document.querySelector('.plots-window .signal-flow-spectrum-status').textContent`), /curves at \w+ gain -?[\d.e-]+/);
+    // Its Simulation section: the band's noise beside the SNDR, and the run's length as chosen, saved.
+    assert.equal(await h.evaluate(`document.querySelector('.plots-window .signal-flow-spectrum > legend').textContent`), 'Simulation');
+    assert.match(await h.evaluate(`document.querySelector('.plots-window .signal-flow-spectrum-status').textContent`), /SNDR -?[\d.]+ dB \(ENOB -?[\d.]+\), noise -[\d.]+ dBFS; 7 averages of 8192 samples/);
+    // The busy dots beside the title from the ask until the spectrum is drawn.
+    const dots = `document.querySelector('.plots-window .floating-window-header .busy-dots')`;
+    await h.until(`${dots}.hidden`, 20000);
+    assert.equal(await h.evaluate(`(() => { const s = document.querySelector('.plots-window .signal-flow-spectrum-samples'); s.value = '4096'; s.dispatchEvent(new Event('change', { bubbles: true })); return ${dots}.hidden; })()`), false);
+    await h.until(`/of 4096 samples/.test(document.querySelector('.plots-window .signal-flow-spectrum-status')?.textContent || '')`, 20000);
+    await h.until(`${dots}.hidden`);
+    assert.equal(await h.evaluate(`${dots}.getAttribute('aria-label')`), 'Simulating');
+    assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.analysisValues.flow.spectrum.samples)`), 4096);
     // Every curve unticked: the spectrum stays, and annotates alone.
     const checks = `[...document.querySelectorAll('.plots-window .signal-flow-legend-row input[type=checkbox]')]`;
     // Each click redraws the legend: one at a time.

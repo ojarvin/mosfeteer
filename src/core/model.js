@@ -16,7 +16,7 @@ import { LABEL_FONT_SIZES, TABLE_RULE_ROOM_EM, labelFontSize, strokeWidth } from
 import { cloneLiteralPath, clonePath, crossNetOverlaps, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 import { curvedArrowGeometry, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue, timingBreakGeometry } from './line-style.js';
 import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } from './beats.js';
-import { TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, parseDither, parseGain, parseLevels, readTransferFunction, transferFunctionDisplay, transferFunctionLines } from './transfer-function.js';
+import { TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, parseDither, parseGain, parseLevels, parseTone, readTransferFunction, toneValueText, transferFunctionDisplay, transferFunctionLines } from './transfer-function.js';
 import { normalizePartsTable, partsTableLayout } from './parts-table.js';
 import { normalizeFigure } from './figures.js';
 import { fanStacks, normalizeStack, segmentEnters, stackRects, stackedBoxes, wireEchoes } from './box-stack.js';
@@ -3406,8 +3406,13 @@ export class Circuit {
     if (!variable) return null;
     const quantizer = component.type === 'quantizer';
     const dither = component.type === 'dither';
-    const ditherTex = () => { const { shape, amplitude } = parseDither(component.value); return `\\text{${shape}} \\pm ${Number(amplitude.toPrecision(6))}\\,\\text{FS}`; };
-    const text = `$${quantizer ? `N = ${component.value}` : dither ? ditherTex() : gain ? gainDisplay(component.value) : transferFunctionDisplay(component.value, variable)}$`;
+    const tone = component.type === 'tone';
+    // A number to six digits, a coefficient as written; the spaces in text,
+    // which keeps them, so a name (amp) stays apart from FS.
+    const sourceTex = (v) => (typeof v === 'string' ? v : Number(v.toPrecision(6)));
+    const ditherTex = () => { const { shape, amplitude } = parseDither(component.value); return `\\text{${shape}} \\pm ${sourceTex(amplitude)}\\text{ FS}`; };
+    const toneTex = () => { const { amplitude, frequency } = parseTone(component.value); return `\\pm ${sourceTex(amplitude)}\\text{ FS, }f = ${sourceTex(frequency)}\\text{ }f_s`; };
+    const text = `$${quantizer ? `N = ${component.value}` : dither ? ditherTex() : tone ? toneTex() : gain ? gainDisplay(component.value) : transferFunctionDisplay(component.value, variable)}$`;
     // A gain's short coefficient sits inside its triangle (centered on its
     // centroid, the part's origin); a longer one beside it, by one rule in
     // world terms: above a triangle the signal crosses horizontally, to the
@@ -3417,7 +3422,7 @@ export class Circuit {
     // Inside a triangle, every coefficient is set a size smaller, so a signed
     // name (-g_1) clears the edges as a plain one (b_1) does.
     // A sampler's period and a quantizer's levels always go beside it.
-    const sampler = component.type === 'sampler' || quantizer || dither;
+    const sampler = component.type === 'sampler' || quantizer || dither || tone;
     const inside = gain && !sampler && gainFitsInside(component.value);
     const width = inside ? 'thin' : 'normal';
     if (gain && !inside) {
@@ -3781,6 +3786,7 @@ export class Circuit {
     if (TRANSFER_FUNCTION_TYPES[c.type] || isCoefficientBlock(c)) {
       if (c.type === 'quantizer') value = String(parseLevels(value));
       else if (c.type === 'dither') value = ditherValueText(parseDither(value));
+      else if (c.type === 'tone') value = toneValueText(parseTone(value));
       else if (isCoefficientBlock(c)) parseGain(value);
       else readTransferFunction(value, TRANSFER_FUNCTION_TYPES[c.type]);
       c.value = String(value).trim();
@@ -7604,9 +7610,11 @@ export class Circuit {
     }
     circuit._loading = true;
     for (const c of data.components) {
-      circuit.addComponent(c.type, {
+      // A dither source drawn as a sine (`sine a_r f_r`) is a tone source.
+      const sineDither = c.type === 'dither' && /^\s*(sine|sin|tone)\b/i.test(String(c.value ?? ''));
+      circuit.addComponent(sineDither ? 'tone' : c.type, {
         refdes: c.refdes,
-        value: c.value,
+        value: sineDither ? String(c.value).trim().replace(/^(sine|sin|tone)\s*/i, '') : c.value,
         x: c.transform.x,
         y: c.transform.y,
         rotation: c.transform.rotation,

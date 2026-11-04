@@ -29,6 +29,7 @@ import { floatingWindow } from './floating-window.js';
 import { refreshModelWindow, showModelWindow } from './reference-window.js';
 import { showPlots } from './plots-window.js';
 import { arriving } from './motion.js';
+import { deriving } from './analysis-busy.js';
 
 const analysisTransferInputs = [...document.querySelectorAll('[data-transfer-function]')];
 const analysisLoopElement = document.getElementById('analysis-loop-element');
@@ -1263,60 +1264,63 @@ export function installAnalysisUi() {
     }
     releaseUnlistedGroundMarks(parseAnalysisList(analysisAcGrounds?.value));
     persistAnalysisForm();
-    const formOptions = analysisFormOptions();
-    const devices = analysisDeviceOptions();
-    const noise = analysisNoiseRequest(formOptions);
-    const loopElement = analysisLoopElement?.value.trim();
-    const request = {
-      ...formOptions,
-      ...(noise ? { noise } : {}),
-      ...(loopElement ? { loopGain: { at: loopElement }, sketchRatios: editor.circuit.analysisValues?.bode || {} } : {}),
-      ...(Object.keys(devices).length ? { devices } : {}),
-      input,
-      output,
-      acGrounds: parseAnalysisList(analysisAcGrounds?.value),
-    };
-    let report;
-    try {
-      report = adaptCombinedReport(analyzeSmallSignalV2(editor.circuit, request), { nameSubexpressions: formOptions.nameSubexpressions });
-      report.analysisOptions = {
+    // The dots beside the title, then the solve.
+    deriving(() => {
+      const formOptions = analysisFormOptions();
+      const devices = analysisDeviceOptions();
+      const noise = analysisNoiseRequest(formOptions);
+      const loopElement = analysisLoopElement?.value.trim();
+      const request = {
         ...formOptions,
-        devices,
-        dominantPoleApplied: formOptions.dominantPole
-          && report.assumptions?.includes('dominant-pole approximation'),
+        ...(noise ? { noise } : {}),
+        ...(loopElement ? { loopGain: { at: loopElement }, sketchRatios: editor.circuit.analysisValues?.bode || {} } : {}),
+        ...(Object.keys(devices).length ? { devices } : {}),
+        input,
+        output,
+        acGrounds: parseAnalysisList(analysisAcGrounds?.value),
       };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      report = adaptCombinedReport({ ok: false, error: `analysis failed: ${message}` });
-    }
-    // The Bode tab's curves: the same model in numbers, from a copy of the
-    // drawing as it is now (the sliders re-solve it; later edits wait for the
-    // next Analyze, as the equations do). It plots even when the equations
-    // are too large to derive.
-    try {
-      report.numericModel = numericSmallSignal(Circuit.fromJSON(JSON.parse(JSON.stringify(editor.circuit.toJSON()))), request);
-    } catch (error) {
-      report.numericModel = { ok: false, error: error instanceof Error ? error.message : String(error) };
-    }
-    // A loop gain too large to keep its symbols, broken at a terminal or a
-    // net: in numbers too, so its curve follows the sliders.
-    if (report.reports?.loop?.numeric && request.loopGain?.at) {
+      let report;
       try {
-        report.loopNumericModel = numericLoopGain(Circuit.fromJSON(JSON.parse(JSON.stringify(editor.circuit.toJSON()))), request);
+        report = adaptCombinedReport(analyzeSmallSignalV2(editor.circuit, request), { nameSubexpressions: formOptions.nameSubexpressions });
+        report.analysisOptions = {
+          ...formOptions,
+          devices,
+          dominantPoleApplied: formOptions.dominantPole
+            && report.assumptions?.includes('dominant-pole approximation'),
+        };
       } catch (error) {
-        report.loopNumericModel = { ok: false, error: error instanceof Error ? error.message : String(error) };
+        const message = error instanceof Error ? error.message : String(error);
+        report = adaptCombinedReport({ ok: false, error: `analysis failed: ${message}` });
       }
-    }
-    latestAnalysisReport = report;
-    analysisReportRevision = editor.modelRevision;
-    const stale = document.getElementById('analysis-stale');
-    if (stale) stale.hidden = true;
-    renderAnalysisResult(report);
-    arriving(analysisEquation);
-    requestAnimationFrame(() => analysisResult?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
-    logLine(report.complete ? 'derived the selected transfer functions and the input and output impedances' : 'some requested analyses are unavailable', report.complete ? 'status' : 'error');
-    for (const { title, result } of report.equationEntries || []) logLine(`${title}: ${result.equation}`, 'status');
-    for (const assumption of report.assumptions || []) logLine(`Assumption: ${assumption}`, 'status');
+      // The Bode tab's curves: the same model in numbers, from a copy of the
+      // drawing as it is now (the sliders re-solve it; later edits wait for the
+      // next Analyze, as the equations do). It plots even when the equations
+      // are too large to derive.
+      try {
+        report.numericModel = numericSmallSignal(Circuit.fromJSON(JSON.parse(JSON.stringify(editor.circuit.toJSON()))), request);
+      } catch (error) {
+        report.numericModel = { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
+      // A loop gain too large to keep its symbols, broken at a terminal or a
+      // net: in numbers too, so its curve follows the sliders.
+      if (report.reports?.loop?.numeric && request.loopGain?.at) {
+        try {
+          report.loopNumericModel = numericLoopGain(Circuit.fromJSON(JSON.parse(JSON.stringify(editor.circuit.toJSON()))), request);
+        } catch (error) {
+          report.loopNumericModel = { ok: false, error: error instanceof Error ? error.message : String(error) };
+        }
+      }
+      latestAnalysisReport = report;
+      analysisReportRevision = editor.modelRevision;
+      const stale = document.getElementById('analysis-stale');
+      if (stale) stale.hidden = true;
+      renderAnalysisResult(report);
+      arriving(analysisEquation);
+      requestAnimationFrame(() => analysisResult?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
+      logLine(report.complete ? 'derived the selected transfer functions and the input and output impedances' : 'some requested analyses are unavailable', report.complete ? 'status' : 'error');
+      for (const { title, result } of report.equationEntries || []) logLine(`${title}: ${result.equation}`, 'status');
+      for (const assumption of report.assumptions || []) logLine(`Assumption: ${assumption}`, 'status');
+    });
   });
 
   analysisInput?.addEventListener('change', () => {

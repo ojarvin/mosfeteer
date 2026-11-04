@@ -49,6 +49,11 @@ menu, or their keys. Docked (the button, or a drag to the pane's right
 edge), a window becomes a section of the side panel that its title bar
 folds and its top edge resizes; dragging the title bar out floats it
 again. No window covers the tool rail itself (the paper below it is free).
+While a window works, busy dots sit right after its title
+(`src/web/busy-indicator.js`): the Plots window's while it simulates (the
+spectrum, in a worker thread, `worker-thread.js`; the swing; the time view), the analysis window's while it
+derives (shown at least 250 ms, `analysis-busy.js`), and the optimizer's
+run window's while it runs.
 A field that takes several names (AC grounds, triode devices, the
 synthesis inputs and outputs) takes them separated by spaces, commas, or
 both, and shows them separated by spaces (`nameList`, `src/core/bus.js`).

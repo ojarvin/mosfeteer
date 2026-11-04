@@ -43,7 +43,7 @@ export function isTransferFunction(component) {
 /** A part whose value is one coefficient, drawn as math: a gain's k, a
  *  sampler's period T. */
 export function isCoefficientBlock(component) {
-  return component?.type === 'gain' || component?.type === 'sampler' || component?.type === 'quantizer' || component?.type === 'dither';
+  return component?.type === 'gain' || component?.type === 'sampler' || component?.type === 'quantizer' || component?.type === 'dither' || component?.type === 'tone';
 }
 
 /**
@@ -53,31 +53,76 @@ export function isCoefficientBlock(component) {
  * `tern 1` (three levels, -A, 0, +A at 1/4, 1/2, 1/4: two such bits added;
  * `ternary`),
  * A a positive number in full scale (1 is +-FS, N - 1 of the largest
- * quantizer; `1/2` too; a `±` and a trailing `FS` are read past). Returns
- * `{ shape: 'rect' | 'tri', amplitude }`.
+ * quantizer; `1/2` too; a `±` and a trailing `FS` are read past), or a
+ * coefficient (`tri a_d`), its number set as any other's. Returns
+ * `{ shape, amplitude }`, A a number or the coefficient's name as written.
  */
 export function parseDither(text) {
-  const words = String(text ?? '').toLowerCase().replace(/±|\+\/-|\+-/g, ' ').replace(/[,()=]/g, ' ').split(/\s+/).filter(Boolean);
   let shape = 'rect';
-  let amplitude = null;
-  for (const word of words) {
-    if (/^(rect|rectangular|uniform|rnd)$/.test(word)) shape = 'rect';
-    else if (/^(tri|triangular|tpdf)$/.test(word)) shape = 'tri';
-    else if (/^(bin|binary|2-level|two-level|1-bit)$/.test(word)) shape = 'bin';
-    else if (/^(tern|ternary|3-level|three-level)$/.test(word)) shape = 'tern';
-    else if (/^(a|amplitude|fs)$/.test(word)) continue;
-    else {
-      const match = word.match(/^(\d*\.?\d+(?:e[-+]?\d+)?)(?:\/(\d*\.?\d+))?$/);
-      if (!match || amplitude !== null) throw new Error('a dither source is a shape and an amplitude: rect 1, tri 0.5, bin 1, tern 1');
-      amplitude = Number(match[1]) / (match[2] ? Number(match[2]) : 1);
-    }
+  const numbers = [];
+  for (const word of sourceWords(text)) {
+    const lower = word.toLowerCase();
+    if (/^(rect|rectangular|uniform|rnd)$/.test(lower)) shape = 'rect';
+    else if (/^(tri|triangular|tpdf)$/.test(lower)) shape = 'tri';
+    else if (/^(bin|binary|2-level|two-level|1-bit)$/.test(lower)) shape = 'bin';
+    else if (/^(tern|ternary|3-level|three-level)$/.test(lower)) shape = 'tern';
+    else if (/^(amplitude|fs)$/.test(lower)) continue;
+    else numbers.push(sourceNumber(word, 'a dither source is a shape and an amplitude: rect 1, tri 0.5, bin 1, tern 1, tri a_d'));
   }
-  if (!(amplitude > 0) || !Number.isFinite(amplitude)) throw new Error('a dither source needs an amplitude above 0: rect 1, tri 0.5');
+  if (numbers.length > 1) throw new Error('a dither source is a shape and an amplitude: rect 1, tri 0.5, bin 1, tern 1, tri a_d');
+  const [amplitude] = numbers;
+  if (typeof amplitude !== 'string' && !(amplitude > 0 && Number.isFinite(amplitude))) throw new Error('a dither source needs an amplitude above 0: rect 1, tri 0.5');
   return { shape, amplitude };
 }
 
-/** A dither source's value as stored: `rect 1`. */
-export const ditherValueText = ({ shape, amplitude }) => `${shape} ${Number(amplitude.toPrecision(12))}`;
+/**
+ * A tone source's value: its amplitude A in full scale and its f/fs, `0.01
+ * 0.37` (f/fs at most 0.5; 0 holds A, an offset), each a number (`1/8`
+ * too) or a coefficient (`a_r f_r`); a leading `sine`, a `±`, `FS`, `at`
+ * and `f/fs` are read past. Returns `{ amplitude, frequency }`, each a
+ * number or the coefficient's name as written.
+ */
+export function parseTone(text) {
+  const usage = 'a tone source is an amplitude and an f/fs: 0.01 0.37, a_r f_r';
+  const numbers = [];
+  for (const word of sourceWords(text)) {
+    if (/^(sine|sin|tone|amplitude|fs|f\/fs|at)$/i.test(word)) continue;
+    numbers.push(sourceNumber(word, usage));
+  }
+  if (numbers.length !== 2) throw new Error(usage);
+  const [amplitude, frequency] = numbers;
+  if (typeof amplitude !== 'string' && !(amplitude >= 0 && Number.isFinite(amplitude))) throw new Error('a tone source needs an amplitude of 0 or more: 0.01 0.37');
+  if (typeof frequency !== 'string' && !(frequency >= 0 && frequency <= 0.5)) throw new Error('a tone source\'s f/fs is from 0 to 0.5: 0.01 0.37');
+  return { amplitude, frequency };
+}
+
+const sourceWords = (text) => String(text ?? '').replace(/±|\+\/-|\+-/g, ' ').replace(/[,()=]/g, ' ').split(/\s+/).filter(Boolean);
+
+/** A source's number as typed (0.5, 1/2, 1e-3) or a coefficient's name (a_r, A_{r}). */
+function sourceNumber(word, usage) {
+  if (/^[A-Za-z][A-Za-z0-9]*(?:_(?:\{[A-Za-z0-9]+\}|[A-Za-z0-9]+))?$/.test(word)) return word;
+  const match = word.match(/^(\d*\.?\d+(?:e[-+]?\d+)?)(?:\/(\d*\.?\d+))?$/i);
+  if (!match) throw new Error(usage);
+  return Number(match[1]) / (match[2] ? Number(match[2]) : 1);
+}
+
+const sourceText = (value) => (typeof value === 'string' ? value : Number(value.toPrecision(12)));
+
+/** A dither source's value as stored: `rect 1`, `tri a_d`. */
+export const ditherValueText = ({ shape, amplitude }) => `${shape} ${sourceText(amplitude)}`;
+
+/** A tone source's value as stored: `0.01 0.37`, `a_r f_r`. */
+export const toneValueText = ({ amplitude, frequency }) => `${sourceText(amplitude)} ${sourceText(frequency)}`;
+
+/** A dither or tone source's coefficients: the names its value gives. */
+export function sourceNames(component) {
+  try {
+    const parsed = component?.type === 'tone' ? parseTone(component.value) : component?.type === 'dither' ? parseDither(component.value) : {};
+    return [parsed.amplitude, parsed.frequency].filter((v) => typeof v === 'string');
+  } catch {
+    return [];
+  }
+}
 
 /** A quantizer's level count: a whole number of at least 2. */
 export function parseLevels(text) {

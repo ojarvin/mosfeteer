@@ -2196,6 +2196,94 @@ html.dark.invert-pictures .light-picture {
   transition: color var(--motion) var(--ease-out);
 }
 
+/* The busy dots (busy-indicator.js) sit right after a window's title. */
+.floating-window-title:has(+ .busy-dots:not([hidden])) {
+  flex: 0 1 auto;
+}
+
+/* Three dots at a triangle's corners; in turn each crosses the line through
+   the other two, its mirror image there, so the triangle flips about its
+   center and seems to turn (six flips, then it repeats). By transform alone:
+   the browser keeps it going while a simulation holds the page. */
+.busy-dots {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin: 0 2px;
+  margin-right: auto;
+}
+
+.busy-dots[hidden] {
+  display: none;
+}
+
+.busy-dots > span {
+  position: absolute;
+  top: calc(50% - 1.6px);
+  left: calc(50% - 1.6px);
+  width: 3.2px;
+  height: 3.2px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: 2.4s var(--ease-in-out) infinite;
+}
+
+.busy-dots > span:nth-child(1) { animation-name: busy-dot-1; }
+.busy-dots > span:nth-child(2) { animation-name: busy-dot-2; }
+.busy-dots > span:nth-child(3) { animation-name: busy-dot-3; }
+
+@keyframes busy-dot-1 {
+  0% { transform: translate(0px, -4px); }
+  11.67% { transform: translate(0px, 4px); }
+  16.67% { transform: translate(0px, 4px); }
+  28.33% { transform: translate(-3.46px, 2px); }
+  33.33% { transform: translate(-3.46px, 2px); }
+  45% { transform: translate(-3.46px, -2px); }
+  50% { transform: translate(-3.46px, -2px); }
+  61.67% { transform: translate(3.46px, 2px); }
+  66.67% { transform: translate(3.46px, 2px); }
+  78.33% { transform: translate(3.46px, -2px); }
+  83.33% { transform: translate(3.46px, -2px); }
+  95% { transform: translate(0px, -4px); }
+  100% { transform: translate(0px, -4px); }
+}
+
+@keyframes busy-dot-2 {
+  0% { transform: translate(-3.46px, 2px); }
+  11.67% { transform: translate(-3.46px, -2px); }
+  16.67% { transform: translate(-3.46px, -2px); }
+  28.33% { transform: translate(3.46px, 2px); }
+  33.33% { transform: translate(3.46px, 2px); }
+  45% { transform: translate(3.46px, -2px); }
+  50% { transform: translate(3.46px, -2px); }
+  61.67% { transform: translate(0px, -4px); }
+  66.67% { transform: translate(0px, -4px); }
+  78.33% { transform: translate(0px, 4px); }
+  83.33% { transform: translate(0px, 4px); }
+  95% { transform: translate(-3.46px, 2px); }
+  100% { transform: translate(-3.46px, 2px); }
+}
+
+@keyframes busy-dot-3 {
+  0% { transform: translate(3.46px, 2px); }
+  11.67% { transform: translate(3.46px, -2px); }
+  16.67% { transform: translate(3.46px, -2px); }
+  28.33% { transform: translate(0px, -4px); }
+  33.33% { transform: translate(0px, -4px); }
+  45% { transform: translate(0px, 4px); }
+  50% { transform: translate(0px, 4px); }
+  61.67% { transform: translate(-3.46px, 2px); }
+  66.67% { transform: translate(-3.46px, 2px); }
+  78.33% { transform: translate(-3.46px, -2px); }
+  83.33% { transform: translate(-3.46px, -2px); }
+  95% { transform: translate(3.46px, 2px); }
+  100% { transform: translate(3.46px, 2px); }
+}
+
+:root[data-reduce-motion] .busy-dots > span { animation-play-state: paused; }
+
 .floating-window-close {
   flex: none;
   width: var(--control-h-sm);

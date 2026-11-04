@@ -32,6 +32,7 @@ import { element as el, onFieldCommit } from './dom.js';
 import { annotateMathFigure } from './figure-annotate.js';
 import { registerAnnotations } from './annotate-menu.js';
 import { bodeGraphActions } from './bode-actions.js';
+import { deriving } from './analysis-busy.js';
 
 // A design this window never changed keeps no settings of its own: its
 // defaults are held aside, and join the design with its first change
@@ -215,7 +216,12 @@ function renderValues({ force = false } = {}) {
 
 // ----- deriving --------------------------------------------------------------------------
 
+/** Derive, with the analysis window's busy dots up while it runs. */
 function derive() {
+  deriving(deriveNow);
+}
+
+function deriveNow() {
   const s = settings();
   const ports = { input: s.input || undefined, output: s.output || undefined, readout: s.readout || undefined };
   const result = analyzeSwitchedCap(editor.circuit, { ...ports, noise: !!s.noise });

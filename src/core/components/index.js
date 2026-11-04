@@ -24,7 +24,7 @@ import { switch_open, switch_closed } from './switch.js';
 import { block } from './block.js';
 import { chopper } from './chopper.js';
 import { mux2 } from './mux.js';
-import { signal_sum, signal_multiply, oscillator, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, tf_dac, tf_dac_rz, tf_delay, tf_zdelay, gain, sampler, quantizer, dither } from './signal-flow.js';
+import { signal_sum, signal_multiply, oscillator, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, tf_dac, tf_dac_rz, tf_delay, tf_zdelay, gain, sampler, quantizer, dither, tone } from './signal-flow.js';
 
 /** All registered symbol definitions, keyed by type name. */
 export const symbolTypes = {
@@ -127,6 +127,7 @@ export const symbolTypes = {
   sampler,
   quantizer,
   dither,
+  tone,
 };
 
 /** Ordered list of type names (for palettes / docs). */

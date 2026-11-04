@@ -21,6 +21,7 @@
 import { prepareSimulation } from '../core/analysis/simulate.js';
 import { TRACE_COLORS, diagramSymbols, hasSignalFlow, signalFlowGraph } from '../core/analysis/signal-flow.js';
 import { swingTestFrequency } from '../core/analysis/optimize.js';
+import { plotsBusy } from './plots-window.js';
 import { thinSeries } from '../core/plot-scale.js';
 import { element as el } from './dom.js';
 import { netPicker } from './net-picker.js';
@@ -110,7 +111,9 @@ function shownKeys(sim) {
 
 function schedule() {
   clearTimeout(timer);
-  if (api?.visible()) timer = setTimeout(runTime, 60);
+  plotsBusy.set('time', !!api?.visible());
+  if (!api?.visible()) return;
+  timer = setTimeout(runTime, 60);
 }
 
 /**
@@ -157,8 +160,13 @@ function simulateTime(keys = null) {
   return { sim, result, samples, amplitude, series };
 }
 
-/** Run the diagram and draw what it gives (the view on screen). */
+/** Run the diagram and draw what it gives (the view on screen); the busy
+ *  dots go once it has. */
 export function runTime() {
+  try { drawTime(); } finally { plotsBusy.set('time', false); }
+}
+
+function drawTime() {
   if (!parts || !api?.visible()) return;
   const say = (text, error = false) => { parts.status.textContent = text; parts.status.classList.toggle('analysis-error', error); };
   const run = simulateTime();

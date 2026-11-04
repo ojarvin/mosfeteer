@@ -12,8 +12,11 @@
 import { canvasEl } from './elements.js';
 import { element as el } from './dom.js';
 import { floatingWindow } from './floating-window.js';
+import { busyIndicator } from './busy-indicator.js';
 
 let win = null; // { el, body, chrome }
+// The dots beside the title while a view simulates: `plotsBusy.set(key, on)`.
+export const plotsBusy = busyIndicator();
 // The views, by analysis mode ('signal-flow', 'circuit'), and the mode shown.
 const views = new Map();
 let mode = 'signal-flow';
@@ -25,7 +28,7 @@ function build() {
   const close = el('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the plots', title: 'Close (Shift+W)', text: '×' });
   const body = el('div', { class: 'plots-body' }, current().view ? [current().view] : []);
   const node = el('section', { class: 'floating-window plots-window', 'aria-labelledby': 'plots-title', hidden: true }, [
-    el('header', { class: 'floating-window-header' }, [el('h2', { id: 'plots-title', class: 'floating-window-title', text: 'Plots' }), close]),
+    el('header', { class: 'floating-window-header' }, [el('h2', { id: 'plots-title', class: 'floating-window-title', text: 'Plots' }), plotsBusy.el, close]),
     body,
   ]);
   node.addEventListener('keydown', (ev) => {

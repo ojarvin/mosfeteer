@@ -18,6 +18,7 @@ import { logLine } from './status-bar-ui.js';
 import { element as el } from './dom.js';
 import { annotateMathFigure } from './figure-annotate.js';
 import { registerAnnotations } from './annotate-menu.js';
+import { deriving } from './analysis-busy.js';
 
 /** A table this many rows long, or shorter, goes on the drawing. */
 const ANNOTATED_ROWS = 64;
@@ -93,7 +94,12 @@ function renderSignals() {
   );
 }
 
+/** Derive, with the analysis window's busy dots up while it runs. */
 function derive() {
+  deriving(deriveNow);
+}
+
+function deriveNow() {
   const result = analyzed();
   latest = { revision: editor.modelRevision, result };
   renderResult();

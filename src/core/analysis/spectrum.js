@@ -87,29 +87,40 @@ export function dbfsOffset(spectrum, fullScale, { noise, amplitude }) {
 /**
  * The simulated SNDR in band: the tone's bins (the input frequency, a Hann
  * window spreading it over three either side) against every other bin of
- * the band. `band` `{ f0, bw }` as bandEdges reads it; returns `{ sndr, enob }`
- * or null.
+ * the band (a tone at DC, f/fs 0, its power the DC's square). `band`
+ * `{ f0, bw }` as bandEdges reads it; returns `{ sndr, enob, noiseDb }`
+ * (`noiseDb` the band's noise, the tone left out, in dBFS of a sine of
+ * amplitude `fullScale`; `sndr` null with no tone), or null.
  */
-export function inBand(spectrum, frequency, edges) {
+export function inBand(spectrum, frequency, edges, { fullScale = 1 } = {}) {
   if (!spectrum || !edges.length) return null;
-  const { power, n } = spectrum;
+  const { power, n, w2 } = spectrum;
   const [f1, f2] = edges.length === 2 ? edges : [0, edges[0]];
   const tone = Math.round(frequency * n);
   let signal = 0;
   let noise = 0;
-  for (let k = Math.max(1, Math.ceil(f1 * n)); k <= Math.min(n / 2, Math.floor(f2 * n)); k++) {
-    if (Math.abs(k - tone) <= 3) signal += power[k];
+  for (let k = Math.max(tone ? 1 : 0, Math.ceil(f1 * n)); k <= Math.min(n / 2, Math.floor(f2 * n)); k++) {
+    // A tone at DC: its bins either side counted twice, the mirrored half,
+    // so its power is the DC's square as a sine's is half its amplitude's.
+    if (Math.abs(k - tone) <= 3) signal += tone || !k ? power[k] : 2 * power[k];
     // DC and the window's spread of it are not noise.
     else if (k > 2) noise += power[k];
   }
-  if (!(signal > 0) || !(noise > 0)) return null;
-  const sndr = 10 * Math.log10(signal / noise);
-  return { sndr, enob: (sndr - 1.76) / 6.02 };
+  if (!(noise > 0)) return null;
+  // The noise's power against a full-scale sine's (the one-sided bins of
+  // white noise sum to n w2 sigma^2 / 2, of a sine n w2 A^2 / 4).
+  const noiseDb = 10 * Math.log10((4 * noise) / (n * w2 * fullScale ** 2));
+  if (!(signal > 0)) return { sndr: null, enob: null, noiseDb };
+  const sndr = 10 * Math.log10(tone ? signal / noise : signal / (2 * noise));
+  return { sndr, enob: (sndr - 1.76) / 6.02, noiseDb };
 }
 
 /**
  * A spectrum for a log-frequency plot: averaged into about `bins` bins a
- * plot can draw (the floor reads as its mean), the tone's own bins kept.
+ * plot can draw (the floor reads as its mean), the tone's own bins kept,
+ * and so are a line's -- a bin 10 dB over its bin's median, with the
+ * window's spread of it -- so a spur stays one narrow peak however many
+ * samples the run has.
  */
 export function plotSpectrum(spectrum, frequency, { bins = 600 } = {}) {
   if (!spectrum) return [];
@@ -120,10 +131,22 @@ export function plotSpectrum(spectrum, frequency, { bins = 600 } = {}) {
   const out = [];
   let bucket = [];
   let edge = low;
+  const power = (p) => 10 ** (p.db / 10);
   const flush = () => {
     if (!bucket.length) return;
-    const mean = bucket.reduce((sum, p) => sum + 10 ** (p.db / 10), 0) / bucket.length;
-    out.push({ f: bucket[Math.floor(bucket.length / 2)].f, db: 10 * Math.log10(mean) });
+    const sorted = bucket.map(power).sort((x, y) => x - y);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    // A line's bins (each over the median by 10 dB, and three either side) drawn as they are.
+    const line = new Set();
+    if (bucket.length > 3) {
+      bucket.forEach((p, i) => {
+        if (power(p) > 10 * median) for (let j = Math.max(0, i - 3); j <= Math.min(bucket.length - 1, i + 3); j++) line.add(j);
+      });
+    }
+    const floor = bucket.filter((_, i) => !line.has(i));
+    if (floor.length) out.push({ f: floor[Math.floor(floor.length / 2)].f, db: 10 * Math.log10(floor.reduce((sum, p) => sum + power(p), 0) / floor.length) });
+    for (const i of [...line].sort((x, y) => x - y)) out.push(bucket[i]);
+    if (line.size) out.sort((x, y) => x.f - y.f);
     bucket = [];
   };
   for (const [index, point] of points.entries()) {

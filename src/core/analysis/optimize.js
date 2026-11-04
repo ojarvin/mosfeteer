@@ -29,6 +29,7 @@
 
 import { analyzeSignalFlow, bandEdges, diagramSymbols, numericRootsOf, responseAt, timingSymbols, withCoefficients } from './signal-flow.js';
 import { prepareSimulation } from './simulate.js';
+import { sourceNames } from '../transfer-function.js';
 import { evaluateCoefficientExpression, parseCoefficientLink, resolveCoefficients } from './coefficient-links.js';
 import { createCmaes, seededRandom } from './cmaes.js';
 import { POLE_MEASURES, normalizeOptimizeSetup } from './optimize-setup.js';
@@ -52,14 +53,17 @@ function failure(error) {
 
 /**
  * The coefficients the search moves: every one the diagram names that is
- * neither linked nor fixed (the timing -- samplers' periods, delays -- is
- * fixed unless set free). Each is `{ name, start, log, min, max, scale }`:
+ * neither linked nor fixed (the timing -- samplers' periods, delays -- and
+ * a dither or tone source's amplitude and f/fs are fixed unless set free). Each is `{ name, start, log, min, max, scale }`:
  * a coefficient that is not zero moves on a log scale, keeping its sign
  * (0.01 and 1 are as easy to reach from 0.1), a zero one linearly.
  */
 export function optimizationParameters(circuit, { values = {}, links = {}, setup: rawSetup } = {}) {
   const setup = normalizeOptimizeSetup(rawSetup);
   const timing = new Set(timingSymbols(circuit));
+  // A dither or tone source's own amplitude and f/fs are what the loop
+  // meets, not what it is designed with: fixed unless set free, as the timing is.
+  for (const part of circuit.components.values()) for (const name of sourceNames(part)) timing.add(name);
   const free = [];
   const fixed = [];
   const linked = [];

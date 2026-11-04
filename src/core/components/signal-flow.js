@@ -203,7 +203,7 @@ export const sampler = defineSymbol({
 /**
  * A dither source: random numbers into a sampled signal, one a sample --
  * rectangular (uniform over +-A) or triangular (two uniforms added, over
- * +-A, peaking at 0). Its value is the shape and A in full scale (`rect 1`
+ * +-A, peaking at 0), or two or three levels. Its value is the shape and A in full scale (`rect 1`
  * is +-FS, the largest quantizer's N - 1), drawn beside it; how much
  * reaches the loop is a gain after it, a
  * coefficient like any other. The transfer functions take it as a source
@@ -226,6 +226,32 @@ export const dither = defineSymbol({
   refPos: null,
   labelOffset: null,
   defaultValue: 'rect 1',
+  allowFloatingTerminals: true,
+});
+
+/**
+ * A tone source: a sine into a sampled signal, one value a sample -- an
+ * aggressor such as a reference's ripple. Its value is the amplitude A in
+ * full scale and the f/fs (`0.01 0.37`), each a number or a coefficient,
+ * drawn beside it. As a dither source, the transfer functions take it as a
+ * source and the simulations draw its values.
+ */
+export const tone = defineSymbol({
+  type: 'tone',
+  description: 'Tone source (a sine)',
+  refPrefix: 'TONE',
+  terminals: [
+    { name: 'out', x: 40, y: 0, direction: 'output', signalRole: 'output', dir: { x: 1, y: 0 } },
+  ],
+  bbox: { x: -40, y: -40, w: 80, h: 80 },
+  graphics: [
+    { kind: 'circle', cx: 0, cy: 0, r: 40, style: 'emph' },
+    { kind: 'path', d: 'M -24 0 C -16 -24 -8 -24 0 0 C 8 24 16 24 24 0', style: 'symbol', fill: 'none' },
+  ],
+  textPos: null,
+  refPos: null,
+  labelOffset: null,
+  defaultValue: '0.01 0.1',
   allowFloatingTerminals: true,
 });
 

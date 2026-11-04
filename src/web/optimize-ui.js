@@ -25,6 +25,7 @@ import { prepareSimulation } from '../core/analysis/simulate.js';
 import { symbolText } from '../core/analysis/present.js';
 import { texToMathML } from '../core/render.js';
 import { element as el } from './dom.js';
+import { startWorker } from './worker-thread.js';
 
 let api = null;
 let root = null;
@@ -585,19 +586,6 @@ function fractionsTable(result) {
 }
 
 // ----- the run --------------------------------------------------------------------------
-
-/** A worker thread: from its module beside the page, or -- opened from a
- *  file, where no worker script may load -- from the browser-only bundle's
- *  own source, run with the worker as its entry (a blob). Null when neither
- *  can start. */
-let workerUrl = null;
-function startWorker() {
-  if (location.protocol !== 'file:') return new Worker('optimize-worker.js', { type: 'module' });
-  const bundle = globalThis.__MOSFETEER_BUNDLE;
-  if (!bundle) return null;
-  workerUrl ||= URL.createObjectURL(new Blob([`(${bundle})("src/web/optimize-worker.js");`], { type: 'text/javascript' }));
-  return new Worker(workerUrl);
-}
 
 /** Score batches in worker threads; null where workers cannot run, and the
  *  run scores in this thread instead. */

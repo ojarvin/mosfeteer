@@ -10,7 +10,7 @@ import { switchState } from '../core/beats.js';
 import { setSharedLabel, sharedLabelPeers } from '../core/shared-labels.js';
 import { MOS_SIZE_ROLE, formatMosSize, parseMosSize } from '../core/mos-size.js';
 import { PART_VALUE_ROLE } from '../core/part-value.js';
-import { TRANSFER_FUNCTION_TYPES, isCoefficientBlock, isSignalBlock, parseDither, parseGain, parseLevels, readTransferFunction } from '../core/transfer-function.js';
+import { TRANSFER_FUNCTION_TYPES, isCoefficientBlock, isSignalBlock, parseDither, parseGain, parseLevels, parseTone, readTransferFunction } from '../core/transfer-function.js';
 import { setPartValue } from '../core/part-moves.js';
 import { labelFontSize } from '../core/style.js';
 import { snap } from '../core/grid.js';
@@ -62,7 +62,9 @@ export function inlineEditSchematicBlock(component) {
   if (transfer) input.title = component.type === 'quantizer'
     ? 'The number of levels N (2 is single-bit; levels at the odd or even integers up to N - 1). Enter applies, Esc cancels.'
     : component.type === 'dither'
-    ? 'The shape and the amplitude A in full scale: rect 1 (uniform over +-FS), tri 0.5 (triangular over +-FS/2), bin 1 (two levels, +-FS: an LFSR bit), or tern 1 (three levels, -FS, 0, +FS). Scale it into the loop with a gain after it. Enter applies, Esc cancels.'
+    ? 'The shape and the amplitude A in full scale: rect 1 (uniform over +-FS), tri 0.5 (triangular over +-FS/2), bin 1 (two levels, +-FS: an LFSR bit), or tern 1 (three levels, -FS, 0, +FS); A may be a coefficient (tri a_d). Scale it into the loop with a gain after it. Enter applies, Esc cancels.'
+    : component.type === 'tone'
+    ? 'The amplitude A in full scale and the f/fs: 0.01 0.37 (+-FS/100 at f/fs 0.37; f/fs 0 is an offset), each a number or a coefficient (a_r f_r). Enter applies, Esc cancels.'
     : component.type === 'sampler'
     ? 'The sampling period: a number or a symbol (T, T_s, 1). Enter applies, Esc cancels.'
     : component.type === 'gain'
@@ -72,21 +74,42 @@ export function inlineEditSchematicBlock(component) {
     : 'tf([num], [den]) or a gain, coefficients highest power of s first. Enter applies, Esc cancels.';
   input.style.position = 'fixed';
   input.style.zIndex = '30';
-  // Covers the block at the current zoom and pan, repositioned on every repaint.
+  // Covers the block at the current zoom and pan, repositioned on every
+  // repaint. A one-line value (a gain's, a source's) is never narrower than
+  // its text: the box grows about the part's center as it is typed.
+  const oneLine = isCoefficientBlock(component);
+  const measure = oneLine ? document.createElement('canvas').getContext('2d') : null;
   input.relayout = () => {
     const paneRect = pane.getBoundingClientRect();
     const box = component.bboxWorld();
-    input.style.left = `${paneRect.left + ((box.x - editor.view.x) / editor.view.w) * paneRect.width}px`;
-    input.style.top = `${paneRect.top + ((box.y - editor.view.y) / editor.view.h) * paneRect.height}px`;
-    input.style.width = `${(box.w / editor.view.w) * paneRect.width}px`;
-    input.style.height = `${(box.h / editor.view.h) * paneRect.height}px`;
+    let width = (box.w / editor.view.w) * paneRect.width;
+    let height = (box.h / editor.view.h) * paneRect.height;
+    if (measure && input.isConnected) {
+      const style = getComputedStyle(input);
+      measure.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+      width = Math.max(width, measure.measureText(`${input.value}MM`).width + 12);
+      height = Math.max(height, parseFloat(style.fontSize) * 2);
+    }
+    const centerX = paneRect.left + ((box.x + box.w / 2 - editor.view.x) / editor.view.w) * paneRect.width;
+    const centerY = paneRect.top + ((box.y + box.h / 2 - editor.view.y) / editor.view.h) * paneRect.height;
+    input.style.left = `${centerX - width / 2}px`;
+    input.style.top = `${centerY - height / 2}px`;
+    input.style.width = `${width}px`;
+    input.style.height = `${height}px`;
+    // A box taller than its line holds the line in its middle.
+    if (measure) input.style.paddingTop = input.isConnected ? `${Math.max(0, (height - parseFloat(getComputedStyle(input).lineHeight || 0)) / 2 - 2)}px` : '';
   };
   input.relayout();
   input.style.textAlign = 'center';
   input.style.resize = 'none';
-  input.style.whiteSpace = 'pre-wrap';
+  input.style.whiteSpace = oneLine ? 'nowrap' : 'pre-wrap';
+  if (oneLine) input.style.fontSize = '15px';
   input.style.overflow = 'hidden';
   document.body.appendChild(input);
+  if (oneLine) {
+    input.relayout();
+    input.addEventListener('input', () => input.relayout());
+  }
   editor.inlineInput = input;
   input.focus({ preventScroll: true });
   input.select();
@@ -103,6 +126,7 @@ export function inlineEditSchematicBlock(component) {
         try {
           if (component.type === 'quantizer') parseLevels(text);
           else if (component.type === 'dither') parseDither(text);
+          else if (component.type === 'tone') parseTone(text);
           else if (isCoefficientBlock(component)) parseGain(text);
           else readTransferFunction(text, TRANSFER_FUNCTION_TYPES[component.type]);
         } catch (err) {
