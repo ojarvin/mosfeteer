@@ -985,7 +985,8 @@ button:disabled {
   min-width: 0;
 }
 
-.signal-flow-time {
+/* The time view, and the sweep's (sweep-plot.js) as it. */
+:is(.signal-flow-time, .signal-flow-sweep) {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
@@ -993,13 +994,22 @@ button:disabled {
   min-height: 16rem;
 }
 
-.signal-flow-time[hidden] {
+:is(.signal-flow-time, .signal-flow-sweep)[hidden] {
   display: none;
 }
 
-.time-plot {
+:is(.time-plot, .sweep-plot) {
   flex: 1 1 auto;
   min-height: 8rem;
+}
+
+/* A sweep's measures are named in words: wider columns. */
+.sweep-measures .net-picker {
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+}
+
+.sweep-run {
+  margin-left: auto;
 }
 
 /* The nets a plot shows (net-picker.js): columns that wrap, all in view. */
@@ -8238,6 +8248,28 @@ body.chrome-away [data-editor-edge="right"] {
 }
 
 .signal-flow-legend-remove:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+/* A trace's Hold and × at the row's end. */
+.signal-flow-legend-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.signal-flow-legend-hold {
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  background: transparent;
+  font-size: var(--text-sm);
+}
+
+.signal-flow-legend-hold:hover {
   color: var(--text);
   background: var(--bg-hover);
 }

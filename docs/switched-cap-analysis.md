@@ -126,7 +126,8 @@ clock. **Derive** (or Enter) gives the equation, with its poles and zeros at
 the capacitances' numbers, and adds it to the Plots window's graph (`Shift+W`)
 as each Derive adds its gain to the Bode graph: magnitude over phase on one
 f/f_s axis, a legend naming each trace by its ratio (V_OUT/V_IN, as the
-signal-flow graph's) to show or take off, **Clear graph**, and
+signal-flow graph's) to show, hold (a copy at the Values now, named by
+those that differ since), or take off, **Clear graph**, and
 **Annotate** to put it on the drawing (`placeResponsePlot`), and
 **with phase** its phase too, as a plot of its own -- the Bode graph's own
 row of actions (`bode-actions.js`). The Annotate menu offers Bode magnitude

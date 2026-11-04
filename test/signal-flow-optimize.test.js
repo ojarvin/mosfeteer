@@ -761,3 +761,21 @@ test('a spectrum run takes and gives plain data, so it runs in a worker thread',
   assert.equal(result.quantizers[0].refdes, 'QZ1');
   assert.match(simulatedSpectrum({ ...request, options: { ...request.options, input: 'NOPE' } }).error, /pick the source/);
 });
+
+test('a sweep steps evenly or in ratio, and each point measures its run', async () => {
+  const { simulatedMeasures, sweepValues } = await import('../src/core/analysis/spectrum-run.js');
+  const { normalizeWindows } = await import('../src/core/window-state.js');
+  assert.deepEqual(sweepValues(0, 1, 5), [0, 0.25, 0.5, 0.75, 1]);
+  assert.deepEqual(sweepValues(1, 100, 3, true).map((v) => Number(v.toPrecision(12))), [1, 10, 100]);
+  assert.deepEqual(sweepValues(-1, 1, 3, true), []);
+  const point = simulatedMeasures(structuredClone({ circuit: modulator().toJSON(), options: { values: { k_1: 1, k_2: 2 }, sources: { U: 'input' }, input: 'U', output: 'name:V', frequency: 4 / 1024, samples: 4096, segment: 1024 }, amplitude: -20, segment: 1024, edges: [1 / 64] }));
+  assert.ok(point.measures, point.error);
+  assert.ok(point.measures.sndr > 20, `${point.measures.sndr}`);
+  assert.ok(point.measures.noise < -40, `${point.measures.noise}`);
+  assert.ok(Math.abs(point.measures.tone + 20) < 1, `${point.measures.tone}`);
+  const state = point.signals.find((s) => s.role === 'state');
+  assert.ok(Number.isFinite(point.measures[`peak:${state.key}`]));
+  // A loop that runs away says so; its settings are kept as typed, bounded.
+  assert.equal(simulatedMeasures({ circuit: modulator().toJSON(), options: { values: { k_1: 1, k_2: 2 }, sources: { U: 'input' }, input: 'U', output: 'name:V', frequency: 4 / 1024, samples: 4096, segment: 1024 }, amplitude: 3, segment: 1024 }).overloaded, true);
+  assert.deepEqual(normalizeWindows({ sweep: { name: 'k_1', from: '1/2', to: '2', points: 999, scale: 'log', samples: 12, measures: ['sndr', 7] } }).sweep, { measures: ['sndr'], name: 'k_1', from: '1/2', to: '2', points: 201, scale: 'log', samples: 1024 });
+});

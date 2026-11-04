@@ -64,7 +64,7 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
 
   test('Derive opens the Plots window with every view a loop with a quantizer offers', async () => {
     await h.until(`!document.querySelector('.plots-window').hidden`);
-    assert.deepEqual(await tabs(), ['Magnitude*', 'Phase', 'Step', 'Locus', 'Swing', 'Loop', 'Time']);
+    assert.deepEqual(await tabs(), ['Magnitude*', 'Phase', 'Step', 'Locus', 'Swing', 'Loop', 'Time', 'Sweep']);
     // The log frequency axis has faint lines through each decade, without numbers.
     await h.until(`document.querySelectorAll('.plots-window .plot-grid .role-grid.faint').length > 0`);
     assert.equal(await shown('.plots-window .signal-flow-spectrum-toggle'), true, 'a quantizer: the simulated spectrum is offered');
@@ -122,7 +122,7 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     await openAnalysis('chain');
     await derive();
     await tab('Magnitude');
-    assert.deepEqual((await tabs()).map((t) => t.replace('*', '')), ['Magnitude', 'Phase', 'Step', 'Locus', 'Swing', 'Time']);
+    assert.deepEqual((await tabs()).map((t) => t.replace('*', '')), ['Magnitude', 'Phase', 'Step', 'Locus', 'Swing', 'Time', 'Sweep']);
     assert.equal(await shown('.plots-window .signal-flow-spectrum-toggle'), false);
   });
 
@@ -194,6 +194,90 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     await h.settle();
     assert.equal(await h.evaluate(`${field}.value`), before, 'one undo takes the whole adjustment back');
     assert.equal(await shown('.signal-flow-stale'), false, 'the equations are still current');
+  });
+
+  test('a held trace stays as the sliders move, named by what differs; the spectrum holds and hides too, and the annotated plot shows or hides each curve', async () => {
+    await openAnalysis('modulator');
+    await h.evaluate(`${h.module('editor-state.js')}.then((m) => { m.editor.circuit.analysisValues.band = { bw: 0.01 }; m.editor.circuit.analysisValues.coefficients = { ...m.editor.circuit.analysisValues.coefficients, k_1: 1, k_2: 2 }; })`);
+    await derive();
+    await tab('Magnitude');
+    const legend = `[...document.querySelectorAll('.plots-window .signal-flow-legend-row')].map((r) => r.querySelector('.signal-flow-legend-math').textContent.replace(/\\s+/g, ' ').trim())`;
+    const before = await h.evaluate(legend);
+    await h.evaluate(`document.querySelector('.plots-window .signal-flow-legend-row .signal-flow-legend-hold').click()`);
+    await h.until(`${legend}.length === ${before.length + 1}`);
+    assert.match((await h.evaluate(legend)).at(-1), /held/);
+    // A held row has no Hold of its own.
+    assert.equal(await h.evaluate(`[...document.querySelectorAll('.plots-window .signal-flow-legend-row')].at(-1).querySelector('.signal-flow-legend-hold')`), null);
+    // The slider moves the live curve; the held one names the number it keeps.
+    await h.evaluate(`(() => { const f = document.querySelector('.signal-flow-coefficient[data-name="k_1"] .signal-flow-coefficient-value'); f.value = '0.5'; f.dispatchEvent(new Event('input', { bubbles: true })); f.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await h.until(`/k_?1 ?= ?1/.test(${legend}.at(-1))`);
+    // The live one beside it names its value now, for the same name.
+    assert.match((await h.evaluate(legend))[0], /k_?1 ?= ?0\.5/);
+    assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.windows.holds['signal-flow'].length)`), 1);
+    // The spectrum: its row holds it and hides it; a held one stays behind.
+    await h.evaluate(`(() => { const a = document.querySelector('.plots-window .signal-flow-spectrum input[aria-label="Sine amplitude, dBFS"]'); a.value = '-20'; a.dispatchEvent(new Event('change', { bubbles: true })); const c = document.querySelector('.plots-window .signal-flow-spectrum-toggle input'); if (!c.checked) c.click(); })()`);
+    await h.until(`!!document.querySelector('.plots-window .signal-flow-legend-spectrum')`, 20000);
+    const backgrounds = `document.querySelectorAll('.plots-window .signal-flow-graph .role-background').length`;
+    assert.equal(await h.evaluate(backgrounds), 1);
+    await h.evaluate(`document.querySelector('.plots-window .signal-flow-legend-spectrum .signal-flow-legend-hold').click()`);
+    await h.until(`!!document.querySelector('.plots-window .signal-flow-legend-held-spectrum')`);
+    assert.equal(await h.evaluate(backgrounds), 2);
+    await h.evaluate(`document.querySelector('.plots-window .signal-flow-legend-spectrum input[type=checkbox]').click()`);
+    await h.until(`${backgrounds} === 1`);
+    await h.evaluate(`document.querySelector('.plots-window .signal-flow-legend-spectrum input[type=checkbox]').click()`);
+    await h.until(`${backgrounds} === 2`);
+    // On the drawing, each curve can be hidden from the plot's settings.
+    await h.evaluate(`[...document.querySelectorAll('.plots-window .signal-flow-graph-actions button')].find((b) => b.textContent === 'Annotate').click()`);
+    const box = `${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].find((l) => l.plot?.units === 'dBFS'))`;
+    await h.until(`${box}.then((b) => !!b)`);
+    const count = await h.evaluate(`${box}.then((b) => b.plot.traces.length)`);
+    assert.ok(count >= 3, `${count}`);
+    assert.ok(await h.evaluate(`${box}.then((b) => b.plot.traces.some((t) => t.hold))`));
+    const entries = await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.plotLegend([...m.editor.circuit.labels.values()].find((l) => l.plot?.units === 'dBFS')).length)`);
+    await h.evaluate(`Promise.all([${h.module('data-plot-ui.js')}, ${box}]).then(([ui, b]) => ui.openPlotSettings(b))`);
+    await h.until(`document.querySelectorAll('.data-plot-dialog .data-plot-curve').length === ${count}`);
+    // Its swatch picks a color (the box beside it stays as it is).
+    await h.evaluate(`document.querySelector('.data-plot-dialog .data-plot-curve .swatch').click()`);
+    await h.until(`!!document.querySelector('.data-plot-swatches')`);
+    assert.equal(await h.evaluate(`document.querySelector('.data-plot-dialog .data-plot-curve input[type=checkbox]').checked`), true);
+    await h.evaluate(`document.querySelector('.data-plot-swatches .swatch[data-value="purple"]').click()`);
+    await h.evaluate(`(() => { document.querySelector('.data-plot-dialog .data-plot-curve input[type=checkbox]').click(); [...document.querySelectorAll('.data-plot-dialog button')].find((b) => b.textContent === 'Apply').click(); })()`);
+    await h.until(`${box}.then((b) => b.plot.traces[0].hidden === true)`);
+    assert.equal(await h.evaluate(`${box}.then((b) => b.plot.traces[0].color)`), await h.evaluate(`import('/src/core/style.js').then((m) => m.COLOR_PALETTE.purple)`));
+    assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.plotLegend([...m.editor.circuit.labels.values()].find((l) => l.plot?.units === 'dBFS')).length)`), entries - 1);
+    // Shown again, its entry is back.
+    await h.evaluate(`Promise.all([${h.module('data-plot-ui.js')}, ${box}]).then(([ui, b]) => ui.openPlotSettings(b))`);
+    await h.until(`!!document.querySelector('.data-plot-dialog .data-plot-curve')`);
+    assert.equal(await h.evaluate(`document.querySelector('.data-plot-dialog .data-plot-curve input[type=checkbox]').checked`), false);
+    await h.evaluate(`(() => { document.querySelector('.data-plot-dialog .data-plot-curve input[type=checkbox]').click(); [...document.querySelectorAll('.data-plot-dialog button')].find((b) => b.textContent === 'Apply').click(); })()`);
+    await h.until(`${box}.then((b) => !b.plot.traces[0].hidden)`);
+    assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.plotLegend([...m.editor.circuit.labels.values()].find((l) => l.plot?.units === 'dBFS')).length)`), entries);
+  });
+
+  test('the sweep steps a coefficient, simulating each point off the page\'s thread, and plots what each run measures', async () => {
+    await openAnalysis('modulator');
+    await h.evaluate(`${h.module('editor-state.js')}.then((m) => { const c = m.editor.circuit; c.analysisValues.band = { bw: 0.01 }; c.analysisValues.coefficients = { ...c.analysisValues.coefficients, k_1: 1, k_2: 2 }; c.windows.sweep = { name: 'k_1', from: '0.5', to: '1.5', points: 5, amplitude: '-20', samples: 4096, measures: [] }; })`);
+    await derive();
+    await tab('Sweep');
+    await h.until(`!!document.querySelector('.plots-window .sweep-run') && !document.querySelector('.plots-window .signal-flow-sweep').hidden`);
+    assert.equal(await h.evaluate(`document.querySelector('.plots-window .sweep-name').value`), 'k_1');
+    // Sweep runs it; the busy dots and Stop while it does.
+    assert.equal(await h.evaluate(`(() => { document.querySelector('.plots-window .sweep-run').click(); return document.querySelector('.plots-window .sweep-run').textContent; })()`), 'Stop');
+    await h.until(`!document.querySelector('.plots-window .sweep-run').dataset.running`, 30000);
+    assert.match(await h.evaluate(`document.querySelector('.plots-window .sweep-status').textContent`), /5 points of k_1 from 0\.5 to 1\.5/);
+    // The SNDR by default (a band is set); every measure is offered.
+    const picks = await h.evaluate(`[...document.querySelectorAll('.plots-window .sweep-measures .net-pick')].map((p) => [p.textContent.replace(/\\s+/g, ' ').trim(), p.querySelector('input').checked])`);
+    assert.deepEqual(picks.slice(0, 3).map(([text]) => text), ['SNDR in band (dB)', 'Noise in band (dBFS)', 'Output tone (dBFS)']);
+    assert.equal(picks[0][1], true);
+    assert.ok(picks.some(([text]) => /peak/.test(text)), JSON.stringify(picks));
+    assert.ok(await h.evaluate(`document.querySelectorAll('.plots-window .sweep-plot .role-curve').length`) >= 1);
+    // Another measure checked joins the plot, saved with the design.
+    await h.evaluate(`document.querySelectorAll('.plots-window .sweep-measures .net-pick input')[1].click()`);
+    await h.until(`${h.module('editor-state.js')}.then((m) => JSON.stringify(m.editor.circuit.windows.sweep.measures) === JSON.stringify(['sndr', 'noise']))`);
+    // Annotate puts it on the drawing as a data plot over k_1.
+    await h.evaluate(`document.querySelector('.plots-window .sweep-annotate').click()`);
+    const plot = await h.evaluate(`${h.module('editor-state.js')}.then((m) => { const b = [...m.editor.circuit.labels.values()].find((l) => l.plot?.kind === 'data' && l.plot.x.label === 'k_1'); return b ? { traces: b.plot.traces.length, points: b.plot.traces[0].points.length } : null; })`);
+    assert.deepEqual(plot, { traces: 2, points: 5 });
   });
 
   test('a coefficient typed as a ratio applies, again after a slider move, and is tabled as typed', async () => {
@@ -342,7 +426,8 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     assert.equal(await h.evaluate(`${dots}.getAttribute('aria-label')`), 'Simulating');
     assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.analysisValues.flow.spectrum.samples)`), 4096);
     // Every curve unticked: the spectrum stays, and annotates alone.
-    const checks = `[...document.querySelectorAll('.plots-window .signal-flow-legend-row input[type=checkbox]')]`;
+    // The curves' boxes (the spectrum's own row hides the spectrum).
+    const checks = `[...document.querySelectorAll('.plots-window .signal-flow-legend-row:not(.signal-flow-legend-spectrum, .signal-flow-legend-held-spectrum) input[type=checkbox]')]`;
     // Each click redraws the legend: one at a time.
     await h.evaluate(`(() => { for (let i = 0; i < 20; i++) { const c = ${checks}.find((c) => c.checked); if (!c) break; c.click(); } })()`);
     await h.until(`${checks}.every((c) => !c.checked)`);

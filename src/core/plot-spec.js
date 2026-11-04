@@ -38,7 +38,7 @@ export function responseSpec(plot) {
     title: phase ? 'Phase responses' : 'Magnitude responses',
     x: { scale: 'log', label: plot.axis === 'normalized' ? 'f/f_{s}' : 'ω', range: [pow10(plot.range.low), pow10(plot.range.high)] },
     y: { scale: 'linear', label: phase ? `∠${name} (°)` : plot.units === 'dBFS' ? 'dBFS' : `|${name}| (dB)`, step: phase ? 45 : 20, floor: phase ? null : -400 },
-    series: plot.traces.map((trace) => ({
+    series: plot.traces.filter((trace) => !trace.hidden).map((trace) => ({
       label: trace.label,
       color: trace.color,
       role: trace.background ? 'background' : trace.start ? 'start' : 'curve',

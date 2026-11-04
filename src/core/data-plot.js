@@ -10,7 +10,7 @@
 import { TRACE_COLORS } from './analysis/signal-flow.js';
 import { newFigureId, placeFigure, settlePlaced } from './figures.js';
 import { GRID, snap } from './grid.js';
-import { MAX_PLOT_EXTRA, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot } from './model.js';
+import { MAX_PLOT_EXTRA, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, plotLegendCurves } from './model.js';
 import { COLOR_PALETTE, colorToken } from './style.js';
 import { MAX_DATA_TRACES, readTable, tableTraces } from './csv-data.js';
 
@@ -231,6 +231,66 @@ export function movePlotTrace(circuit, box, from, to) {
       top = label.bbox().y + label.bbox().h;
     }
   }
+  return true;
+}
+
+/**
+ * Show or hide a response plot's own traces (its curves and spectra),
+ * `shown[i]` for trace i: a hidden one stays in the plot's data, drawn
+ * again once shown, but is not drawn and has no legend entry. The entries
+ * are written again in the legend's order where its column starts, the
+ * traces added from files and the notes stacked after them. Returns
+ * whether anything changed.
+ */
+export function setPlotTracesShown(circuit, box, shown) {
+  const plot = box?.plot;
+  if (plot?.kind !== 'response') throw new Error(`"${box?.id}" is not a response plot`);
+  const next = plot.traces.map((trace, i) => {
+    const { hidden: _hidden, ...rest } = trace;
+    return shown[i] === false ? { ...rest, hidden: true } : shown[i] === true ? rest : trace;
+  });
+  if (next.every((trace, i) => !!trace.hidden === !!plot.traces[i].hidden)) return false;
+  const legend = circuit.plotLegend(box);
+  const own = circuit.plotLegendCurves(box).filter((curve) => curve.trace < plot.traces.length);
+  const entries = legend.slice(0, own.length);
+  const rest = legend.slice(own.length);
+  const frame = box.bbox();
+  const at = legend.length
+    ? { x: Math.min(...legend.map((l) => l.bbox().x)), y: Math.min(...legend.map((l) => l.bbox().y)) }
+    : { x: frame.x + frame.w + PLOT_LEGEND_SAMPLE_ROOM, y: frame.y };
+  for (const label of entries) circuit.removeLabel(label.id);
+  box.plot = normalizePlot({ ...plot, traces: next });
+  // In the legend's order: the curves, then the spectra behind them.
+  const order = plotLegendCurves(box.plot).filter((curve) => curve.trace < next.length).map((curve) => next[curve.trace]);
+  let top = at.y;
+  for (const trace of order) {
+    const label = circuit.addLabel({ text: `$${trace.label}$`, math: true, parent: box.id, role: PLOT_LEGEND_ROLE, align: 'left', x: 0, y: 0, style: { color: trace.color } });
+    const size = label.bbox();
+    label.moveTo(snap(at.x + size.w / 2), snap(top + size.h / 2));
+    top = label.bbox().y + label.bbox().h;
+  }
+  putLast(circuit, rest);
+  for (const label of rest) {
+    const size = label.bbox();
+    label.moveTo(snap(at.x + size.w / 2), snap(top + size.h / 2));
+    top = label.bbox().y + label.bbox().h;
+  }
+  return true;
+}
+
+/** Recolor a response plot's own traces, `colors[i]` for trace i (a
+ *  palette value), and their legend entries. Returns whether anything
+ *  changed. */
+export function setPlotCurveColors(circuit, box, colors) {
+  const plot = box?.plot;
+  if (plot?.kind !== 'response') throw new Error(`"${box?.id}" is not a response plot`);
+  const next = plot.traces.map((trace, i) => (colors[i] && colors[i] !== trace.color ? { ...trace, color: colors[i] } : trace));
+  if (next.every((trace, i) => trace === plot.traces[i])) return false;
+  box.plot = normalizePlot({ ...plot, traces: next });
+  const legend = circuit.plotLegend(box);
+  circuit.plotLegendCurves(box).forEach((curve, n) => {
+    if (curve.trace < next.length && legend[n]) legend[n].style = { ...legend[n].style, color: next[curve.trace].color };
+  });
   return true;
 }
 

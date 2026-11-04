@@ -1643,6 +1643,7 @@ export function responsePlot(traces, variable, { sAxis = 'omega', band = null, q
           label: trace.label,
           color: trace.color,
           ...(trace.start ? { start: true } : {}),
+          ...(trace.held?.key ? { hold: trace.held.key } : {}),
           points: curve.points.map(({ f, db, phase }) => ({ f, db: quantity === 'phase' ? phase : db + offset })),
         };
       }),

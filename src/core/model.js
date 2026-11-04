@@ -394,16 +394,22 @@ export function plotCurveCount(plot) {
  * front (or its one curve), then a simulated spectrum behind them, then
  * the traces added from files (`extra`). Each is `{ trace, rank }`, `trace`
  * its index among the plot's traces then its added ones and `rank` its
- * dash in black, or `{ trace, spectrum: true }`.
+ * dash in black, or `{ trace, spectrum: true }` -- a held spectrum (one
+ * with a `hold`) also with `held`, its dash among the held ones. A hidden
+ * trace has none.
  */
 export function plotLegendCurves(plot) {
   const traces = Array.isArray(plot?.traces) ? plot.traces : null;
-  const indices = (background) => (traces || []).map((trace, index) => (!!trace.background === background ? index : -1)).filter((index) => index >= 0);
+  // A hidden trace draws nothing and has no entry.
+  const indices = (background) => (traces || []).map((trace, index) => (!!trace.background === background && !trace.hidden ? index : -1)).filter((index) => index >= 0);
   const front = traces ? indices(false) : [0];
   const base = traces ? traces.length : 1;
   return [
     ...front.map((trace, rank) => ({ trace, rank })),
-    ...indices(true).map((trace) => ({ trace, spectrum: true })),
+    ...indices(true).map((trace, n, all) => {
+      const held = all.slice(0, n + 1).filter((i) => traces[i].hold).length - 1;
+      return traces[trace].hold ? { trace, spectrum: true, held } : { trace, spectrum: true };
+    }),
     ...(plot?.extra || []).map((_, k) => ({ trace: base + k, rank: front.length + k })),
   ];
 }
@@ -1294,6 +1300,10 @@ function normalizeResponsePlot(plot) {
     color: /^#[0-9a-f]{6}$/i.test(trace?.color || '') ? trace.color : '#3b74e0',
     // A simulated spectrum drawn behind the curves.
     ...(trace?.background ? { background: true } : {}),
+    // A held curve or spectrum, by its key: an update finds it again.
+    ...(typeof trace?.hold === 'string' && trace.hold ? { hold: trace.hold.slice(0, 40) } : {}),
+    // Hidden (its settings): kept, but neither drawn nor in the legend.
+    ...(trace?.hidden ? { hidden: true } : {}),
     points: (Array.isArray(trace?.points) ? trace.points : [])
       .filter((p) => finite(p?.f) && p.f > 0 && finite(p?.db))
       .map((p) => ({ f: round(p.f, 6), db: round(p.db) })),

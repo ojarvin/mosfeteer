@@ -127,7 +127,10 @@ columns separated by spaces (`src/core/csv-data.js`, `src/core/data-plot.js`,
   drawn over its own curves and dashed on after them in black, their
   legend entries after its curves' (and after a simulated spectrum's,
   which has its own entry, gray in black). The plot's range holds them. Its **Plot settings…** (right-click,
-  or a double-click anywhere on it) edits those traces and its zoom; its
+  or a double-click anywhere on it) edits those traces and its zoom, and
+  on a response plot shows or hides each of its own curves and spectra
+  (`hidden`: kept in its data, drawn again once shown, with no legend
+  entry while hidden; an update keeps it hidden, `setPlotTracesShown`); its
   axes are the analysis's. Adding to a response reads x in rad/s or Hz
   (×2π) and a magnitude in dB or as a ratio (20 log10). Updating the plot
   from its analysis keeps them. A Bode sketch takes none, and a

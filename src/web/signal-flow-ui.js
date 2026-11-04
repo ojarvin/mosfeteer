@@ -50,6 +50,8 @@ import { element as el, onFieldCommit } from './dom.js';
 import { netPicker } from './net-picker.js';
 import { deriving } from './analysis-busy.js';
 import { startWorker } from './worker-thread.js';
+import { differing, differingNames, heldName, heldNumber, holdButton, holdKey, liveName, saveHolds, savedHolds } from './trace-hold.js';
+import { installSweepPlot, showSweep, sweepSection } from './sweep-plot.js';
 import { simulatedSpectrum } from '../core/analysis/spectrum-run.js';
 
 // Devices the small-signal analysis models: a drawing with any opens in it.
@@ -63,7 +65,19 @@ let chosenThisSession = false;
 const flow = () => (editor.circuit.analysisValues.flow ||= { output: '', sources: {}, swingInput: '', swingFrequency: '' });
 let latest = null;
 // The graph's traces, kept across derives: { id, label (TeX), color, value, variable, on }.
+// A held one (`held: { values, base, key }`) is a copy worked out at the
+// numbers it was held at; it stays while the sliders move the live one.
 let traces = [];
+// Held traces and spectra are saved with the design (trace-hold.js): a
+// held spectrum is its record, { key, kind: 'spectrum', points, values,
+// amplitude, color, on }; a held trace is made from its record as the trace
+// it was held from comes back.
+const holds = () => savedHolds('signal-flow');
+const heldSpectraList = () => holds().filter((record) => record.kind === 'spectrum');
+/** The held records changed (a hold, a removal, a box ticked): saved. */
+const holdsChanged = (records = holds()) => saveHolds('signal-flow', records);
+// Whether the live simulated spectrum is drawn (its legend row's box): hidden, it still runs.
+let liveSpectrumOn = true;
 // Numbers for the symbols in the results (a_1, k), 1 until set: the graph and
 // the numeric poles and zeros use them. Kept in the document, so a drawing
 // opens with the numbers it was left at.
@@ -279,6 +293,7 @@ function fillForm() {
 function clearResults() {
   for (const view of Object.values(plotViews)) view.set(null);
   traces = [];
+  liveSpectrumOn = true;
   latest = null;
   locus = null;
   loop = null;
@@ -898,28 +913,114 @@ function refreshLinkedRows() {
 const sAxisSetting = () => editor.circuit.analysisValues.sAxis || 'omega';
 // What the graph shows (saved with the document): magnitude, phase, or the step response.
 const graphView = () => flow().graphView || 'magnitude';
+// Over a simulated spectrum a curve predicts it: solved with each
+// quantizer at the gain the simulation measured (a two-level one's is set
+// by the loop), where that solve has the same output and input.
+const spectrumShown = () => !!spectrum?.points?.length;
+const measuredValue = (trace) => (spectrumShown() && spectrum.linear?.ok && spectrum.linear.output.key === trace.output
+  ? spectrum.linear.entries.find((entry) => entry.input === trace.input)?.value : null);
+// With a simulated spectrum, one plot in its dBFS: the spectrum, each NTF
+// as the noise it predicts (its error at the variance measured), each STF
+// as where the tone would sit.
+const dbfsOffsetOf = (trace) => {
+  const fit = trace.noise && measuredValue(trace) ? spectrum.quantizers?.find((q) => q.refdes === trace.input) : null;
+  const error = fit?.errorVariance > 0 ? 10 * Math.log10(fit.errorVariance * 3) : 0;
+  return dbfsOffset(spectrum.raw, spectrum.fullScale, { noise: trace.noise, amplitude: spectrum.amplitude }) + error;
+};
+
 const graphPlot = (list, view = graphView(), detail = null) => {
-  const background = view === 'magnitude' && spectrum?.points?.length ? [{ label: '\\text{simulated output}', color: MUTED_TRACE_COLOR, points: spectrum.points }] : [];
-  // Over a simulated spectrum a curve predicts it: solved with each
-  // quantizer at the gain the simulation measured (a two-level one's is
-  // set by the loop), where that solve has the same output and input.
-  const measured = (trace) => (background.length && spectrum.linear?.ok && spectrum.linear.output.key === trace.output
-    ? spectrum.linear.entries.find((entry) => entry.input === trace.input)?.value : null);
-  const numbered = list.map((trace) => {
-    const value = measured(trace) ?? trace.value;
-    return { ...trace, value: numeric(value, trace.variable) };
-  });
+  const shown = view === 'magnitude' && spectrumShown();
+  // Held spectra behind the live one, while it is shown.
+  const background = shown
+    ? [...heldSpectraList().filter((held) => held.on !== false).map((held) => ({ label: heldLabel(held), color: held.color, points: held.points, hold: held.key })),
+      ...(liveSpectrumOn ? [{ label: liveSpectrumLabel(), color: MUTED_TRACE_COLOR, points: spectrum.points }] : [])]
+    : [];
+  // A held trace is numbers already, and keeps the offset it was held at.
+  const numbered = list.map((trace) => (trace.held
+    ? { ...trace, label: heldLabel(trace) }
+    : { ...trace, value: numeric(measuredValue(trace) ?? trace.value, trace.variable) }));
   if (view === 'step') return stepPlot(numbered);
-  // With a simulated spectrum, one plot in its dBFS: the spectrum, each NTF
-  // as the noise it predicts (its error at the variance measured), each STF
-  // as where the tone would sit.
-  const errorDb = (trace) => {
-    const fit = trace.noise && measured(trace) ? spectrum.quantizers?.find((q) => q.refdes === trace.input) : null;
-    return fit?.errorVariance > 0 ? 10 * Math.log10(fit.errorVariance * 3) : 0;
-  };
-  const dbfs = background.length ? { offset: (trace) => dbfsOffset(spectrum.raw, spectrum.fullScale, { noise: trace.noise, amplitude: spectrum.amplitude }) + errorDb(trace) } : null;
+  const dbfs = shown ? { offset: (trace) => (trace.held && Number.isFinite(trace.held.offset) ? trace.held.offset : dbfsOffsetOf(trace)) } : null;
   return responsePlot(numbered, 's', { sAxis: sAxisSetting(), band: editor.circuit.analysisValues.band, quantity: view, background, dbfs, detail });
 };
+
+// ----- held traces ----------------------------------------------------------------------
+
+/** A held trace's or spectrum's label: its own, then the numbers it was
+ *  held at that differ from the sliders' now (`a_r = 0.01`), or "held"
+ *  when none does. */
+function heldLabel(held) {
+  const numbers = resolved();
+  const differ = differing(held.held?.values || held.values, (name) => numbers[name] ?? 1);
+  const amplitude = held.amplitude !== undefined && spectrum && held.amplitude !== spectrum.amplitude ? [`${heldNumber(held.amplitude)}\\ \\text{dBFS}`] : [];
+  return heldName(held.held?.base ?? '\\text{simulated output}', [...differ, ...amplitude]);
+}
+
+/** A live trace's name beside its held copies: its numbers now for the
+ *  names theirs give. */
+function liveLabel(trace) {
+  const numbers = resolved();
+  const current = (name) => numbers[name] ?? 1;
+  return liveName(trace.label, traces.filter((t) => t.held?.of === trace.id).flatMap((t) => differingNames(t.held.values, current)), current);
+}
+
+/** The live spectrum's name beside the held ones, as a live trace's. */
+function liveSpectrumLabel() {
+  const numbers = resolved();
+  const current = (name) => numbers[name] ?? 1;
+  return liveName('\\text{simulated output}', heldSpectraList().filter((held) => held.on !== false).flatMap((held) => differingNames(held.values, current)), current);
+}
+
+const nextTraceColor = () => {
+  const used = new Set([...traces.map((trace) => trace.color), ...heldSpectraList().map((held) => held.color)]);
+  return TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[(traces.length + heldSpectraList().length) % TRACE_COLORS.length];
+};
+
+/** Hold a trace: a copy at the numbers now, in a color of its own, that
+ *  the sliders leave as it is. */
+function holdTrace(trace) {
+  const numbers = resolved();
+  const values = Object.fromEntries(resultSymbols(trace.value, trace.variable).map((name) => [name, numbers[name] ?? 1]));
+  const offset = spectrumShown() ? dbfsOffsetOf(trace) : undefined;
+  const record = { key: holdKey(), of: trace.id, base: trace.label, color: nextTraceColor(), values, ...(offset !== undefined ? { offset } : {}) };
+  holdsChanged([...holds(), record]);
+  // Over a spectrum, at the gains it measured, as the live curve is drawn.
+  traces.push(heldFrom(record, trace, measuredValue(trace) ?? trace.value));
+  renderGraph();
+}
+
+/** A held trace from its record and the live trace it was held from, at
+ *  the numbers held. */
+function heldFrom(record, live, value = live.value) {
+  return {
+    ...live,
+    id: `${live.id}\n${record.key}`,
+    value: withCoefficients(value, record.values),
+    color: record.color,
+    on: record.on !== false,
+    held: { values: record.values, base: record.base, key: record.key, of: record.of, ...(Number.isFinite(record.offset) ? { offset: record.offset } : {}) },
+  };
+}
+
+/** The held traces whose live one is on the graph again (a Derive brought
+ *  it back), made from their records. */
+function restoreHolds() {
+  for (const record of holds()) {
+    if (record.kind === 'spectrum' || traces.some((trace) => trace.held?.key === record.key)) continue;
+    const live = traces.find((trace) => !trace.held && trace.id === record.of);
+    if (live) traces.push(heldFrom(record, live));
+  }
+}
+
+/** Hold the simulated spectrum: a copy at the numbers now, drawn behind
+ *  the live one. */
+function holdSpectrum() {
+  if (!spectrumShown()) return;
+  const numbers = resolved();
+  const values = Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, numbers[name] ?? 1]));
+  holdsChanged([...holds(), { key: holdKey(), kind: 'spectrum', points: spectrum.points, values, amplitude: spectrum.amplitude, color: nextTraceColor() }]);
+  renderGraph();
+}
 
 // ----- the simulated output's spectrum, behind the curves --------------------------------
 
@@ -1073,15 +1174,28 @@ function showSpectrum(request, result) {
       : null;
     spectrum = { raw, points: plotSpectrum({ ...raw, points: dbfsSpectrum(raw, result.fullScale) }, result.frequency), frequency: result.frequency, amplitude: request.amplitude, fullScale: result.fullScale, quantizers, linear };
   }
-  redrawGraphPlot();
+  // Its legend row comes or goes with it; else the plot alone is redrawn.
+  if (graphView() === 'magnitude' && !!plots.querySelector('.signal-flow-legend-spectrum') !== spectrumShown()) renderGraph();
+  else redrawGraphPlot();
   const status = plots.querySelector('.signal-flow-spectrum-status');
   if (status) status.textContent = spectrumStatus();
 }
-const shownTraces = () => traces.filter((trace) => trace.on);
+// The traces drawn, each held one named by the numbers it was held at.
+const shownTraces = () => traces.filter((trace) => trace.on).map((trace) => ({ ...trace, label: trace.held ? heldLabel(trace) : liveLabel(trace) }));
 const hasQuantizer = () => [...editor.circuit.components.values()].some((c) => c.type === 'quantizer');
 
-/** Redraw the graph's plot alone, its controls left as they are. */
+/** Redraw the graph's plot alone, its controls left as they are (but a
+ *  held trace's name, which names the numbers that differ from these). */
 function redrawGraphPlot() {
+  for (const math of plots.querySelectorAll('.signal-flow-legend-math[data-hold]')) {
+    const held = traces.find((t) => t.held?.key === math.dataset.hold) || heldSpectraList().find((h) => h.key === math.dataset.hold);
+    if (held) math.innerHTML = texToMathML(heldLabel(held));
+  }
+  // A live one names its numbers now beside its held copies.
+  for (const math of plots.querySelectorAll('.signal-flow-legend-math[data-live]')) {
+    const live = math.dataset.live === 'spectrum' ? null : traces.find((t) => t.id === math.dataset.live);
+    if (live || math.dataset.live === 'spectrum') math.innerHTML = texToMathML(live ? liveLabel(live) : liveSpectrumLabel());
+  }
   const host = plots.querySelector('.signal-flow-graph');
   const graph = plotViews.graph;
   const plot = graphPlot(shownTraces());
@@ -1135,6 +1249,8 @@ function addTrace(entry, variable, output) {
   const color = TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
   // A trace is named by its ratio (OUT/IN); the equation can be annotated on its own.
   traces.push({ id, label: entry.label, equation: entry.equation, color, value: entry.value, variable, on: true, noise: !!entry.quantizer, input: entry.input, output: output.key });
+  // Its held copies, saved with the design, come back with it.
+  restoreHolds();
 }
 
 const GRAPH_VIEWS = new Set(['magnitude', 'phase', 'step']);
@@ -1150,6 +1266,7 @@ function plotTabs() {
     ['swing', 'Swing', 'Net peaks as a sine\'s amplitude sweeps'],
     ...(loopSignals().length ? [['loop', 'Loop', 'Loop gain T: crossover and margins']] : []),
     ['time', 'Time', 'Nets in time, simulated with a sine'],
+    ['sweep', 'Sweep', 'A coefficient swept: what each simulation measures'],
   ];
 }
 
@@ -1170,11 +1287,13 @@ function renderPlots() {
   plots.querySelector('.signal-flow-swing').hidden = !diagram || view !== 'swing';
   plots.querySelector('.signal-flow-loop').hidden = !diagram || view !== 'loop';
   plots.querySelector('.signal-flow-time').hidden = !diagram || view !== 'time';
+  plots.querySelector('.signal-flow-sweep').hidden = !diagram || view !== 'sweep';
   if (!diagram) return;
   if (GRAPH_VIEWS.has(view)) renderGraph();
   if (view === 'locus') fillLocus();
   if (view === 'loop') renderLoop();
   if (view === 'time') runTime();
+  if (view === 'sweep') showSweep();
 }
 
 /** The window opened: its sources and its view, as the diagram is now. */
@@ -1225,16 +1344,53 @@ function renderGraph() {
   for (const trace of traces) {
     const check = el('input', { type: 'checkbox', 'aria-label': 'Show this trace' });
     check.checked = trace.on;
-    check.addEventListener('change', () => { trace.on = check.checked; renderGraph(); });
+    check.addEventListener('change', () => {
+      trace.on = check.checked;
+      // A held one's box is saved with it.
+      if (trace.held) holdsChanged(holds().map((record) => (record.key === trace.held.key ? { ...record, on: trace.on } : record)));
+      renderGraph();
+    });
     const math = el('span', { class: 'signal-flow-legend-math' });
-    math.innerHTML = texToMathML(trace.label);
     math.style.color = trace.color;
-    const remove = el('button', { type: 'button', class: 'signal-flow-legend-remove', 'aria-label': 'Remove this trace', title: 'Remove', text: '×', onclick: () => { traces = traces.filter((t) => t !== trace); renderCoefficients(); renderGraph(); } });
-    legend.append(el('div', { class: 'signal-flow-legend-row' }, [check, el('span', { class: 'signal-flow-swatch', style: `background:${trace.color}` }), math, remove]));
+    math.innerHTML = texToMathML(trace.held ? heldLabel(trace) : liveLabel(trace));
+    if (trace.held) math.dataset.hold = trace.held.key;
+    else math.dataset.live = trace.id;
+    const remove = el('button', { type: 'button', class: 'signal-flow-legend-remove', 'aria-label': 'Remove this trace', title: 'Remove', text: '×', onclick: () => {
+      traces = traces.filter((t) => t !== trace);
+      if (trace.held) holdsChanged(holds().filter((record) => record.key !== trace.held.key));
+      renderCoefficients();
+      renderGraph();
+    } });
+    // A live trace can be held: a copy at these numbers stays as the sliders move.
+    const hold = trace.held ? null : holdButton(() => holdTrace(trace));
+    legend.append(el('div', { class: 'signal-flow-legend-row' }, [check, el('span', { class: 'signal-flow-swatch', style: `background:${trace.color}` }), math, el('span', { class: 'signal-flow-legend-actions' }, [...(hold ? [hold] : []), remove])]));
+  }
+  // The simulated spectrum and those held, on the magnitude view.
+  if (view === 'magnitude' && spectrumShown()) {
+    const check = el('input', { type: 'checkbox', 'aria-label': 'Show the simulated output' });
+    check.checked = liveSpectrumOn;
+    check.addEventListener('change', () => { liveSpectrumOn = check.checked; renderGraph(); });
+    const math = el('span', { class: 'signal-flow-legend-math' });
+    math.innerHTML = texToMathML(liveSpectrumLabel());
+    math.dataset.live = 'spectrum';
+    math.style.color = MUTED_TRACE_COLOR;
+    const hold = holdButton(holdSpectrum, 'Hold the simulated output');
+    legend.append(el('div', { class: 'signal-flow-legend-row signal-flow-legend-spectrum' }, [check, el('span', { class: 'signal-flow-swatch', style: `background:${MUTED_TRACE_COLOR}` }), math, el('span', { class: 'signal-flow-legend-actions' }, [hold])]));
+    for (const held of heldSpectraList()) {
+      const check = el('input', { type: 'checkbox', 'aria-label': 'Show this spectrum' });
+      check.checked = held.on !== false;
+      check.addEventListener('change', () => { holdsChanged(holds().map((record) => (record.key === held.key ? { ...record, on: check.checked } : record))); renderGraph(); });
+      const math = el('span', { class: 'signal-flow-legend-math' });
+      math.innerHTML = texToMathML(heldLabel(held));
+      math.dataset.hold = held.key;
+      math.style.color = held.color;
+      const remove = el('button', { type: 'button', class: 'signal-flow-legend-remove', 'aria-label': 'Remove this spectrum', title: 'Remove', text: '×', onclick: () => { holdsChanged(holds().filter((record) => record.key !== held.key)); renderGraph(); } });
+      legend.append(el('div', { class: 'signal-flow-legend-row signal-flow-legend-held-spectrum' }, [check, el('span', { class: 'signal-flow-swatch', style: `background:${held.color}` }), math, el('span', { class: 'signal-flow-legend-actions' }, [remove])]));
+    }
   }
   host.append(legend);
   host.append(el('div', { class: 'signal-flow-graph-actions' }, [
-    el('button', { type: 'button', text: 'Clear graph', onclick: () => { traces = []; renderCoefficients(); renderGraph(); renderResults(); } }),
+    el('button', { type: 'button', text: 'Clear graph', onclick: () => { traces = []; holdsChanged([]); renderCoefficients(); renderGraph(); renderResults(); } }),
     el('button', { type: 'button', text: 'Annotate', title: 'Put the graph on the drawing', disabled: !plot, onclick: annotateGraph }),
   ]));
 }
@@ -1326,6 +1482,13 @@ function writePlot(target, plot, shown, { identity = null } = {}) {
   const ids = [];
   const figure = identity && { ...identity, id: target?.figure?.id || newFigureId(circuit) };
   if (target) {
+    // A trace hidden in the plot's settings stays hidden through an update
+    // (a held one by its key, the others by name).
+    const before = target.plot?.traces || [];
+    // A name past its comma is its numbers then, which may have moved since.
+    const base = (label) => String(label).split(',\\ ')[0];
+    const wasHidden = (trace) => before.some((old) => old.hidden && (old.hold ? old.hold === trace.hold : !trace.hold && base(old.label) === base(trace.label) && !!old.background === !!trace.background));
+    if (Array.isArray(plot.traces) && before.some((old) => old.hidden)) plot = { ...plot, traces: plot.traces.map((trace) => (wasHidden(trace) ? { ...trace, hidden: true } : trace)) };
     // Traces added from files stay through an update.
     target.plot = normalizePlot(target.plot?.extra ? { ...plot, extra: target.plot.extra } : plot);
     // A plot from before figures is this tool's from now on.
@@ -1346,8 +1509,10 @@ function writePlot(target, plot, shown, { identity = null } = {}) {
   };
   // The analysis's curves, then a simulated spectrum behind them, then the
   // traces added from files.
-  const behind = (box.plot.traces || []).filter((trace) => trace.background);
-  shown.forEach((trace) => add(`$${trace.label}$`, { color: trace.color }));
+  // A hidden trace has no entry: `shown` names the front traces in order.
+  const front = (box.plot.traces || []).filter((trace) => !trace.background);
+  const behind = (box.plot.traces || []).filter((trace) => trace.background && !trace.hidden);
+  shown.forEach((trace, i) => { if (!front[i]?.hidden) add(`$${trace.label}$`, { color: trace.color }); });
   behind.forEach((trace) => add(`$${trace.label}$`, { color: trace.color }));
   for (const trace of box.plot.extra || []) add(trace.label || ' ', { color: trace.color }, false);
   return { box, ids, left, top };
@@ -1447,9 +1612,11 @@ function plotUpdate(plot) {
   if (plot.kind === 'response' || plot.kind === 'step') {
     // Each trace by its name, keeping its color.
     const stored = plot.traces.filter((trace) => !trace.background);
+    // A held one by its key, its name naming the numbers it was held at.
     const matched = stored.map((trace) => {
-      const current = traces.find((t) => t.label === trace.label);
-      return current ? { ...current, color: trace.color } : null;
+      // A live one's name may carry its numbers then (`OUT/IN,\\ a = 1`).
+      const current = trace.hold ? traces.find((t) => t.held?.key === trace.hold) : traces.find((t) => !t.held && (t.label === trace.label || trace.label.startsWith(`${t.label},`)));
+      return current ? { ...current, label: current.held ? heldLabel(current) : liveLabel(current), color: trace.color } : null;
     });
     if (!matched.length || matched.some((t) => !t)) return null;
     const view = plot.kind === 'step' ? 'step' : plot.quantity === 'phase' ? 'phase' : 'magnitude';
@@ -1715,9 +1882,12 @@ export function installSignalFlowUi() {
     swingSection(),
     loopSection(),
     timeSection(),
+    sweepSection(),
   ]);
   installPlotsWindow({ mode: 'signal-flow', view: plots, shown: refreshPlots });
   installTimePlot({ flow, resolved, placePlot: (plot, shown, options) => placePlot(plot, shown, options), visible: () => plotsShown() && graphView() === 'time' });
+  // A sweep's values: the sliders', one of them (or more) set apart.
+  installSweepPlot({ flow, links, resolvedWith: (values) => resolveCoefficients({ ...defaultCoefficients(), ...coefficients(), ...values }, links()), visible: () => plotsShown() && graphView() === 'sweep' });
   // Another document starts clean: its own mode, none of the last one's results.
   onDocumentShown(() => {
     chosenThisSession = false;

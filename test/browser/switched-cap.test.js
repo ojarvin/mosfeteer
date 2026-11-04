@@ -113,6 +113,32 @@ describe('switched-capacitor analysis', { skip: browserSkip() }, () => {
     await h.evaluate(`document.querySelector('.sc-derive').click()`);
     await h.until(`document.querySelectorAll('.sc-legend .signal-flow-legend-row').length > 0`);
     assert.deepEqual(await h.evaluate(`[...document.querySelectorAll('.sc-legend .signal-flow-legend-math')].map((m) => m.textContent)`), ['VOUTVIN']);
+    // Held, a copy stays at the values of then, named by what differs since.
+    await h.evaluate(`document.querySelector('.sc-legend .signal-flow-legend-hold').click()`);
+    await h.until(`document.querySelectorAll('.sc-legend .signal-flow-legend-row').length === 2`);
+    const held = `document.querySelectorAll('.sc-legend .signal-flow-legend-math')[1].textContent`;
+    assert.match(await h.evaluate(held), /held/);
+    const name = await h.evaluate(`document.querySelector('.sc-values .signal-flow-coefficient').dataset.name`);
+    await h.evaluate(`(() => { const f = document.querySelector('.sc-values .signal-flow-coefficient .signal-flow-coefficient-value'); f.value = '3'; f.dispatchEvent(new Event('input', { bubbles: true })); f.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await h.until(`!/held/.test(${held})`);
+    assert.match(await h.evaluate(held), new RegExp(name.replace(/_/g, '')));
+    // The Values are relative: plain numbers, no farads.
+    assert.match(await h.evaluate(held), /= ?[\d.e-]+$/);
+    // The live one names its value now for the same name.
+    const live = `document.querySelectorAll('.sc-legend .signal-flow-legend-math')[0].textContent`;
+    assert.match(await h.evaluate(live), /= ?3$/);
+    // Saved with the design: another design opened and this one again, Derive brings it back.
+    assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.windows.holds['switched-cap'].length)`), 1);
+    await h.open('unclocked');
+    await h.open('integrator');
+    await openWindow();
+    await h.evaluate(`document.querySelector('.sc-derive').click()`);
+    await h.until(`document.querySelectorAll('.sc-legend .signal-flow-legend-row').length === 2`);
+    assert.match(await h.evaluate(held), /^VOUTVIN/);
+    assert.equal(await h.evaluate(`document.querySelectorAll('.sc-legend .signal-flow-legend-row')[1].querySelector('.signal-flow-legend-hold')`), null);
+    await h.evaluate(`document.querySelectorAll('.sc-legend .signal-flow-legend-remove')[1].click()`);
+    await h.until(`document.querySelectorAll('.sc-legend .signal-flow-legend-row').length === 1`);
+    assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.windows.holds?.['switched-cap'] ?? null)`), null);
   });
 
   test('kT/C noise: off until asked, then a row per sampling, and the calculator\'s numbers, saved with the design', async () => {

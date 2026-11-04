@@ -36,6 +36,7 @@ import { installPlotsWindow, offerPlots, plotsShown } from './plots-window.js';
 import { placeResponsePlot } from './signal-flow-ui.js';
 import { registerAnnotations } from './annotate-menu.js';
 import { bodeGraphActions } from './bode-actions.js';
+import { differing, differingNames, heldName, holdButton, holdKey, legendActions, liveName, saveHolds, savedHolds } from './trace-hold.js';
 
 const EMPTY_TEXT = 'Derive in the analysis window (Shift+S) to plot its gain here.';
 const QUANTITIES = {
@@ -179,7 +180,8 @@ function numericAt(model, values) {
 function sketchOf(trace) {
   const parameters = parametersOf(trace);
   if (!parameters) return null;
-  const values = withDerivedValues(sketchValues(parameters.all, ratios), trace.report.derivedSymbols);
+  // A held trace at the values it was held at.
+  const values = withDerivedValues(sketchValues(parameters.all, trace.held?.ratios || ratios), trace.report.derivedSymbols);
   let sketch;
   let response;
   const model = numericModelOf(trace.report, trace.key);
@@ -272,9 +274,74 @@ function addTrace(report, key) {
   const used = new Set(traces.map((trace) => trace.color));
   fresh.color = TRACE_COLORS.find((color) => !used.has(color)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
   traces.push(fresh);
+  // Its held copies, saved with the design, come back with it.
+  restoreHolds();
 }
 
-const shownTraces = () => traces.filter((trace) => trace.on);
+// The traces drawn, each held one named by the values it was held at.
+const shownTraces = () => traces.filter((trace) => trace.on).map((trace) => ({ ...trace, label: trace.held ? heldLabel(trace) : liveLabel(trace) }));
+
+/** The ratios now, as a held trace keeps them: by name. */
+const ratioValues = (r) => ({ intrinsicGain: r.intrinsicGain, parasiticRatio: r.parasiticRatio, ...Object.fromEntries(Object.entries(r.multipliers).map(([name, value]) => [`×${name}`, value])) });
+
+/** The Values' names in TeX, by the keys ratioValues gives them. */
+function ratioTex() {
+  const tex = new Map(graphParameters().map((parameter) => [`×${parameter.name}`, `${parameter.tex}\\ \\times`]));
+  tex.set('intrinsicGain', 'g_{m} r_{o}');
+  tex.set('parasiticRatio', 'C_{par}/C');
+  return (name) => tex.get(name) || name;
+}
+
+/** A held trace's Values by name, a multiplier left at 1 (not kept) as 1. */
+function heldRatios(trace) {
+  const held = ratioValues(trace.held.ratios);
+  for (const name of Object.keys(ratioValues(ratios))) if (!(name in held)) held[name] = 1;
+  return held;
+}
+
+/** A held trace's name: the Values it was held at that differ from now. */
+function heldLabel(trace) {
+  const now = ratioValues(ratios);
+  return heldName(trace.held.base, differing(heldRatios(trace), (name) => now[name] ?? 1, { tex: ratioTex() }));
+}
+
+/** A live trace's name beside its held copies: its Values now for the
+ *  names theirs give. */
+function liveLabel(trace) {
+  const now = ratioValues(ratios);
+  const current = (name) => now[name] ?? 1;
+  return liveName(trace.label, traces.filter((t) => t.held?.of === trace.id).flatMap((t) => differingNames(heldRatios(t), current)), current, { tex: ratioTex() });
+}
+
+// Held traces are saved with the design (trace-hold.js): a record each, by
+// the trace it was held from, made into a trace as a Derive brings it back.
+const holds = () => savedHolds('small-signal');
+const holdsChanged = (records) => saveHolds('small-signal', records);
+
+/** Hold a trace: a copy at the Values now, in a color of its own. */
+function holdTrace(trace) {
+  const used = new Set(traces.map((t) => t.color));
+  const color = TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
+  const record = { key: holdKey(), of: trace.id, base: trace.label, color, values: {}, ratios: { intrinsicGain: ratios.intrinsicGain, parasiticRatio: ratios.parasiticRatio, multipliers: { ...ratios.multipliers } } };
+  holdsChanged([...holds(), record]);
+  traces.push(heldFrom(record, trace));
+  renderPlots();
+}
+
+/** A held trace from its record and the live trace it was held from (its
+ *  report: a newer Derive's, when it came back). */
+function heldFrom(record, live) {
+  return { ...live, id: `${live.id}\n${record.key}`, color: record.color, on: record.on !== false, held: { ratios: record.ratios, base: record.base, key: record.key, of: record.of } };
+}
+
+/** The held traces whose live one is on the graph again, from their records. */
+function restoreHolds() {
+  for (const record of holds()) {
+    if (!record.ratios || traces.some((trace) => trace.held?.key === record.key)) continue;
+    const live = traces.find((trace) => !trace.held && trace.id === record.of);
+    if (live) traces.push(heldFrom(record, live));
+  }
+}
 
 // ----- the Plots window ------------------------------------------------------------------
 
@@ -417,17 +484,26 @@ function renderLegend() {
   for (const trace of traces) {
     const check = el('input', { type: 'checkbox', 'aria-label': 'Show this trace' });
     check.checked = trace.on;
-    check.addEventListener('change', () => { trace.on = check.checked; renderPlots(); });
+    check.addEventListener('change', () => {
+      trace.on = check.checked;
+      if (trace.held) holdsChanged(holds().map((record) => (record.key === trace.held.key ? { ...record, on: trace.on } : record)));
+      renderPlots();
+    });
     const math = el('span', { class: 'signal-flow-legend-math' });
-    math.innerHTML = texToMathML(trace.label);
+    math.innerHTML = texToMathML(trace.held ? heldLabel(trace) : liveLabel(trace));
     math.style.color = trace.color;
-    const remove = el('button', { type: 'button', class: 'signal-flow-legend-remove', 'aria-label': 'Remove this trace', title: 'Remove this trace from the graph', text: '×', onclick: () => { traces = traces.filter((t) => t !== trace); renderValues(); renderPlots(); } });
-    legend.append(el('div', { class: 'signal-flow-legend-row' }, [check, el('span', { class: 'signal-flow-swatch', style: `background:${trace.color}` }), math, remove]));
+    const remove = el('button', { type: 'button', class: 'signal-flow-legend-remove', 'aria-label': 'Remove this trace', title: 'Remove this trace from the graph', text: '×', onclick: () => {
+      traces = traces.filter((t) => t !== trace);
+      if (trace.held) holdsChanged(holds().filter((record) => record.key !== trace.held.key));
+      renderValues();
+      renderPlots();
+    } });
+    legend.append(el('div', { class: 'signal-flow-legend-row' }, [check, el('span', { class: 'signal-flow-swatch', style: `background:${trace.color}` }), math, legendActions(trace.held ? null : holdButton(() => holdTrace(trace)), remove)]));
   }
   const actions = plotsEl.querySelector('.bode-plots-actions');
   actions.hidden = !traces.length;
   actions.replaceChildren(...bodeGraphActions({
-    clear: () => { traces = []; renderValues(); renderPlots(); },
+    clear: () => { traces = []; holdsChanged([]); renderValues(); renderPlots(); },
     annotate: annotateGraph,
     ready: shownTraces().length > 0,
     state: graphChoice,

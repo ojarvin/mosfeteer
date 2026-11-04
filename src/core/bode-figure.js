@@ -308,7 +308,7 @@ export function responseFigure(plot, { width = 480, height = 260, fontSize = 11 
   // A phase plot: degrees in steps of 45 (90, 180 on a wide range).
   const phase = plot.quantity === 'phase';
   // A background trace (a simulated spectrum) does not set the axis.
-  const values = [...plot.traces.filter((trace) => !trace.background).flatMap((trace) => trace.points.map((p) => p.db)), ...extraValues(plot)].filter((db) => db > -1000 && Number.isFinite(db));
+  const values = [...plot.traces.filter((trace) => !trace.background && !trace.hidden).flatMap((trace) => trace.points.map((p) => p.db)), ...extraValues(plot)].filter((db) => db > -1000 && Number.isFinite(db));
   let [dbLow, dbHigh] = view.y || niceRange(values, phase ? 45 : 20, 0);
   const span = dbHigh - dbLow;
   const step = phase ? (span > 720 ? 180 : span > 360 ? 90 : 45) : span > 400 ? 100 : span > 200 ? 50 : span > 100 ? 40 : 20;
@@ -339,6 +339,7 @@ export function responseFigure(plot, { width = 480, height = 260, fontSize = 11 
     items.push({ type: 'text', x: pane.x - 0.45 * em, y: y(v) + 0.36 * em, text, anchor: 'end', role: 'number' });
   }
   plot.traces.forEach((trace, index) => {
+    if (trace.hidden) return;
     // Only what lies in the frequency range (a spectrum's lowest bins may not).
     const samples = trace.points.filter((p) => Math.log10(p.f) >= low - 1e-9 && Math.log10(p.f) <= high + 1e-9).map((p) => ({ f: p.f, value: p.db }));
     for (const path of clippedPaths(samples, (s) => x(s.f), y, dbLow, dbHigh, trace.background ? 'spectrum' : 'curve')) items.push({ ...path, color: trace.color, trace: index });

@@ -3,7 +3,8 @@
  * (`Circuit#windows`), so another design opens with its own and this one
  * comes back as it was left: the reference windows (designs by path and
  * name, or pasted pictures), the calculator's past results, the time-domain
- * plot's nets and stimulus, the small-signal analysis form, and the sizing
+ * plot's nets and stimulus, the sweep's settings, the analyses' held
+ * traces, the small-signal analysis form, and the sizing
  * window's order (a column sorted by, and grouped by type or not).
  *
  * It is window state, not drawing: an undo or redo keeps it as it is
@@ -48,6 +49,35 @@ function calculatorEntry(entry) {
   };
 }
 
+const finiteNumber = (value) => typeof value === 'number' && Number.isFinite(value);
+
+/** Numbers by name, as a held trace keeps the values it was held at. */
+function numberMap(value, max = 200) {
+  const source = object(value) || {};
+  return Object.fromEntries(Object.entries(source).filter(([name, number]) => name.length <= 80 && finiteNumber(number)).slice(0, max));
+}
+
+/** One held trace as saved (`windows.holds`), or null. */
+function holdRecord(entry) {
+  const value = object(entry);
+  if (!value || !text(value.key, 40)) return null;
+  const spectrum = value.kind === 'spectrum';
+  if (!spectrum && !text(value.of, 600)) return null;
+  const points = spectrum ? (Array.isArray(value.points) ? value.points : []).filter((p) => finiteNumber(p?.f) && p.f > 0 && finiteNumber(p?.db)).slice(0, 4000).map((p) => ({ f: p.f, db: p.db })) : [];
+  if (spectrum && points.length < 2) return null;
+  const ratios = object(value.ratios);
+  return {
+    key: text(value.key, 40),
+    ...(spectrum ? { kind: 'spectrum', points } : { of: text(value.of, 600), base: text(value.base, 400) }),
+    color: /^#[0-9a-f]{6}$/i.test(value.color || '') ? value.color : '#3b74e0',
+    ...(value.on === false ? { on: false } : {}),
+    values: numberMap(value.values),
+    ...(finiteNumber(value.offset) ? { offset: value.offset } : {}),
+    ...(finiteNumber(value.amplitude) ? { amplitude: value.amplitude } : {}),
+    ...(ratios ? { ratios: { intrinsicGain: finiteNumber(ratios.intrinsicGain) ? ratios.intrinsicGain : 1, parasiticRatio: finiteNumber(ratios.parasiticRatio) ? ratios.parasiticRatio : 0, multipliers: numberMap(ratios.multipliers) } } : {}),
+  };
+}
+
 /** Window state as saved: only what each window keeps, bounded. */
 export function normalizeWindows(value) {
   const source = object(value) || {};
@@ -78,6 +108,41 @@ export function normalizeWindows(value) {
       ...(text(scope.amplitude, 40) ? { amplitude: text(scope.amplitude, 40) } : {}),
       ...(text(scope.frequency, 40) ? { frequency: text(scope.frequency, 40) } : {}),
     };
+  }
+  // The sweep: the coefficient it sweeps, from, to, how many points, on a
+  // linear or log scale; its stimulus as the time plot's (the source, the
+  // amplitude and f/fs as typed, the samples a segment); the measures shown.
+  const sweep = object(source.sweep);
+  if (sweep) {
+    const points = Math.round(Number(sweep.points));
+    const samples = Math.round(Number(sweep.samples));
+    const measures = (Array.isArray(sweep.measures) ? sweep.measures : []).filter((m) => typeof m === 'string' && m).map((m) => m.slice(0, 200)).slice(0, 24);
+    windows.sweep = {
+      measures,
+      ...(sweep.chosen === true ? { chosen: true } : {}),
+      ...(text(sweep.name, 80) ? { name: text(sweep.name, 80) } : {}),
+      ...(text(sweep.from, 40) ? { from: text(sweep.from, 40) } : {}),
+      ...(text(sweep.to, 40) ? { to: text(sweep.to, 40) } : {}),
+      ...(points > 1 ? { points: Math.min(points, 201) } : {}),
+      ...(sweep.scale === 'log' ? { scale: 'log' } : {}),
+      ...(text(sweep.input) ? { input: text(sweep.input) } : {}),
+      ...(text(sweep.amplitude, 40) ? { amplitude: text(sweep.amplitude, 40) } : {}),
+      ...(text(sweep.frequency, 40) ? { frequency: text(sweep.frequency, 40) } : {}),
+      ...(samples > 0 ? { samples: Math.max(1024, Math.min(samples, 1 << 16)) } : {}),
+    };
+  }
+  // Held traces, by analysis ('signal-flow', 'switched-cap', 'small-signal'):
+  // each the trace it was held from (`of`), its name, color, shown or not,
+  // and the numbers it was held at -- remade when a Derive brings that
+  // trace back. A held spectrum keeps its points.
+  const holds = object(source.holds);
+  if (holds) {
+    const kept = {};
+    for (const mode of ['signal-flow', 'switched-cap', 'small-signal']) {
+      const list = (Array.isArray(holds[mode]) ? holds[mode] : []).map(holdRecord).filter(Boolean).slice(0, 16);
+      if (list.length) kept[mode] = list;
+    }
+    if (Object.keys(kept).length) windows.holds = kept;
   }
   // The sizing window: the column its rows are sorted by, and whether
   // they are grouped by type.

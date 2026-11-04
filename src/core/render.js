@@ -871,12 +871,17 @@ function plotAnnotationSvg(label, opacity = '') {
   const rank = new Map();
   // Added traces dash on after the plot's own curves (a root locus's is one).
   const legendCurves = label.circuit ? label.circuit.plotLegendCurves(label) : plotLegendCurves(plot);
-  for (const curve of legendCurves) if (!curve.spectrum) rank.set(curve.trace, curve.rank);
+  // A held spectrum is gray too, dashed so it reads apart from the live one.
+  const heldDash = new Map();
+  for (const curve of legendCurves) {
+    if (!curve.spectrum) rank.set(curve.trace, curve.rank);
+    else if (curve.held !== undefined) heldDash.set(curve.trace, curve.held + 1);
+  }
   const dashOf = (n) => PLOT_TRACE_DASHES[n % PLOT_TRACE_DASHES.length];
   const curve = (item) => {
     if (!black) return stroke(item.role, item.color ? escapeSvg(item.color) : color);
     const attrs = stroke(item.role);
-    if (item.role === 'spectrum') return `${attrs} stroke-opacity="0.35"`;
+    if (item.role === 'spectrum') return `${attrs} stroke-opacity="0.35"${heldDash.has(item.trace) ? ` stroke-dasharray="${dashOf(heldDash.get(item.trace))}"` : ''}`;
     const dash = item.role === 'curve' && rank.has(item.trace) ? dashOf(rank.get(item.trace)) : '';
     return dash ? `${attrs} stroke-dasharray="${dash}"` : attrs;
   };
@@ -897,7 +902,7 @@ function plotAnnotationSvg(label, opacity = '') {
       const x2 = b.x - 6 - x;
       // A spectrum's sample is gray, as its curve is.
       const curve = legendCurves[n];
-      const look = curve.spectrum ? `${stroke('curve')} stroke-opacity="0.35"` : `${stroke('curve')}${dashOf(curve.rank) ? ` stroke-dasharray="${dashOf(curve.rank)}"` : ''}`;
+      const look = curve.spectrum ? `${stroke('curve')} stroke-opacity="0.35"${curve.held !== undefined ? ` stroke-dasharray="${dashOf(curve.held + 1)}"` : ''}` : `${stroke('curve')}${dashOf(curve.rank) ? ` stroke-dasharray="${dashOf(curve.rank)}"` : ''}`;
       return `<line class="plot-legend-sample" x1="${fmt(x1)}" y1="${fmt(cy)}" x2="${fmt(x2)}" y2="${fmt(cy)}" ${look} stroke-linecap="butt"/>`;
     }).join('')
     : '';

@@ -5,12 +5,13 @@
  * prepares the objective once (core/analysis/optimize.js), and scores each
  * batch of coefficient numbers it is sent (the quick test, or the long one
  * for `{ verify }`). For `spectrum` it simulates the diagram once and takes
- * its output's spectrum (core/analysis/spectrum-run.js).
+ * its output's spectrum, and `measures` measures one point of a sweep
+ * (core/analysis/spectrum-run.js).
  */
 
 import { Circuit } from '../core/model.js';
 import { prepareObjective, scoreRequest } from '../core/analysis/optimize.js';
-import { simulatedSpectrum } from '../core/analysis/spectrum-run.js';
+import { simulatedMeasures, simulatedSpectrum } from '../core/analysis/spectrum-run.js';
 
 let objective = null;
 
@@ -34,5 +35,7 @@ self.addEventListener('message', ({ data }) => {
     self.postMessage({ type: 'scores', id: data.id, scores });
   } else if (data.type === 'spectrum') {
     self.postMessage({ type: 'spectrum', id: data.id, ...simulatedSpectrum(data) });
+  } else if (data.type === 'measures') {
+    self.postMessage({ type: 'measures', id: data.id, index: data.index, ...simulatedMeasures(data) });
   }
 });

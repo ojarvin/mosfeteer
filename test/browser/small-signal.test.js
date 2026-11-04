@@ -311,6 +311,17 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     assert.equal(await h.evaluate(`document.querySelector('#analysis-values .bode-value[data-name="CC"] input[type=range]').value`), '7');
     await h.evaluate(`document.querySelector('#analysis-values .bode-values-actions button').click()`);
     assert.deepEqual((await bode()).values.multipliers, {});
+    // Held, a copy stays at the values of then, named by what differs since.
+    const held = `document.querySelectorAll('.plots-window .bode-legend .signal-flow-legend-math')[1]?.textContent || ''`;
+    await h.evaluate(`document.querySelector('.plots-window .bode-legend .signal-flow-legend-hold').click()`);
+    await h.until(`${h.module('bode-ui.js')}.then((m) => m.bodeSnapshot().traces.length === 2)`);
+    assert.match(await h.evaluate(held), /held/);
+    await h.evaluate(`(() => { const f = document.querySelector('#analysis-values .bode-value[data-name="CC"] .signal-flow-coefficient-value'); f.value = '2'; f.dispatchEvent(new Event('input', { bubbles: true })); f.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await h.until(`/CC.*= ?1/.test(${held})`);
+    assert.equal(await h.evaluate(`document.querySelectorAll('.plots-window .bode-legend .signal-flow-legend-row')[1].querySelector('.signal-flow-legend-hold')`), null);
+    await h.evaluate(`document.querySelectorAll('.plots-window .bode-legend .signal-flow-legend-remove')[1].click()`);
+    await h.evaluate(`document.querySelector('#analysis-values .bode-values-actions button').click()`);
+    assert.equal((await bode()).traces.length, 1);
   });
 
   test('each Derive adds its gain beside the others; the graph shows phase, takes other quantities, and goes on the drawing', async () => {

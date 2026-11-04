@@ -411,7 +411,9 @@ adds the first transfer function the form asks for (`A_v`, `Z_m`, `G_m`,
 or `A_i`; the voltage gain when none can be plotted, a current into a gate)
 and its loop gain, if one is asked for, to the graph beside what is there --
 a supply's way to the output beside the signal's, or one setting beside
-another; the same quantity between the same nets replaces itself. The
+another; the same quantity between the same nets replaces itself. A
+legend row's **Hold** keeps a copy at the Values now (`g_m r_o`, `C_par/C`,
+each multiplier), named by those that differ since (`trace-hold.js`). The
 transfer functions asked for, **Voltage gain** (always solved), **Output
 impedance**, **Input impedance**, and **Loop gain** above the graph are
 switches for the last Derive's quantities: pressed while one is on the

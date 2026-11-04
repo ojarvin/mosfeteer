@@ -298,7 +298,8 @@ white with variance 1/3 (levels 2 apart) over f/fs in (-1/2, 1/2), shaped by
 50 log OSR - 11.1 dB for a second-order one.
 
 The plots share one area, its view picked at the top (saved with the
-document): **Magnitude**, **Phase**, **Step**, **Locus**, **Swing**, **Loop**.
+document): **Magnitude**, **Phase**, **Step**, **Locus**, **Swing**, **Loop**,
+**Time**, **Sweep**.
 Each view annotates the same way -- a plot box with its legend beside it,
 updated in place on the next annotate (a plot's identity is its kind, its
 quantity, and its role, so a loop plot and the graph never replace each
@@ -306,6 +307,35 @@ other). A plot annotates as its window shows it: zoomed, at those
 limits (`plot.view`, `{ x, y }` in its data's units; the small-signal and
 switched-cap graphs too), its curves cut at the frame; fitted, all of it.
 Update all plots keeps each plot's limits.
+
+**Hold** (the magnitude, phase, and step views): a legend row's Hold puts
+a copy of that trace on the graph at the numbers now, in a color of its
+own, that the sliders leave as it is. The simulated spectrum has a row
+of its own, its box hiding the spectrum (still simulated) and its Hold
+keeping a copy behind it, drawn while the spectrum is on. A held trace or
+spectrum is named by the numbers it was held at that differ from the
+sliders now (`OUT/IN, a_r = 0.01`), or `(held)` while none does; it is
+annotated with the rest, its `hold` key letting Update plots find it
+again, and in black a held spectrum is gray and dashed. Held traces are
+saved with the design (`Circuit#windows.holds`, by analysis: the trace
+each was held from, its name, color, box, and numbers; a held spectrum
+its points) and made again when a Derive brings back the trace they were
+held from; Clear graph drops them. Beside its held copies a live trace
+names its numbers now for the same names (`OUT/IN, a_r = 0.15`). The switched-cap and the small-signal Bode graphs hold traces
+the same way (`trace-hold.js`), each at its own Values.
+
+**Sweep** (`sweep-plot.js`): one coefficient (not a linked one) stepped
+from, to, in a number of points (2 to 201), linear or log, the diagram
+simulated at each value -- the sine into the source picked, at its
+amplitude (dBFS) and f/fs, its spectrum in segments of the samples picked
+(`spectrum-run.js` `simulatedMeasures`, in a worker thread, a point at a
+time: Stop stops it) -- and what each run measures plotted over the
+values: the band's SNDR and noise, the output tone, and the peaks of the
+integrators, the quantizers' inputs, and the output (dBFS). It runs on
+Sweep only; a point where the loop runs away has no values. Its settings
+and the measures shown are saved with the design
+(`Circuit#windows.sweep`); Annotate puts the measures shown on the drawing
+as a data plot.
 
 A new plot is drawn in black (`style.blackTraces`): its traces in its ink,
 told apart by dash (solid, dashed, dash-dot, dotted, then around again),

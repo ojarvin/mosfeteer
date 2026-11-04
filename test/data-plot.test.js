@@ -5,7 +5,8 @@ import { runCommand } from '../src/core/commands.js';
 import { loadDocument } from '../src/core/document.js';
 import { svgString } from '../src/core/render.js';
 import { listFigures } from '../src/core/figures.js';
-import { dataPlotFromText, replaceDataPlotTraces } from '../src/core/data-plot.js';
+import { dataPlotFromText, replaceDataPlotTraces, setPlotTracesShown } from '../src/core/data-plot.js';
+import { responseFigure } from '../src/core/bode-figure.js';
 
 const SCOPE = 'Scope export\nTime (s),CH1 (V),CH2 (V)\n0,0.1,1\n1e-6,0.2,2\n2e-6,0.3,3\n';
 const io = (files) => ({ readDataFile: (file) => {
@@ -191,4 +192,53 @@ test('a file\'s traces go on an analysis plot too, in its units, and stay throug
   assert.throws(() => runCommand(circuit, `annotation dataplot sim.csv --into ${box.id} --hz`, io({ 'sim.csv': 'f\n1\n2\n' })), /no column of numbers|no two/);
   const step = circuit.addAnnotation('box', { x: 0, y: 800, end: { x: 720, y: 1240 }, plot: { kind: 'step', unit: 't', range: { low: 0, high: 1 }, traces: [{ label: 'y', points: [{ t: 0, y: 0 }, { t: 1, y: 1 }] }] } });
   assert.throws(() => runCommand(circuit, `annotation dataplot sim.csv --into ${step.id} --hz`, io(files)), /--hz is for a response plot/);
+});
+
+test('a response plot\'s own curves and spectra are each shown or hidden: kept in its data, off the drawing and the legend', () => {
+  const circuit = new Circuit();
+  const line = (db) => [{ f: 0.001, db }, { f: 0.1, db: db - 20 }];
+  const box = circuit.addAnnotation('box', {
+    x: 0, y: 0, end: { x: 720, y: 440 }, style: { lineStyle: 'solid', blackTraces: true },
+    plot: { kind: 'response', axis: 'normalized', range: { low: -3, high: -1 }, units: 'dBFS', traces: [
+      { label: 'A', color: '#3b74e0', points: line(0) },
+      { label: 'B', color: '#df4d59', points: line(-10), hold: 'hold1' },
+      { label: 'S', color: '#888888', points: line(-5), background: true },
+    ] },
+  });
+  for (const [i, text] of ['$A$', '$B$', '$S$'].entries()) circuit.addLabel({ text, math: true, parent: box.id, role: 'plot-legend', align: 'left', x: 800, y: 40 + 40 * i });
+  const drawn = () => responseFigure(box.plot).items.filter((item) => item.type === 'path').map((item) => item.trace);
+  assert.deepEqual([...new Set(drawn())].sort(), [0, 1, 2]);
+  assert.equal(setPlotTracesShown(circuit, box, [true, false, true]), true);
+  assert.equal(box.plot.traces[1].hidden, true);
+  assert.equal(box.plot.traces[1].hold, 'hold1');
+  assert.deepEqual(circuit.plotLegend(box).map((l) => l.text), ['$A$', '$S$']);
+  assert.deepEqual(circuit.plotLegendCurves(box).map((c) => c.trace), [0, 2]);
+  assert.deepEqual([...new Set(drawn())].sort(), [0, 2]);
+  // Saved and loaded, still hidden; shown again, its entry is back in order.
+  const loaded = loadDocument(JSON.parse(JSON.stringify(circuit.toJSON())));
+  assert.equal(loaded.labels.get(box.id).plot.traces[1].hidden, true);
+  assert.equal(setPlotTracesShown(circuit, box, [true, false, true]), false);
+  setPlotTracesShown(circuit, box, [true, true, false]);
+  assert.deepEqual(circuit.plotLegend(box).map((l) => l.text), ['$A$', '$B$']);
+  assert.equal(box.plot.traces[2].hidden, true);
+  assert.doesNotMatch(svgString(circuit), /NaN/);
+});
+
+test('a held spectrum draws gray and dashed in black, apart from the live one', () => {
+  const circuit = new Circuit();
+  const line = (db) => [{ f: 0.001, db }, { f: 0.1, db: db - 20 }];
+  const box = circuit.addAnnotation('box', {
+    x: 0, y: 0, end: { x: 720, y: 440 }, style: { lineStyle: 'solid', blackTraces: true },
+    plot: { kind: 'response', axis: 'normalized', range: { low: -3, high: -1 }, units: 'dBFS', traces: [
+      { label: 'A', color: '#3b74e0', points: line(0) },
+      { label: 'held', color: '#df4d59', points: line(-50), background: true, hold: 'hold2' },
+      { label: 'live', color: '#888888', points: line(-60), background: true },
+    ] },
+  });
+  for (const [i, text] of ['$A$', '$held$', '$live$'].entries()) circuit.addLabel({ text, math: true, parent: box.id, role: 'plot-legend', align: 'left', x: 800, y: 40 + 40 * i });
+  assert.deepEqual(circuit.plotLegendCurves(box), [{ trace: 0, rank: 0 }, { trace: 1, spectrum: true, held: 0 }, { trace: 2, spectrum: true }]);
+  const svg = svgString(circuit);
+  const spectra = svg.match(/stroke-opacity="0\.35"[^>]*/g) || [];
+  assert.ok(spectra.some((attrs) => /stroke-dasharray/.test(attrs)), spectra.join('\n'));
+  assert.ok(spectra.some((attrs) => !/stroke-dasharray/.test(attrs)), spectra.join('\n'));
 });

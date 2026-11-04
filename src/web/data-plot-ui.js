@@ -16,7 +16,8 @@
 import { element as el } from './dom.js';
 import { MAX_DATA_TRACES, readTable, tableTraces } from '../core/csv-data.js';
 import { TRACE_COLORS } from '../core/analysis/signal-flow.js';
-import { appendPlotTraces, fileUnits, inPlotUnits, movePlotTrace, placeDataPlot, removePlotTrace, replaceDataPlotTraces, setDataPlotAxis, setPlotTrace, setDataPlotView, takesFileTraces } from '../core/data-plot.js';
+import { appendPlotTraces, fileUnits, inPlotUnits, movePlotTrace, placeDataPlot, removePlotTrace, replaceDataPlotTraces, setDataPlotAxis, setPlotCurveColors, setPlotTrace, setPlotTracesShown, setDataPlotView, takesFileTraces } from '../core/data-plot.js';
+import { texToMathML } from '../core/render.js';
 import { MAX_DATA_POINTS, MAX_PLOT_EXTRA, normalizePlot } from '../core/model.js';
 import { COLOR_PALETTE } from '../core/style.js';
 import { plotSpec } from '../core/plot-spec.js';
@@ -121,7 +122,9 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, 
   const view = createPlotView({ height: 260, wheel: 'always', className: 'data-plot-view' });
   const shown = () => draft.traces.filter((t) => !t.removed);
   const traces = () => shown().map(({ label, color, points }) => ({ label, color, points }));
-  const bare = () => (base ? normalizePlot({ ...base, extra: traces() }) : normalizePlot({ kind: 'data', x: draft.x, y: draft.y, traces: traces() }));
+  // A response plot's own curves as the draft shows or hides them.
+  const withShown = (plot) => (draft.curves ? { ...plot, traces: plot.traces.map(({ hidden: _hidden, ...trace }, i) => ({ ...trace, color: draft.curves[i]?.color || trace.color, ...(draft.curves[i]?.on === false ? { hidden: true } : {}) })) } : plot);
+  const bare = () => (base ? normalizePlot({ ...withShown(base), extra: traces() }) : normalizePlot({ kind: 'data', x: draft.x, y: draft.y, traces: traces() }));
   const show = ({ keepZoom = true } = {}) => {
     const zoom = keepZoom ? view.zoom() : null;
     const plot = bare();
@@ -129,6 +132,18 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, 
     if (zoom && plot) view.zoomTo(zoom);
   };
   const axes = el('div', { class: 'data-plot-columns' });
+  // A response plot's own curves and spectra, each shown or hidden.
+  const curveList = draft.curves ? el('div', { class: 'data-plot-traces data-plot-curves', role: 'group', 'aria-label': 'Curves' }, draft.curves.map((curve) => {
+    const check = el('input', { type: 'checkbox', 'aria-label': 'Show this curve', onchange: (ev) => { curve.on = ev.target.checked; show(); } });
+    check.checked = curve.on;
+    const name = el('span', { class: 'data-plot-curve-name' });
+    name.innerHTML = texToMathML(curve.label);
+    name.style.color = curve.color;
+    // The box shows or hides; the swatch picks the color, as a file trace's does.
+    const swatch = el('button', { type: 'button', class: 'swatch', style: `--swatch:${curve.color}`, title: 'Color', 'aria-label': 'Curve color', 'aria-haspopup': 'true', 'aria-expanded': 'false',
+      onclick: () => openPalette(swatch, curve.color, (value) => { curve.color = value; name.style.color = value; swatch.style.setProperty('--swatch', value); show(); }) });
+    return el('div', { class: 'data-plot-trace data-plot-curve' }, [check, swatch, name]);
+  })) : null;
   const traceList = el('div', { class: 'data-plot-traces', role: 'group', 'aria-label': 'Traces' });
   const axisFields = (axis) => el('fieldset', { class: 'data-plot-axis' }, [
     el('legend', { text: axis === 'x' ? 'X axis' : 'Y axis' }),
@@ -169,7 +184,7 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, 
   };
   refresh();
   return {
-    parts: [view.el, el('p', { class: 'field-hint', text: 'Drag pans, right-drag zooms to a box, the wheel zooms, double-click fits. The plot on the drawing keeps this zoom. A trace lower in the list draws on top.' }), axes, traceList],
+    parts: [view.el, el('p', { class: 'field-hint', text: 'Drag pans, right-drag zooms to a box, the wheel zooms, double-click fits. The plot on the drawing keeps this zoom. A trace lower in the list draws on top.' }), axes, ...(curveList ? [curveList] : []), traceList],
     show,
     refresh,
     zoomTo: (range) => view.zoomTo(range),
@@ -430,7 +445,7 @@ export function openDataPlotDialog(text, name, target = null, { mode = 'replace'
 export function openPlotSettings(box) {
   if (!takesFileTraces(box)) return;
   const data = box.plot.kind === 'data';
-  const draft = { x: { ...box.plot.x }, y: { ...box.plot.y }, traces: editedTraces(box.plot) };
+  const draft = { x: { ...box.plot.x }, y: { ...box.plot.y }, traces: editedTraces(box.plot), curves: box.plot.kind === 'response' ? box.plot.traces.map((trace) => ({ label: trace.label, color: trace.color, on: !trace.hidden })) : null };
   const dialog = el('dialog', { class: 'confirm-dialog data-plot-dialog', 'aria-label': 'Plot settings' });
   const plotEdit = plotEditor(draft, { base: data ? null : analysisBase(box.plot) });
   const apply = () => {
@@ -438,6 +453,10 @@ export function openPlotSettings(box) {
     const old = editor.circuit.plotLegend(box).map((label) => label.bbox());
     dialog.close();
     commit(() => {
+      if (draft.curves) {
+        setPlotCurveColors(editor.circuit, box, draft.curves.map((curve) => curve.color));
+        setPlotTracesShown(editor.circuit, box, draft.curves.map((curve) => curve.on));
+      }
       applyDraft(editor.circuit, box, draft);
       applyOrder(editor.circuit, box, draft, ownLeft(draft));
       applyZoom(box, zoom);
