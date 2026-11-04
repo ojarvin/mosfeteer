@@ -64799,24 +64799,29 @@ function openPlotSettings(box) {
     logLine('updated the plot');
     render();
   };
+  // The close event comes a task later: a file's dialog opened from this
+  // one must not find it still there, or lose its focus to the canvas.
+  const closed = () => {
+    if (!dialog.isConnected) return;
+    plotEdit.dispose();
+    dialog.remove();
+    canvasEl.focus({ preventScroll: true });
+  };
+  const closeNow = () => { dialog.close(); closed(); };
   const full = draft.traces.length >= (data ? MAX_DATA_TRACES : MAX_PLOT_EXTRA);
   dialog.append(
     el('h2', { text: data ? (box.plot.file ? `Data plot from ${box.plot.file}` : 'Data plot') : 'Plot settings' }),
     ...plotEdit.parts,
     el('div', { class: 'dialog-actions' }, [
-      el('button', { type: 'button', class: 'data-plot-add', text: 'Add file…', title: 'Add traces from a file', disabled: full, onclick: () => { dialog.close(); chooseDataFile(box, 'add'); } }),
-      ...(data ? [el('button', { type: 'button', class: 'data-plot-reread', text: 'Replace file…', title: 'Replace the traces with a file\'s, keeping the plot\'s place, axes, and zoom', onclick: () => { dialog.close(); chooseDataFile(box); } })] : []),
+      el('button', { type: 'button', class: 'data-plot-add', text: 'Add file…', title: 'Add traces from a file', disabled: full, onclick: () => { closeNow(); chooseDataFile(box, 'add'); } }),
+      ...(data ? [el('button', { type: 'button', class: 'data-plot-reread', text: 'Replace file…', title: 'Replace the traces with a file\'s, keeping the plot\'s place, axes, and zoom', onclick: () => { closeNow(); chooseDataFile(box); } })] : []),
       el('span', { class: 'dialog-actions-gap' }),
       el('button', { type: 'button', text: 'Cancel', onclick: () => dialog.close() }),
       el('button', { type: 'button', class: 'primary-action', text: 'Apply', onclick: apply }),
     ]),
   );
   dialog.addEventListener('keydown', (event) => event.stopPropagation());
-  dialog.addEventListener('close', () => {
-    plotEdit.dispose();
-    dialog.remove();
-    canvasEl.focus({ preventScroll: true });
-  }, { once: true });
+  dialog.addEventListener('close', closed, { once: true });
   document.body.append(dialog);
   dialog.showModal();
   plotEdit.show({ keepZoom: false });
