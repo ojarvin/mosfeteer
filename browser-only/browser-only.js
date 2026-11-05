@@ -9816,7 +9816,7 @@ function swingTestFrequency(swing, band) {
   const text = String(swing.frequency || '').trim();
   const match = text.match(/^(\d+(?:\.\d*)?)\s*\/\s*(\d+(?:\.\d*)?)$/);
   const set = match ? Number(match[1]) / Number(match[2]) : Number(text);
-  if (set > 0 && set < 0.5) return set;
+  if (set > 0 && Number.isFinite(set)) return set;
   const edges = bandEdges(band);
   if (edges.length === 2) return (edges[0] + edges[1]) / 2;
   if (edges.length === 1) return edges[0] / 2;
@@ -16868,6 +16868,7 @@ __exports.prepareSimulation = prepareSimulation;
 __exports.sweepAmplitudes = sweepAmplitudes;
 let blockTransferFunction, coefficientValue, delayTermsOf, denseCoefficients, hasDelays, mixedPeriods, signalDomains, signalFlowGraph, withCoefficients; __bind(() => { ({ blockTransferFunction, coefficientValue, delayTermsOf, denseCoefficients, hasDelays, mixedPeriods, signalDomains, signalFlowGraph, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
 let expm; __bind(() => { ({ expm } = __require("src/core/analysis/sampling.js")); });
+let aliasedFrequency; __bind(() => { ({ aliasedFrequency } = __require("src/core/analysis/spectrum.js")); });
 let evaluateExpression; __bind(() => { ({ evaluateExpression } = __require("src/core/analysis/bode.js")); });
 let TRANSFER_FUNCTION_TYPES, isBlockIn, parseDither, parseGain, parseLevels, parseTone; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, isBlockIn, parseDither, parseGain, parseLevels, parseTone } = __require("src/core/transfer-function.js")); });
 let analyzedCircuit, canonicalNetName; __bind(() => { ({ analyzedCircuit, canonicalNetName } = __require("src/core/model.js")); });
@@ -16885,7 +16886,9 @@ let rationalMultiply; __bind(() => { ({ rationalMultiply } = __require("src/core
  * as one linear map each step, quantizers in the order their inputs need
  * them). Its continuous side, between samples, is integrated exactly:
  * x' = F x over an augmented state -- the H(s) blocks, the DAC blocks'
- * pulse, a sine oscillator, a constant -- so x(t + h) = e^{F h} x(t); each
+ * pulse, a sine oscillator for the input and one for each tone source on
+ * a continuous signal (at any f/fs: a sampler after it aliases it), a
+ * constant -- so x(t + h) = e^{F h} x(t); each
  * DAC block takes each sample as impulses into one state of its own
  * (observable form, so the pulse's edges -- +1/s at its start, -1/s at its
  * end -- share it and it stays bounded), each edge at its delay (excess
@@ -16896,6 +16899,7 @@ let rationalMultiply; __bind(() => { ({ rationalMultiply } = __require("src/core
  * worked out a sample at a time, as a quantizer is, in the order its
  * inputs need it.
  */
+
 
 
 
@@ -17044,7 +17048,7 @@ function prepareSimulation(circuit, options = {}) {
       const at = (value) => (typeof value === 'string' ? num(value) : value);
       const set = { ...dither, amplitude: at(dither.amplitude), ...(dither.shape === 'sine' ? { frequency: at(dither.frequency) } : {}) };
       if (!(set.amplitude >= 0 && Number.isFinite(set.amplitude))) throw new Error(`its amplitude ${dither.amplitude} is ${set.amplitude}: it must be 0 or more`);
-      if (set.shape === 'sine' && !(set.frequency >= 0 && set.frequency <= 0.5)) throw new Error(`its f/fs ${dither.frequency} is ${set.frequency}: it must be from 0 to 0.5`);
+      if (set.shape === 'sine' && !(set.frequency >= 0 && Number.isFinite(set.frequency))) throw new Error(`its f/fs ${dither.frequency} is ${set.frequency}: it must be 0 or more`);
       sourceValue.set(source.key, { driven: false, constant: 0, dither: set });
     } catch (err) {
       return failure('bad-dither', `${source.id}: ${err.message}`);
@@ -17152,7 +17156,11 @@ function prepareSimulation(circuit, options = {}) {
   const OSC_C = m;
   const OSC_S = m + 1;
   const ONE = m + 2;
-  const size = m + 3;
+  // A tone source on a continuous signal is a sine in time, as the input's
+  // is: an oscillator pair of its own.
+  const tones = cont.filter((s) => sourceValue.get(s.key)?.dither?.shape === 'sine')
+    .map((s, k) => ({ key: s.key, c: m + 3 + 2 * k, s: m + 4 + 2 * k, ...sourceValue.get(s.key).dither }));
+  const size = m + 3 + 2 * tones.length;
 
   const zero = (rows, cols) => Array.from({ length: rows }, () => new Array(cols).fill(0));
   // Continuous signals: Y = G Y + H X.
@@ -17162,7 +17170,9 @@ function prepareSimulation(circuit, options = {}) {
     for (const [i, signal] of cont.entries()) {
       const source = sourceValue.get(signal.key);
       if (source) {
-        if (source.dither) throw new Error(`the ${circuit.components.get(signal.driver?.comp)?.type === 'tone' ? 'tone' : 'dither'} on ${signal.display} feeds continuous signals: it draws a value a sample, so wire it into a sum after the sampler, not through a sampler of its own`);
+        const tone = tones.find((t) => t.key === signal.key);
+        if (tone) { Hc[i][tone.s] = 1; continue; }
+        if (source.dither) throw new Error(`the dither on ${signal.display} feeds continuous signals: it draws a value a sample, so wire it into a sum after the sampler, not through a sampler of its own`);
         if (source.driven) Hc[i][OSC_S] = 1;
         else Hc[i][ONE] = source.constant;
         continue;
@@ -17295,7 +17305,14 @@ function prepareSimulation(circuit, options = {}) {
   }
   F[OSC_C][OSC_S] = -omega;
   F[OSC_S][OSC_C] = omega;
-  const subSteps = Math.max(1, Math.round(options.subSteps || 8));
+  for (const tone of tones) {
+    tone.f = tone.frequency === 0 ? 0 : Math.max(1, Math.round(tone.frequency * coherent)) / coherent;
+    F[tone.c][tone.s] = (-2 * Math.PI * tone.f) / T;
+    F[tone.s][tone.c] = (2 * Math.PI * tone.f) / T;
+  }
+  // Eight sub-steps a cycle of the fastest continuous sine, at least eight a period.
+  const fastest = Math.max(domain.get(driven.key) === 's' ? frequency : 0, ...tones.map((tone) => tone.f));
+  const subSteps = Math.max(1, Math.round(options.subSteps || Math.min(256, Math.max(8, Math.ceil(8 * fastest)))));
   const offsets = new Set(Array.from({ length: subSteps }, (_, k) => (k * T) / subSteps));
   for (const term of terms) {
     let shift = Math.floor(term.delay / T + 1e-9);
@@ -17390,6 +17407,12 @@ function prepareSimulation(circuit, options = {}) {
     // The oscillator's pair is (A cos, A sin) of the sine's phase.
     if (sourceValue.get(driven.key) && domain.get(driven.key) === 's') { X[OSC_C] = amplitude * Math.cos(phase); X[OSC_S] = amplitude * Math.sin(phase); }
     X[ONE] = 1;
+    // A continuous tone starts as a sampled one does, sin 0 (at f/fs 0 its amplitude).
+    for (const tone of tones) {
+      const a = tone.amplitude * fullScale;
+      if (tone.f === 0) X[tone.s] = a;
+      else X[tone.c] = a;
+    }
     let xd = new Float64Array(md);
     const p = new Float64Array(pSize);
     const state = new Float64Array(md + pSize);
@@ -17517,7 +17540,7 @@ function prepareSimulation(circuit, options = {}) {
     for (let i = 0; i < m + md; i++) {
       if (halves[1][i] > 2 * fullScale && halves[1][i] > 2 * halves[0][i]) return { peaks: Array.from(peaks), tone: null, overloaded: true, ...wavesOut() };
     }
-    const tone = outputIndex >= 0 ? ((frequency === 0 ? 1 : 2) * Math.hypot(re, im)) / window : null;
+    const tone = outputIndex >= 0 ? ((aliasedFrequency(frequency) === 0 ? 1 : 2) * Math.hypot(re, im)) / window : null;
     // y = k v + e, k by least squares: e is then uncorrelated with v.
     const quantizerFits = rounding.map((q) => {
       const { vy, vv, yy } = fits.get(q);
@@ -17920,6 +17943,7 @@ function sweepValues(from, to, points, log = false) {
 
 __modules["src/core/analysis/spectrum.js"] = function (__require, __exports) {
 __exports.outputSpectrum = outputSpectrum;
+__exports.aliasedFrequency = aliasedFrequency;
 __exports.dbfsSpectrum = dbfsSpectrum;
 __exports.dbfsOffset = dbfsOffset;
 __exports.inBand = inBand;
@@ -17989,6 +18013,12 @@ function outputSpectrum(samples, { variance = 1 / 3, segment = samples.length } 
   return { points, power, n, w1, w2, variance, averages };
 }
 
+/** Where a sampled sine of `frequency` (f/fs, any) shows: its alias, 0 to 0.5. */
+function aliasedFrequency(frequency) {
+  const r = frequency - Math.floor(frequency);
+  return Math.min(r, 1 - r);
+}
+
 /**
  * The spectrum in dBFS per bin: a full-scale sine (amplitude `fullScale`)
  * reads 0 dBFS in its bin -- the window's coherent gain taken out, so white
@@ -18011,7 +18041,7 @@ function dbfsOffset(spectrum, fullScale, { noise, amplitude }) {
 }
 
 /**
- * The simulated SNDR in band: the tone's bins (the input frequency, a Hann
+ * The simulated SNDR in band: the tone's bins (the input frequency's alias, a Hann
  * window spreading it over three either side) against every other bin of
  * the band (a tone at DC, f/fs 0, its power the DC's square). `band`
  * `{ f0, bw }` as bandEdges reads it; returns `{ sndr, enob, noiseDb }`
@@ -18022,7 +18052,7 @@ function inBand(spectrum, frequency, edges, { fullScale = 1 } = {}) {
   if (!spectrum || !edges.length) return null;
   const { power, n, w2 } = spectrum;
   const [f1, f2] = edges.length === 2 ? edges : [0, edges[0]];
-  const tone = Math.round(frequency * n);
+  const tone = Math.round(aliasedFrequency(frequency) * n);
   let signal = 0;
   let noise = 0;
   for (let k = Math.max(tone ? 1 : 0, Math.ceil(f1 * n)); k <= Math.min(n / 2, Math.floor(f2 * n)); k++) {
@@ -18051,7 +18081,7 @@ function inBand(spectrum, frequency, edges, { fullScale = 1 } = {}) {
 function plotSpectrum(spectrum, frequency, { bins = 600 } = {}) {
   if (!spectrum) return [];
   const { points, n } = spectrum;
-  const tone = Math.round(frequency * n);
+  const tone = Math.round(aliasedFrequency(frequency) * n);
   const low = Math.log10(points[0].f);
   const high = Math.log10(0.5);
   const out = [];
@@ -21982,7 +22012,8 @@ function responseFigure(plot, { width = 480, height = 260, fontSize = 11 } = {})
     x: plot.axis === 'normalized' ? 'Frequency (f/f_{s})' : 'Angular frequency (rad/s)',
     y: phase ? `Phase ∠${name} (°)` : plot.units === 'dBFS' ? 'Magnitude (dBFS)' : `Magnitude |${name}| (dB)`,
   });
-  return { width, height, items: plot.view ? clipToPane(items, pane) : items, pane, ranges: { db: [dbLow, dbHigh] } };
+  const toPx = { x: xAt, y: (db) => pane.y + ((dbHigh - db) / (dbHigh - dbLow)) * pane.h };
+  return { width, height, items: plot.view ? clipToPane(items, pane) : items, pane, ranges: { db: [dbLow, dbHigh] }, toPx };
 }
 
 /**
@@ -22043,7 +22074,7 @@ function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
     x: plot.unit === 'n' ? 'Sample n (t/T_{s})' : 'Time (s)',
     y: plot.kind === 'wave' ? 'Value (arb. units)' : 'Step response (arb. units)',
   });
-  return { width, height, items: plot.view ? clipToPane(items, pane) : items, pane, ranges: { y: [yLow, yHigh] } };
+  return { width, height, items: plot.view ? clipToPane(items, pane) : items, pane, ranges: { y: [yLow, yHigh] }, toPx: { x, y: (v) => pane.y + ((yHigh - v) / (yHigh - yLow)) * pane.h } };
 }
 
 /**
@@ -22105,7 +22136,7 @@ function dataFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
     flush();
   });
   axisTitles(items, pane, em, { x: plot.x?.label || '', y: plot.y?.label || '' });
-  return { width, height, items: clipToPane(items, pane), pane, ranges: { x: [x0, x1], y: [y0, y1] } };
+  return { width, height, items: clipToPane(items, pane), pane, ranges: { x: [x0, x1], y: [y0, y1] }, toPx: { x, y } };
 }
 
 /** 1, 2, or 5 times a power of ten, near `rough`. */
@@ -22178,7 +22209,7 @@ function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   });
   items.push(...extraPaths(plot, x, (db) => pane.y + ((dbHigh - db) / (dbHigh - dbLow)) * pane.h, pane, plot.traces.length));
   axisTitles(items, pane, em, { x: 'Input amplitude (dBFS)', y: 'Peak swing (dBFS)' });
-  return { width, height, items: plot.view ? clipToPane(items, pane) : items, pane, ranges: { db: [dbLow, dbHigh] } };
+  return { width, height, items: plot.view ? clipToPane(items, pane) : items, pane, ranges: { db: [dbLow, dbHigh] }, toPx: { x, y: (db) => pane.y + ((dbHigh - db) / (dbHigh - dbLow)) * pane.h } };
 }
 
 /** A trace's TeX name as plot text, which knows only `_{}` and `^{}`:
@@ -22333,7 +22364,7 @@ function locusFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
     items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 2.1 * em, text, anchor: 'start', role: 'marker' });
   }
   axisTitles(items, pane, em, { x: z ? 'Real part (Re z)' : 'Real part (Re s)', y: z ? 'Imaginary part (Im z)' : 'Imaginary part (Im s)' });
-  return { width, height, items, pane };
+  return { width, height, items, pane, toPx: { x, y } };
 }
 
 };
@@ -27447,6 +27478,7 @@ __exports.movePlotTrace = movePlotTrace;
 __exports.setPlotTracesShown = setPlotTracesShown;
 __exports.setPlotCurveColors = setPlotCurveColors;
 __exports.removePlotTrace = removePlotTrace;
+__exports.setPlotCursors = setPlotCursors;
 __exports.appendPlotTraces = appendPlotTraces;
 __exports.replaceDataPlotTraces = replaceDataPlotTraces;
 let TRACE_COLORS; __bind(() => { ({ TRACE_COLORS } = __require("src/core/analysis/signal-flow.js")); });
@@ -27455,6 +27487,8 @@ let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js"));
 let MAX_PLOT_EXTRA, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, plotLegendCurves; __bind(() => { ({ MAX_PLOT_EXTRA, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, plotLegendCurves } = __require("src/core/model.js")); });
 let COLOR_PALETTE, colorToken; __bind(() => { ({ COLOR_PALETTE, colorToken } = __require("src/core/style.js")); });
 let MAX_DATA_TRACES, readTable, tableTraces; __bind(() => { ({ MAX_DATA_TRACES, readTable, tableTraces } = __require("src/core/csv-data.js")); });
+let remapCursorTraces; __bind(() => { ({ remapCursorTraces } = __require("src/core/plot-cursors.js")); });
+let ownTraceCount; __bind(() => { ({ ownTraceCount } = __require("src/core/plot-spec.js")); });
 /**
  * Data plots on the drawing: a plot box (`plot.kind` 'data', model.js
  * normalizeDataPlot) built from a text file's columns (csv-data.js), its
@@ -27463,6 +27497,8 @@ let MAX_DATA_TRACES, readTable, tableTraces; __bind(() => { ({ MAX_DATA_TRACES, 
  * zoom, and its traces are edited here, for the commands and the plot's
  * settings window alike.
  */
+
+
 
 
 
@@ -27678,7 +27714,7 @@ function movePlotTrace(circuit, box, from, to) {
   order.splice(to, 0, order.splice(from, 1)[0]);
   const legend = circuit.plotLegend(box);
   const entries = ownEntries(circuit, box, own);
-  box.plot = normalizePlot({ ...box.plot, [own.key]: order.map((i) => own.traces[i]) });
+  box.plot = normalizePlot({ ...remapCursorTraces(box.plot, ownBase(box.plot, own), order), [own.key]: order.map((i) => own.traces[i]) });
   if (entries.length === count) {
     const left = Math.min(...entries.map((l) => l.bbox().x));
     let top = Math.min(...entries.map((l) => l.bbox().y));
@@ -27761,7 +27797,23 @@ function removePlotTrace(circuit, box, index) {
   if (own.traces.length <= own.min) throw new Error('a plot keeps one trace at least');
   const entry = ownEntries(circuit, box, own)[index];
   if (entry) circuit.removeLabel(entry.id);
-  box.plot = normalizePlot({ ...box.plot, [own.key]: own.traces.filter((_, i) => i !== index) });
+  const order = own.traces.map((_, i) => i).filter((i) => i !== index);
+  box.plot = normalizePlot({ ...remapCursorTraces(box.plot, ownBase(box.plot, own), order), [own.key]: own.traces.filter((_, i) => i !== index) });
+}
+
+/** The trace id (plot-spec.js) of a plot's first editable trace. */
+const ownBase = (plot, own) => (own.key === 'extra' ? ownTraceCount(plot) : 0);
+
+/** Set a plot's markers (plot-cursors.js) and whether their numbers show.
+ *  Returns whether anything changed. */
+function setPlotCursors(box, cursors, { values = true } = {}) {
+  const plot = box?.plot;
+  if (!plot || !takesFileTraces(box)) throw new Error(`"${box?.id}" takes no markers`);
+  const { cursors: _cursors, cursorValues: _values, ...rest } = plot;
+  const next = normalizePlot({ ...rest, cursors, ...(values ? {} : { cursorValues: false }) });
+  if (JSON.stringify(next) === JSON.stringify(plot)) return false;
+  box.plot = next;
+  return true;
 }
 
 /** The names of the files a plot's traces came from, each once. */
@@ -29847,6 +29899,8 @@ let normalizeFigure; __bind(() => { ({ normalizeFigure } = __require("src/core/f
 let fanStacks, normalizeStack, segmentEnters, stackRects, stackedBoxes, wireEchoes; __bind(() => { ({ fanStacks, normalizeStack, segmentEnters, stackRects, stackedBoxes, wireEchoes } = __require("src/core/box-stack.js")); });
 let PART_VALUE_ROLE, VALUE_LABEL_MODES, VALUE_TYPES, valueLabelTex; __bind(() => { ({ PART_VALUE_ROLE, VALUE_LABEL_MODES, VALUE_TYPES, valueLabelTex } = __require("src/core/part-value.js")); });
 let MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize; __bind(() => { ({ MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize } = __require("src/core/mos-size.js")); });
+let cursorsOf; __bind(() => { ({ cursorsOf } = __require("src/core/plot-cursors.js")); });
+
 
 
 
@@ -31159,7 +31213,7 @@ function normalizeResponsePlot(plot) {
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   const band = (Array.isArray(plot.band) ? plot.band : []).filter((f) => finite(f) && f > 0).slice(0, 2).map((f) => round(f, 6));
-  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces, ...(band.length ? { band } : {}), ...(plot.quantity === 'phase' ? { quantity: 'phase' } : {}), ...(plot.units === 'dBFS' ? { units: 'dBFS' } : {}), ...markersOf(plot), ...(plot.role === 'loop' ? { role: 'loop' } : {}), ...sourceOf(plot), ...viewOf(plot, { positiveX: true }), ...extraOf(plot, { positiveX: true }) };
+  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces, ...(band.length ? { band } : {}), ...(plot.quantity === 'phase' ? { quantity: 'phase' } : {}), ...(plot.units === 'dBFS' ? { units: 'dBFS' } : {}), ...markersOf(plot), ...(plot.role === 'loop' ? { role: 'loop' } : {}), ...sourceOf(plot), ...viewOf(plot, { positiveX: true }), ...extraOf(plot, { positiveX: true }), ...cursorsOf(plot) };
 }
 
 /** What a plot was drawn from, so it can be drawn again at new numbers:
@@ -31222,6 +31276,7 @@ function normalizeLocusPlot(plot) {
     crossings: (Array.isArray(plot.crossings) ? plot.crossings : []).filter((c) => finite(c?.k) && ['stable', 'unstable'].includes(c.becomes)).slice(0, 8).map((c) => ({ k: round(c.k, 5), becomes: c.becomes })),
     ...sourceOf(plot),
     ...extraOf(plot),
+    ...cursorsOf(plot),
   };
 }
 
@@ -31239,7 +31294,7 @@ function normalizeStepPlot(plot) {
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   // A waveform (the time-domain plot's) is drawn as a step response is, in time.
-  return { kind: plot.kind === 'wave' ? 'wave' : 'step', unit: plot.unit === 'n' ? 'n' : 't', range: { low, high }, traces, ...viewOf(plot), ...extraOf(plot) };
+  return { kind: plot.kind === 'wave' ? 'wave' : 'step', unit: plot.unit === 'n' ? 'n' : 't', range: { low, high }, traces, ...viewOf(plot), ...extraOf(plot), ...cursorsOf(plot) };
 }
 
 /** The most points a data plot keeps of one trace (thinDataPoints). */
@@ -31286,7 +31341,7 @@ function normalizeDataPlot(plot) {
   const x = axis(plot.x);
   const y = axis(plot.y);
   const file = text(plot.file, 200);
-  return { kind: 'data', ...(file ? { file } : {}), x, y, traces, ...viewOf(plot, { positiveX: x.scale === 'log', positiveY: y.scale === 'log' }) };
+  return { kind: 'data', ...(file ? { file } : {}), x, y, traces, ...viewOf(plot, { positiveX: x.scale === 'log', positiveY: y.scale === 'log' }), ...cursorsOf(plot) };
 }
 
 /** A swing plot (signal-flow simulation): colored traces of each net's
@@ -31305,7 +31360,7 @@ function normalizeSwingPlot(plot) {
     ...(trace?.tone ? { tone: true } : {}),
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
-  return { kind: 'swing', range: { low, high }, traces, ...viewOf(plot), ...extraOf(plot) };
+  return { kind: 'swing', range: { low, high }, traces, ...viewOf(plot), ...extraOf(plot), ...cursorsOf(plot) };
 }
 
 class LabelInstance {
@@ -35978,6 +36033,32 @@ class Circuit {
     return ends;
   }
 
+  /** Shorten a wire from its free end (an `openWireEnds` entry's net, path,
+   *  and endpoint) back to `point` on that path: the stretch beyond it goes.
+   *  Changes nothing and returns false when `point` is not on the path short
+   *  of its other end, or a pin, a junction, or another wire meets the
+   *  stretch that would go. */
+  trimWireEnd(netId, pathIndex, endpointIndex, point) {
+    const net = this.nets.get(netId);
+    const paths = net?.paths() || [];
+    const path = paths[pathIndex];
+    if (!path || path.length < 2) return false;
+    const walk = endpointIndex === 0 ? path : [...path].reverse();
+    const same = (a, b) => a.x === b.x && a.y === b.y;
+    if (same(walk[0], point)) return false;
+    const cut = walk.findIndex((p, i) => i > 0 && pointOnPath(point, [walk[i - 1], p]));
+    if (cut < 0) return false;
+    const kept = normalizePath([{ x: point.x, y: point.y }, ...walk.slice(cut)]);
+    if (kept.length < 2) return false;
+    const removed = [...walk.slice(0, cut), point];
+    const meets = (p) => !same(p, point) && pointOnPath(p, removed);
+    const pins = net.terminals.map((t) => this.components.get(t.comp)?.worldTerminals().find((w) => w.name === t.term)).filter(Boolean);
+    if (pins.some(meets) || net.junctions.some(meets)) return false;
+    if (paths.some((other, i) => i !== pathIndex && (meets(other[0]) || meets(other[other.length - 1])))) return false;
+    const next = paths.map((p, i) => (i === pathIndex ? (endpointIndex === 0 ? kept : [...kept].reverse()) : p));
+    return this.installNetPaths(net, next);
+  }
+
   _explicitBranches(net) {
     if (net.branches && net.branches.length) return net.branches.map((p) => clonePath(p, net.allowDiagonal));
     if (net.route && net.route.length >= 2) return [clonePath(net.route, net.allowDiagonal)];
@@ -39547,6 +39628,244 @@ function addPinRail(circuit, ref, type) {
 __exports.PIN_RAIL_TYPES = PIN_RAIL_TYPES;
 };
 
+__modules["src/core/plot-cursors.js"] = function (__require, __exports) {
+__exports.cursorsOf = cursorsOf;
+__exports.remapCursorTraces = remapCursorTraces;
+__exports.cursorCurves = cursorCurves;
+__exports.curveAt = curveAt;
+__exports.curveCrossings = curveCrossings;
+__exports.cursorNumber = cursorNumber;
+__exports.cursorLabel = cursorLabel;
+__exports.nearestCurve = nearestCurve;
+__exports.cursorReadings = cursorReadings;
+__exports.placeCursorLabels = placeCursorLabels;
+__exports.cursorLayout = cursorLayout;
+let fromU, toU; __bind(() => { ({ fromU, toU } = __require("src/core/plot-scale.js")); });
+/**
+ * Markers on a plot (`plot.cursors`, set in its settings): a point on a
+ * trace, reading its x and y there; a vertical line at an x, reading each
+ * trace's y where it crosses; a horizontal line at a y, reading each
+ * trace's x where it crosses. Their numbers go small beside what they
+ * read, clear of one another (`plot.cursorValues: false` leaves them out).
+ * One reading and one layout for both renderers: the plot in a window
+ * (web/plot-view.js) and the plot on the drawing (render.js).
+ *
+ * A marker: `{ kind: 'point', trace, x }` (`trace` a spec series' `trace`
+ * id: the plot's own traces from 0, then those added from files),
+ * `{ kind: 'vertical', x }`, `{ kind: 'horizontal', y }`, in the data's
+ * own units.
+ */
+
+
+
+const MAX_PLOT_CURSORS = 8;
+const CURSOR_KINDS = ['point', 'vertical', 'horizontal'];
+
+const precise = (v) => Number(v.toPrecision(9));
+
+/** A plot's markers, checked, and whether their numbers show: for a
+ *  normalized plot to spread in. */
+function cursorsOf(plot) {
+  const cursors = (Array.isArray(plot?.cursors) ? plot.cursors : []).filter((c) => CURSOR_KINDS.includes(c?.kind)).slice(0, MAX_PLOT_CURSORS).flatMap((c) => {
+    if (c.kind === 'horizontal') return Number.isFinite(c.y) ? [{ kind: 'horizontal', y: precise(c.y) }] : [];
+    if (!Number.isFinite(c.x)) return [];
+    if (c.kind === 'vertical') return [{ kind: 'vertical', x: precise(c.x) }];
+    return Number.isInteger(c.trace) && c.trace >= 0 && c.trace < 64 ? [{ kind: 'point', trace: c.trace, x: precise(c.x) }] : [];
+  });
+  return { ...(cursors.length ? { cursors } : {}), ...(plot?.cursorValues === false ? { cursorValues: false } : {}) };
+}
+
+/** Point markers moved with their traces: `order` the old indices of the
+ *  traces from `base` on, in their new order (one left out is gone, and so
+ *  are its markers). */
+function remapCursorTraces(plot, base, order) {
+  if (!plot.cursors) return plot;
+  const cursors = plot.cursors.flatMap((c) => {
+    if (c.kind !== 'point' || c.trace < base) return [c];
+    const at = order.indexOf(c.trace - base);
+    return at < 0 ? [] : [{ ...c, trace: base + at }];
+  });
+  const { cursors: _old, ...rest } = plot;
+  return cursors.length ? { ...rest, cursors } : rest;
+}
+
+/** The curves a marker reads: a spec's series that are a y for each x
+ *  (not a locus's dots, not the unit circle), in u (plot-scale.js). */
+function cursorCurves(spec) {
+  const xs = spec?.x?.scale || 'linear';
+  const ys = spec?.y?.scale || 'linear';
+  return (spec?.series || [])
+    .filter((s) => s.trace !== undefined && !s.parametric && !s.dots && s.role !== 'band')
+    .map((s) => ({
+      trace: s.trace,
+      color: s.color || null,
+      label: s.label || '',
+      stairs: !!s.stairs,
+      points: s.points.map(([x, y]) => [toU(xs, x), y === null || y === undefined ? null : toU(ys, y)])
+        .filter(([u, v]) => Number.isFinite(u) && (v === null || Number.isFinite(v))),
+    }))
+    .filter((c) => c.points.length > 1);
+}
+
+/** A curve's value (u) at `u`, straight between its points (held, for
+ *  stairs); the first where it passes `u` more than once; null off it. */
+function curveAt(curve, u) {
+  const { points, stairs } = curve;
+  for (let i = 1; i < points.length; i++) {
+    const [a0, a1] = points[i - 1];
+    const [b0, b1] = points[i];
+    if (a1 === null || b1 === null || u < Math.min(a0, b0) || u > Math.max(a0, b0)) continue;
+    if (stairs) return u === b0 ? b1 : a1;
+    return a0 === b0 ? a1 : a1 + ((u - a0) / (b0 - a0)) * (b1 - a1);
+  }
+  return null;
+}
+
+/** Where a curve crosses the value `v` (u): a few x's (u), in its order. */
+function curveCrossings(curve, v, max = 3) {
+  const out = [];
+  const { points, stairs } = curve;
+  for (let i = 1; i < points.length && out.length < max; i++) {
+    const [a0, a1] = points[i - 1];
+    const [b0, b1] = points[i];
+    if (a1 === null || b1 === null || (a1 - v) * (b1 - v) > 0 || (a1 === b1 && a1 !== v)) continue;
+    const u = stairs ? (a1 === v ? a0 : b0) : a1 === b1 ? a0 : a0 + ((v - a1) / (b1 - a1)) * (b0 - a0);
+    if (!out.some((w) => Math.abs(w - u) <= 1e-12 * Math.max(1, Math.abs(u)))) out.push(u);
+  }
+  return out;
+}
+
+/** A number as a marker shows it: four figures. */
+function cursorNumber(value) {
+  if (!Number.isFinite(value)) return '–';
+  const magnitude = Math.abs(value);
+  if (magnitude !== 0 && (magnitude < 1e-3 || magnitude >= 1e6)) return value.toExponential(3).replace(/\.?0+e/, 'e');
+  return String(Number(value.toPrecision(4)));
+}
+
+/** A number as a marker's label writes it, an exponent as a power of
+ *  ten in plot markup: 6.152·10^{-6}, as the axis does. */
+function cursorLabel(value) {
+  const text = cursorNumber(value);
+  const match = text.match(/^(-?[\d.]+)e([-+]?\d+)$/);
+  return match ? `${match[1]}·10^{${Number(match[2])}}` : text;
+}
+
+/** The curve nearest a point (u, v) as `toPx` places them, read at u:
+ *  `{ trace, v }`, or null where no curve passes u. */
+function nearestCurve(curves, u, py, toPx) {
+  let best = null;
+  for (const curve of curves) {
+    const v = curveAt(curve, u);
+    if (v === null) continue;
+    const d = Math.abs(toPx.y(v) - py);
+    if (!best || d < best.d) best = { trace: curve.trace, v, d };
+  }
+  return best && { trace: best.trace, v: best.v };
+}
+
+/**
+ * What `cursors` read on `spec`: `[{ cursor, index, kind, u?, v?, color?,
+ * hits: [{ u, v, color, text }], text? }]` -- a point's hit its x and y,
+ * a line's each trace it crosses with the other value, and the line's own
+ * value as `text`. A point on no trace, or off its trace, reads nothing.
+ */
+function cursorReadings(spec, cursors = spec?.cursors || []) {
+  const xs = spec?.x?.scale || 'linear';
+  const ys = spec?.y?.scale || 'linear';
+  const curves = cursorCurves(spec);
+  const x = (u) => cursorLabel(fromU(xs, u));
+  const y = (v) => cursorLabel(fromU(ys, v));
+  return cursors.flatMap((cursor, index) => {
+    if (cursor.kind === 'point') {
+      const curve = curves.find((c) => c.trace === cursor.trace);
+      const u = toU(xs, cursor.x);
+      const v = curve && Number.isFinite(u) ? curveAt(curve, u) : null;
+      if (v === null) return [];
+      return [{ cursor, index, kind: 'point', u, v, color: curve.color, hits: [{ u, v, color: curve.color, text: `${x(u)}, ${y(v)}` }] }];
+    }
+    if (cursor.kind === 'vertical') {
+      const u = toU(xs, cursor.x);
+      if (!Number.isFinite(u)) return [];
+      const hits = curves.map((c) => ({ c, v: curveAt(c, u) })).filter(({ v }) => v !== null).map(({ c, v }) => ({ u, v, color: c.color, text: y(v) }));
+      return [{ cursor, index, kind: 'vertical', u, hits, text: x(u) }];
+    }
+    const v = toU(ys, cursor.y);
+    if (!Number.isFinite(v)) return [];
+    const hits = curves.flatMap((c) => curveCrossings(c, v).map((u) => ({ u, v, color: c.color, text: x(u) })));
+    return [{ cursor, index, kind: 'horizontal', v, hits, text: y(v) }];
+  });
+}
+
+/**
+ * Small texts placed beside their points, none over another or over a
+ * point, inside `pane`: `labels` `[{ x, y, text }]` (px), each tried
+ * up-right, down-right, up-left, down-left of its point, then further up
+ * and down; one with no clear place takes its first inside the pane.
+ * `size` is the text's height; widths are estimated. Returns `[{ x, y
+ * (baseline), anchor, text, box }]`.
+ */
+function placeCursorLabels(labels, pane, { size = 10, gap = 3 } = {}) {
+  const placed = [];
+  // Plot markup (^{}) takes no room of its own; a superscript is smaller.
+  const width = (text) => 0.58 * size * text.replace(/\^\{([^}]*)\}/g, (m, sup) => sup.slice(0, Math.ceil(0.7 * sup.length))).length;
+  const points = labels.map((l) => ({ x: l.x - gap, y: l.y - gap, w: 2 * gap, h: 2 * gap }));
+  const clear = (b) => ![...placed.map((p) => p.box), ...points].some((o) => b.x < o.x + o.w && o.x < b.x + b.w && b.y < o.y + o.h && o.y < b.y + b.h);
+  const inside = (b) => b.x >= pane.x && b.y >= pane.y && b.x + b.w <= pane.x + pane.w && b.y + b.h <= pane.y + pane.h;
+  for (const label of labels) {
+    const w = width(label.text);
+    const h = size;
+    const spots = [];
+    for (let row = 0; row < 5; row++) {
+      const up = label.y - gap - h - row * (h + 1);
+      const down = label.y + gap + row * (h + 1);
+      spots.push([label.x + gap, up], [label.x + gap, down], [label.x - gap - w, up], [label.x - gap - w, down]);
+    }
+    const boxes = spots.map(([x, y]) => ({ x, y, w, h })).filter(inside);
+    const box = boxes.find(clear) || boxes[0] || { x: Math.min(Math.max(pane.x, label.x + gap), pane.x + pane.w - w), y: Math.max(pane.y, label.y - gap - h), w, h };
+    placed.push({ x: box.x, y: box.y + 0.82 * h, anchor: 'start', text: label.text, box });
+  }
+  return placed;
+}
+
+/**
+ * The markers as drawing items on a pane: `toPx` `{ x(u), y(v) }` places
+ * a value, `pane` the plot's area. Returns `{ lines: [{ x1, y1, x2, y2 }],
+ * dots: [{ x, y, color }], texts }` (placeCursorLabels's), the lines and
+ * dots only those in the pane, the texts left out when `values` is false.
+ */
+function cursorLayout(spec, { toPx, pane, size = 10, values = spec?.cursorValues !== false, cursors = spec?.cursors || [] } = {}) {
+  const lines = [];
+  const dots = [];
+  const labels = [];
+  const within = (v, low, length) => v >= low - 0.5 && v <= low + length + 0.5;
+  for (const reading of cursorReadings(spec, cursors)) {
+    if (reading.kind === 'vertical') {
+      const px = toPx.x(reading.u);
+      if (!within(px, pane.x, pane.w)) continue;
+      lines.push({ x1: px, y1: pane.y, x2: px, y2: pane.y + pane.h, index: reading.index });
+      labels.push({ x: px, y: pane.y + pane.h, text: reading.text });
+    } else if (reading.kind === 'horizontal') {
+      const py = toPx.y(reading.v);
+      if (!within(py, pane.y, pane.h)) continue;
+      lines.push({ x1: pane.x, y1: py, x2: pane.x + pane.w, y2: py, index: reading.index });
+      labels.push({ x: pane.x, y: py, text: reading.text });
+    }
+    for (const hit of reading.hits) {
+      const x = toPx.x(hit.u);
+      const y = toPx.y(hit.v);
+      if (!within(x, pane.x, pane.w) || !within(y, pane.y, pane.h)) continue;
+      dots.push({ x, y, color: hit.color, index: reading.index, point: reading.kind === 'point' });
+      labels.push({ x, y, text: hit.text });
+    }
+  }
+  return { lines, dots, texts: values ? placeCursorLabels(labels, pane, { size }) : [] };
+}
+
+__exports.MAX_PLOT_CURSORS = MAX_PLOT_CURSORS;
+__exports.CURSOR_KINDS = CURSOR_KINDS;
+};
+
 __modules["src/core/plot-export.js"] = function (__require, __exports) {
 __exports.plainName = plainName;
 __exports.plotSeries = plotSeries;
@@ -39961,7 +40280,8 @@ function responseSpec(plot) {
     title: phase ? 'Phase responses' : 'Magnitude responses',
     x: { scale: 'log', label: plot.axis === 'normalized' ? 'f/f_{s}' : 'ω', range: [pow10(plot.range.low), pow10(plot.range.high)] },
     y: { scale: 'linear', label: phase ? `∠${name} (°)` : plot.units === 'dBFS' ? 'dBFS' : `|${name}| (dB)`, step: phase ? 45 : 20, floor: phase ? null : -400 },
-    series: plot.traces.filter((trace) => !trace.hidden).map((trace) => ({
+    series: plot.traces.map((trace, index) => ({ trace, index })).filter(({ trace }) => !trace.hidden).map(({ trace, index }) => ({
+      trace: index,
       label: trace.label,
       color: trace.color,
       role: trace.background ? 'background' : trace.start ? 'start' : 'curve',
@@ -39982,7 +40302,8 @@ function stepSpec(plot) {
     title: 'Step responses',
     x: { scale: 'linear', label: plot.unit === 'n' ? 'n (t/T_{s})' : 't', range: [plot.range.low, plot.range.high] },
     y: { scale: 'linear', label: 'step response', include: [0] },
-    series: plot.traces.map((trace) => ({
+    series: plot.traces.map((trace, index) => ({
+      trace: index,
       label: trace.label,
       color: trace.color,
       role: 'curve',
@@ -40011,7 +40332,7 @@ function dataSpec(plot) {
     title: 'Data',
     x: { scale: plot.x.scale, label: plot.x.label },
     y: { scale: plot.y.scale, label: plot.y.label },
-    series: plot.traces.map((trace) => ({ label: trace.label, color: trace.color, role: 'curve', points: trace.points.map(([x, y]) => [x, y]) })),
+    series: plot.traces.map((trace, index) => ({ trace: index, label: trace.label, color: trace.color, role: 'curve', points: trace.points.map(([x, y]) => [x, y]) })),
     vlines: [],
     hlines: plot.y.scale === 'linear' ? [{ y: 0, role: 'zero' }] : [],
   };
@@ -40028,7 +40349,8 @@ function swingSpec(plot) {
     title: 'Peak against input amplitude',
     x: { scale: 'linear', label: 'input (dBFS)', range: [plot.range.low, plot.range.high], step: 10 },
     y: { scale: 'linear', label: 'peak (dBFS)', step: 10, include: [-10, 10], ceiling: 40, floor: -200 },
-    series: plot.traces.map((trace) => ({
+    series: plot.traces.map((trace, index) => ({
+      trace: index,
       label: trace.label,
       color: trace.color,
       role: 'curve',
@@ -40066,7 +40388,7 @@ function locusSpec(plot) {
     y: { scale: 'linear', label: z ? 'Im z' : 'Im s', include: z ? [-1.1, 1.1] : [], symmetric: true },
     series: [
       ...(z ? [{ role: 'band', points: Array.from({ length: 97 }, (_, i) => [Math.cos((i * Math.PI) / 48), Math.sin((i * Math.PI) / 48)]), parametric: true }] : []),
-      { label: plot.label, color: plot.color, role: 'curve', dots: shown.map((p) => p.t), points: shown.map((p) => [p.re, p.im]) },
+      { trace: 0, label: plot.label, color: plot.color, role: 'curve', dots: shown.map((p) => p.t), points: shown.map((p) => [p.re, p.im]) },
     ],
     vlines: z ? [] : [{ x: 0, role: 'band' }],
     hlines: [{ y: 0, role: 'zero' }],
@@ -40132,21 +40454,30 @@ function waveSpec(traces, { start = 0, label = 'n' } = {}) {
   };
 }
 
+/** How many of a plot's traces are its own, before those added from
+ *  files: a series' `trace` id counts on from there. */
+const ownTraceCount = (plot) => (plot.kind === 'locus' ? 1 : plot.traces?.length || 0);
+
 /** The spec of any plot on the drawing that a window shows: an analysis
  *  plot with the traces added to it from files over its own, or a data
- *  plot. Null for a Bode sketch, which windows show as two plots. */
+ *  plot, and its markers (plot-cursors.js). Null for a Bode sketch, which
+ *  windows show as two plots. */
 function plotSpec(plot) {
-  const spec = plot.kind === 'data' ? dataSpec(plot)
+  const own = plot.kind === 'data' ? dataSpec(plot)
     : plot.kind === 'response' ? responseSpec(plot)
     : plot.kind === 'step' || plot.kind === 'wave' ? stepSpec(plot)
     : plot.kind === 'swing' ? swingSpec(plot)
     : plot.kind === 'locus' ? locusSpec(plot)
     : null;
-  if (!spec || !plot.extra) return spec;
+  if (!own) return own;
+  const spec = { ...own, ...(plot.cursors ? { cursors: plot.cursors } : {}), ...(plot.cursorValues === false ? { cursorValues: false } : {}) };
+  if (!plot.extra) return spec;
   const parametric = plot.kind === 'locus' ? { parametric: true } : {};
-  return { ...withExtraRange(spec, plot), series: [...spec.series, ...plot.extra.map((trace) => ({ label: trace.label, color: trace.color, role: 'curve', points: trace.points.map(([x, y]) => [x, y]), ...parametric }))] };
+  const base = ownTraceCount(plot);
+  return { ...withExtraRange(spec, plot), series: [...spec.series, ...plot.extra.map((trace, k) => ({ trace: base + k, label: trace.label, color: trace.color, role: 'curve', points: trace.points.map(([x, y]) => [x, y]), ...parametric }))] };
 }
 
+__exports.ownTraceCount = ownTraceCount;
 };
 
 __modules["src/core/png-export.js"] = function (__require, __exports) {
@@ -40292,8 +40623,12 @@ let BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth; __bind
 let TRANSFER_FUNCTION_TYPES; __bind(() => { ({ TRANSFER_FUNCTION_TYPES } = __require("src/core/transfer-function.js")); });
 let normalizePageGuide, pageGuideFrame; __bind(() => { ({ normalizePageGuide, pageGuideFrame } = __require("src/core/page-guide.js")); });
 let bodeFigure, dataFigure, locusFigure, responseFigure, stepFigure, swingFigure; __bind(() => { ({ bodeFigure, dataFigure, locusFigure, responseFigure, stepFigure, swingFigure } = __require("src/core/bode-figure.js")); });
+let cursorLayout; __bind(() => { ({ cursorLayout } = __require("src/core/plot-cursors.js")); });
+let plotSpec; __bind(() => { ({ plotSpec } = __require("src/core/plot-spec.js")); });
 let mathRuns; __bind(() => { ({ mathRuns } = __require("src/core/math-text.js")); });
 let joinSegments, stackOutline, stackedBoxes, wireEchoes; __bind(() => { ({ joinSegments, stackOutline, stackedBoxes, wireEchoes } = __require("src/core/box-stack.js")); });
+
+
 
 
 
@@ -40887,7 +41222,11 @@ function texToMathML(source) {
     if (GREEK_LOWER[name]) return mathMlAtom(GREEK_LOWER[name], 'mi');
     if (GREEK_UPPER[name]) return mathMlAtom(GREEK_UPPER[name], 'mi', 'mathvariant="normal"');
     if (commandSymbols[name]) return mathMlAtom(commandSymbols[name], 'mo');
-    if (name === ',' || name === ';' || name === '!') return '';
+    // TeX's spaces: a word space between a number and its unit (`2\ \text{dBFS}`), thin and medium ones.
+    if (name === ' ') return '<mspace width="0.25em"/>';
+    if (name === ',') return '<mspace width="0.1667em"/>';
+    if (name === ';') return '<mspace width="0.2778em"/>';
+    if (name === '!') return '';
     return mathMlAtom(name, 'mi');
   };
   // An atom that follows nothing, or follows an operator, starts an
@@ -41095,6 +41434,7 @@ const PLOT_STROKES = {
   band: { width: 3, dash: '18 9' },
   spectrum: { width: 3 },
   marker: { width: 3, dash: '18 9' },
+  cursor: { width: 2, dash: '10 6' },
 };
 
 /** A black-and-white plot's traces, told apart as a journal figure's are:
@@ -41155,11 +41495,12 @@ function plotAnnotationSvg(label, opacity = '') {
   // Its text is math (math-text.js), in the math font with math labels'
   // outline to give the light face their weight.
   const text = (item) => {
+    const size = item.size || fontSize;
     const runs = mathRuns(item.text).map((run) => (run.sub || run.super
-      ? `<tspan baseline-shift="${run.sub ? '-' : ''}${fmt(fontSize * 0.25)}" font-size="${fmt(fontSize * 0.68)}">${escapeSvg(run.text)}</tspan>`
+      ? `<tspan baseline-shift="${run.sub ? '-' : ''}${fmt(size * 0.25)}" font-size="${fmt(size * 0.68)}">${escapeSvg(run.text)}</tspan>`
       : escapeSvg(run.text))).join('');
     const turn = item.rotate ? ` transform="rotate(${item.rotate} ${fmt(item.x)} ${fmt(item.y)})"` : '';
-    return `<text x="${fmt(item.x)}" y="${fmt(item.y)}"${turn} text-anchor="${item.anchor}" font-family="${escapeSvg(MATH_FONT_FAMILY)}" font-size="${fmt(fontSize)}" fill="${color}" stroke="${color}" stroke-width="${fmt(fontSize * 0.02)}">${runs}</text>`;
+    return `<text x="${fmt(item.x)}" y="${fmt(item.y)}"${turn} text-anchor="${item.anchor}" font-family="${escapeSvg(MATH_FONT_FAMILY)}" font-size="${fmt(size)}" fill="${color}" stroke="${color}" stroke-width="${fmt(size * 0.02)}">${runs}</text>`;
   };
   // In black (the default), each curve takes the next dash; a simulated
   // spectrum behind them goes gray.
@@ -41188,6 +41529,17 @@ function plotAnnotationSvg(label, opacity = '') {
     if (item.type === 'text') return text(item);
     return '';
   }).join('');
+  // Its markers (plot-cursors.js): dashed lines, a dot at each value they
+  // read, the numbers small beside them.
+  const spec = plot.cursors && figure.toPx ? plotSpec(plot) : null;
+  const markers = spec ? (() => {
+    const layout = cursorLayout(spec, { toPx: figure.toPx, pane: figure.pane, size: 0.8 * fontSize, gap: 0.35 * fontSize });
+    return [
+      ...layout.lines.map((l) => `<line class="plot-cursor" x1="${fmt(l.x1)}" y1="${fmt(l.y1)}" x2="${fmt(l.x2)}" y2="${fmt(l.y2)}" ${stroke('cursor')} stroke-linecap="butt"/>`),
+      ...layout.dots.map((d) => `<circle class="plot-cursor-dot" cx="${fmt(d.x)}" cy="${fmt(d.y)}" r="${fmt((d.point ? 0.24 : 0.17) * fontSize)}" fill="${d.color && !black ? escapeSvg(d.color) : color}" stroke="#fff" stroke-width="${fmt(0.05 * fontSize)}"/>`),
+      ...layout.texts.map((t) => text({ ...t, size: 0.8 * fontSize })),
+    ].join('');
+  })() : '';
   // In black, each curve's legend entry has its line before it, in the
   // room left for it there (a lone curve's too); notes after them none.
   const samples = black && label.circuit
@@ -41205,7 +41557,7 @@ function plotAnnotationSvg(label, opacity = '') {
   // On its own paper (#fff takes the theme's paper), so the canvas grid
   // does not run through the plot's own.
   const paper = `<rect class="plot-paper" x="0" y="0" width="${fmt(w)}" height="${fmt(h)}" fill="#fff" stroke="none"/>`;
-  return `<g class="plot-annotation" transform="translate(${fmt(x)} ${fmt(y)})"${opacity}>${paper}${parts}${samples}</g>`;
+  return `<g class="plot-annotation" transform="translate(${fmt(x)} ${fmt(y)})"${opacity}>${paper}${parts}${markers}${samples}</g>`;
 }
 
 /**
@@ -48447,7 +48799,7 @@ function parseTone(text) {
   if (numbers.length !== 2) throw new Error(usage);
   const [amplitude, frequency] = numbers;
   if (typeof amplitude !== 'string' && !(amplitude >= 0 && Number.isFinite(amplitude))) throw new Error('a tone source needs an amplitude of 0 or more: 0.01 0.37');
-  if (typeof frequency !== 'string' && !(frequency >= 0 && frequency <= 0.5)) throw new Error('a tone source\'s f/fs is from 0 to 0.5: 0.01 0.37');
+  if (typeof frequency !== 'string' && !(frequency >= 0 && Number.isFinite(frequency))) throw new Error('a tone source\'s f/fs is 0 or more: 0.01 0.37');
   return { amplitude, frequency };
 }
 
@@ -60512,7 +60864,8 @@ let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
  * results above it, no buttons. Enter works the line out (core/calculator.js:
  * `20*log(123)`, `123e-12`, `4.7k`, `R = 10k`, `ans`); the last ten results
  * show, older ones scroll. Up and Down step through what was typed, and a
- * click on a result puts its value in the line. The results are saved with
+ * click on a result puts its value in the line; their text selects and
+ * copies as any text does. The results are saved with
  * the design (`Circuit#windows.calculator`), names given in them included,
  * so another design has its own and this one keeps them when it is closed
  * and opened again. `clear` typed in the line, or the Clear button, empties
@@ -60542,7 +60895,10 @@ function row(entry) {
   const item = el('li', { class: 'calculator-entry' }, [el('span', { class: 'calculator-input', text: entry.input }), result]);
   if (!entry.error) {
     item.title = 'Insert';
-    item.addEventListener('click', () => insert(entry.result.split(' ')[0]));
+    // A drag that selects text is left to copy it.
+    item.addEventListener('click', () => {
+      if (!String(window.getSelection?.() || '')) insert(entry.result.split(' ')[0]);
+    });
   }
   return item;
 }
@@ -64320,11 +64676,13 @@ __exports.installDataPlotUi = installDataPlotUi;
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 let MAX_DATA_TRACES, readTable, tableTraces; __bind(() => { ({ MAX_DATA_TRACES, readTable, tableTraces } = __require("src/core/csv-data.js")); });
 let TRACE_COLORS; __bind(() => { ({ TRACE_COLORS } = __require("src/core/analysis/signal-flow.js")); });
-let appendPlotTraces, fileUnits, inPlotUnits, movePlotTrace, placeDataPlot, removePlotTrace, replaceDataPlotTraces, setDataPlotAxis, setPlotCurveColors, setPlotTrace, setPlotTracesShown, setDataPlotView, takesFileTraces; __bind(() => { ({ appendPlotTraces, fileUnits, inPlotUnits, movePlotTrace, placeDataPlot, removePlotTrace, replaceDataPlotTraces, setDataPlotAxis, setPlotCurveColors, setPlotTrace, setPlotTracesShown, setDataPlotView, takesFileTraces } = __require("src/core/data-plot.js")); });
+let appendPlotTraces, fileUnits, inPlotUnits, movePlotTrace, placeDataPlot, removePlotTrace, replaceDataPlotTraces, setDataPlotAxis, setPlotCurveColors, setPlotCursors, setPlotTrace, setPlotTracesShown, setDataPlotView, takesFileTraces; __bind(() => { ({ appendPlotTraces, fileUnits, inPlotUnits, movePlotTrace, placeDataPlot, removePlotTrace, replaceDataPlotTraces, setDataPlotAxis, setPlotCurveColors, setPlotCursors, setPlotTrace, setPlotTracesShown, setDataPlotView, takesFileTraces } = __require("src/core/data-plot.js")); });
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
 let MAX_DATA_POINTS, MAX_PLOT_EXTRA, normalizePlot; __bind(() => { ({ MAX_DATA_POINTS, MAX_PLOT_EXTRA, normalizePlot } = __require("src/core/model.js")); });
 let COLOR_PALETTE; __bind(() => { ({ COLOR_PALETTE } = __require("src/core/style.js")); });
-let plotSpec; __bind(() => { ({ plotSpec } = __require("src/core/plot-spec.js")); });
+let ownTraceCount, plotSpec; __bind(() => { ({ ownTraceCount, plotSpec } = __require("src/core/plot-spec.js")); });
+let MAX_PLOT_CURSORS, cursorCurves, cursorNumber, cursorReadings; __bind(() => { ({ MAX_PLOT_CURSORS, cursorCurves, cursorNumber, cursorReadings } = __require("src/core/plot-cursors.js")); });
+let plainTex; __bind(() => { ({ plainTex } = __require("src/core/bode-figure.js")); });
 let createPlotView; __bind(() => { ({ createPlotView } = __require("src/web/plot-view.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
@@ -64344,6 +64702,8 @@ let alignLabelColumn, commit, render, setLabelSelection, setSelection; __bind(()
  * dialog adds a file's traces to that plot (Add file…), the plot's own shown
  * with them, or replaces them (Replace file…).
  */
+
+
 
 
 
@@ -64384,6 +64744,9 @@ function chooseDataFile(target = null, mode = 'replace') {
 }
 
 const SCALES = [['linear', 'Linear'], ['log', 'Log']];
+/** The markers' kinds: their button text and key. */
+const MARKERS = [['point', 'Point', 'm'], ['vertical', 'Vertical', 'v'], ['horizontal', 'Horizontal', 'h']];
+const MARKER_NAMES = { point: 'Point', vertical: 'Vertical', horizontal: 'Horizontal' };
 const capitalized = (name) => name[0].toUpperCase() + name.slice(1);
 
 /** Swatches a row in the palette over a trace's color. */
@@ -64451,12 +64814,33 @@ function select(label, id, choices, value, onchange) {
  * and `dispose()`.
  */
 function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, base = null } = {}) {
-  const view = createPlotView({ height: 260, wheel: 'always', className: 'data-plot-view' });
+  draft.cursors ||= [];
+  if (draft.cursorValues === undefined) draft.cursorValues = true;
+  const view = createPlotView({ height: 260, wheel: 'always', className: 'data-plot-view', onCursors: (next) => { draft.cursors = next; show(); refreshCursors(); } });
   const shown = () => draft.traces.filter((t) => !t.removed);
   const traces = () => shown().map(({ label, color, points }) => ({ label, color, points }));
+  // A point marker names its trace by id (plot-spec.js): the plot's own
+  // traces first, then these. Moved or removed, the markers follow.
+  const firstId = () => (base ? ownTraceCount(base) : 0);
+  const traceKey = (t) => (t.index !== undefined ? `o${t.index}` : `c${t.column}`);
+  const traceIds = () => new Map(shown().map((t, i) => [traceKey(t), firstId() + i]));
+  const keepCursors = (change) => {
+    const before = traceIds();
+    change();
+    const after = traceIds();
+    const keyOf = new Map([...before].map(([key, id]) => [id, key]));
+    draft.cursors = draft.cursors.flatMap((c) => {
+      if (c.kind !== 'point' || c.trace < firstId()) return [c];
+      const id = after.get(keyOf.get(c.trace));
+      return id === undefined ? [] : [{ ...c, trace: id }];
+    });
+    show();
+    refreshCursors();
+  };
   // A response plot's own curves as the draft shows or hides them.
   const withShown = (plot) => (draft.curves ? { ...plot, traces: plot.traces.map(({ hidden: _hidden, ...trace }, i) => ({ ...trace, color: draft.curves[i]?.color || trace.color, ...(draft.curves[i]?.on === false ? { hidden: true } : {}) })) } : plot);
-  const bare = () => (base ? normalizePlot({ ...withShown(base), extra: traces() }) : normalizePlot({ kind: 'data', x: draft.x, y: draft.y, traces: traces() }));
+  const marked = () => ({ cursors: draft.cursors, ...(draft.cursorValues ? {} : { cursorValues: false }) });
+  const bare = () => (base ? normalizePlot({ ...withShown(base), extra: traces(), ...marked() }) : normalizePlot({ kind: 'data', x: draft.x, y: draft.y, traces: traces(), ...marked() }));
   const show = ({ keepZoom = true } = {}) => {
     const zoom = keepZoom ? view.zoom() : null;
     const plot = bare();
@@ -64494,9 +64878,11 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, 
       const other = visible[visible.indexOf(trace) + step];
       const a = draft.traces.indexOf(trace);
       const b = draft.traces.indexOf(other);
-      [draft.traces[a], draft.traces[b]] = [draft.traces[b], draft.traces[a]];
-      if (onMove) onMove();
-      else { refresh(); show(); }
+      keepCursors(() => {
+        [draft.traces[a], draft.traces[b]] = [draft.traces[b], draft.traces[a]];
+        if (onMove) onMove();
+        else { refresh(); show(); }
+      });
     };
     if (base && !visible.length) {
       traceList.replaceChildren(el('p', { class: 'field-hint', text: 'No traces from files. Add file… adds them.' }));
@@ -64510,15 +64896,65 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, 
           onclick: (ev) => openPalette(ev.currentTarget, trace.color, (value) => { trace.color = value; refresh(); show(); }) }),
         el('input', { type: 'text', value: trace.label, 'aria-label': 'Trace name', spellcheck: 'false', oninput: (ev) => { trace.label = ev.target.value; show(); } }),
         el('button', { type: 'button', class: 'data-plot-trace-remove', text: '×', title: 'Remove', 'aria-label': `Remove ${trace.label}`, disabled: left < 2,
-          onclick: () => { if (onRemove) onRemove(trace); else { trace.removed = true; refresh(); show(); } } }),
+          onclick: () => keepCursors(() => { if (onRemove) onRemove(trace); else { trace.removed = true; refresh(); show(); } }) }),
       ]);
     }));
   };
+  // The markers: added by their buttons or keys, dragged on the plot, a
+  // line's place typed.
+  const cursorList = el('div', { class: 'data-plot-traces data-plot-markers', role: 'group', 'aria-label': 'Markers' });
+  const valuesBox = el('input', { type: 'checkbox', class: 'data-plot-marker-values', onchange: (ev) => { draft.cursorValues = ev.target.checked; show(); } });
+  valuesBox.checked = draft.cursorValues;
+  const addButtons = MARKERS.map(([kind, text, key]) => el('button', { type: 'button', class: 'data-plot-marker-add', 'data-kind': kind, text, title: `${text} marker (${key.toUpperCase()})`, onclick: () => add(kind) }));
+  const markerBar = el('div', { class: 'data-plot-marker-bar' }, [
+    el('span', { class: 'data-plot-marker-heading', text: 'Markers' }), ...addButtons,
+    el('label', { class: 'data-plot-check' }, [valuesBox, ' Values']),
+  ]);
+  const add = (kind) => {
+    if (draft.cursors.length >= MAX_PLOT_CURSORS) return;
+    if (!view.addCursor(kind)) logLine('no trace to put a point marker on', 'error');
+  };
+  const number = (text) => { const v = Number(String(text).trim()); return String(text).trim() && Number.isFinite(v) ? v : null; };
+  const setCursor = (i, next) => { draft.cursors = draft.cursors.map((c, k) => (k === i ? next : c)); show(); };
+  function refreshCursors() {
+    for (const button of addButtons) button.disabled = draft.cursors.length >= MAX_PLOT_CURSORS;
+    const spec = view.spec();
+    const curves = spec ? cursorCurves(spec) : [];
+    const readings = new Map((spec ? cursorReadings(spec) : []).map((r) => [r.index, r]));
+    cursorList.replaceChildren(...draft.cursors.map((cursor, i) => {
+      const axis = cursor.kind === 'horizontal' ? 'y' : 'x';
+      const field = el('input', { type: 'text', class: 'data-plot-marker-value', value: cursorNumber(cursor[axis]), 'aria-label': `${MARKER_NAMES[cursor.kind]} marker ${axis}`, spellcheck: 'false',
+        onchange: (ev) => { const v = number(ev.target.value); if (v === null) { ev.target.setAttribute('aria-invalid', 'true'); return; } ev.target.removeAttribute('aria-invalid'); setCursor(i, { ...draft.cursors[i], [axis]: v }); refreshCursors(); } });
+      const trace = cursor.kind === 'point' ? el('select', { class: 'data-plot-marker-trace', 'aria-label': 'Point marker trace', onchange: (ev) => { setCursor(i, { ...draft.cursors[i], trace: Number(ev.target.value) }); refreshCursors(); } },
+        curves.map((c) => el('option', { value: String(c.trace), text: plainTex(c.label) || `Trace ${c.trace + 1}`, selected: c.trace === cursor.trace }))) : null;
+      const read = readings.get(i);
+      const reads = cursor.kind === 'point' ? (read ? read.hits[0].text : 'off its trace') : read ? read.hits.map((h) => h.text).join(', ') : '';
+      return el('div', { class: 'data-plot-trace data-plot-marker' }, [
+        el('span', { class: 'data-plot-marker-kind', text: MARKER_NAMES[cursor.kind] }),
+        ...(trace ? [trace] : []),
+        el('span', { class: 'data-plot-marker-axis', text: `${axis} =` }), field,
+        el('span', { class: 'data-plot-marker-reads', text: reads }),
+        el('button', { type: 'button', class: 'data-plot-trace-remove', text: '×', title: 'Remove', 'aria-label': `Remove ${MARKER_NAMES[cursor.kind].toLowerCase()} marker`,
+          onclick: () => { draft.cursors = draft.cursors.filter((_, k) => k !== i); show(); refreshCursors(); } }),
+      ]);
+    }));
+  }
+  /** M, V, and H add a marker, unless a field is being typed in. */
+  const key = (ev) => {
+    if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.target.closest?.('input[type=text], input[type=number], textarea, select')) return;
+    const marker = MARKERS.find(([, , k]) => k === ev.key.toLowerCase());
+    if (!marker) return;
+    ev.preventDefault();
+    add(marker[0]);
+  };
   refresh();
   return {
-    parts: [view.el, el('p', { class: 'field-hint', text: 'Drag pans, right-drag zooms to a box, the wheel zooms, double-click fits. The plot on the drawing keeps this zoom. A trace lower in the list draws on top.' }), axes, ...(curveList ? [curveList] : []), traceList],
-    show,
+    parts: [view.el, el('p', { class: 'field-hint', text: 'Drag pans, right-drag zooms to a box, the wheel zooms, double-click fits. The plot on the drawing keeps this zoom. A trace lower in the list draws on top.' }), axes, ...(curveList ? [curveList] : []), traceList, markerBar, cursorList],
+    show: (options) => { show(options); refreshCursors(); },
     refresh,
+    key,
+    /** The markers as edited: `{ cursors, values }`. */
+    cursors: () => ({ cursors: draft.cursors, values: draft.cursorValues }),
     zoomTo: (range) => view.zoomTo(range),
     zoom: () => view.zoom(),
     /** The plot as shown, zoomed as shown (a zoom a log axis cannot show left out). */
@@ -64564,6 +65000,12 @@ function applyZoom(box, zoom) {
     return;
   }
   for (const axis of ['x', 'y']) setDataPlotView(box, axis, zoom?.[axis] && !(box.plot[axis].scale === 'log' && zoom[axis][0] <= 0) ? zoom[axis] : null);
+}
+
+/** The markers the plot editor set, on `box`. */
+function applyCursors(box, plotEdit) {
+  const { cursors, values } = plotEdit.cursors();
+  setPlotCursors(box, cursors, { values });
 }
 
 /** An analysis plot as the plot editor draws under its added traces. */
@@ -64721,12 +65163,14 @@ function openDataPlotDialog(text, name, target = null, { mode = 'replace' } = {}
         if (fresh.length) appendPlotTraces(editor.circuit, target, fresh.map(({ label, color, points }) => ({ label, color, points })), { file: name });
         applyOrder(editor.circuit, target, draft, [...ownLeft(draft), ...fresh]);
         applyZoom(target, zoom);
+        applyCursors(target, plotEdit);
         placed = { box: target, legend: editor.circuit.plotLegend(target) };
       } else if (target) {
         // Its axes, as edited here, and the zoom shown.
         const legend = replaceDataPlotTraces(editor.circuit, target, plot);
         for (const axis of ['x', 'y']) setDataPlotAxis(target, axis, plot[axis]);
         for (const axis of ['x', 'y']) setDataPlotView(target, axis, plot.view?.[axis] || null);
+        applyCursors(target, plotEdit);
         placed = { box: target, legend };
       } else placed = placeDataPlot(editor.circuit, plot);
     });
@@ -64750,6 +65194,7 @@ function openDataPlotDialog(text, name, target = null, { mode = 'replace' } = {}
     edited.y = true;
   }
   const dialog = el('dialog', { class: 'confirm-dialog data-plot-dialog', 'aria-label': 'Data plot' });
+  if (target?.plot) Object.assign(draft, { cursors: [...(target.plot.cursors || [])], cursorValues: target.plot.cursorValues !== false });
   dialog.append(
     el('h2', { text: adding ? `Add ${name} to the plot` : target ? `Read ${name} into the plot` : `Data plot from ${name}` }),
     el('h3', { class: 'data-plot-heading', text: 'File' }),
@@ -64758,7 +65203,7 @@ function openDataPlotDialog(text, name, target = null, { mode = 'replace' } = {}
     ...plotEdit.parts, status,
     el('div', { class: 'dialog-actions' }, [el('button', { type: 'button', value: 'cancel', text: 'Cancel', onclick: () => dialog.close() }), place]),
   );
-  dialog.addEventListener('keydown', (event) => event.stopPropagation());
+  dialog.addEventListener('keydown', (event) => { event.stopPropagation(); plotEdit.key(event); });
   dialog.addEventListener('close', () => {
     plotEdit.dispose();
     dialog.remove();
@@ -64777,7 +65222,8 @@ function openDataPlotDialog(text, name, target = null, { mode = 'replace' } = {}
 function openPlotSettings(box) {
   if (!takesFileTraces(box)) return;
   const data = box.plot.kind === 'data';
-  const draft = { x: { ...box.plot.x }, y: { ...box.plot.y }, traces: editedTraces(box.plot), curves: box.plot.kind === 'response' ? box.plot.traces.map((trace) => ({ label: trace.label, color: trace.color, on: !trace.hidden })) : null };
+  const draft = { x: { ...box.plot.x }, y: { ...box.plot.y }, traces: editedTraces(box.plot), curves: box.plot.kind === 'response' ? box.plot.traces.map((trace) => ({ label: trace.label, color: trace.color, on: !trace.hidden })) : null,
+    cursors: [...(box.plot.cursors || [])], cursorValues: box.plot.cursorValues !== false };
   const dialog = el('dialog', { class: 'confirm-dialog data-plot-dialog', 'aria-label': 'Plot settings' });
   const plotEdit = plotEditor(draft, { base: data ? null : analysisBase(box.plot) });
   const apply = () => {
@@ -64792,6 +65238,7 @@ function openPlotSettings(box) {
       applyDraft(editor.circuit, box, draft);
       applyOrder(editor.circuit, box, draft, ownLeft(draft));
       applyZoom(box, zoom);
+      applyCursors(box, plotEdit);
     });
     // Renamed entries are measured again: the column keeps its left edge and top.
     const legend = editor.circuit.plotLegend(box);
@@ -64820,7 +65267,7 @@ function openPlotSettings(box) {
       el('button', { type: 'button', class: 'primary-action', text: 'Apply', onclick: apply }),
     ]),
   );
-  dialog.addEventListener('keydown', (event) => event.stopPropagation());
+  dialog.addEventListener('keydown', (event) => { event.stopPropagation(); plotEdit.key(event); });
   dialog.addEventListener('close', closed, { once: true });
   document.body.append(dialog);
   dialog.showModal();
@@ -77672,7 +78119,7 @@ function renderCanvas(modelKey) {
           : { kind: labelMode, a: annotationStart || drag?.startWorld, b: drag?.previewEnd || cursor }
         : undefined,
     warnOverlaps: netWarnings,
-    wirePreview: wire ? currentWirePreview() : null,
+    wirePreview: wire && !drag?.trim ? currentWirePreview() : null,
     wireMode: !!wire,
     wireSource: wire?.source ? { ...wire.source } : undefined,
     terminalSnapTarget: terminalSnap && drag?.mode !== 'wirestroke' ? nearestSnapTarget(cursor) : null,
@@ -77812,6 +78259,7 @@ function cancelDrag() {
     return;
   }
   if (drag?.mode === 'pinwire' || drag?.mode === 'copygrab' || drag?.mode === 'knife') {
+    if (drag.mode === 'pinwire') cancelPreviewTransaction();
     drag = null;
     endGestureWire();
     render();
@@ -78806,7 +79254,8 @@ function pinWireCursor(w) {
 }
 
 /** Ctrl/Cmd-drag from inside a wire: a new branch grows from the grab point.
- *  A drag from a free wire end grows the wire from that end. */
+ *  A drag from a free wire end grows the wire from that end, or shortens it
+ *  back along itself (`trimWireEnd`). */
 function beginBranchWire(segDrag, w) {
   cancelPreviewTransaction();
   setSelection([]);
@@ -78823,10 +79272,10 @@ function beginBranchWire(segDrag, w) {
     return;
   }
   const fromEnd = !!segDrag.endGrab;
-  drag = { mode: 'pinwire', startWorld: segDrag.startWorld, startClient: segDrag.startClient, fromEnd };
+  drag = { mode: 'pinwire', startWorld: segDrag.startWorld, startClient: segDrag.startClient, fromEnd, ...(fromEnd ? { end: { ...segDrag.endGrab, path: circuit.nets.get(segDrag.endGrab.netId).paths()[segDrag.endGrab.pathIndex] }, startSnapshot: snapshot() } : {}) };
   noteTip('pin-drag');
   cursor = pinWireCursor(w);
-  hintLine(fromEnd ? 'WIRE: from its free end · drop on a pin, a wire, or a free end to join it, or in space to end there' : 'WIRE: branch · drop on a pin or wire, or in space to add a part');
+  hintLine(fromEnd ? 'WIRE: from its free end · drop on a pin, a wire, or a free end to join it, back along it to shorten it, or in space to end there' : 'WIRE: branch · drop on a pin or wire, or in space to add a part');
   render();
 }
 
@@ -78880,6 +79329,18 @@ function beginCopyDrag(grab, ev) {
   setLabelSelection(labels, labels[0], true);
   beginObjectMove(refs, labels, startWorld, startClient, { duplicate: true });
   canvasMouseMove(ev);
+}
+
+/** A free end dragged back along its own wire: the wire shown shortened to
+ *  `point` (a preview from the drag's start), or as it was off its wire. */
+function previewWireTrim(point) {
+  const { netId, pathIndex, endpointIndex, point: end, path } = drag.end;
+  if (drag.trim) cancelPreviewTransaction();
+  drag.trim = null;
+  if ((point.x === end.x && point.y === end.y) || !pointOnPath(point, path)) return;
+  beginPreviewTransaction(drag.startSnapshot);
+  if (circuit.trimWireEnd(netId, pathIndex, endpointIndex, point)) drag.trim = { ...point };
+  else cancelPreviewTransaction();
 }
 
 function endGestureWire() {
@@ -79565,8 +80026,9 @@ function canvasMouseDown(ev) {
         doubleWireClick,
         // Ctrl/Cmd-drag grows a new branch from this point instead of moving the run.
         branchGrab: (ev.ctrlKey || ev.metaKey) && !ev.shiftKey,
-        // A drag from a free end grows the wire from that end, any way.
-        endGrab: isSelectionModifier(ev) ? null : openWireEndNear(net, startWorld),
+        // A drag from a free end grows the wire from that end, any way, or
+        // back along it shortens it; a selected wire's end moves the wire.
+        endGrab: isSelectionModifier(ev) || selectedWires.has(key) ? null : openWireEndNear(net, startWorld),
       },
     });
     return;
@@ -80076,6 +80538,7 @@ function canvasMouseMove(ev) {
     const key = `${next.x},${next.y}`;
     if (drag.drawnEnd === key) return;
     drag.drawnEnd = key;
+    if (drag.end) previewWireTrim(next);
     scheduleInteractionRender();
     return;
   }
@@ -80576,8 +81039,16 @@ function finishCanvasMouseUp(ev) {
     return;
   }
   if (drag.mode === 'pinwire') {
-    const { fromEnd } = drag;
+    const { fromEnd, trim, startSnapshot } = drag;
     drag = null;
+    if (trim && previewTransaction) {
+      markModelChanged();
+      recordHistoryEntry(startSnapshot, true, 'none');
+      commitPreviewTransaction();
+      endGestureWire();
+      render();
+      return;
+    }
     finishPinWire(releaseWorld, ev, { fromEnd });
     return;
   }
@@ -86342,6 +86813,7 @@ __exports.createPlotView = createPlotView;
 __exports.linkPlots = linkPlots;
 let mathRuns; __bind(() => { ({ mathRuns } = __require("src/core/math-text.js")); });
 let axisTicks, fitRange, logMinorGrid, fromU, thinSeries, toU, valueAt, zoomAbout, zoomAxes; __bind(() => { ({ axisTicks, fitRange, logMinorGrid, fromU, thinSeries, toU, valueAt, zoomAbout, zoomAxes } = __require("src/core/plot-scale.js")); });
+let cursorCurves, cursorLayout, nearestCurve; __bind(() => { ({ cursorCurves, cursorLayout, nearestCurve } = __require("src/core/plot-cursors.js")); });
 /**
  * The one interactive plot every analysis view uses (responses, steps,
  * swing, root locus, loop gain, Bode, the optimizer's run, the
@@ -86357,11 +86829,16 @@ let axisTicks, fitRange, logMinorGrid, fromU, thinSeries, toU, valueAt, zoomAbou
  * - double-click, or the Fit button that shows once zoomed, fits it all;
  * - hovering reads each curve at the pointer.
  *
+ * A spec's markers (core/plot-cursors.js) are drawn with their numbers;
+ * given `onCursors`, a marker drags (a point along the trace nearest the
+ * pointer) and `addCursor` places one where the pointer is.
+ *
  * A spec with `refine(xRange)` draws its curves again for the frequencies
  * in view as it is zoomed, so a close look has its own points. New data
  * keeps a zoomed view (the plot follows the data only until it is
  * zoomed); a spec with another `key` starts afresh.
  */
+
 
 
 
@@ -86405,10 +86882,11 @@ const plain = (tex) => String(tex || '').replace(/\\text\{([^{}]*)\}/g, '$1').re
  * wheel scrolls the page) or 'always'. `onView(view)` hears each change of
  * view (u coordinates), to link plots. `xAxis: false` leaves out the x
  * axis's numbers and name: the top plot of a stack whose bottom one shows
- * them for both (linkPlots). Returns `{ el, set(spec), fit(),
- * setXView(range), dispose() }`.
+ * them for both (linkPlots). `onCursors(cursors)` hears the markers
+ * moved or added. Returns `{ el, set(spec), fit(), setXView(range),
+ * addCursor(kind), dispose() }`.
  */
-function createPlotView({ height = 230, fill = false, aspect = null, maxHeight = 520, wheel = 'modifier', onView = null, className = '', xAxis = true } = {}) {
+function createPlotView({ height = 230, fill = false, aspect = null, maxHeight = 520, wheel = 'modifier', onView = null, className = '', xAxis = true, onCursors = null } = {}) {
   const margin = xAxis ? MARGIN : { ...MARGIN, bottom: 6 };
   const el = document.createElement('div');
   el.className = `plot-view${className ? ` ${className}` : ''}`;
@@ -86590,6 +87068,18 @@ function createPlotView({ height = 230, fill = false, aspect = null, maxHeight =
     }
     root.append(body);
     root.append(svg('rect', { x: p.x, y: p.y, width: p.w, height: p.h, rx: PANE_RADIUS, class: 'plot-frame' }));
+    if (spec.cursors?.length) {
+      const layout = cursorLayout(spec, { toPx: { x: X, y: Y }, pane: p, size: 11, gap: 4 });
+      const marks = svg('g', { class: 'plot-markers' });
+      for (const line of layout.lines) marks.append(svg('line', { ...line, index: undefined, class: 'plot-marker-line' }));
+      for (const dot of layout.dots) {
+        const node = svg('circle', { cx: dot.x, cy: dot.y, r: dot.point ? 4 : 2.5, class: 'plot-marker-dot' });
+        if (dot.color) node.style.fill = dot.color;
+        marks.append(node);
+      }
+      for (const text of layout.texts) marks.append(markupText(text.text, { x: text.x, y: text.y, 'text-anchor': text.anchor, class: 'plot-marker-value' }));
+      root.append(marks);
+    }
     // Marked lines' names at the top, inside, clear of the edge.
     for (const mark of marks) {
       const right = mark.at > p.x + p.w / 2;
@@ -86642,6 +87132,62 @@ function createPlotView({ height = 230, fill = false, aspect = null, maxHeight =
 
   const schedule = () => { if (!frame) frame = requestAnimationFrame(render); };
 
+  // ----- markers -----
+  const toPx = { x: (u) => X(u), y: (v) => Y(v) };
+  /** The marker under a pane point (px): its index, or -1; points first. */
+  function cursorAt(at) {
+    if (!onCursors || !spec?.cursors?.length || !view) return -1;
+    size = measure();
+    const layout = cursorLayout(spec, { toPx, pane: pane(), values: false });
+    const dot = layout.dots.find((d) => d.point && Math.hypot(d.x - at.x, d.y - at.y) <= 7);
+    if (dot) return dot.index;
+    const line = layout.lines.find((l) => (l.x1 === l.x2 ? Math.abs(l.x1 - at.x) <= 5 && at.y >= l.y1 && at.y <= l.y2 : Math.abs(l.y1 - at.y) <= 5 && at.x >= l.x1 && at.x <= l.x2));
+    return line ? line.index : -1;
+  }
+  /** Marker `index` moved to a pane point (px). */
+  function moveCursor(index, at) {
+    const cursor = spec.cursors[index];
+    const p = pane();
+    const px = Math.max(p.x, Math.min(p.x + p.w, at.x));
+    const py = Math.max(p.y, Math.min(p.y + p.h, at.y));
+    let next = cursor;
+    if (cursor.kind === 'vertical') next = { kind: 'vertical', x: fromU(scaleX(), atX(px)) };
+    else if (cursor.kind === 'horizontal') next = { kind: 'horizontal', y: fromU(scaleY(), atY(py)) };
+    else {
+      const near = nearestCurve(cursorCurves(spec), atX(px), py, toPx);
+      if (near) next = { kind: 'point', trace: near.trace, x: fromU(scaleX(), atX(px)) };
+    }
+    if (next !== cursor) onCursors(spec.cursors.map((c, i) => (i === index ? next : c)));
+  }
+  /** A marker of `kind` where the pointer is (else the middle of the
+   *  view): a point on the trace nearest it. Returns whether one was added. */
+  function addCursor(kind) {
+    if (!onCursors || !spec || !view) return false;
+    size = measure();
+    const p = pane();
+    const inside = hover && hover.px >= p.x && hover.px <= p.x + p.w && hover.py >= p.y && hover.py <= p.y + p.h;
+    const at = inside ? { x: hover.px, y: hover.py } : { x: p.x + p.w / 2, y: p.y + p.h / 2 };
+    let cursor;
+    if (kind === 'vertical') cursor = { kind, x: fromU(scaleX(), atX(at.x)) };
+    else if (kind === 'horizontal') cursor = { kind, y: fromU(scaleY(), atY(at.y)) };
+    else {
+      const curves = cursorCurves(spec);
+      let near = nearestCurve(curves, atX(at.x), at.y, toPx);
+      let u = atX(at.x);
+      // Off every trace there: the middle of the first trace in view.
+      if (!near && curves.length) {
+        const shown = curves[0].points.filter(([pu, pv]) => pv !== null && pu >= view.x[0] && pu <= view.x[1]);
+        const pick = (shown.length ? shown : curves[0].points)[Math.floor((shown.length || curves[0].points.length) / 2)];
+        u = pick[0];
+        near = { trace: curves[0].trace };
+      }
+      if (!near) return false;
+      cursor = { kind: 'point', trace: near.trace, x: fromU(scaleX(), u) };
+    }
+    onCursors([...(spec.cursors || []), cursor]);
+    return true;
+  }
+
   function refine() {
     clearTimeout(refineTimer);
     if (!spec?.refine) return;
@@ -86688,6 +87234,21 @@ function createPlotView({ height = 230, fill = false, aspect = null, maxHeight =
     const start = local(ev);
     const startView = view;
     let moved = false;
+    const grabbed = ev.button === 0 ? cursorAt(start) : -1;
+    if (grabbed >= 0) {
+      el.classList.add('dragging-marker');
+      const drag = (e) => { const at = local(e); hover = null; moveCursor(grabbed, at); };
+      const drop = () => {
+        el.removeEventListener('pointermove', drag);
+        el.removeEventListener('pointerup', drop);
+        el.removeEventListener('pointercancel', drop);
+        el.classList.remove('dragging-marker');
+      };
+      el.addEventListener('pointermove', drag);
+      el.addEventListener('pointerup', drop);
+      el.addEventListener('pointercancel', drop);
+      return;
+    }
     if (ev.button === 2) box = { from: start, to: start, axes: null };
     else el.classList.add('panning');
     const move = (e) => {
@@ -86738,7 +87299,7 @@ function createPlotView({ height = 230, fill = false, aspect = null, maxHeight =
     el.addEventListener('pointercancel', end);
   });
   el.addEventListener('pointermove', (ev) => {
-    if (box || el.classList.contains('panning')) return;
+    if (box || el.classList.contains('panning') || el.classList.contains('dragging-marker')) return;
     const at = local(ev);
     hover = { px: at.x, py: at.y };
     schedule();
@@ -86790,6 +87351,9 @@ function createPlotView({ height = 230, fill = false, aspect = null, maxHeight =
       clearTimeout(refineTimer);
       refineTimer = setTimeout(refine, 120);
     },
+    addCursor,
+    /** The spec shown. */
+    spec: () => spec,
     zoomed: () => !following,
     /** The zoomed view's limits in the data's units, `{ x, y }`; null when it shows it all. */
     zoom: () => (spec && view && !following ? { x: view.x.map((u) => fromU(scaleX(), u)), y: view.y.map((u) => fromU(scaleY(), u)) } : null),
@@ -90679,8 +91243,9 @@ function writePlot(target, plot, shown, { identity = null } = {}) {
     const base = (label) => String(label).split(',\\ ')[0];
     const wasHidden = (trace) => before.some((old) => old.hidden && (old.hold ? old.hold === trace.hold : !trace.hold && base(old.label) === base(trace.label) && !!old.background === !!trace.background));
     if (Array.isArray(plot.traces) && before.some((old) => old.hidden)) plot = { ...plot, traces: plot.traces.map((trace) => (wasHidden(trace) ? { ...trace, hidden: true } : trace)) };
-    // Traces added from files stay through an update.
-    target.plot = normalizePlot(target.plot?.extra ? { ...plot, extra: target.plot.extra } : plot);
+    // Traces added from files, and the markers, stay through an update.
+    const { extra, cursors, cursorValues } = target.plot || {};
+    target.plot = normalizePlot({ ...plot, ...(extra ? { extra } : {}), ...(cursors ? { cursors } : {}), ...(cursorValues === false ? { cursorValues } : {}) });
     // A plot from before figures is this tool's from now on.
     if (figure && !target.figure) target.figure = figure;
     for (const label of legendOf(target)) circuit.removeLabel(label.id);

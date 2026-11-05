@@ -135,6 +135,17 @@ columns separated by spaces (`src/core/csv-data.js`, `src/core/data-plot.js`,
   (×2π) and a magnitude in dB or as a ratio (20 log10). Updating the plot
   from its analysis keeps them. A Bode sketch takes none, and a
   double-click on it opens nothing.
+- **Markers** in the plot editor (`plot.cursors`, `src/core/plot-cursors.js`),
+  up to 8: **Point** (`m`) sits on the trace nearest the pointer and reads
+  its x and y; **Vertical** (`v`) and **Horizontal** (`h`) lines read each
+  trace's y, or x, where they cross it. Each is placed where the pointer
+  is, drags on the plot (a point to the trace nearest the pointer), and
+  takes a typed x or y (a point its trace too). The numbers go small
+  beside what they read, clear of one another; **Values** off leaves them
+  out (`cursorValues: false`). The drawing's plot shows them as the
+  editor does. A point names its trace by id (the plot's own traces from
+  0, then those from files), followed when traces move or go; an update
+  from the analysis keeps the markers.
 - A renamed trace's legend entry keeps its left edge beside the plot, and
   a legend entry renamed on the drawing renames its trace.
 - `annotation dataplot FILE` places a plot from the CLI, which reads the

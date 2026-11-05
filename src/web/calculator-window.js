@@ -3,7 +3,8 @@
  * results above it, no buttons. Enter works the line out (core/calculator.js:
  * `20*log(123)`, `123e-12`, `4.7k`, `R = 10k`, `ans`); the last ten results
  * show, older ones scroll. Up and Down step through what was typed, and a
- * click on a result puts its value in the line. The results are saved with
+ * click on a result puts its value in the line; their text selects and
+ * copies as any text does. The results are saved with
  * the design (`Circuit#windows.calculator`), names given in them included,
  * so another design has its own and this one keeps them when it is closed
  * and opened again. `clear` typed in the line, or the Clear button, empties
@@ -33,7 +34,10 @@ function row(entry) {
   const item = el('li', { class: 'calculator-entry' }, [el('span', { class: 'calculator-input', text: entry.input }), result]);
   if (!entry.error) {
     item.title = 'Insert';
-    item.addEventListener('click', () => insert(entry.result.split(' ')[0]));
+    // A drag that selects text is left to copy it.
+    item.addEventListener('click', () => {
+      if (!String(window.getSelection?.() || '')) insert(entry.result.split(' ')[0]);
+    });
   }
   return item;
 }

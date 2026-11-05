@@ -163,6 +163,24 @@ describe('editor chrome', { skip: browserSkip() }, () => {
     assert.ok(corners.every((n) => n === 4), `${corners}`);
   });
 
+  test('a calculator expression selects with the mouse; a click on a result still inserts it', async () => {
+    await h.evaluate(`(() => { const line = document.querySelector('.calculator-line'); line.value = '20*log(123)'; line.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+    await h.until(`!!document.querySelector('.calculator-entry:last-child .calculator-input')`);
+    assert.equal(await style('.calculator-entry:last-child .calculator-input', 'user-select'), 'text');
+    const box = await h.evaluate(`(() => { const r = document.querySelector('.calculator-entry:last-child .calculator-input').getBoundingClientRect(); return { x: r.left, y: r.top + r.height / 2, w: r.width }; })()`);
+    await h.mouse('mouseMoved', box.x + 1, box.y);
+    await h.mouse('mousePressed', box.x + 1, box.y);
+    await h.mouse('mouseMoved', box.x + box.w - 1, box.y, { buttons: 1 });
+    await h.mouse('mouseReleased', box.x + box.w - 1, box.y);
+    await h.settle();
+    assert.equal(await h.evaluate(`String(window.getSelection())`), '20*log(123)');
+    assert.equal(await h.evaluate(`document.querySelector('.calculator-line').value`), '', 'selecting is not inserting');
+    await h.evaluate(`window.getSelection().removeAllRanges()`);
+    await h.click('.calculator-entry:last-child');
+    assert.match(await h.evaluate(`document.querySelector('.calculator-line').value`), /^41\.7/);
+    await h.evaluate(`document.querySelector('.calculator-line').value = ''`);
+  });
+
   test('window state never makes a design unsaved; an edit does, and leaving it asks to save, discard, or keep editing', async () => {
     await h.open('amplifier');
     assert.equal(await unsaved(), false);

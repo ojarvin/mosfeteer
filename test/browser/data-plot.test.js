@@ -114,6 +114,49 @@ describe('data plot', { skip: browserSkip() }, () => {
     assert.deepEqual(undone.legend, ['Ua', 'Ub']);
   });
 
+  test('Plot settings… places markers by key or button, drags them, takes a typed place, and the drawing shows them', async () => {
+    const before = await plot();
+    const p = await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.worldToClient(${before.box.x + before.box.w / 2}, ${before.box.y + before.box.h / 2}))`);
+    await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
+    await h.tap(p.x, p.y, { button: 'right' });
+    await h.until(`!document.querySelector('.component-context-menu').hidden`);
+    await h.evaluate(`${button('.component-context-menu', 'Plot settings')}.click()`);
+    await h.until(`!!document.querySelector('.data-plot-dialog .plot-view svg path')`);
+    const pane = await h.evaluate(`(() => { const r = document.querySelector('.data-plot-dialog .plot-view svg .plot-paper').getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; })()`);
+    const key = (k) => h.evaluate(`document.querySelector('.data-plot-dialog').dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, bubbles: true }))`);
+    // V over the plot: a vertical line where the pointer is; M a point on the trace nearest it.
+    await h.mouse('mouseMoved', pane.x + pane.w / 2, pane.y + pane.h / 2, { button: 'none', buttons: 0 });
+    await key('v');
+    await key('m');
+    await h.evaluate(`${button('.data-plot-marker-bar', 'Horizontal')}.click()`);
+    await h.settle();
+    const kinds = await h.evaluate(`[...document.querySelectorAll('.data-plot-marker-kind')].map((k) => k.textContent)`);
+    assert.deepEqual(kinds, ['Vertical', 'Point', 'Horizontal']);
+    assert.equal(await h.evaluate(`document.querySelectorAll('.data-plot-dialog .plot-marker-line').length`), 2);
+    assert.ok(await h.evaluate(`document.querySelectorAll('.data-plot-dialog .plot-marker-value').length`) >= 4);
+    // The vertical line at a typed x.
+    await h.evaluate(`(() => { const f = document.querySelectorAll('.data-plot-marker-value')[0]; f.value = '100'; f.dispatchEvent(new Event('change')); })()`);
+    // The horizontal line dragged down: its y falls.
+    const line = await h.evaluate(`(() => { const l = [...document.querySelectorAll('.data-plot-dialog .plot-marker-line')].find((l) => l.getAttribute('y1') === l.getAttribute('y2')); const r = document.querySelector('.data-plot-dialog .plot-view svg').getBoundingClientRect(); return { x: r.x + Number(l.getAttribute('x1')) + 30, y: r.y + Number(l.getAttribute('y1')) }; })()`);
+    const yBefore = await h.evaluate(`document.querySelectorAll('.data-plot-marker-value')[2].value`);
+    await h.mouse('mouseMoved', line.x, line.y, { button: 'none', buttons: 0 });
+    await h.mouse('mousePressed', line.x, line.y);
+    await h.mouse('mouseMoved', line.x, line.y + 30, { button: 'left', buttons: 1 });
+    await h.mouse('mouseReleased', line.x, line.y + 30);
+    await h.settle();
+    assert.ok(Number(await h.evaluate(`document.querySelectorAll('.data-plot-marker-value')[2].value`)) < Number(yBefore));
+    // Typing M in a field types it.
+    assert.equal(await h.evaluate(`(() => { const f = document.querySelector('.data-plot-marker-value'); const e = new KeyboardEvent('keydown', { key: 'm', bubbles: true, cancelable: true }); f.dispatchEvent(e); return e.defaultPrevented; })()`), false);
+    await h.evaluate(`${button('.data-plot-dialog', 'Apply')}.click()`);
+    await h.until(`!document.querySelector('.data-plot-dialog')`);
+    const after = await plot();
+    assert.deepEqual(after.plot.cursors.map((c) => c.kind), ['vertical', 'point', 'horizontal']);
+    assert.equal(after.plot.cursors[0].x, 100);
+    assert.ok(await h.evaluate(`document.querySelectorAll('#canvas .plot-annotation .plot-cursor').length`) >= 1);
+    await h.key('z', { ctrlKey: true });
+    assert.equal((await plot()).plot.cursors, undefined);
+  });
+
   test('a legend entry renamed on the drawing keeps its left edge beside the plot, and names its trace', async () => {
     const id = (await editor(`editor.circuit.plotLegend([...editor.circuit.labels.values()].find((l) => l.plot))[0].id`));
     const left = () => editor(`editor.circuit.labels.get(${JSON.stringify(id)}).bbox().x`);

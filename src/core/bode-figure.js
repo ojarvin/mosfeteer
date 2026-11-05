@@ -369,7 +369,8 @@ export function responseFigure(plot, { width = 480, height = 260, fontSize = 11 
     x: plot.axis === 'normalized' ? 'Frequency (f/f_{s})' : 'Angular frequency (rad/s)',
     y: phase ? `Phase ∠${name} (°)` : plot.units === 'dBFS' ? 'Magnitude (dBFS)' : `Magnitude |${name}| (dB)`,
   });
-  return { width, height, items: plot.view ? clipToPane(items, pane) : items, pane, ranges: { db: [dbLow, dbHigh] } };
+  const toPx = { x: xAt, y: (db) => pane.y + ((dbHigh - db) / (dbHigh - dbLow)) * pane.h };
+  return { width, height, items: plot.view ? clipToPane(items, pane) : items, pane, ranges: { db: [dbLow, dbHigh] }, toPx };
 }
 
 /**
@@ -430,7 +431,7 @@ export function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = 
     x: plot.unit === 'n' ? 'Sample n (t/T_{s})' : 'Time (s)',
     y: plot.kind === 'wave' ? 'Value (arb. units)' : 'Step response (arb. units)',
   });
-  return { width, height, items: plot.view ? clipToPane(items, pane) : items, pane, ranges: { y: [yLow, yHigh] } };
+  return { width, height, items: plot.view ? clipToPane(items, pane) : items, pane, ranges: { y: [yLow, yHigh] }, toPx: { x, y: (v) => pane.y + ((yHigh - v) / (yHigh - yLow)) * pane.h } };
 }
 
 /**
@@ -492,7 +493,7 @@ export function dataFigure(plot, { width = 480, height = 260, fontSize = 11 } = 
     flush();
   });
   axisTitles(items, pane, em, { x: plot.x?.label || '', y: plot.y?.label || '' });
-  return { width, height, items: clipToPane(items, pane), pane, ranges: { x: [x0, x1], y: [y0, y1] } };
+  return { width, height, items: clipToPane(items, pane), pane, ranges: { x: [x0, x1], y: [y0, y1] }, toPx: { x, y } };
 }
 
 /** 1, 2, or 5 times a power of ten, near `rough`. */
@@ -565,7 +566,7 @@ export function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } =
   });
   items.push(...extraPaths(plot, x, (db) => pane.y + ((dbHigh - db) / (dbHigh - dbLow)) * pane.h, pane, plot.traces.length));
   axisTitles(items, pane, em, { x: 'Input amplitude (dBFS)', y: 'Peak swing (dBFS)' });
-  return { width, height, items: plot.view ? clipToPane(items, pane) : items, pane, ranges: { db: [dbLow, dbHigh] } };
+  return { width, height, items: plot.view ? clipToPane(items, pane) : items, pane, ranges: { db: [dbLow, dbHigh] }, toPx: { x, y: (db) => pane.y + ((dbHigh - db) / (dbHigh - dbLow)) * pane.h } };
 }
 
 /** A trace's TeX name as plot text, which knows only `_{}` and `^{}`:
@@ -720,5 +721,5 @@ export function locusFigure(plot, { width = 480, height = 260, fontSize = 11 } =
     items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 2.1 * em, text, anchor: 'start', role: 'marker' });
   }
   axisTitles(items, pane, em, { x: z ? 'Real part (Re z)' : 'Real part (Re s)', y: z ? 'Imaginary part (Im z)' : 'Imaginary part (Im s)' });
-  return { width, height, items, pane };
+  return { width, height, items, pane, toPx: { x, y } };
 }

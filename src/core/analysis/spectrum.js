@@ -63,6 +63,12 @@ export function outputSpectrum(samples, { variance = 1 / 3, segment = samples.le
   return { points, power, n, w1, w2, variance, averages };
 }
 
+/** Where a sampled sine of `frequency` (f/fs, any) shows: its alias, 0 to 0.5. */
+export function aliasedFrequency(frequency) {
+  const r = frequency - Math.floor(frequency);
+  return Math.min(r, 1 - r);
+}
+
 /**
  * The spectrum in dBFS per bin: a full-scale sine (amplitude `fullScale`)
  * reads 0 dBFS in its bin -- the window's coherent gain taken out, so white
@@ -85,7 +91,7 @@ export function dbfsOffset(spectrum, fullScale, { noise, amplitude }) {
 }
 
 /**
- * The simulated SNDR in band: the tone's bins (the input frequency, a Hann
+ * The simulated SNDR in band: the tone's bins (the input frequency's alias, a Hann
  * window spreading it over three either side) against every other bin of
  * the band (a tone at DC, f/fs 0, its power the DC's square). `band`
  * `{ f0, bw }` as bandEdges reads it; returns `{ sndr, enob, noiseDb }`
@@ -96,7 +102,7 @@ export function inBand(spectrum, frequency, edges, { fullScale = 1 } = {}) {
   if (!spectrum || !edges.length) return null;
   const { power, n, w2 } = spectrum;
   const [f1, f2] = edges.length === 2 ? edges : [0, edges[0]];
-  const tone = Math.round(frequency * n);
+  const tone = Math.round(aliasedFrequency(frequency) * n);
   let signal = 0;
   let noise = 0;
   for (let k = Math.max(tone ? 1 : 0, Math.ceil(f1 * n)); k <= Math.min(n / 2, Math.floor(f2 * n)); k++) {
@@ -125,7 +131,7 @@ export function inBand(spectrum, frequency, edges, { fullScale = 1 } = {}) {
 export function plotSpectrum(spectrum, frequency, { bins = 600 } = {}) {
   if (!spectrum) return [];
   const { points, n } = spectrum;
-  const tone = Math.round(frequency * n);
+  const tone = Math.round(aliasedFrequency(frequency) * n);
   const low = Math.log10(points[0].f);
   const high = Math.log10(0.5);
   const out = [];

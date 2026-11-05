@@ -2435,6 +2435,30 @@ test('openWireEnds lists free ends of floating wires and stubs, not terminals or
   assert.deepEqual(endsOf(tee), ['0,200', '160,200', '80,280']);
 });
 
+test('trimWireEnd shortens a wire from its free end, past a corner too, and refuses to cut off a pin or a branch', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  const stub = c.createWireNet({ branches: [[{ x: 80, y: 0 }, { x: 240, y: 0 }, { x: 240, y: 160 }]] });
+  c.connectTo(stub.id, 'R1.b');
+  const end = () => c.openWireEnds().find((e) => e.netId === stub.id);
+  const trim = (point) => c.trimWireEnd(stub.id, end().pathIndex, end().endpointIndex, point);
+  assert.equal(trim({ x: 240, y: 80 }), true);
+  assert.deepEqual(c.nets.get(stub.id).paths(), [[{ x: 80, y: 0 }, { x: 240, y: 0 }, { x: 240, y: 80 }]]);
+  // Past the corner: the corner goes with it.
+  assert.equal(trim({ x: 160, y: 0 }), true);
+  assert.deepEqual(c.nets.get(stub.id).paths(), [[{ x: 80, y: 0 }, { x: 160, y: 0 }]]);
+  // Not on its wire, onto its pin, or onto its own end: nothing changes.
+  assert.equal(trim({ x: 160, y: 40 }), false);
+  assert.equal(trim({ x: 80, y: 0 }), false);
+  assert.equal(trim({ x: 160, y: 0 }), false);
+  assert.deepEqual(c.nets.get(stub.id).paths(), [[{ x: 80, y: 0 }, { x: 160, y: 0 }]]);
+  // A branch tees into the stretch that would go: refused.
+  const tee = c.createWireNet({ branches: [[{ x: 400, y: 200 }, { x: 640, y: 200 }], [{ x: 560, y: 200 }, { x: 560, y: 320 }]] });
+  const right = c.openWireEnds().find((e) => e.netId === tee.id && e.point.x === 640);
+  assert.equal(c.trimWireEnd(tee.id, right.pathIndex, right.endpointIndex, { x: 480, y: 200 }), false);
+  assert.equal(c.trimWireEnd(tee.id, right.pathIndex, right.endpointIndex, { x: 600, y: 200 }), true);
+});
+
 test('splitting a merged net clears its stale name warning', () => {
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });

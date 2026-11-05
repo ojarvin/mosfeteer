@@ -9,8 +9,8 @@ test('colors live in the theme tokens: no raw color outside a custom property', 
   const raw = css.split('\n')
     .map((line, i) => ({ line: line.trim(), at: i + 1 }))
     .filter(({ line }) => !line.startsWith('--') && !line.startsWith('/*') && !line.startsWith('*'))
-    // An attribute selector naming an SVG's fill is not a color used.
-    .map(({ line, at }) => ({ line: line.replace(/\[fill="#[0-9a-f]+"\]/gi, ''), at }))
+    // An attribute selector naming an SVG's fill or stroke is not a color used.
+    .map(({ line, at }) => ({ line: line.replace(/\[(?:fill|stroke)="#[0-9a-f]+"\]/gi, ''), at }))
     // Darkening a token by mixing in black is the theme's own color.
     .filter(({ line }) => /#[0-9a-f]{3,8}\b|rgba?\(/i.test(line.replace(/, #000\)/g, ')')));
   assert.deepEqual(raw, []);

@@ -1084,3 +1084,11 @@ test('a label mixing words and $...$ draws as math, its words as text, while its
   label.setText('Edge after half a period');
   assert.equal(label.math, false);
 });
+
+test('TeX spaces in math are drawn: a word space between a number and its unit, thin and medium ones', () => {
+  const markup = texToMathML('-2\\ \\text{dBFS}, 5\\,\\text{pF}, a\\;b');
+  assert.match(markup, /<mn>2<\/mn><mspace width="0.25em"\/><mtext>dBFS<\/mtext>/);
+  assert.match(markup, /<mn>5<\/mn><mspace width="0.1667em"\/><mtext>pF<\/mtext>/);
+  assert.match(markup, /<mi>a<\/mi><mspace width="0.2778em"\/><mi>b<\/mi>/);
+  assert.doesNotMatch(markup, /<mi> <\/mi>/);
+});

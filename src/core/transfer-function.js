@@ -92,7 +92,7 @@ export function parseTone(text) {
   if (numbers.length !== 2) throw new Error(usage);
   const [amplitude, frequency] = numbers;
   if (typeof amplitude !== 'string' && !(amplitude >= 0 && Number.isFinite(amplitude))) throw new Error('a tone source needs an amplitude of 0 or more: 0.01 0.37');
-  if (typeof frequency !== 'string' && !(frequency >= 0 && frequency <= 0.5)) throw new Error('a tone source\'s f/fs is from 0 to 0.5: 0.01 0.37');
+  if (typeof frequency !== 'string' && !(frequency >= 0 && Number.isFinite(frequency))) throw new Error('a tone source\'s f/fs is 0 or more: 0.01 0.37');
   return { amplitude, frequency };
 }
 

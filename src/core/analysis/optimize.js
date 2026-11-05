@@ -296,7 +296,7 @@ export function swingTestFrequency(swing, band) {
   const text = String(swing.frequency || '').trim();
   const match = text.match(/^(\d+(?:\.\d*)?)\s*\/\s*(\d+(?:\.\d*)?)$/);
   const set = match ? Number(match[1]) / Number(match[2]) : Number(text);
-  if (set > 0 && set < 0.5) return set;
+  if (set > 0 && Number.isFinite(set)) return set;
   const edges = bandEdges(band);
   if (edges.length === 2) return (edges[0] + edges[1]) / 2;
   if (edges.length === 1) return edges[0] / 2;

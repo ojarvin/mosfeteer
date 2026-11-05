@@ -3096,7 +3096,7 @@ export function renderCanvas(modelKey) {
           : { kind: labelMode, a: annotationStart || drag?.startWorld, b: drag?.previewEnd || cursor }
         : undefined,
     warnOverlaps: netWarnings,
-    wirePreview: wire ? currentWirePreview() : null,
+    wirePreview: wire && !drag?.trim ? currentWirePreview() : null,
     wireMode: !!wire,
     wireSource: wire?.source ? { ...wire.source } : undefined,
     terminalSnapTarget: terminalSnap && drag?.mode !== 'wirestroke' ? nearestSnapTarget(cursor) : null,
@@ -3236,6 +3236,7 @@ function cancelDrag() {
     return;
   }
   if (drag?.mode === 'pinwire' || drag?.mode === 'copygrab' || drag?.mode === 'knife') {
+    if (drag.mode === 'pinwire') cancelPreviewTransaction();
     drag = null;
     endGestureWire();
     render();
@@ -4230,7 +4231,8 @@ function pinWireCursor(w) {
 }
 
 /** Ctrl/Cmd-drag from inside a wire: a new branch grows from the grab point.
- *  A drag from a free wire end grows the wire from that end. */
+ *  A drag from a free wire end grows the wire from that end, or shortens it
+ *  back along itself (`trimWireEnd`). */
 function beginBranchWire(segDrag, w) {
   cancelPreviewTransaction();
   setSelection([]);
@@ -4247,10 +4249,10 @@ function beginBranchWire(segDrag, w) {
     return;
   }
   const fromEnd = !!segDrag.endGrab;
-  drag = { mode: 'pinwire', startWorld: segDrag.startWorld, startClient: segDrag.startClient, fromEnd };
+  drag = { mode: 'pinwire', startWorld: segDrag.startWorld, startClient: segDrag.startClient, fromEnd, ...(fromEnd ? { end: { ...segDrag.endGrab, path: circuit.nets.get(segDrag.endGrab.netId).paths()[segDrag.endGrab.pathIndex] }, startSnapshot: snapshot() } : {}) };
   noteTip('pin-drag');
   cursor = pinWireCursor(w);
-  hintLine(fromEnd ? 'WIRE: from its free end · drop on a pin, a wire, or a free end to join it, or in space to end there' : 'WIRE: branch · drop on a pin or wire, or in space to add a part');
+  hintLine(fromEnd ? 'WIRE: from its free end · drop on a pin, a wire, or a free end to join it, back along it to shorten it, or in space to end there' : 'WIRE: branch · drop on a pin or wire, or in space to add a part');
   render();
 }
 
@@ -4304,6 +4306,18 @@ function beginCopyDrag(grab, ev) {
   setLabelSelection(labels, labels[0], true);
   beginObjectMove(refs, labels, startWorld, startClient, { duplicate: true });
   canvasMouseMove(ev);
+}
+
+/** A free end dragged back along its own wire: the wire shown shortened to
+ *  `point` (a preview from the drag's start), or as it was off its wire. */
+function previewWireTrim(point) {
+  const { netId, pathIndex, endpointIndex, point: end, path } = drag.end;
+  if (drag.trim) cancelPreviewTransaction();
+  drag.trim = null;
+  if ((point.x === end.x && point.y === end.y) || !pointOnPath(point, path)) return;
+  beginPreviewTransaction(drag.startSnapshot);
+  if (circuit.trimWireEnd(netId, pathIndex, endpointIndex, point)) drag.trim = { ...point };
+  else cancelPreviewTransaction();
 }
 
 export function endGestureWire() {
@@ -4989,8 +5003,9 @@ function canvasMouseDown(ev) {
         doubleWireClick,
         // Ctrl/Cmd-drag grows a new branch from this point instead of moving the run.
         branchGrab: (ev.ctrlKey || ev.metaKey) && !ev.shiftKey,
-        // A drag from a free end grows the wire from that end, any way.
-        endGrab: isSelectionModifier(ev) ? null : openWireEndNear(net, startWorld),
+        // A drag from a free end grows the wire from that end, any way, or
+        // back along it shortens it; a selected wire's end moves the wire.
+        endGrab: isSelectionModifier(ev) || selectedWires.has(key) ? null : openWireEndNear(net, startWorld),
       },
     });
     return;
@@ -5500,6 +5515,7 @@ export function canvasMouseMove(ev) {
     const key = `${next.x},${next.y}`;
     if (drag.drawnEnd === key) return;
     drag.drawnEnd = key;
+    if (drag.end) previewWireTrim(next);
     scheduleInteractionRender();
     return;
   }
@@ -6000,8 +6016,16 @@ function finishCanvasMouseUp(ev) {
     return;
   }
   if (drag.mode === 'pinwire') {
-    const { fromEnd } = drag;
+    const { fromEnd, trim, startSnapshot } = drag;
     drag = null;
+    if (trim && previewTransaction) {
+      markModelChanged();
+      recordHistoryEntry(startSnapshot, true, 'none');
+      commitPreviewTransaction();
+      endGestureWire();
+      render();
+      return;
+    }
     finishPinWire(releaseWorld, ev, { fromEnd });
     return;
   }

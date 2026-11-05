@@ -581,7 +581,8 @@ test('a tone source: a sine of amplitude A at its f/fs, a whole number of cycles
   assert.deepEqual(parseTone('sine ±1/2 FS at 1/8'), { amplitude: 0.5, frequency: 0.125 });
   assert.equal(toneValueText(parseTone('sin 0.01 0.37')), '0.01 0.37');
   assert.throws(() => parseTone('0.01'), /amplitude and an f\/fs/);
-  assert.throws(() => parseTone('0.01 0.6'), /f\/fs is from 0 to 0.5/);
+  assert.deepEqual(parseTone('0.01 1.3'), { amplitude: 0.01, frequency: 1.3 });
+  assert.throws(() => parseTone('0.01 -0.2'), /amplitude and an f\/fs|0 or more/);
   assert.throws(() => parseDither('rect 1 0.2'), /shape and an amplitude/);
   assert.throws(() => parseDither('sine 0.01 0.37'), /shape and an amplitude/);
   // Full scale 2 (three levels): 0.5 is +-1.
@@ -597,6 +598,33 @@ test('a tone source: a sine of amplitude A at its f/fs, a whole number of cycles
   const v = sim.run(-60, { record: true }).samples;
   const f = Math.round(0.1 * 1024) / 1024;
   v.forEach((y, n) => assert.ok(Math.abs(y - Math.sin(2 * Math.PI * f * n)) < 1e-9, `${n}: ${y}`));
+});
+
+test('a tone on a continuous signal is a sine in time: past fs/2 a sampler aliases it', async () => {
+  const { aliasedFrequency, inBand, outputSpectrum } = await import('../src/core/analysis/spectrum.js');
+  assert.equal(aliasedFrequency(0.6), 0.4);
+  assert.ok(Math.abs(aliasedFrequency(2.3) - 0.3) < 1e-12);
+  const lines = (f) => ['add input U --at -400 400', 'add tone TONE1 --at -400 0 --value "0.5 ' + f + '"', 'add tf_s H1 --at 0 0 --value "1/(1 + s)"', 'add sampler SMP1 --at 400 0', 'add output V --at 800 0', 'add output W --at 800 400',
+    'connect TONE1.out H1.in', 'connect H1.out SMP1.in', 'connect SMP1.out V.p', 'connect U.p W.p'];
+  const options = { values: { T: 1 }, sources: {}, input: 'U', output: 'name:V', samples: 1024, warmup: 0 };
+  const sim = prepareSimulation(diagram(lines(0.6)), options);
+  assert.ok(sim.ok, sim.error);
+  const v = sim.run(-60, { record: true }).samples;
+  // 1/(1 + s) at w = 2 pi 0.6 / T, T = 1, after its start has died away.
+  const f = Math.round(0.6 * 1024) / 1024;
+  const w = 2 * Math.PI * f;
+  const gain = 1 / Math.hypot(1, w);
+  const lag = Math.atan(w);
+  for (let n = 50; n < 1024; n++) assert.ok(Math.abs(v[n] - 0.5 * gain * Math.sin(w * n - lag)) < 1e-9, `${n}: ${v[n]}`);
+  // The same samples as its alias at 0.4, read in the spectrum there.
+  const spectrum = outputSpectrum(v.slice(64, 576), { segment: 512 });
+  const peak = spectrum.points.reduce((best, p) => (p.db > best.db ? p : best));
+  assert.ok(Math.abs(peak.f - 0.4) < 2 / 512, `${peak.f}`);
+  assert.ok(inBand(spectrum, 0.6, [0.35, 0.45]).sndr > 40);
+  // A dither on a continuous signal still draws a value a sample.
+  const dither = prepareSimulation(diagram(lines(0.6).map((l) => l.replace('add tone TONE1', 'add dither TONE1').replace('"0.5 0.6"', '"rect 0.5"'))), options);
+  assert.equal(dither.ok, false);
+  assert.match(dither.error, /dither on .* draws a value a sample/);
 });
 
 test('a multiply junction of two sampled signals simulates their product', () => {
@@ -675,11 +703,15 @@ test('a tone or dither source\'s amplitude and f/fs may be coefficients: sliders
   const v = run({ A_r: 0.5, f_r: 0.1 }).run(-60, { record: true }).samples;
   const f = Math.round(0.1 * 1024) / 1024;
   v.forEach((y, n) => assert.ok(Math.abs(y - Math.sin(2 * Math.PI * f * n)) < 1e-9, `${n}: ${y}`));
-  // At f/fs 0 the sine holds its amplitude; past 0.5 it is refused.
+  // At f/fs 0 the sine holds its amplitude; a sampled one past 0.5 is its
+  // alias; below 0 it is refused.
   assert.ok(Array.from(run({ A_r: 0.5, f_r: 0 }).run(-60, { record: true }).samples).every((y) => Math.abs(y - 1) < 1e-12));
-  const refused = run({ A_r: 0.5, f_r: 0.7 });
+  const aliased = run({ A_r: 0.5, f_r: 0.9 }).run(-60, { record: true }).samples;
+  const g = Math.round(0.9 * 1024) / 1024;
+  aliased.forEach((y, n) => assert.ok(Math.abs(y + Math.sin(2 * Math.PI * (1 - g) * n)) < 1e-9, `${n}: ${y}`));
+  const refused = run({ A_r: 0.5, f_r: -0.7 });
   assert.equal(refused.ok, false);
-  assert.match(refused.error, /TONE1: its f\/fs f_r is 0.7/);
+  assert.match(refused.error, /TONE1: its f\/fs f_r is -0.7/);
 });
 
 test('an input at f/fs 0 is a constant of its amplitude; the band\'s noise reads in dBFS, the tone left out', async () => {

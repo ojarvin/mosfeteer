@@ -1489,8 +1489,9 @@ function writePlot(target, plot, shown, { identity = null } = {}) {
     const base = (label) => String(label).split(',\\ ')[0];
     const wasHidden = (trace) => before.some((old) => old.hidden && (old.hold ? old.hold === trace.hold : !trace.hold && base(old.label) === base(trace.label) && !!old.background === !!trace.background));
     if (Array.isArray(plot.traces) && before.some((old) => old.hidden)) plot = { ...plot, traces: plot.traces.map((trace) => (wasHidden(trace) ? { ...trace, hidden: true } : trace)) };
-    // Traces added from files stay through an update.
-    target.plot = normalizePlot(target.plot?.extra ? { ...plot, extra: target.plot.extra } : plot);
+    // Traces added from files, and the markers, stay through an update.
+    const { extra, cursors, cursorValues } = target.plot || {};
+    target.plot = normalizePlot({ ...plot, ...(extra ? { extra } : {}), ...(cursors ? { cursors } : {}), ...(cursorValues === false ? { cursorValues } : {}) });
     // A plot from before figures is this tool's from now on.
     if (figure && !target.figure) target.figure = figure;
     for (const label of legendOf(target)) circuit.removeLabel(label.id);

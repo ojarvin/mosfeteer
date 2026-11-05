@@ -10,7 +10,9 @@
  * as one linear map each step, quantizers in the order their inputs need
  * them). Its continuous side, between samples, is integrated exactly:
  * x' = F x over an augmented state -- the H(s) blocks, the DAC blocks'
- * pulse, a sine oscillator, a constant -- so x(t + h) = e^{F h} x(t); each
+ * pulse, a sine oscillator for the input and one for each tone source on
+ * a continuous signal (at any f/fs: a sampler after it aliases it), a
+ * constant -- so x(t + h) = e^{F h} x(t); each
  * DAC block takes each sample as impulses into one state of its own
  * (observable form, so the pulse's edges -- +1/s at its start, -1/s at its
  * end -- share it and it stays bounded), each edge at its delay (excess
@@ -24,6 +26,7 @@
 
 import { blockTransferFunction, coefficientValue, delayTermsOf, denseCoefficients, hasDelays, mixedPeriods, signalDomains, signalFlowGraph, withCoefficients } from './signal-flow.js';
 import { expm } from './sampling.js';
+import { aliasedFrequency } from './spectrum.js';
 import { evaluateExpression } from './bode.js';
 import { TRANSFER_FUNCTION_TYPES, isBlockIn, parseDither, parseGain, parseLevels, parseTone } from '../transfer-function.js';
 import { analyzedCircuit, canonicalNetName } from '../model.js';
@@ -169,7 +172,7 @@ export function prepareSimulation(circuit, options = {}) {
       const at = (value) => (typeof value === 'string' ? num(value) : value);
       const set = { ...dither, amplitude: at(dither.amplitude), ...(dither.shape === 'sine' ? { frequency: at(dither.frequency) } : {}) };
       if (!(set.amplitude >= 0 && Number.isFinite(set.amplitude))) throw new Error(`its amplitude ${dither.amplitude} is ${set.amplitude}: it must be 0 or more`);
-      if (set.shape === 'sine' && !(set.frequency >= 0 && set.frequency <= 0.5)) throw new Error(`its f/fs ${dither.frequency} is ${set.frequency}: it must be from 0 to 0.5`);
+      if (set.shape === 'sine' && !(set.frequency >= 0 && Number.isFinite(set.frequency))) throw new Error(`its f/fs ${dither.frequency} is ${set.frequency}: it must be 0 or more`);
       sourceValue.set(source.key, { driven: false, constant: 0, dither: set });
     } catch (err) {
       return failure('bad-dither', `${source.id}: ${err.message}`);
@@ -277,7 +280,11 @@ export function prepareSimulation(circuit, options = {}) {
   const OSC_C = m;
   const OSC_S = m + 1;
   const ONE = m + 2;
-  const size = m + 3;
+  // A tone source on a continuous signal is a sine in time, as the input's
+  // is: an oscillator pair of its own.
+  const tones = cont.filter((s) => sourceValue.get(s.key)?.dither?.shape === 'sine')
+    .map((s, k) => ({ key: s.key, c: m + 3 + 2 * k, s: m + 4 + 2 * k, ...sourceValue.get(s.key).dither }));
+  const size = m + 3 + 2 * tones.length;
 
   const zero = (rows, cols) => Array.from({ length: rows }, () => new Array(cols).fill(0));
   // Continuous signals: Y = G Y + H X.
@@ -287,7 +294,9 @@ export function prepareSimulation(circuit, options = {}) {
     for (const [i, signal] of cont.entries()) {
       const source = sourceValue.get(signal.key);
       if (source) {
-        if (source.dither) throw new Error(`the ${circuit.components.get(signal.driver?.comp)?.type === 'tone' ? 'tone' : 'dither'} on ${signal.display} feeds continuous signals: it draws a value a sample, so wire it into a sum after the sampler, not through a sampler of its own`);
+        const tone = tones.find((t) => t.key === signal.key);
+        if (tone) { Hc[i][tone.s] = 1; continue; }
+        if (source.dither) throw new Error(`the dither on ${signal.display} feeds continuous signals: it draws a value a sample, so wire it into a sum after the sampler, not through a sampler of its own`);
         if (source.driven) Hc[i][OSC_S] = 1;
         else Hc[i][ONE] = source.constant;
         continue;
@@ -420,7 +429,14 @@ export function prepareSimulation(circuit, options = {}) {
   }
   F[OSC_C][OSC_S] = -omega;
   F[OSC_S][OSC_C] = omega;
-  const subSteps = Math.max(1, Math.round(options.subSteps || 8));
+  for (const tone of tones) {
+    tone.f = tone.frequency === 0 ? 0 : Math.max(1, Math.round(tone.frequency * coherent)) / coherent;
+    F[tone.c][tone.s] = (-2 * Math.PI * tone.f) / T;
+    F[tone.s][tone.c] = (2 * Math.PI * tone.f) / T;
+  }
+  // Eight sub-steps a cycle of the fastest continuous sine, at least eight a period.
+  const fastest = Math.max(domain.get(driven.key) === 's' ? frequency : 0, ...tones.map((tone) => tone.f));
+  const subSteps = Math.max(1, Math.round(options.subSteps || Math.min(256, Math.max(8, Math.ceil(8 * fastest)))));
   const offsets = new Set(Array.from({ length: subSteps }, (_, k) => (k * T) / subSteps));
   for (const term of terms) {
     let shift = Math.floor(term.delay / T + 1e-9);
@@ -515,6 +531,12 @@ export function prepareSimulation(circuit, options = {}) {
     // The oscillator's pair is (A cos, A sin) of the sine's phase.
     if (sourceValue.get(driven.key) && domain.get(driven.key) === 's') { X[OSC_C] = amplitude * Math.cos(phase); X[OSC_S] = amplitude * Math.sin(phase); }
     X[ONE] = 1;
+    // A continuous tone starts as a sampled one does, sin 0 (at f/fs 0 its amplitude).
+    for (const tone of tones) {
+      const a = tone.amplitude * fullScale;
+      if (tone.f === 0) X[tone.s] = a;
+      else X[tone.c] = a;
+    }
     let xd = new Float64Array(md);
     const p = new Float64Array(pSize);
     const state = new Float64Array(md + pSize);
@@ -642,7 +664,7 @@ export function prepareSimulation(circuit, options = {}) {
     for (let i = 0; i < m + md; i++) {
       if (halves[1][i] > 2 * fullScale && halves[1][i] > 2 * halves[0][i]) return { peaks: Array.from(peaks), tone: null, overloaded: true, ...wavesOut() };
     }
-    const tone = outputIndex >= 0 ? ((frequency === 0 ? 1 : 2) * Math.hypot(re, im)) / window : null;
+    const tone = outputIndex >= 0 ? ((aliasedFrequency(frequency) === 0 ? 1 : 2) * Math.hypot(re, im)) / window : null;
     // y = k v + e, k by least squares: e is then uncorrelated with v.
     const quantizerFits = rounding.map((q) => {
       const { vy, vv, yy } = fits.get(q);

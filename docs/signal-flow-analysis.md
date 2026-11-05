@@ -377,7 +377,8 @@ run through the sampled loop.
 **Simulated output spectrum** (magnitude view, its **Simulation** section):
 one swing-simulation run at
 an amplitude and frequency of its own (the swing's source; the frequency made a whole number of
-cycles in each segment; f/fs 0 a constant input of the amplitude, DC), Welch-averaged -- Hann-windowed
+cycles in each segment; f/fs 0 a constant input of the amplitude, DC; past 1/2
+the tone and the SNDR read at its alias), Welch-averaged -- Hann-windowed
 segments of 8192 samples (**Samples**: 4096 to 65536) overlapping by half
 over a record four segments long, seven averages -- run in a worker
 thread (`spectrum-run.js` in `optimize-worker.js`; in the page where none
@@ -432,14 +433,16 @@ set it to Input for its own transfer function. The dither setting of
 designs from before dither sources (`flow.dither`) is no longer read.
 
 A **tone source** (`tone`, value `0.01 0.37`: its amplitude A in full
-scale and its f/fs, at most 0.5; 0 holds A, an offset) draws a sine, a
-value a sample, made a whole number of cycles in the window (in the
-spectrum, in each segment, so its products stay in their bins): an aggressor
-such as a reference's ripple. A and the f/fs may be coefficients (`a_r
+scale and its f/fs, any from 0; 0 holds A, an offset) is a sine made a
+whole number of cycles in the window (in the spectrum, in each segment, so
+its products stay in their bins): an aggressor such as a reference's
+ripple. On the sampled side it is a value a sample; on a continuous signal
+it is a sine in time, an oscillator of its own as the input's, so past
+f/fs 1/2 a sampler after it aliases it. A and the f/fs may be coefficients (`a_r
 f_r`). A dither or tone source's coefficients get sliders as any
 coefficient does, and the optimizer holds them fixed unless set free.
 Otherwise a tone source is a dither source: a source in the transfer
-functions, **Zero** at first, sampled side only.
+functions, **Zero** at first. A dither source is sampled side only.
 
 A **product of two sampled signals** (a multiply junction with two or more
 inputs that are not constants, a dither or tone source's among them) is

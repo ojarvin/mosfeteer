@@ -13,6 +13,8 @@ import { GRID, snap } from './grid.js';
 import { MAX_PLOT_EXTRA, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, plotLegendCurves } from './model.js';
 import { COLOR_PALETTE, colorToken } from './style.js';
 import { MAX_DATA_TRACES, readTable, tableTraces } from './csv-data.js';
+import { remapCursorTraces } from './plot-cursors.js';
+import { ownTraceCount } from './plot-spec.js';
 
 /** A new data plot's box, in cells. */
 const BOX = { w: 18, h: 11 };
@@ -221,7 +223,7 @@ export function movePlotTrace(circuit, box, from, to) {
   order.splice(to, 0, order.splice(from, 1)[0]);
   const legend = circuit.plotLegend(box);
   const entries = ownEntries(circuit, box, own);
-  box.plot = normalizePlot({ ...box.plot, [own.key]: order.map((i) => own.traces[i]) });
+  box.plot = normalizePlot({ ...remapCursorTraces(box.plot, ownBase(box.plot, own), order), [own.key]: order.map((i) => own.traces[i]) });
   if (entries.length === count) {
     const left = Math.min(...entries.map((l) => l.bbox().x));
     let top = Math.min(...entries.map((l) => l.bbox().y));
@@ -304,7 +306,23 @@ export function removePlotTrace(circuit, box, index) {
   if (own.traces.length <= own.min) throw new Error('a plot keeps one trace at least');
   const entry = ownEntries(circuit, box, own)[index];
   if (entry) circuit.removeLabel(entry.id);
-  box.plot = normalizePlot({ ...box.plot, [own.key]: own.traces.filter((_, i) => i !== index) });
+  const order = own.traces.map((_, i) => i).filter((i) => i !== index);
+  box.plot = normalizePlot({ ...remapCursorTraces(box.plot, ownBase(box.plot, own), order), [own.key]: own.traces.filter((_, i) => i !== index) });
+}
+
+/** The trace id (plot-spec.js) of a plot's first editable trace. */
+const ownBase = (plot, own) => (own.key === 'extra' ? ownTraceCount(plot) : 0);
+
+/** Set a plot's markers (plot-cursors.js) and whether their numbers show.
+ *  Returns whether anything changed. */
+export function setPlotCursors(box, cursors, { values = true } = {}) {
+  const plot = box?.plot;
+  if (!plot || !takesFileTraces(box)) throw new Error(`"${box?.id}" takes no markers`);
+  const { cursors: _cursors, cursorValues: _values, ...rest } = plot;
+  const next = normalizePlot({ ...rest, cursors, ...(values ? {} : { cursorValues: false }) });
+  if (JSON.stringify(next) === JSON.stringify(plot)) return false;
+  box.plot = next;
+  return true;
 }
 
 /** The names of the files a plot's traces came from, each once. */

@@ -38,7 +38,8 @@ export function responseSpec(plot) {
     title: phase ? 'Phase responses' : 'Magnitude responses',
     x: { scale: 'log', label: plot.axis === 'normalized' ? 'f/f_{s}' : 'ω', range: [pow10(plot.range.low), pow10(plot.range.high)] },
     y: { scale: 'linear', label: phase ? `∠${name} (°)` : plot.units === 'dBFS' ? 'dBFS' : `|${name}| (dB)`, step: phase ? 45 : 20, floor: phase ? null : -400 },
-    series: plot.traces.filter((trace) => !trace.hidden).map((trace) => ({
+    series: plot.traces.map((trace, index) => ({ trace, index })).filter(({ trace }) => !trace.hidden).map(({ trace, index }) => ({
+      trace: index,
       label: trace.label,
       color: trace.color,
       role: trace.background ? 'background' : trace.start ? 'start' : 'curve',
@@ -59,7 +60,8 @@ export function stepSpec(plot) {
     title: 'Step responses',
     x: { scale: 'linear', label: plot.unit === 'n' ? 'n (t/T_{s})' : 't', range: [plot.range.low, plot.range.high] },
     y: { scale: 'linear', label: 'step response', include: [0] },
-    series: plot.traces.map((trace) => ({
+    series: plot.traces.map((trace, index) => ({
+      trace: index,
       label: trace.label,
       color: trace.color,
       role: 'curve',
@@ -88,7 +90,7 @@ export function dataSpec(plot) {
     title: 'Data',
     x: { scale: plot.x.scale, label: plot.x.label },
     y: { scale: plot.y.scale, label: plot.y.label },
-    series: plot.traces.map((trace) => ({ label: trace.label, color: trace.color, role: 'curve', points: trace.points.map(([x, y]) => [x, y]) })),
+    series: plot.traces.map((trace, index) => ({ trace: index, label: trace.label, color: trace.color, role: 'curve', points: trace.points.map(([x, y]) => [x, y]) })),
     vlines: [],
     hlines: plot.y.scale === 'linear' ? [{ y: 0, role: 'zero' }] : [],
   };
@@ -105,7 +107,8 @@ export function swingSpec(plot) {
     title: 'Peak against input amplitude',
     x: { scale: 'linear', label: 'input (dBFS)', range: [plot.range.low, plot.range.high], step: 10 },
     y: { scale: 'linear', label: 'peak (dBFS)', step: 10, include: [-10, 10], ceiling: 40, floor: -200 },
-    series: plot.traces.map((trace) => ({
+    series: plot.traces.map((trace, index) => ({
+      trace: index,
       label: trace.label,
       color: trace.color,
       role: 'curve',
@@ -143,7 +146,7 @@ export function locusSpec(plot) {
     y: { scale: 'linear', label: z ? 'Im z' : 'Im s', include: z ? [-1.1, 1.1] : [], symmetric: true },
     series: [
       ...(z ? [{ role: 'band', points: Array.from({ length: 97 }, (_, i) => [Math.cos((i * Math.PI) / 48), Math.sin((i * Math.PI) / 48)]), parametric: true }] : []),
-      { label: plot.label, color: plot.color, role: 'curve', dots: shown.map((p) => p.t), points: shown.map((p) => [p.re, p.im]) },
+      { trace: 0, label: plot.label, color: plot.color, role: 'curve', dots: shown.map((p) => p.t), points: shown.map((p) => [p.re, p.im]) },
     ],
     vlines: z ? [] : [{ x: 0, role: 'band' }],
     hlines: [{ y: 0, role: 'zero' }],
@@ -209,17 +212,25 @@ export function waveSpec(traces, { start = 0, label = 'n' } = {}) {
   };
 }
 
+/** How many of a plot's traces are its own, before those added from
+ *  files: a series' `trace` id counts on from there. */
+export const ownTraceCount = (plot) => (plot.kind === 'locus' ? 1 : plot.traces?.length || 0);
+
 /** The spec of any plot on the drawing that a window shows: an analysis
  *  plot with the traces added to it from files over its own, or a data
- *  plot. Null for a Bode sketch, which windows show as two plots. */
+ *  plot, and its markers (plot-cursors.js). Null for a Bode sketch, which
+ *  windows show as two plots. */
 export function plotSpec(plot) {
-  const spec = plot.kind === 'data' ? dataSpec(plot)
+  const own = plot.kind === 'data' ? dataSpec(plot)
     : plot.kind === 'response' ? responseSpec(plot)
     : plot.kind === 'step' || plot.kind === 'wave' ? stepSpec(plot)
     : plot.kind === 'swing' ? swingSpec(plot)
     : plot.kind === 'locus' ? locusSpec(plot)
     : null;
-  if (!spec || !plot.extra) return spec;
+  if (!own) return own;
+  const spec = { ...own, ...(plot.cursors ? { cursors: plot.cursors } : {}), ...(plot.cursorValues === false ? { cursorValues: false } : {}) };
+  if (!plot.extra) return spec;
   const parametric = plot.kind === 'locus' ? { parametric: true } : {};
-  return { ...withExtraRange(spec, plot), series: [...spec.series, ...plot.extra.map((trace) => ({ label: trace.label, color: trace.color, role: 'curve', points: trace.points.map(([x, y]) => [x, y]), ...parametric }))] };
+  const base = ownTraceCount(plot);
+  return { ...withExtraRange(spec, plot), series: [...spec.series, ...plot.extra.map((trace, k) => ({ trace: base + k, label: trace.label, color: trace.color, role: 'curve', points: trace.points.map(([x, y]) => [x, y]), ...parametric }))] };
 }

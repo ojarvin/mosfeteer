@@ -22,6 +22,7 @@ import { normalizeFigure } from './figures.js';
 import { fanStacks, normalizeStack, segmentEnters, stackRects, stackedBoxes, wireEchoes } from './box-stack.js';
 import { PART_VALUE_ROLE, VALUE_LABEL_MODES, VALUE_TYPES, valueLabelTex } from './part-value.js';
 import { MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize } from './mos-size.js';
+import { cursorsOf } from './plot-cursors.js';
 
 /** Canonical physical net-name form. Names are case-sensitive; only outer
  * whitespace is non-semantic, and the spaces around a list's commas
@@ -1310,7 +1311,7 @@ function normalizeResponsePlot(plot) {
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   const band = (Array.isArray(plot.band) ? plot.band : []).filter((f) => finite(f) && f > 0).slice(0, 2).map((f) => round(f, 6));
-  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces, ...(band.length ? { band } : {}), ...(plot.quantity === 'phase' ? { quantity: 'phase' } : {}), ...(plot.units === 'dBFS' ? { units: 'dBFS' } : {}), ...markersOf(plot), ...(plot.role === 'loop' ? { role: 'loop' } : {}), ...sourceOf(plot), ...viewOf(plot, { positiveX: true }), ...extraOf(plot, { positiveX: true }) };
+  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces, ...(band.length ? { band } : {}), ...(plot.quantity === 'phase' ? { quantity: 'phase' } : {}), ...(plot.units === 'dBFS' ? { units: 'dBFS' } : {}), ...markersOf(plot), ...(plot.role === 'loop' ? { role: 'loop' } : {}), ...sourceOf(plot), ...viewOf(plot, { positiveX: true }), ...extraOf(plot, { positiveX: true }), ...cursorsOf(plot) };
 }
 
 /** What a plot was drawn from, so it can be drawn again at new numbers:
@@ -1373,6 +1374,7 @@ function normalizeLocusPlot(plot) {
     crossings: (Array.isArray(plot.crossings) ? plot.crossings : []).filter((c) => finite(c?.k) && ['stable', 'unstable'].includes(c.becomes)).slice(0, 8).map((c) => ({ k: round(c.k, 5), becomes: c.becomes })),
     ...sourceOf(plot),
     ...extraOf(plot),
+    ...cursorsOf(plot),
   };
 }
 
@@ -1390,7 +1392,7 @@ function normalizeStepPlot(plot) {
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   // A waveform (the time-domain plot's) is drawn as a step response is, in time.
-  return { kind: plot.kind === 'wave' ? 'wave' : 'step', unit: plot.unit === 'n' ? 'n' : 't', range: { low, high }, traces, ...viewOf(plot), ...extraOf(plot) };
+  return { kind: plot.kind === 'wave' ? 'wave' : 'step', unit: plot.unit === 'n' ? 'n' : 't', range: { low, high }, traces, ...viewOf(plot), ...extraOf(plot), ...cursorsOf(plot) };
 }
 
 /** The most points a data plot keeps of one trace (thinDataPoints). */
@@ -1437,7 +1439,7 @@ function normalizeDataPlot(plot) {
   const x = axis(plot.x);
   const y = axis(plot.y);
   const file = text(plot.file, 200);
-  return { kind: 'data', ...(file ? { file } : {}), x, y, traces, ...viewOf(plot, { positiveX: x.scale === 'log', positiveY: y.scale === 'log' }) };
+  return { kind: 'data', ...(file ? { file } : {}), x, y, traces, ...viewOf(plot, { positiveX: x.scale === 'log', positiveY: y.scale === 'log' }), ...cursorsOf(plot) };
 }
 
 /** A swing plot (signal-flow simulation): colored traces of each net's
@@ -1456,7 +1458,7 @@ function normalizeSwingPlot(plot) {
     ...(trace?.tone ? { tone: true } : {}),
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
-  return { kind: 'swing', range: { low, high }, traces, ...viewOf(plot), ...extraOf(plot) };
+  return { kind: 'swing', range: { low, high }, traces, ...viewOf(plot), ...extraOf(plot), ...cursorsOf(plot) };
 }
 
 export class LabelInstance {
@@ -6127,6 +6129,32 @@ export class Circuit {
       });
     }
     return ends;
+  }
+
+  /** Shorten a wire from its free end (an `openWireEnds` entry's net, path,
+   *  and endpoint) back to `point` on that path: the stretch beyond it goes.
+   *  Changes nothing and returns false when `point` is not on the path short
+   *  of its other end, or a pin, a junction, or another wire meets the
+   *  stretch that would go. */
+  trimWireEnd(netId, pathIndex, endpointIndex, point) {
+    const net = this.nets.get(netId);
+    const paths = net?.paths() || [];
+    const path = paths[pathIndex];
+    if (!path || path.length < 2) return false;
+    const walk = endpointIndex === 0 ? path : [...path].reverse();
+    const same = (a, b) => a.x === b.x && a.y === b.y;
+    if (same(walk[0], point)) return false;
+    const cut = walk.findIndex((p, i) => i > 0 && pointOnPath(point, [walk[i - 1], p]));
+    if (cut < 0) return false;
+    const kept = normalizePath([{ x: point.x, y: point.y }, ...walk.slice(cut)]);
+    if (kept.length < 2) return false;
+    const removed = [...walk.slice(0, cut), point];
+    const meets = (p) => !same(p, point) && pointOnPath(p, removed);
+    const pins = net.terminals.map((t) => this.components.get(t.comp)?.worldTerminals().find((w) => w.name === t.term)).filter(Boolean);
+    if (pins.some(meets) || net.junctions.some(meets)) return false;
+    if (paths.some((other, i) => i !== pathIndex && (meets(other[0]) || meets(other[other.length - 1])))) return false;
+    const next = paths.map((p, i) => (i === pathIndex ? (endpointIndex === 0 ? kept : [...kept].reverse()) : p));
+    return this.installNetPaths(net, next);
   }
 
   _explicitBranches(net) {

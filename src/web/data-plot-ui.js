@@ -16,11 +16,13 @@
 import { element as el } from './dom.js';
 import { MAX_DATA_TRACES, readTable, tableTraces } from '../core/csv-data.js';
 import { TRACE_COLORS } from '../core/analysis/signal-flow.js';
-import { appendPlotTraces, fileUnits, inPlotUnits, movePlotTrace, placeDataPlot, removePlotTrace, replaceDataPlotTraces, setDataPlotAxis, setPlotCurveColors, setPlotTrace, setPlotTracesShown, setDataPlotView, takesFileTraces } from '../core/data-plot.js';
+import { appendPlotTraces, fileUnits, inPlotUnits, movePlotTrace, placeDataPlot, removePlotTrace, replaceDataPlotTraces, setDataPlotAxis, setPlotCurveColors, setPlotCursors, setPlotTrace, setPlotTracesShown, setDataPlotView, takesFileTraces } from '../core/data-plot.js';
 import { texToMathML } from '../core/render.js';
 import { MAX_DATA_POINTS, MAX_PLOT_EXTRA, normalizePlot } from '../core/model.js';
 import { COLOR_PALETTE } from '../core/style.js';
-import { plotSpec } from '../core/plot-spec.js';
+import { ownTraceCount, plotSpec } from '../core/plot-spec.js';
+import { MAX_PLOT_CURSORS, cursorCurves, cursorNumber, cursorReadings } from '../core/plot-cursors.js';
+import { plainTex } from '../core/bode-figure.js';
 import { createPlotView } from './plot-view.js';
 import { editor } from './editor-state.js';
 import { logLine } from './status-bar-ui.js';
@@ -52,6 +54,9 @@ export function chooseDataFile(target = null, mode = 'replace') {
 }
 
 const SCALES = [['linear', 'Linear'], ['log', 'Log']];
+/** The markers' kinds: their button text and key. */
+const MARKERS = [['point', 'Point', 'm'], ['vertical', 'Vertical', 'v'], ['horizontal', 'Horizontal', 'h']];
+const MARKER_NAMES = { point: 'Point', vertical: 'Vertical', horizontal: 'Horizontal' };
 const capitalized = (name) => name[0].toUpperCase() + name.slice(1);
 
 /** Swatches a row in the palette over a trace's color. */
@@ -119,12 +124,33 @@ function select(label, id, choices, value, onchange) {
  * and `dispose()`.
  */
 function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, base = null } = {}) {
-  const view = createPlotView({ height: 260, wheel: 'always', className: 'data-plot-view' });
+  draft.cursors ||= [];
+  if (draft.cursorValues === undefined) draft.cursorValues = true;
+  const view = createPlotView({ height: 260, wheel: 'always', className: 'data-plot-view', onCursors: (next) => { draft.cursors = next; show(); refreshCursors(); } });
   const shown = () => draft.traces.filter((t) => !t.removed);
   const traces = () => shown().map(({ label, color, points }) => ({ label, color, points }));
+  // A point marker names its trace by id (plot-spec.js): the plot's own
+  // traces first, then these. Moved or removed, the markers follow.
+  const firstId = () => (base ? ownTraceCount(base) : 0);
+  const traceKey = (t) => (t.index !== undefined ? `o${t.index}` : `c${t.column}`);
+  const traceIds = () => new Map(shown().map((t, i) => [traceKey(t), firstId() + i]));
+  const keepCursors = (change) => {
+    const before = traceIds();
+    change();
+    const after = traceIds();
+    const keyOf = new Map([...before].map(([key, id]) => [id, key]));
+    draft.cursors = draft.cursors.flatMap((c) => {
+      if (c.kind !== 'point' || c.trace < firstId()) return [c];
+      const id = after.get(keyOf.get(c.trace));
+      return id === undefined ? [] : [{ ...c, trace: id }];
+    });
+    show();
+    refreshCursors();
+  };
   // A response plot's own curves as the draft shows or hides them.
   const withShown = (plot) => (draft.curves ? { ...plot, traces: plot.traces.map(({ hidden: _hidden, ...trace }, i) => ({ ...trace, color: draft.curves[i]?.color || trace.color, ...(draft.curves[i]?.on === false ? { hidden: true } : {}) })) } : plot);
-  const bare = () => (base ? normalizePlot({ ...withShown(base), extra: traces() }) : normalizePlot({ kind: 'data', x: draft.x, y: draft.y, traces: traces() }));
+  const marked = () => ({ cursors: draft.cursors, ...(draft.cursorValues ? {} : { cursorValues: false }) });
+  const bare = () => (base ? normalizePlot({ ...withShown(base), extra: traces(), ...marked() }) : normalizePlot({ kind: 'data', x: draft.x, y: draft.y, traces: traces(), ...marked() }));
   const show = ({ keepZoom = true } = {}) => {
     const zoom = keepZoom ? view.zoom() : null;
     const plot = bare();
@@ -162,9 +188,11 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, 
       const other = visible[visible.indexOf(trace) + step];
       const a = draft.traces.indexOf(trace);
       const b = draft.traces.indexOf(other);
-      [draft.traces[a], draft.traces[b]] = [draft.traces[b], draft.traces[a]];
-      if (onMove) onMove();
-      else { refresh(); show(); }
+      keepCursors(() => {
+        [draft.traces[a], draft.traces[b]] = [draft.traces[b], draft.traces[a]];
+        if (onMove) onMove();
+        else { refresh(); show(); }
+      });
     };
     if (base && !visible.length) {
       traceList.replaceChildren(el('p', { class: 'field-hint', text: 'No traces from files. Add file… adds them.' }));
@@ -178,15 +206,65 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, 
           onclick: (ev) => openPalette(ev.currentTarget, trace.color, (value) => { trace.color = value; refresh(); show(); }) }),
         el('input', { type: 'text', value: trace.label, 'aria-label': 'Trace name', spellcheck: 'false', oninput: (ev) => { trace.label = ev.target.value; show(); } }),
         el('button', { type: 'button', class: 'data-plot-trace-remove', text: '×', title: 'Remove', 'aria-label': `Remove ${trace.label}`, disabled: left < 2,
-          onclick: () => { if (onRemove) onRemove(trace); else { trace.removed = true; refresh(); show(); } } }),
+          onclick: () => keepCursors(() => { if (onRemove) onRemove(trace); else { trace.removed = true; refresh(); show(); } }) }),
       ]);
     }));
   };
+  // The markers: added by their buttons or keys, dragged on the plot, a
+  // line's place typed.
+  const cursorList = el('div', { class: 'data-plot-traces data-plot-markers', role: 'group', 'aria-label': 'Markers' });
+  const valuesBox = el('input', { type: 'checkbox', class: 'data-plot-marker-values', onchange: (ev) => { draft.cursorValues = ev.target.checked; show(); } });
+  valuesBox.checked = draft.cursorValues;
+  const addButtons = MARKERS.map(([kind, text, key]) => el('button', { type: 'button', class: 'data-plot-marker-add', 'data-kind': kind, text, title: `${text} marker (${key.toUpperCase()})`, onclick: () => add(kind) }));
+  const markerBar = el('div', { class: 'data-plot-marker-bar' }, [
+    el('span', { class: 'data-plot-marker-heading', text: 'Markers' }), ...addButtons,
+    el('label', { class: 'data-plot-check' }, [valuesBox, ' Values']),
+  ]);
+  const add = (kind) => {
+    if (draft.cursors.length >= MAX_PLOT_CURSORS) return;
+    if (!view.addCursor(kind)) logLine('no trace to put a point marker on', 'error');
+  };
+  const number = (text) => { const v = Number(String(text).trim()); return String(text).trim() && Number.isFinite(v) ? v : null; };
+  const setCursor = (i, next) => { draft.cursors = draft.cursors.map((c, k) => (k === i ? next : c)); show(); };
+  function refreshCursors() {
+    for (const button of addButtons) button.disabled = draft.cursors.length >= MAX_PLOT_CURSORS;
+    const spec = view.spec();
+    const curves = spec ? cursorCurves(spec) : [];
+    const readings = new Map((spec ? cursorReadings(spec) : []).map((r) => [r.index, r]));
+    cursorList.replaceChildren(...draft.cursors.map((cursor, i) => {
+      const axis = cursor.kind === 'horizontal' ? 'y' : 'x';
+      const field = el('input', { type: 'text', class: 'data-plot-marker-value', value: cursorNumber(cursor[axis]), 'aria-label': `${MARKER_NAMES[cursor.kind]} marker ${axis}`, spellcheck: 'false',
+        onchange: (ev) => { const v = number(ev.target.value); if (v === null) { ev.target.setAttribute('aria-invalid', 'true'); return; } ev.target.removeAttribute('aria-invalid'); setCursor(i, { ...draft.cursors[i], [axis]: v }); refreshCursors(); } });
+      const trace = cursor.kind === 'point' ? el('select', { class: 'data-plot-marker-trace', 'aria-label': 'Point marker trace', onchange: (ev) => { setCursor(i, { ...draft.cursors[i], trace: Number(ev.target.value) }); refreshCursors(); } },
+        curves.map((c) => el('option', { value: String(c.trace), text: plainTex(c.label) || `Trace ${c.trace + 1}`, selected: c.trace === cursor.trace }))) : null;
+      const read = readings.get(i);
+      const reads = cursor.kind === 'point' ? (read ? read.hits[0].text : 'off its trace') : read ? read.hits.map((h) => h.text).join(', ') : '';
+      return el('div', { class: 'data-plot-trace data-plot-marker' }, [
+        el('span', { class: 'data-plot-marker-kind', text: MARKER_NAMES[cursor.kind] }),
+        ...(trace ? [trace] : []),
+        el('span', { class: 'data-plot-marker-axis', text: `${axis} =` }), field,
+        el('span', { class: 'data-plot-marker-reads', text: reads }),
+        el('button', { type: 'button', class: 'data-plot-trace-remove', text: '×', title: 'Remove', 'aria-label': `Remove ${MARKER_NAMES[cursor.kind].toLowerCase()} marker`,
+          onclick: () => { draft.cursors = draft.cursors.filter((_, k) => k !== i); show(); refreshCursors(); } }),
+      ]);
+    }));
+  }
+  /** M, V, and H add a marker, unless a field is being typed in. */
+  const key = (ev) => {
+    if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.target.closest?.('input[type=text], input[type=number], textarea, select')) return;
+    const marker = MARKERS.find(([, , k]) => k === ev.key.toLowerCase());
+    if (!marker) return;
+    ev.preventDefault();
+    add(marker[0]);
+  };
   refresh();
   return {
-    parts: [view.el, el('p', { class: 'field-hint', text: 'Drag pans, right-drag zooms to a box, the wheel zooms, double-click fits. The plot on the drawing keeps this zoom. A trace lower in the list draws on top.' }), axes, ...(curveList ? [curveList] : []), traceList],
-    show,
+    parts: [view.el, el('p', { class: 'field-hint', text: 'Drag pans, right-drag zooms to a box, the wheel zooms, double-click fits. The plot on the drawing keeps this zoom. A trace lower in the list draws on top.' }), axes, ...(curveList ? [curveList] : []), traceList, markerBar, cursorList],
+    show: (options) => { show(options); refreshCursors(); },
     refresh,
+    key,
+    /** The markers as edited: `{ cursors, values }`. */
+    cursors: () => ({ cursors: draft.cursors, values: draft.cursorValues }),
     zoomTo: (range) => view.zoomTo(range),
     zoom: () => view.zoom(),
     /** The plot as shown, zoomed as shown (a zoom a log axis cannot show left out). */
@@ -232,6 +310,12 @@ function applyZoom(box, zoom) {
     return;
   }
   for (const axis of ['x', 'y']) setDataPlotView(box, axis, zoom?.[axis] && !(box.plot[axis].scale === 'log' && zoom[axis][0] <= 0) ? zoom[axis] : null);
+}
+
+/** The markers the plot editor set, on `box`. */
+function applyCursors(box, plotEdit) {
+  const { cursors, values } = plotEdit.cursors();
+  setPlotCursors(box, cursors, { values });
 }
 
 /** An analysis plot as the plot editor draws under its added traces. */
@@ -389,12 +473,14 @@ export function openDataPlotDialog(text, name, target = null, { mode = 'replace'
         if (fresh.length) appendPlotTraces(editor.circuit, target, fresh.map(({ label, color, points }) => ({ label, color, points })), { file: name });
         applyOrder(editor.circuit, target, draft, [...ownLeft(draft), ...fresh]);
         applyZoom(target, zoom);
+        applyCursors(target, plotEdit);
         placed = { box: target, legend: editor.circuit.plotLegend(target) };
       } else if (target) {
         // Its axes, as edited here, and the zoom shown.
         const legend = replaceDataPlotTraces(editor.circuit, target, plot);
         for (const axis of ['x', 'y']) setDataPlotAxis(target, axis, plot[axis]);
         for (const axis of ['x', 'y']) setDataPlotView(target, axis, plot.view?.[axis] || null);
+        applyCursors(target, plotEdit);
         placed = { box: target, legend };
       } else placed = placeDataPlot(editor.circuit, plot);
     });
@@ -418,6 +504,7 @@ export function openDataPlotDialog(text, name, target = null, { mode = 'replace'
     edited.y = true;
   }
   const dialog = el('dialog', { class: 'confirm-dialog data-plot-dialog', 'aria-label': 'Data plot' });
+  if (target?.plot) Object.assign(draft, { cursors: [...(target.plot.cursors || [])], cursorValues: target.plot.cursorValues !== false });
   dialog.append(
     el('h2', { text: adding ? `Add ${name} to the plot` : target ? `Read ${name} into the plot` : `Data plot from ${name}` }),
     el('h3', { class: 'data-plot-heading', text: 'File' }),
@@ -426,7 +513,7 @@ export function openDataPlotDialog(text, name, target = null, { mode = 'replace'
     ...plotEdit.parts, status,
     el('div', { class: 'dialog-actions' }, [el('button', { type: 'button', value: 'cancel', text: 'Cancel', onclick: () => dialog.close() }), place]),
   );
-  dialog.addEventListener('keydown', (event) => event.stopPropagation());
+  dialog.addEventListener('keydown', (event) => { event.stopPropagation(); plotEdit.key(event); });
   dialog.addEventListener('close', () => {
     plotEdit.dispose();
     dialog.remove();
@@ -445,7 +532,8 @@ export function openDataPlotDialog(text, name, target = null, { mode = 'replace'
 export function openPlotSettings(box) {
   if (!takesFileTraces(box)) return;
   const data = box.plot.kind === 'data';
-  const draft = { x: { ...box.plot.x }, y: { ...box.plot.y }, traces: editedTraces(box.plot), curves: box.plot.kind === 'response' ? box.plot.traces.map((trace) => ({ label: trace.label, color: trace.color, on: !trace.hidden })) : null };
+  const draft = { x: { ...box.plot.x }, y: { ...box.plot.y }, traces: editedTraces(box.plot), curves: box.plot.kind === 'response' ? box.plot.traces.map((trace) => ({ label: trace.label, color: trace.color, on: !trace.hidden })) : null,
+    cursors: [...(box.plot.cursors || [])], cursorValues: box.plot.cursorValues !== false };
   const dialog = el('dialog', { class: 'confirm-dialog data-plot-dialog', 'aria-label': 'Plot settings' });
   const plotEdit = plotEditor(draft, { base: data ? null : analysisBase(box.plot) });
   const apply = () => {
@@ -460,6 +548,7 @@ export function openPlotSettings(box) {
       applyDraft(editor.circuit, box, draft);
       applyOrder(editor.circuit, box, draft, ownLeft(draft));
       applyZoom(box, zoom);
+      applyCursors(box, plotEdit);
     });
     // Renamed entries are measured again: the column keeps its left edge and top.
     const legend = editor.circuit.plotLegend(box);
@@ -488,7 +577,7 @@ export function openPlotSettings(box) {
       el('button', { type: 'button', class: 'primary-action', text: 'Apply', onclick: apply }),
     ]),
   );
-  dialog.addEventListener('keydown', (event) => event.stopPropagation());
+  dialog.addEventListener('keydown', (event) => { event.stopPropagation(); plotEdit.key(event); });
   dialog.addEventListener('close', closed, { once: true });
   document.body.append(dialog);
   dialog.showModal();

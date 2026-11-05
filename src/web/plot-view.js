@@ -13,6 +13,10 @@
  * - double-click, or the Fit button that shows once zoomed, fits it all;
  * - hovering reads each curve at the pointer.
  *
+ * A spec's markers (core/plot-cursors.js) are drawn with their numbers;
+ * given `onCursors`, a marker drags (a point along the trace nearest the
+ * pointer) and `addCursor` places one where the pointer is.
+ *
  * A spec with `refine(xRange)` draws its curves again for the frequencies
  * in view as it is zoomed, so a close look has its own points. New data
  * keeps a zoomed view (the plot follows the data only until it is
@@ -21,6 +25,7 @@
 
 import { mathRuns } from '../core/math-text.js';
 import { axisTicks, fitRange, logMinorGrid, fromU, thinSeries, toU, valueAt, zoomAbout, zoomAxes } from '../core/plot-scale.js';
+import { cursorCurves, cursorLayout, nearestCurve } from '../core/plot-cursors.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const MARGIN = { left: 46, right: 12, top: 10, bottom: 24 };
@@ -61,10 +66,11 @@ const plain = (tex) => String(tex || '').replace(/\\text\{([^{}]*)\}/g, '$1').re
  * wheel scrolls the page) or 'always'. `onView(view)` hears each change of
  * view (u coordinates), to link plots. `xAxis: false` leaves out the x
  * axis's numbers and name: the top plot of a stack whose bottom one shows
- * them for both (linkPlots). Returns `{ el, set(spec), fit(),
- * setXView(range), dispose() }`.
+ * them for both (linkPlots). `onCursors(cursors)` hears the markers
+ * moved or added. Returns `{ el, set(spec), fit(), setXView(range),
+ * addCursor(kind), dispose() }`.
  */
-export function createPlotView({ height = 230, fill = false, aspect = null, maxHeight = 520, wheel = 'modifier', onView = null, className = '', xAxis = true } = {}) {
+export function createPlotView({ height = 230, fill = false, aspect = null, maxHeight = 520, wheel = 'modifier', onView = null, className = '', xAxis = true, onCursors = null } = {}) {
   const margin = xAxis ? MARGIN : { ...MARGIN, bottom: 6 };
   const el = document.createElement('div');
   el.className = `plot-view${className ? ` ${className}` : ''}`;
@@ -246,6 +252,18 @@ export function createPlotView({ height = 230, fill = false, aspect = null, maxH
     }
     root.append(body);
     root.append(svg('rect', { x: p.x, y: p.y, width: p.w, height: p.h, rx: PANE_RADIUS, class: 'plot-frame' }));
+    if (spec.cursors?.length) {
+      const layout = cursorLayout(spec, { toPx: { x: X, y: Y }, pane: p, size: 11, gap: 4 });
+      const marks = svg('g', { class: 'plot-markers' });
+      for (const line of layout.lines) marks.append(svg('line', { ...line, index: undefined, class: 'plot-marker-line' }));
+      for (const dot of layout.dots) {
+        const node = svg('circle', { cx: dot.x, cy: dot.y, r: dot.point ? 4 : 2.5, class: 'plot-marker-dot' });
+        if (dot.color) node.style.fill = dot.color;
+        marks.append(node);
+      }
+      for (const text of layout.texts) marks.append(markupText(text.text, { x: text.x, y: text.y, 'text-anchor': text.anchor, class: 'plot-marker-value' }));
+      root.append(marks);
+    }
     // Marked lines' names at the top, inside, clear of the edge.
     for (const mark of marks) {
       const right = mark.at > p.x + p.w / 2;
@@ -298,6 +316,62 @@ export function createPlotView({ height = 230, fill = false, aspect = null, maxH
 
   const schedule = () => { if (!frame) frame = requestAnimationFrame(render); };
 
+  // ----- markers -----
+  const toPx = { x: (u) => X(u), y: (v) => Y(v) };
+  /** The marker under a pane point (px): its index, or -1; points first. */
+  function cursorAt(at) {
+    if (!onCursors || !spec?.cursors?.length || !view) return -1;
+    size = measure();
+    const layout = cursorLayout(spec, { toPx, pane: pane(), values: false });
+    const dot = layout.dots.find((d) => d.point && Math.hypot(d.x - at.x, d.y - at.y) <= 7);
+    if (dot) return dot.index;
+    const line = layout.lines.find((l) => (l.x1 === l.x2 ? Math.abs(l.x1 - at.x) <= 5 && at.y >= l.y1 && at.y <= l.y2 : Math.abs(l.y1 - at.y) <= 5 && at.x >= l.x1 && at.x <= l.x2));
+    return line ? line.index : -1;
+  }
+  /** Marker `index` moved to a pane point (px). */
+  function moveCursor(index, at) {
+    const cursor = spec.cursors[index];
+    const p = pane();
+    const px = Math.max(p.x, Math.min(p.x + p.w, at.x));
+    const py = Math.max(p.y, Math.min(p.y + p.h, at.y));
+    let next = cursor;
+    if (cursor.kind === 'vertical') next = { kind: 'vertical', x: fromU(scaleX(), atX(px)) };
+    else if (cursor.kind === 'horizontal') next = { kind: 'horizontal', y: fromU(scaleY(), atY(py)) };
+    else {
+      const near = nearestCurve(cursorCurves(spec), atX(px), py, toPx);
+      if (near) next = { kind: 'point', trace: near.trace, x: fromU(scaleX(), atX(px)) };
+    }
+    if (next !== cursor) onCursors(spec.cursors.map((c, i) => (i === index ? next : c)));
+  }
+  /** A marker of `kind` where the pointer is (else the middle of the
+   *  view): a point on the trace nearest it. Returns whether one was added. */
+  function addCursor(kind) {
+    if (!onCursors || !spec || !view) return false;
+    size = measure();
+    const p = pane();
+    const inside = hover && hover.px >= p.x && hover.px <= p.x + p.w && hover.py >= p.y && hover.py <= p.y + p.h;
+    const at = inside ? { x: hover.px, y: hover.py } : { x: p.x + p.w / 2, y: p.y + p.h / 2 };
+    let cursor;
+    if (kind === 'vertical') cursor = { kind, x: fromU(scaleX(), atX(at.x)) };
+    else if (kind === 'horizontal') cursor = { kind, y: fromU(scaleY(), atY(at.y)) };
+    else {
+      const curves = cursorCurves(spec);
+      let near = nearestCurve(curves, atX(at.x), at.y, toPx);
+      let u = atX(at.x);
+      // Off every trace there: the middle of the first trace in view.
+      if (!near && curves.length) {
+        const shown = curves[0].points.filter(([pu, pv]) => pv !== null && pu >= view.x[0] && pu <= view.x[1]);
+        const pick = (shown.length ? shown : curves[0].points)[Math.floor((shown.length || curves[0].points.length) / 2)];
+        u = pick[0];
+        near = { trace: curves[0].trace };
+      }
+      if (!near) return false;
+      cursor = { kind: 'point', trace: near.trace, x: fromU(scaleX(), u) };
+    }
+    onCursors([...(spec.cursors || []), cursor]);
+    return true;
+  }
+
   function refine() {
     clearTimeout(refineTimer);
     if (!spec?.refine) return;
@@ -344,6 +418,21 @@ export function createPlotView({ height = 230, fill = false, aspect = null, maxH
     const start = local(ev);
     const startView = view;
     let moved = false;
+    const grabbed = ev.button === 0 ? cursorAt(start) : -1;
+    if (grabbed >= 0) {
+      el.classList.add('dragging-marker');
+      const drag = (e) => { const at = local(e); hover = null; moveCursor(grabbed, at); };
+      const drop = () => {
+        el.removeEventListener('pointermove', drag);
+        el.removeEventListener('pointerup', drop);
+        el.removeEventListener('pointercancel', drop);
+        el.classList.remove('dragging-marker');
+      };
+      el.addEventListener('pointermove', drag);
+      el.addEventListener('pointerup', drop);
+      el.addEventListener('pointercancel', drop);
+      return;
+    }
     if (ev.button === 2) box = { from: start, to: start, axes: null };
     else el.classList.add('panning');
     const move = (e) => {
@@ -394,7 +483,7 @@ export function createPlotView({ height = 230, fill = false, aspect = null, maxH
     el.addEventListener('pointercancel', end);
   });
   el.addEventListener('pointermove', (ev) => {
-    if (box || el.classList.contains('panning')) return;
+    if (box || el.classList.contains('panning') || el.classList.contains('dragging-marker')) return;
     const at = local(ev);
     hover = { px: at.x, py: at.y };
     schedule();
@@ -446,6 +535,9 @@ export function createPlotView({ height = 230, fill = false, aspect = null, maxH
       clearTimeout(refineTimer);
       refineTimer = setTimeout(refine, 120);
     },
+    addCursor,
+    /** The spec shown. */
+    spec: () => spec,
     zoomed: () => !following,
     /** The zoomed view's limits in the data's units, `{ x, y }`; null when it shows it all. */
     zoom: () => (spec && view && !following ? { x: view.x.map((u) => fromU(scaleX(), u)), y: view.y.map((u) => fromU(scaleY(), u)) } : null),

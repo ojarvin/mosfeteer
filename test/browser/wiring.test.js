@@ -337,4 +337,37 @@ describe('wiring', { skip: browserSkip() }, () => {
     await h.settle();
     assert.deepEqual((await netOf('R2.b')).terminals, ['R2.b']);
   });
+
+  test('a free wire end dragged back along its wire shortens it; a selected wire\'s end moves the wire', async () => {
+    const press = async ([x0, y0], [x1, y1], { release = true } = {}) => {
+      const a = await at(x0, y0);
+      const b = await at(x1, y1);
+      await h.mouse('mouseMoved', a.x, a.y, { button: 'none', buttons: 0 });
+      await h.mouse('mousePressed', a.x, a.y);
+      for (let i = 1; i <= 6; i++) await h.mouse('mouseMoved', a.x + ((b.x - a.x) * i) / 6, a.y + ((b.y - a.y) * i) / 6, { button: 'left', buttons: 1 });
+      await h.settle();
+      if (release) { await h.mouse('mouseReleased', b.x, b.y); await h.settle(); }
+      return b;
+    };
+    await h.key('w');
+    await clickAt(880, 400);
+    await move(1200, 400);
+    await h.key('Enter');
+    await h.key('Escape');
+    await h.key('Escape');
+    // Held back along it: the wire shows shortened, with no draft over it.
+    const held = await press([1200, 400], [1040, 400], { release: false });
+    assert.deepEqual((await netOf('R2.b')).paths, [[{ x: 880, y: 400 }, { x: 1040, y: 400 }]]);
+    assert.equal(await preview(), null);
+    await h.mouse('mouseReleased', held.x, held.y);
+    await h.settle();
+    assert.deepEqual((await netOf('R2.b')).paths, [[{ x: 880, y: 400 }, { x: 1040, y: 400 }]]);
+    await h.key('u');
+    await h.settle();
+    assert.deepEqual((await netOf('R2.b')).paths, [[{ x: 880, y: 400 }, { x: 1200, y: 400 }]], 'one undo step');
+    // Selected, its end moves the wire: down, from its pin.
+    await clickAt(1040, 400);
+    await press([1200, 400], [1200, 560]);
+    assert.deepEqual((await netOf('R2.b')).paths, [[{ x: 880, y: 400 }, { x: 880, y: 560 }, { x: 1200, y: 560 }]]);
+  });
 });

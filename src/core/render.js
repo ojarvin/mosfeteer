@@ -12,6 +12,8 @@ import { BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth } 
 import { TRANSFER_FUNCTION_TYPES } from './transfer-function.js';
 import { normalizePageGuide, pageGuideFrame } from './page-guide.js';
 import { bodeFigure, dataFigure, locusFigure, responseFigure, stepFigure, swingFigure } from './bode-figure.js';
+import { cursorLayout } from './plot-cursors.js';
+import { plotSpec } from './plot-spec.js';
 import { mathRuns } from './math-text.js';
 import { joinSegments, stackOutline, stackedBoxes, wireEchoes } from './box-stack.js';
 
@@ -591,7 +593,11 @@ export function texToMathML(source) {
     if (GREEK_LOWER[name]) return mathMlAtom(GREEK_LOWER[name], 'mi');
     if (GREEK_UPPER[name]) return mathMlAtom(GREEK_UPPER[name], 'mi', 'mathvariant="normal"');
     if (commandSymbols[name]) return mathMlAtom(commandSymbols[name], 'mo');
-    if (name === ',' || name === ';' || name === '!') return '';
+    // TeX's spaces: a word space between a number and its unit (`2\ \text{dBFS}`), thin and medium ones.
+    if (name === ' ') return '<mspace width="0.25em"/>';
+    if (name === ',') return '<mspace width="0.1667em"/>';
+    if (name === ';') return '<mspace width="0.2778em"/>';
+    if (name === '!') return '';
     return mathMlAtom(name, 'mi');
   };
   // An atom that follows nothing, or follows an operator, starts an
@@ -799,6 +805,7 @@ const PLOT_STROKES = {
   band: { width: 3, dash: '18 9' },
   spectrum: { width: 3 },
   marker: { width: 3, dash: '18 9' },
+  cursor: { width: 2, dash: '10 6' },
 };
 
 /** A black-and-white plot's traces, told apart as a journal figure's are:
@@ -859,11 +866,12 @@ function plotAnnotationSvg(label, opacity = '') {
   // Its text is math (math-text.js), in the math font with math labels'
   // outline to give the light face their weight.
   const text = (item) => {
+    const size = item.size || fontSize;
     const runs = mathRuns(item.text).map((run) => (run.sub || run.super
-      ? `<tspan baseline-shift="${run.sub ? '-' : ''}${fmt(fontSize * 0.25)}" font-size="${fmt(fontSize * 0.68)}">${escapeSvg(run.text)}</tspan>`
+      ? `<tspan baseline-shift="${run.sub ? '-' : ''}${fmt(size * 0.25)}" font-size="${fmt(size * 0.68)}">${escapeSvg(run.text)}</tspan>`
       : escapeSvg(run.text))).join('');
     const turn = item.rotate ? ` transform="rotate(${item.rotate} ${fmt(item.x)} ${fmt(item.y)})"` : '';
-    return `<text x="${fmt(item.x)}" y="${fmt(item.y)}"${turn} text-anchor="${item.anchor}" font-family="${escapeSvg(MATH_FONT_FAMILY)}" font-size="${fmt(fontSize)}" fill="${color}" stroke="${color}" stroke-width="${fmt(fontSize * 0.02)}">${runs}</text>`;
+    return `<text x="${fmt(item.x)}" y="${fmt(item.y)}"${turn} text-anchor="${item.anchor}" font-family="${escapeSvg(MATH_FONT_FAMILY)}" font-size="${fmt(size)}" fill="${color}" stroke="${color}" stroke-width="${fmt(size * 0.02)}">${runs}</text>`;
   };
   // In black (the default), each curve takes the next dash; a simulated
   // spectrum behind them goes gray.
@@ -892,6 +900,17 @@ function plotAnnotationSvg(label, opacity = '') {
     if (item.type === 'text') return text(item);
     return '';
   }).join('');
+  // Its markers (plot-cursors.js): dashed lines, a dot at each value they
+  // read, the numbers small beside them.
+  const spec = plot.cursors && figure.toPx ? plotSpec(plot) : null;
+  const markers = spec ? (() => {
+    const layout = cursorLayout(spec, { toPx: figure.toPx, pane: figure.pane, size: 0.8 * fontSize, gap: 0.35 * fontSize });
+    return [
+      ...layout.lines.map((l) => `<line class="plot-cursor" x1="${fmt(l.x1)}" y1="${fmt(l.y1)}" x2="${fmt(l.x2)}" y2="${fmt(l.y2)}" ${stroke('cursor')} stroke-linecap="butt"/>`),
+      ...layout.dots.map((d) => `<circle class="plot-cursor-dot" cx="${fmt(d.x)}" cy="${fmt(d.y)}" r="${fmt((d.point ? 0.24 : 0.17) * fontSize)}" fill="${d.color && !black ? escapeSvg(d.color) : color}" stroke="#fff" stroke-width="${fmt(0.05 * fontSize)}"/>`),
+      ...layout.texts.map((t) => text({ ...t, size: 0.8 * fontSize })),
+    ].join('');
+  })() : '';
   // In black, each curve's legend entry has its line before it, in the
   // room left for it there (a lone curve's too); notes after them none.
   const samples = black && label.circuit
@@ -909,7 +928,7 @@ function plotAnnotationSvg(label, opacity = '') {
   // On its own paper (#fff takes the theme's paper), so the canvas grid
   // does not run through the plot's own.
   const paper = `<rect class="plot-paper" x="0" y="0" width="${fmt(w)}" height="${fmt(h)}" fill="#fff" stroke="none"/>`;
-  return `<g class="plot-annotation" transform="translate(${fmt(x)} ${fmt(y)})"${opacity}>${paper}${parts}${samples}</g>`;
+  return `<g class="plot-annotation" transform="translate(${fmt(x)} ${fmt(y)})"${opacity}>${paper}${parts}${markers}${samples}</g>`;
 }
 
 /**
