@@ -17,7 +17,7 @@ import { cloneLiteralPath, clonePath, crossNetOverlaps, hasPositiveBranchOverlap
 import { curvedArrowGeometry, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue, timingBreakGeometry } from './line-style.js';
 import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } from './beats.js';
 import { TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, parseDither, parseGain, parseLevels, parseTone, readTransferFunction, toneValueText, transferFunctionDisplay, transferFunctionLines } from './transfer-function.js';
-import { normalizePartsTable, partsTableLayout } from './parts-table.js';
+import { normalizePartsTable, partsTableKey, partsTableLayout } from './parts-table.js';
 import { normalizeFigure } from './figures.js';
 import { fanStacks, normalizeStack, segmentEnters, stackRects, stackedBoxes, wireEchoes } from './box-stack.js';
 import { PART_VALUE_ROLE, VALUE_LABEL_MODES, VALUE_TYPES, valueLabelTex } from './part-value.js';
@@ -1829,7 +1829,10 @@ export class LabelInstance {
    *  from the parts, so its size follows theirs, from its top-left corner. */
   syncTableBox() {
     if (!this.table) return null;
-    const layout = partsTableLayout(this.circuit, this.table, { width: this.style?.width });
+    // bbox() asks on every hit test: laid out again only when what it shows changed.
+    const key = partsTableKey(this.circuit, this.table, this.style?.width);
+    if (this._tableLayout?.key !== key) this._tableLayout = { key, layout: partsTableLayout(this.circuit, this.table, { width: this.style?.width }) };
+    const { layout } = this._tableLayout;
     const x = Math.min(this.anchor.x, this.end.x);
     const y = Math.min(this.anchor.y, this.end.y);
     this.anchor = { x, y };

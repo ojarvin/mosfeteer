@@ -65,6 +65,7 @@ import { logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, an
 import { resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi } from './design-check-ui.js';
 import { partialVertexPicks, selectAllNetIds } from '../core/selection.js';
 import { paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, fitView, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect } from './canvas-view.js';
+import { adoptDrawing, patchChildren, patchDrawing } from './svg-patch.js';
 import { syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock } from './analysis-ui.js';
 import { closeComponentContextMenu, openContextMenuAt, installContextMenu } from './context-menu.js';
 import { boxState, restoreBoxState, openComponentChildLabelEditor, inlineEditLabel } from './label-editor.js';
@@ -100,13 +101,14 @@ import { installSizing, renderSizingWindow, sizingDocumentShown, toggleSizing } 
 import { togglePlots } from './plots-window.js';
 import { paddedLineBounds } from './label-measure.js';
 import { syncChromeQuiet } from './chrome-quiet.js';
-import { captureNetGeometry, captureRouteGeometry, captureRunNetGeometry, cloneWireStyles, translateNetGeometry } from './net-geometry.js';
+import { captureNetGeometry, captureRunNetGeometry, cloneWireStyles, translateNetGeometry } from './net-geometry.js';
 import { copyHoveredReference, fitHoveredReference, installReferenceWindows, toggleReferenceWindows } from './reference-window.js';
 import { enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, linkBubbleFrame, moveLinkBubble, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles } from './hierarchy.js';
 import { askAnnotationText, askNetLabelNames, moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines } from './annotation-tools.js';
 import { refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste } from './copy-paste.js';
-import { netMarkerRefs, setHoverTarget, updateCanvasHover } from './hover-preview.js';
+import { hoverMoves, netMarkerRefs, setHoverTarget, updateCanvasHover } from './hover-preview.js';
 import { syncSnapPulse, annotationReach, cutAlong, withGestureOverlay } from './gesture-overlay.js';
+import { setHidden } from './dom.js';
 
 // Accessors for the state the split-out modules share (see editor-state.js).
 Object.defineProperties(editor, {
@@ -401,6 +403,7 @@ let wireHitIndexRevision = -1;
 let committedCanvasKey = '';
 let committedViewKey = '';
 let canvasSvgEl = null;
+let mountedDocumentPath; // the design the mounted drawing is of
 let overlayEl = null;
 let labelMetricsRenderPending = false;
 // Cross-net collinear wire overlaps (B4): highlighted spans + status warning.
@@ -673,15 +676,9 @@ export function applyJson(blob, { document: replacesDocument = false } = {}) {
   terminalSnap = false;
   clearSymmetry();
   drag = null;
-  moveMode = null;
-  copyMode = false;
-  deleteMode = false;
+  disarmTools();
   if (alignTool) alignTool = { source: null, hover: null };
-  movePending = false;
-  copyPending = false;
   mode = 'normal';
-  labelMode = null;
-  annotationPoints = [];
   resetCheckState();
   const previous = circuit;
   circuit = loadDocument(JSON.parse(blob));
@@ -1382,7 +1379,7 @@ export function updateAlignControls() {
   const panel = document.getElementById('align-panel');
   if (!panel) return;
   const selection = layoutSelection();
-  panel.hidden = selection.count < 2;
+  setHidden(panel, selection.count < 2);
   if (panel.hidden) { layoutPreviewRects = []; return; }
   document.getElementById('align-count').textContent = `${selection.count} selected`;
   const measure = document.getElementById('align-measure')?.value || 'gaps';
@@ -2471,7 +2468,7 @@ function syncEmptyState() {
   const card = document.getElementById('empty-state');
   if (!card) return;
   const empty = !circuit.components.size && !circuit.labels.size && !circuit.nets.size;
-  card.hidden = !empty || mode === 'insert' || !!wire || !!labelMode || !!tutorial;
+  setHidden(card, !empty || mode === 'insert' || !!wire || !!labelMode || !!tutorial);
   if (card.hidden) return;
   card.querySelector('.empty-state-title').textContent = 'Empty schematic';
   syncRecentDesigns(card);
@@ -2807,8 +2804,13 @@ function keepAlignedEdge(label, before) {
 let mathLayerEl = null;
 let mathLayerMarkup = null;
 
+// A move cursor on a layer of its own under the overlay: set on the drawing's
+// root, the cursor (inherited) made every element of a large drawing restyle.
+const HOVER_MOVE_AREA = '<rect class="hover-move-area" x="-1e7" y="-1e7" width="2e7" height="2e7" fill="none" pointer-events="all"/>';
+
 function syncMathLayer(parts) {
-  const markup = themeInkSvg(parts.join('\n'));
+  // The ink pass runs over the whole layer: only when its source changed.
+  const source = parts.join('\n');
   if (!mathLayerEl || mathLayerEl.parentNode !== canvasEl) {
     mathLayerEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     mathLayerEl.setAttribute('class', 'math-layer');
@@ -2817,9 +2819,17 @@ function syncMathLayer(parts) {
     mathLayerMarkup = null;
   }
   for (const name of ['width', 'height', 'viewBox']) mathLayerEl.setAttribute(name, canvasSvgEl.getAttribute(name));
-  if (markup === mathLayerMarkup) return;
-  mathLayerMarkup = markup;
-  mathLayerEl.innerHTML = markup;
+  if (source === mathLayerMarkup) return;
+  const first = mathLayerMarkup === null;
+  mathLayerMarkup = source;
+  if (first) {
+    mathLayerEl.innerHTML = themeInkSvg(source);
+    return;
+  }
+  // Only the labels that changed are replaced, as in the drawing.
+  const template = document.createElement('template');
+  template.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg">${themeInkSvg(source)}</svg>`;
+  patchChildren(mathLayerEl, template.content.firstChild);
 }
 
 export function syncRenderedLabelMetrics() {
@@ -2926,16 +2936,25 @@ export function renderCanvas(modelKey) {
       editingLabel: editingLabelId,
       ...(beatView ? { beat: { view: beatView, fade: true, timing: timingBeatBands(circuit, beatView.index) } } : {}),
     });
-    // Swap the drawing alone: the math layer beside it stays in the page.
     const template = document.createElement('template');
     template.innerHTML = markup;
     const nextSvg = template.content.querySelector('svg');
+    // The same design, the drawing changes in place (svg-patch.js), its
+    // other layers (the overlay, the beams, the rubber box) kept; another
+    // design shares nothing to keep, and is put in whole.
     const previousSvg = canvasSvgEl?.parentNode === canvasEl ? canvasSvgEl : null;
-    if (previousSvg) canvasEl.replaceChild(nextSvg, previousSvg);
-    else canvasEl.replaceChildren(nextSvg);
-    canvasSvgEl = nextSvg;
+    if (previousSvg && mountedDocumentPath === currentDocumentPath) patchDrawing(previousSvg, nextSvg);
+    else {
+      adoptDrawing(nextSvg);
+      if (previousSvg) canvasEl.replaceChild(nextSvg, previousSvg);
+      else canvasEl.replaceChildren(nextSvg);
+      canvasSvgEl = nextSvg;
+      mountedDocumentPath = currentDocumentPath;
+    }
     syncMathLayer(mathParts);
     if (syncRenderedLabelMetrics()) scheduleMeasuredLabelRender();
+  }
+  if (canvasRebuilt && canvasSvgEl && !overlayEl?.isConnected) {
     overlayEl = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     overlayEl.setAttribute('class', 'editor-overlay');
     canvasSvgEl.appendChild(overlayEl);
@@ -3104,7 +3123,7 @@ export function renderCanvas(modelKey) {
     cursorCrosshair: crosshairVisible && cursorInCanvas ? view : null,
   });
   // Ghosts and previews use the same theme-aware ink as the committed drawing.
-  overlayEl.innerHTML = themeInkSvg(withGestureOverlay(overlay, ghost));
+  overlayEl.innerHTML = themeInkSvg((hoverMoves() ? HOVER_MOVE_AREA : '') + withGestureOverlay(overlay, ghost));
   drawRubber();
   syncLinkBubbles();
   syncSnapPulse();
@@ -7230,14 +7249,8 @@ function onNormalKey(key, shiftKey = false) {
       return;
     }
     pendingKey = null;
-    moveMode = null;
-    copyMode = false;
-    deleteMode = false;
-    movePending = false;
-    copyPending = false;
-    labelMode = null;
+    disarmTools();
     annotationStart = null;
-    annotationPoints = [];
     setLabelSelection([]);
     selectedNets.clear();
     render();
@@ -7388,14 +7401,9 @@ function activateLabelPlacement(kind) {
   pendingPlace = null;
   clearSymmetry();
   insertQuery = '';
-  moveMode = null;
-  copyMode = false;
-  deleteMode = false;
-  movePending = false;
-  copyPending = false;
+  disarmTools();
   labelMode = kind;
   annotationStart = null;
-  annotationPoints = [];
   hintLine(kind === 'net'
     ? 'NET LABEL: click a physical wire; stays active until Esc'
     : kind === 'highlight'
@@ -7468,8 +7476,8 @@ function wrapSelectionInBox() {
   return true;
 }
 
-export function activatePlace() {
-  leaveActiveInteraction();
+/** Disarm the one-shot tools: move, copy, delete, label and annotation placement. */
+function disarmTools() {
   moveMode = null;
   copyMode = false;
   deleteMode = false;
@@ -7477,6 +7485,11 @@ export function activatePlace() {
   copyPending = false;
   labelMode = null;
   annotationPoints = [];
+}
+
+export function activatePlace() {
+  leaveActiveInteraction();
+  disarmTools();
   mode = 'insert';
   terminalSnap = false;
   pendingPlace = null;
@@ -7492,13 +7505,7 @@ export function activateSelect() {
   pendingPlace = null;
   clearSymmetry();
   insertQuery = '';
-  labelMode = null;
-  annotationPoints = [];
-  moveMode = null;
-  copyMode = false;
-  deleteMode = false;
-  movePending = false;
-  copyPending = false;
+  disarmTools();
   render();
 }
 export function activateDelete() {
@@ -7511,12 +7518,7 @@ export function activateDelete() {
   }
   mode = 'normal';
   terminalSnap = false;
-  moveMode = null;
-  copyMode = false;
-  movePending = false;
-  copyPending = false;
-  labelMode = null;
-  annotationPoints = [];
+  disarmTools();
   deleteMode = true;
   render();
 }
@@ -7526,13 +7528,7 @@ export function activateWire() {
   // a partially drawn path, including its manually entered waypoints.
   if (hasWireDraft()) { logLine('active interaction retained'); render(); return; }
   leaveActiveInteraction();
-  moveMode = null;
-  copyMode = false;
-  deleteMode = false;
-  movePending = false;
-  copyPending = false;
-  labelMode = null;
-  annotationPoints = [];
+  disarmTools();
   mode = 'normal';
   terminalSnap = !!altHeld;
   // F3 changes the route style of this same managed workflow.  Diagonal wires
@@ -7548,12 +7544,7 @@ export function activateMove(kind = 'connected') {
   noteTip('move-start');
   mode = 'normal';
   terminalSnap = false;
-  copyMode = false;
-  deleteMode = false;
-  movePending = false;
-  copyPending = false;
-  labelMode = null;
-  annotationPoints = [];
+  disarmTools();
   moveMode = kind === 'detached' ? 'detached' : 'connected';
   render();
 }
@@ -7562,12 +7553,7 @@ export function activateCopy() {
   leaveActiveInteraction();
   mode = 'normal';
   terminalSnap = false;
-  moveMode = null;
-  deleteMode = false;
-  movePending = false;
-  copyPending = false;
-  labelMode = null;
-  annotationPoints = [];
+  disarmTools();
   copyMode = true; // source click and placement are handled by the canvas
   hintLine('COPY: click an object, move the copy, then click · Esc exits');
   render();
@@ -7576,13 +7562,7 @@ export function activateCopy() {
 export function activateAlign() {
   leaveActiveInteraction();
   terminalSnap = false;
-  moveMode = null;
-  copyMode = false;
-  deleteMode = false;
-  movePending = false;
-  copyPending = false;
-  labelMode = null;
-  annotationPoints = [];
+  disarmTools();
   alignTool = { source: null, hover: null };
   hintLine(ALIGN_SOURCE_HINT);
   render();

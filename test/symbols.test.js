@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { GRID, onGrid } from '../src/core/grid.js';
+import { GRID } from '../src/core/grid.js';
 import { defineSymbol, validateSymbol } from '../src/core/components/defineSymbol.js';
 import { symbolTypes, symbolTypeNames, getSymbol } from '../src/core/components/index.js';
 import { SOLDER_DOT_RADIUS } from '../src/core/components/solder.js';

@@ -12,6 +12,7 @@ import { editor } from './editor-state.js';
 import { paneSize } from './canvas-view.js';
 import { syncInteractionUI } from './toolbar-ui.js';
 import { keyHintContext, selectedComp, selectedComps, selectedLabel, selectedLabels, symmetryAxisText, symmetryTwin } from './main.js';
+import { setClassName, setHidden, setText } from './dom.js';
 
 let logPeekTimer = 0;
 
@@ -144,23 +145,18 @@ export function renderStatus() {
     cursor: editor.cursor,
     hints: parts,
   });
-  statusEl.textContent = fields.hint;
+  setText(statusEl, fields.hint);
   renderKeyHints(!fields.hint);
-  statusEl.className = `status ${interaction.key}`;
-  if (editor.wire) statusEl.classList.add('wire');
-  else if (editor.mode === 'insert') statusEl.classList.add('insert');
-  if (statusModeEl) {
-    statusModeEl.textContent = fields.mode;
-    statusModeEl.className = `status-mode ${statusEl.className.replace(/^status\s*/, '')}`;
-  }
-  if (statusSelectionEl) {
-    statusSelectionEl.textContent = fields.selection;
-    statusSelectionEl.hidden = !fields.selection;
-  }
-  if (statusCursorEl) statusCursorEl.textContent = fields.cursor;
+  const modeClass = `${interaction.key}${editor.wire ? ' wire' : editor.mode === 'insert' ? ' insert' : ''}`;
+  setClassName(statusEl, `status ${modeClass}`);
+  setText(statusModeEl, fields.mode);
+  setClassName(statusModeEl, `status-mode ${modeClass}`);
+  setText(statusSelectionEl, fields.selection);
+  setHidden(statusSelectionEl, !fields.selection);
+  setText(statusCursorEl, fields.cursor);
   // render() measured the pane before writing the DOM; measuring again here
   // would force a synchronous layout on every frame.
-  if (statusZoomEl) statusZoomEl.textContent = `${zoomPercent(editor.view, (editor.viewPane || paneSize())?.w, editor.zoom)}%`;
+  setText(statusZoomEl, `${zoomPercent(editor.view, (editor.viewPane || paneSize())?.w, editor.zoom)}%`);
 }
 
 /** The footer's key strip: the few keys that matter now, while no mode hint

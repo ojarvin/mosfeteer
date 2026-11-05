@@ -98,21 +98,28 @@ function sourceOf(el) {
   return el.getAttribute('href') || el.getAttribute('src') || '';
 }
 
+/** Mark or unmark a picture, writing its class only when that changes: the
+ *  observer below hears class writes, and `classList.remove` writes the
+ *  attribute even when the class is not there. */
+function setMark(el, light) {
+  if (el.classList.contains('light-picture') !== light) el.classList.toggle('light-picture', light);
+}
+
 function mark(el) {
   const src = sourceOf(el);
   // A design drawn into a reference window is already in the theme.
   if (!src.startsWith('data:image/') || src.startsWith('data:image/svg')) {
-    el.classList.remove('light-picture');
+    setMark(el, false);
     return;
   }
   const known = judged.get(src);
   if (typeof known === 'boolean') {
-    el.classList.toggle('light-picture', known);
+    setMark(el, known);
     return;
   }
-  el.classList.remove('light-picture');
+  setMark(el, false);
   judge(src).then((light) => {
-    if (sourceOf(el) === src) el.classList.toggle('light-picture', light);
+    if (sourceOf(el) === src) setMark(el, light);
   });
 }
 
@@ -125,14 +132,15 @@ function markWithin(node) {
 export function installPictureTheme() {
   invertPicturesButton?.addEventListener('click', () => setPicturesFollowTheme(!on));
   sync();
-  // Pictures come and go as the drawing and the notes are redrawn; a judged
-  // source is marked before the frame is painted.
+  // Pictures come and go as the drawing and the notes are redrawn, and a
+  // drawing patched in place (svg-patch.js) resets their class to its
+  // markup's; a judged source is marked before the frame is painted.
   new MutationObserver((records) => {
     for (const record of records) {
       if (record.type === 'attributes') {
         if (record.target.matches?.(PICTURES)) mark(record.target);
       } else for (const node of record.addedNodes) markWithin(node);
     }
-  }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['src', 'href'] });
+  }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['src', 'href', 'class'] });
   markWithin(document.body);
 }

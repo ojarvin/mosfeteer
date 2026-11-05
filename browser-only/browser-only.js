@@ -6804,11 +6804,7 @@ function compareProducts(a, b) {
   return 0;
 }
 
-/** A table cell: 0, 1, Z, X. */
-const logicValueText = (v) => String(v);
-
 __exports.LOGIC_MAX_VARIABLES = LOGIC_MAX_VARIABLES;
-__exports.logicValueText = logicValueText;
 };
 
 __modules["src/core/analysis/loop-gain.js"] = function (__require, __exports) {
@@ -21634,6 +21630,7 @@ __exports.responseFigure = responseFigure;
 __exports.stepFigure = stepFigure;
 __exports.dataFigure = dataFigure;
 __exports.swingFigure = swingFigure;
+__exports.swingLimitText = swingLimitText;
 __exports.plainTex = plainTex;
 __exports.swingOverload = swingOverload;
 __exports.swingRunaway = swingRunaway;
@@ -21669,6 +21666,20 @@ const AXIS_BOTTOM_EM = 3.4;
 function axisTitles(items, pane, em, { x, y }) {
   items.push({ type: 'text', x: pane.x + pane.w / 2, y: pane.y + pane.h + 2.9 * em, text: x, anchor: 'middle', role: 'label' });
   items.push({ type: 'text', x: 1.05 * em, y: pane.y + pane.h / 2, text: y, anchor: 'middle', role: 'label', rotate: -90 });
+}
+
+/** A plot's pane in a `width` x `height` box: room left of it and under it
+ *  for the numbers and axis titles. */
+function framePane(width, height, em) {
+  const left = AXIS_LEFT_EM * em;
+  const top = 0.9 * em;
+  return { x: left, y: top, w: Math.max(10, width - left - 0.9 * em), h: Math.max(10, height - top - AXIS_BOTTOM_EM * em) };
+}
+
+/** The pane's left and bottom axes. */
+function frameAxes(items, pane) {
+  items.push({ type: 'line', x1: pane.x, y1: pane.y, x2: pane.x, y2: pane.y + pane.h, role: 'axis' });
+  items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });
 }
 
 function niceRange(values, step, pad) {
@@ -21940,11 +21951,7 @@ function responseFigure(plot, { width = 480, height = 260, fontSize = 11 } = {})
   // A zoomed plot keeps the limits it was annotated at (`view`).
   const view = plot.view || {};
   const [low, high] = view.x ? view.x.map(Math.log10) : rangeWithExtra(plot, { log: true });
-  const left = AXIS_LEFT_EM * em;
-  const right = 0.9 * em;
-  const top = 0.9 * em;
-  const bottom = AXIS_BOTTOM_EM * em;
-  const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
+  const pane = framePane(width, height, em);
   const x = (f) => pane.x + ((Math.log10(f) - low) / (high - low)) * pane.w;
   // The axis fits every curve, in whole 20 dB steps; its ticks spread out on
   // a wide range (a high-order noise shaper reaches far down).
@@ -21956,8 +21963,7 @@ function responseFigure(plot, { width = 480, height = 260, fontSize = 11 } = {})
   const span = dbHigh - dbLow;
   const step = phase ? (span > 720 ? 180 : span > 360 ? 90 : 45) : span > 400 ? 100 : span > 200 ? 50 : span > 100 ? 40 : 20;
   const y = (db) => pane.y + ((dbHigh - clamp(db, dbLow, dbHigh)) / (dbHigh - dbLow)) * pane.h;
-  items.push({ type: 'line', x1: pane.x, y1: pane.y, x2: pane.x, y2: pane.y + pane.h, role: 'axis' });
-  items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });
+  frameAxes(items, pane);
   if (dbLow < 0 && dbHigh > 0) items.push({ type: 'line', x1: pane.x, y1: y(0), x2: pane.x + pane.w, y2: y(0), role: 'zero' });
   const xTicks = view.x
     ? zoomTicks('log', low, high, pane.w, 6 * em).map((tick) => ({ at: pane.x + ((tick.u - low) / (high - low)) * pane.w, text: tick.text }))
@@ -21984,7 +21990,10 @@ function responseFigure(plot, { width = 480, height = 260, fontSize = 11 } = {})
   plot.traces.forEach((trace, index) => {
     if (trace.hidden) return;
     // Only what lies in the frequency range (a spectrum's lowest bins may not).
-    const samples = trace.points.filter((p) => Math.log10(p.f) >= low - 1e-9 && Math.log10(p.f) <= high + 1e-9).map((p) => ({ f: p.f, value: p.db }));
+    // Zoomed, a point either side of the range too: the curve runs to the
+    // pane's edge, where clipToPane cuts it.
+    const inRange = (p) => p && Math.log10(p.f) >= low - 1e-9 && Math.log10(p.f) <= high + 1e-9;
+    const samples = trace.points.filter((p, i, all) => inRange(p) || (view.x && (inRange(all[i - 1]) || inRange(all[i + 1])))).map((p) => ({ f: p.f, value: p.db }));
     for (const path of clippedPaths(samples, (s) => x(s.f), y, dbLow, dbHigh, trace.background ? 'spectrum' : 'curve')) items.push({ ...path, color: trace.color, trace: index });
   });
   items.push(...extraPaths(plot, (f) => (f > 0 ? x(f) : NaN), (db) => pane.y + ((dbHigh - db) / (dbHigh - dbLow)) * pane.h, pane, plot.traces.length));
@@ -22024,11 +22033,7 @@ function responseFigure(plot, { width = 480, height = 260, fontSize = 11 } = {})
 function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const items = [];
   const em = fontSize;
-  const left = AXIS_LEFT_EM * em;
-  const right = 0.9 * em;
-  const top = 0.9 * em;
-  const bottom = AXIS_BOTTOM_EM * em;
-  const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
+  const pane = framePane(width, height, em);
   const view = plot.view || {};
   const [low, high] = view.x || rangeWithExtra(plot);
   const x = (t) => pane.x + ((t - low) / (high - low || 1)) * pane.w;
@@ -22041,8 +22046,7 @@ function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const [yLow, yHigh] = view.y || [Math.floor((yBottom - (yBottom < 0 ? 0.08 * span : 0)) / ystep) * ystep, Math.ceil((yTop + 0.08 * span) / ystep) * ystep || ystep];
   // Zoomed, a curve runs out of the pane (cut there) rather than along its edge.
   const y = view.y ? (v) => pane.y + ((yHigh - v) / (yHigh - yLow)) * pane.h : (v) => pane.y + ((yHigh - Math.max(yLow, Math.min(yHigh, v))) / (yHigh - yLow)) * pane.h;
-  items.push({ type: 'line', x1: pane.x, y1: pane.y, x2: pane.x, y2: pane.y + pane.h, role: 'axis' });
-  items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });
+  frameAxes(items, pane);
   if (yLow < 0 && yHigh > 0) items.push({ type: 'line', x1: pane.x, y1: y(0), x2: pane.x + pane.w, y2: y(0), role: 'zero' });
   const xstep = niceStep((high - low) / 5);
   const xTicks = view.x
@@ -22087,11 +22091,7 @@ function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
 function dataFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const items = [];
   const em = fontSize;
-  const left = AXIS_LEFT_EM * em;
-  const right = 0.9 * em;
-  const top = 0.9 * em;
-  const bottom = AXIS_BOTTOM_EM * em;
-  const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
+  const pane = framePane(width, height, em);
   const xs = plot.x?.scale === 'log' ? 'log' : 'linear';
   const ys = plot.y?.scale === 'log' ? 'log' : 'linear';
   const curves = plot.traces.map((trace) => trace.points.map(([px, py]) => [toU(xs, px), toU(ys, py)])
@@ -22102,8 +22102,7 @@ function dataFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const [y0, y1] = range(plot.view?.y, ys, 1);
   const x = (u) => pane.x + ((u - x0) / (x1 - x0 || 1)) * pane.w;
   const y = (v) => pane.y + ((y1 - v) / (y1 - y0 || 1)) * pane.h;
-  items.push({ type: 'line', x1: pane.x, y1: pane.y, x2: pane.x, y2: pane.y + pane.h, role: 'axis' });
-  items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });
+  frameAxes(items, pane);
   if (ys === 'linear' && y0 < 0 && y1 > 0) items.push({ type: 'line', x1: pane.x, y1: y(0), x2: pane.x + pane.w, y2: y(0), role: 'zero' });
   const xTicks = zoomTicks(xs, x0, x1, pane.w, 6 * em);
   const yTicks = zoomTicks(ys, y0, y1, pane.h, 2.5 * em);
@@ -22157,11 +22156,7 @@ function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const em = fontSize;
   const view = plot.view || {};
   const [low, high] = view.x || rangeWithExtra(plot);
-  const left = AXIS_LEFT_EM * em;
-  const right = 0.9 * em;
-  const top = 0.9 * em;
-  const bottom = AXIS_BOTTOM_EM * em;
-  const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
+  const pane = framePane(width, height, em);
   const x = (a) => pane.x + ((a - low) / (high - low)) * pane.w;
   // The peaks fit in whole 10 dB steps; a loop blowing up runs off the top.
   const values = [...plot.traces.flatMap((trace) => trace.points.map((p) => p.db)), ...extraValues(plot)].filter((db) => Number.isFinite(db) && db > -200);
@@ -22171,8 +22166,7 @@ function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   if (view.y) [dbLow, dbHigh] = view.y;
   const step = dbHigh - dbLow > 80 ? 20 : 10;
   const y = (db) => pane.y + ((dbHigh - clamp(db, dbLow, dbHigh)) / (dbHigh - dbLow)) * pane.h;
-  items.push({ type: 'line', x1: pane.x, y1: pane.y, x2: pane.x, y2: pane.y + pane.h, role: 'axis' });
-  items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });
+  frameAxes(items, pane);
   if (dbLow < 0 && dbHigh > 0) items.push({ type: 'line', x1: pane.x, y1: y(0), x2: pane.x + pane.w, y2: y(0), role: 'zero' });
   if (low < 0 && high > 0) items.push({ type: 'line', x1: x(0), y1: pane.y, x2: x(0), y2: pane.y + pane.h, role: 'zero' });
   const xStep = high - low > 60 ? 20 : 10;
@@ -22198,10 +22192,7 @@ function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
     items.push({ type: 'line', x1: x(limit.a), y1: pane.y, x2: x(limit.a), y2: pane.y + pane.h, role: 'marker' });
     // At the top, clear of the axis titles: left of the line in the right half, else right of it.
     const right = x(limit.a) > pane.x + pane.w / 2;
-    const text = limit.kind === 'full-scale'
-      ? `${limit.label ? `${plainTex(limit.label)} ` : ''}full scale ${Number(limit.a.toFixed(1))} dBFS`
-      : `runaway ${Number(limit.a.toFixed(2))} dBFS`;
-    items.push({ type: 'text', x: x(limit.a) + (right ? -0.35 : 0.35) * em, y: pane.y + 1.2 * em, text, anchor: right ? 'end' : 'start', role: 'marker' });
+    items.push({ type: 'text', x: x(limit.a) + (right ? -0.35 : 0.35) * em, y: pane.y + 1.2 * em, text: swingLimitText(limit), anchor: right ? 'end' : 'start', role: 'marker' });
   }
   plot.traces.forEach((trace, index) => {
     const samples = trace.points.map((p) => ({ f: p.a, value: Number.isFinite(p.db) ? p.db : dbHigh + 100 }));
@@ -22210,6 +22201,13 @@ function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   items.push(...extraPaths(plot, x, (db) => pane.y + ((dbHigh - db) / (dbHigh - dbLow)) * pane.h, pane, plot.traces.length));
   axisTitles(items, pane, em, { x: 'Input amplitude (dBFS)', y: 'Peak swing (dBFS)' });
   return { width, height, items: plot.view ? clipToPane(items, pane) : items, pane, ranges: { db: [dbLow, dbHigh] }, toPx: { x, y: (db) => pane.y + ((dbHigh - db) / (dbHigh - dbLow)) * pane.h } };
+}
+
+/** A swing limit (swingLimit) as its marker names it. */
+function swingLimitText(limit) {
+  return limit.kind === 'full-scale'
+    ? `${limit.label ? `${plainTex(limit.label)} ` : ''}full scale ${Number(limit.a.toFixed(1))} dBFS`
+    : `runaway ${Number(limit.a.toFixed(2))} dBFS`;
 }
 
 /** A trace's TeX name as plot text, which knows only `_{}` and `^{}`:
@@ -22310,11 +22308,7 @@ function swingLimit(traces) {
 function locusFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const items = [];
   const em = fontSize;
-  const left = AXIS_LEFT_EM * em;
-  const right = 0.9 * em;
-  const top = 0.9 * em;
-  const bottom = AXIS_BOTTOM_EM * em;
-  const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
+  const pane = framePane(width, height, em);
   const z = plot.variable === 'z';
   // In z the view stays near the unit circle: a pole far outside is
   // unstable either way, and following it would shrink the circle away.
@@ -22331,8 +22325,7 @@ function locusFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const cx = (reLow + reHigh) / 2;
   const x = (re) => pane.x + pane.w / 2 + (re - cx) / scale;
   const y = (im) => pane.y + pane.h / 2 - im / scale;
-  items.push({ type: 'line', x1: pane.x, y1: pane.y, x2: pane.x, y2: pane.y + pane.h, role: 'axis' });
-  items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });
+  frameAxes(items, pane);
   // The real and imaginary axes through the origin, when in view.
   if (y(0) > pane.y && y(0) < pane.y + pane.h) items.push({ type: 'line', x1: pane.x, y1: y(0), x2: pane.x + pane.w, y2: y(0), role: 'grid' });
   if (x(0) > pane.x && x(0) < pane.x + pane.w) items.push({ type: 'line', x1: x(0), y1: pane.y, x2: x(0), y2: pane.y + pane.h, role: z ? 'grid' : 'band' });
@@ -29894,7 +29887,7 @@ let cloneLiteralPath, clonePath, crossNetOverlaps, hasPositiveBranchOverlap, joi
 let curvedArrowGeometry, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue, timingBreakGeometry; __bind(() => { ({ curvedArrowGeometry, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue, timingBreakGeometry } = __require("src/core/line-style.js")); });
 let SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey; __bind(() => { ({ SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } = __require("src/core/beats.js")); });
 let TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, parseDither, parseGain, parseLevels, parseTone, readTransferFunction, toneValueText, transferFunctionDisplay, transferFunctionLines; __bind(() => { ({ TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, parseDither, parseGain, parseLevels, parseTone, readTransferFunction, toneValueText, transferFunctionDisplay, transferFunctionLines } = __require("src/core/transfer-function.js")); });
-let normalizePartsTable, partsTableLayout; __bind(() => { ({ normalizePartsTable, partsTableLayout } = __require("src/core/parts-table.js")); });
+let normalizePartsTable, partsTableKey, partsTableLayout; __bind(() => { ({ normalizePartsTable, partsTableKey, partsTableLayout } = __require("src/core/parts-table.js")); });
 let normalizeFigure; __bind(() => { ({ normalizeFigure } = __require("src/core/figures.js")); });
 let fanStacks, normalizeStack, segmentEnters, stackRects, stackedBoxes, wireEchoes; __bind(() => { ({ fanStacks, normalizeStack, segmentEnters, stackRects, stackedBoxes, wireEchoes } = __require("src/core/box-stack.js")); });
 let PART_VALUE_ROLE, VALUE_LABEL_MODES, VALUE_TYPES, valueLabelTex; __bind(() => { ({ PART_VALUE_ROLE, VALUE_LABEL_MODES, VALUE_TYPES, valueLabelTex } = __require("src/core/part-value.js")); });
@@ -31731,7 +31724,10 @@ class LabelInstance {
    *  from the parts, so its size follows theirs, from its top-left corner. */
   syncTableBox() {
     if (!this.table) return null;
-    const layout = partsTableLayout(this.circuit, this.table, { width: this.style?.width });
+    // bbox() asks on every hit test: laid out again only when what it shows changed.
+    const key = partsTableKey(this.circuit, this.table, this.style?.width);
+    if (this._tableLayout?.key !== key) this._tableLayout = { key, layout: partsTableLayout(this.circuit, this.table, { width: this.style?.width }) };
+    const { layout } = this._tableLayout;
     const x = Math.min(this.anchor.x, this.end.x);
     const y = Math.min(this.anchor.y, this.end.y);
     this.anchor = { x, y };
@@ -39234,6 +39230,7 @@ __exports.sortPartRows = sortPartRows;
 __exports.groupPartRows = groupPartRows;
 __exports.normalizePartsTable = normalizePartsTable;
 __exports.partsTableParts = partsTableParts;
+__exports.partsTableKey = partsTableKey;
 __exports.lengthText = lengthText;
 __exports.partCells = partCells;
 __exports.partsTableLayout = partsTableLayout;
@@ -39388,6 +39385,18 @@ function partsTableParts(circuit, table) {
 }
 
 const PREFIX_TEXT = { f: 'f', p: 'p', n: 'n', u: 'µ', m: 'm' };
+
+/** What a table's layout reads, as one string: the table, its text size,
+ *  and each part's name, type, size, and value. Equal keys, equal layouts. */
+function partsTableKey(circuit, table, width = 'normal') {
+  let key = `${width}|${table?.parts ? table.parts.join(',') : '*'}`;
+  for (const component of circuit.components.values()) {
+    if (!partKind(component)) continue;
+    const { size } = component;
+    key += `|${component.refdes}:${component.type}:${component.drawingOnly ? 1 : 0}:${size ? `${size.w},${size.l},${size.m}` : ''}:${component.value ?? ''}:${circuit.labelOf(component.refdes)?._text ?? ''}`;
+  }
+  return key;
+}
 
 /** A stored length (`2u`, `400n`) as a table shows it: 2 µm, 400 nm. */
 function lengthText(length) {
@@ -39735,12 +39744,12 @@ function curveCrossings(curve, v, max = 3) {
   return out;
 }
 
-/** A number as a marker shows it: four figures. */
-function cursorNumber(value) {
+/** A number as a marker shows it: four figures (`digits`). */
+function cursorNumber(value, digits = 4) {
   if (!Number.isFinite(value)) return '–';
   const magnitude = Math.abs(value);
   if (magnitude !== 0 && (magnitude < 1e-3 || magnitude >= 1e6)) return value.toExponential(3).replace(/\.?0+e/, 'e');
-  return String(Number(value.toPrecision(4)));
+  return String(Number(value.toPrecision(digits)));
 }
 
 /** A number as a marker's label writes it, an exponent as a power of
@@ -39797,33 +39806,82 @@ function cursorReadings(spec, cursors = spec?.cursors || []) {
   });
 }
 
+/** Whether the segment a-b passes through `box`. */
+function segmentHitsBox(a, b, box) {
+  const x1 = box.x + box.w;
+  const y1 = box.y + box.h;
+  if (Math.max(a.x, b.x) < box.x || Math.min(a.x, b.x) > x1 || Math.max(a.y, b.y) < box.y || Math.min(a.y, b.y) > y1) return false;
+  // Clipped to the box's x span, the segment's y range meets the box's.
+  const dx = b.x - a.x;
+  const at = (x) => (dx ? a.y + ((x - a.x) / dx) * (b.y - a.y) : a.y);
+  const lo = Math.max(box.x, Math.min(a.x, b.x));
+  const hi = Math.min(x1, Math.max(a.x, b.x));
+  const ys = dx ? [at(lo), at(hi)] : [a.y, b.y];
+  return Math.max(...ys) >= box.y && Math.min(...ys) <= y1;
+}
+
 /**
  * Small texts placed beside their points, none over another or over a
- * point, inside `pane`: `labels` `[{ x, y, text }]` (px), each tried
- * up-right, down-right, up-left, down-left of its point, then further up
- * and down; one with no clear place takes its first inside the pane.
- * `size` is the text's height; widths are estimated. Returns `[{ x, y
- * (baseline), anchor, text, box }]`.
+ * point, inside `pane`, and as few as can be over the traces: `labels`
+ * `[{ x, y, text }]` (px), `curves` the traces as px polylines. Each label
+ * is tried up-right, down-right, up-left, and down-left of its point, then
+ * a row further out at a time; the nearest spot over no trace wins, and a
+ * spot over one trace costs as much as four rows further out. One with no
+ * clear place takes its first inside the pane. `size` is the text's
+ * height; widths are estimated. Returns `[{ x, y (baseline), anchor,
+ * text, box, leader? }]`: a label moved out a row or more has a leader,
+ * `{ x1, y1, x2, y2 }`, from its point to the nearest of its box.
  */
-function placeCursorLabels(labels, pane, { size = 10, gap = 3 } = {}) {
+function placeCursorLabels(labels, pane, { size = 10, gap = 3, curves = [] } = {}) {
   const placed = [];
-  // Plot markup (^{}) takes no room of its own; a superscript is smaller.
-  const width = (text) => 0.58 * size * text.replace(/\^\{([^}]*)\}/g, (m, sup) => sup.slice(0, Math.ceil(0.7 * sup.length))).length;
+  // In the math font a figure is half an em; markup (^{}) takes no room of
+  // its own, and a superscript is two thirds the size.
+  const width = (text) => {
+    const sup = [...text.matchAll(/\^\{([^}]*)\}/g)].reduce((n, m) => n + m[1].length, 0);
+    const base = text.replace(/\^\{[^}]*\}/g, '').length;
+    return 0.52 * size * (base + 0.68 * sup);
+  };
   const points = labels.map((l) => ({ x: l.x - gap, y: l.y - gap, w: 2 * gap, h: 2 * gap }));
-  const clear = (b) => ![...placed.map((p) => p.box), ...points].some((o) => b.x < o.x + o.w && o.x < b.x + b.w && b.y < o.y + o.h && o.y < b.y + b.h);
+  const overlaps = (b, o) => b.x < o.x + o.w && o.x < b.x + b.w && b.y < o.y + o.h && o.y < b.y + b.h;
+  const clear = (b) => ![...placed.map((p) => p.box), ...points].some((o) => overlaps(b, o));
   const inside = (b) => b.x >= pane.x && b.y >= pane.y && b.x + b.w <= pane.x + pane.w && b.y + b.h <= pane.y + pane.h;
+  const segments = curves.flatMap((line) => line.slice(1).map((b, i) => [line[i], b]));
+  const crossings = (box) => {
+    const near = { x: box.x - 1, y: box.y - 1, w: box.w + 2, h: box.h + 2 };
+    let n = 0;
+    for (const [a, b] of segments) if (segmentHitsBox(a, b, near)) n += 1;
+    return n;
+  };
+  const ROWS = 5;
   for (const label of labels) {
     const w = width(label.text);
     const h = size;
     const spots = [];
-    for (let row = 0; row < 5; row++) {
+    for (let row = 0; row < ROWS; row++) {
       const up = label.y - gap - h - row * (h + 1);
       const down = label.y + gap + row * (h + 1);
-      spots.push([label.x + gap, up], [label.x + gap, down], [label.x - gap - w, up], [label.x - gap - w, down]);
+      for (const [x, y] of [[label.x + gap, up], [label.x + gap, down], [label.x - gap - w, up], [label.x - gap - w, down]]) spots.push({ x, y, w, h, row });
     }
-    const boxes = spots.map(([x, y]) => ({ x, y, w, h })).filter(inside);
-    const box = boxes.find(clear) || boxes[0] || { x: Math.min(Math.max(pane.x, label.x + gap), pane.x + pane.w - w), y: Math.max(pane.y, label.y - gap - h), w, h };
-    placed.push({ x: box.x, y: box.y + 0.82 * h, anchor: 'start', text: label.text, box });
+    const boxes = spots.filter(inside);
+    let best = null;
+    for (const box of boxes) {
+      if (best && box.row >= best.cost) break;
+      if (!clear(box)) continue;
+      const cost = box.row + 4 * crossings(box);
+      if (!best || cost < best.cost) best = { box, cost };
+    }
+    const box = best?.box || boxes[0] || { x: Math.min(Math.max(pane.x, label.x + gap), pane.x + pane.w - w), y: Math.max(pane.y, label.y - gap - h), w, h };
+    // Away from its point, a label shows which point is its.
+    let leader;
+    if (box.row > 0) {
+      const to = { x: Math.max(box.x, Math.min(box.x + box.w, label.x)), y: Math.max(box.y, Math.min(box.y + box.h, label.y)) };
+      const length = Math.hypot(to.x - label.x, to.y - label.y);
+      if (length > 2 * gap) {
+        const from = gap / length;
+        leader = { x1: label.x + (to.x - label.x) * from, y1: label.y + (to.y - label.y) * from, x2: to.x, y2: to.y };
+      }
+    }
+    placed.push({ x: box.x, y: box.y + 0.82 * h, anchor: 'start', text: label.text, box: { x: box.x, y: box.y, w: box.w, h: box.h }, ...(leader ? { leader } : {}) });
   }
   return placed;
 }
@@ -39834,7 +39892,7 @@ function placeCursorLabels(labels, pane, { size = 10, gap = 3 } = {}) {
  * dots: [{ x, y, color }], texts }` (placeCursorLabels's), the lines and
  * dots only those in the pane, the texts left out when `values` is false.
  */
-function cursorLayout(spec, { toPx, pane, size = 10, values = spec?.cursorValues !== false, cursors = spec?.cursors || [] } = {}) {
+function cursorLayout(spec, { toPx, pane, size = 10, gap = 3, values = spec?.cursorValues !== false, cursors = spec?.cursors || [] } = {}) {
   const lines = [];
   const dots = [];
   const labels = [];
@@ -39859,7 +39917,10 @@ function cursorLayout(spec, { toPx, pane, size = 10, values = spec?.cursorValues
       labels.push({ x, y, text: hit.text });
     }
   }
-  return { lines, dots, texts: values ? placeCursorLabels(labels, pane, { size }) : [] };
+  if (!values) return { lines, dots, texts: [] };
+  // The traces as drawn, for the numbers to keep off them.
+  const curves = labels.length ? cursorCurves(spec).map((curve) => curve.points.filter(([, v]) => v !== null).map(([u, v]) => ({ x: toPx.x(u), y: toPx.y(v) }))) : [];
+  return { lines, dots, texts: placeCursorLabels(labels, pane, { size, gap, curves }) };
 }
 
 __exports.MAX_PLOT_CURSORS = MAX_PLOT_CURSORS;
@@ -40239,7 +40300,7 @@ __exports.locusSpec = locusSpec;
 __exports.bodeSpecs = bodeSpecs;
 __exports.waveSpec = waveSpec;
 __exports.plotSpec = plotSpec;
-let plainTex, swingLimit; __bind(() => { ({ plainTex, swingLimit } = __require("src/core/bode-figure.js")); });
+let swingLimit, swingLimitText; __bind(() => { ({ swingLimit, swingLimitText } = __require("src/core/bode-figure.js")); });
 /**
  * The plots the analysis windows show, as one kind of interactive plot
  * (web/plot-view.js) describes them: the data in its own units, the axes'
@@ -40341,9 +40402,6 @@ function dataSpec(plot) {
 /** Each net's peak against the input amplitude (the swing simulation). */
 function swingSpec(plot) {
   const limit = swingLimit(plot.traces);
-  const limitText = limit && (limit.kind === 'full-scale'
-    ? `${limit.label ? `${plainTex(limit.label)} ` : ''}full scale ${Number(limit.a.toFixed(1))} dBFS`
-    : `runaway ${Number(limit.a.toFixed(2))} dBFS`);
   return {
     key: 'swing',
     title: 'Peak against input amplitude',
@@ -40356,7 +40414,7 @@ function swingSpec(plot) {
       role: 'curve',
       points: trace.points.map((p) => [p.a, Number.isFinite(p.db) ? p.db : null]),
     })),
-    vlines: limit ? [{ x: limit.a, role: 'marker', label: limitText }] : [],
+    vlines: limit ? [{ x: limit.a, role: 'marker', label: swingLimitText(limit) }] : [],
     hlines: [{ y: 0, role: 'zero' }],
   };
 }
@@ -41432,10 +41490,14 @@ const PLOT_STROKES = {
   grid: { width: 1 },
   minor: { width: 1, opacity: 0.3 },
   band: { width: 3, dash: '18 9' },
-  spectrum: { width: 3 },
+  spectrum: { width: 6 },
   marker: { width: 3, dash: '18 9' },
   cursor: { width: 2, dash: '10 6' },
 };
+
+/** A simulated spectrum in a black plot: an opaque gray, so the grid
+ *  stays under it rather than showing through. */
+const SPECTRUM_GRAY = '#a6a6a6';
 
 /** A black-and-white plot's traces, told apart as a journal figure's are:
  *  solid, dashed, dash-dot, dotted, then around again. */
@@ -41518,7 +41580,7 @@ function plotAnnotationSvg(label, opacity = '') {
   const curve = (item) => {
     if (!black) return stroke(item.role, item.color ? escapeSvg(item.color) : color);
     const attrs = stroke(item.role);
-    if (item.role === 'spectrum') return `${attrs} stroke-opacity="0.35"${heldDash.has(item.trace) ? ` stroke-dasharray="${dashOf(heldDash.get(item.trace))}"` : ''}`;
+    if (item.role === 'spectrum') return `${stroke(item.role, SPECTRUM_GRAY)}${heldDash.has(item.trace) ? ` stroke-dasharray="${dashOf(heldDash.get(item.trace))}"` : ''}`;
     const dash = item.role === 'curve' && rank.has(item.trace) ? dashOf(rank.get(item.trace)) : '';
     return dash ? `${attrs} stroke-dasharray="${dash}"` : attrs;
   };
@@ -41537,6 +41599,7 @@ function plotAnnotationSvg(label, opacity = '') {
     return [
       ...layout.lines.map((l) => `<line class="plot-cursor" x1="${fmt(l.x1)}" y1="${fmt(l.y1)}" x2="${fmt(l.x2)}" y2="${fmt(l.y2)}" ${stroke('cursor')} stroke-linecap="butt"/>`),
       ...layout.dots.map((d) => `<circle class="plot-cursor-dot" cx="${fmt(d.x)}" cy="${fmt(d.y)}" r="${fmt((d.point ? 0.24 : 0.17) * fontSize)}" fill="${d.color && !black ? escapeSvg(d.color) : color}" stroke="#fff" stroke-width="${fmt(0.05 * fontSize)}"/>`),
+      ...layout.texts.filter((t) => t.leader).map(({ leader: l }) => `<line class="plot-cursor-leader" x1="${fmt(l.x1)}" y1="${fmt(l.y1)}" x2="${fmt(l.x2)}" y2="${fmt(l.y2)}" stroke="${color}" stroke-width="${fmt(0.06 * fontSize)}"/>`),
       ...layout.texts.map((t) => text({ ...t, size: 0.8 * fontSize })),
     ].join('');
   })() : '';
@@ -41550,7 +41613,7 @@ function plotAnnotationSvg(label, opacity = '') {
       const x2 = b.x - 6 - x;
       // A spectrum's sample is gray, as its curve is.
       const curve = legendCurves[n];
-      const look = curve.spectrum ? `${stroke('curve')} stroke-opacity="0.35"${curve.held !== undefined ? ` stroke-dasharray="${dashOf(curve.held + 1)}"` : ''}` : `${stroke('curve')}${dashOf(curve.rank) ? ` stroke-dasharray="${dashOf(curve.rank)}"` : ''}`;
+      const look = curve.spectrum ? `${stroke('curve', SPECTRUM_GRAY)}${curve.held !== undefined ? ` stroke-dasharray="${dashOf(curve.held + 1)}"` : ''}` : `${stroke('curve')}${dashOf(curve.rank) ? ` stroke-dasharray="${dashOf(curve.rank)}"` : ''}`;
       return `<line class="plot-legend-sample" x1="${fmt(x1)}" y1="${fmt(cy)}" x2="${fmt(x2)}" y2="${fmt(cy)}" ${look} stroke-linecap="butt"/>`;
     }).join('')
     : '';
@@ -45893,6 +45956,7 @@ __exports.colorToken = colorToken;
 __exports.resolveColor = resolveColor;
 __exports.themeInkSvg = themeInkSvg;
 __exports.setColorToken = setColorToken;
+__exports.escapeSvg = escapeSvg;
 __exports.strokeAttrs = strokeAttrs;
 __exports.strokeWidth = strokeWidth;
 __exports.fontAttrs = fontAttrs;
@@ -46005,8 +46069,15 @@ function setColorToken(token, value) {
   return value;
 }
 
-/** Escape a value for use in SVG text or a quoted attribute. */
-const escapeSvg = (value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+const SVG_SPECIAL = /[&<>"']/;
+const SVG_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' };
+
+/** Escape a value for use in SVG text or a quoted attribute. Most values
+ *  have nothing to escape, and pass through without a copy. */
+function escapeSvg(value) {
+  const text = String(value);
+  return SVG_SPECIAL.test(text) ? text.replace(/[&<>"']/g, (ch) => SVG_ESCAPES[ch]) : text;
+}
 
 function strokeParts(styleName, miterLimit, color = DEFAULT_INK, width) {
   const s = STROKES[styleName] || STROKES.line;
@@ -46062,7 +46133,6 @@ function styleAttrs(style = {}, base = 'symbol', miterLimit) {
 const TABLE_RULE_ROOM_EM = 0.4;
 
 __exports.COLOR_PALETTE = COLOR_PALETTE;
-__exports.escapeSvg = escapeSvg;
 __exports.LABEL_FONT_SIZES = LABEL_FONT_SIZES;
 __exports.labelFontSize = labelFontSize;
 __exports.TABLE_RULE_ROOM_EM = TABLE_RULE_ROOM_EM;
@@ -47257,60 +47327,21 @@ let plainTexText; __bind(() => { ({ plainTexText } = __require("src/core/render.
 let LabelInstance, normalizeTimingSpec; __bind(() => { ({ LabelInstance, normalizeTimingSpec } = __require("src/core/model.js")); });
 let coreBounds; __bind(() => { ({ coreBounds } = __require("src/core/figures.js")); });
 /**
- * Timing diagram: one clock waveform per switch phase, drawn under the
- * drawing as annotations -- each phase's name (its own spelling, TeX drawn
- * as math) and its wave, two cells tall with vertical edges. Rows may also
- * be signals of the diagram's own (a clock, an enable, a drawing with no
- * switches at all): added and removed by name, and kept by the drawn
- * diagram (`timing.signal`). They are drawn like phases but play no part
- * in beats.
- *
- * A wave is typed as slots, one character each: `1` high, `0` low. A short
- * wave holds its last level. The waves repeat, so each row
- * shows a little of its last slot before the start and of its first after
- * the end, where its transitions are -- unless the diagram leaves the
- * lead-in and lead-out out (`lead: false`): then it starts at the first
- * slot and ends with the last.
- *
- * Non-overlap is kept between the pairs of phases asked for: none in a new
- * diagram; 'auto' picks every two that are never high in the same slot (and
- * a diagram saved before the setting was its own keeps that). Where one of a pair falls and the other
- * rises, a one-cell gap opens in every row; in it the pair's fall comes early
- * and its rise late, so the two are never high at once. Other phases change
- * at the start of the gap.
- *
- * A signal row may instead be analog: a value from -1 to 1 at the start of
- * a slot (`values`, null where none is set), joined by straight lines
- * across the slots between, or held until the next (`hold`); a short list
- * holds its last value; nothing is drawn before the first value or after
- * the last -- except that a value
- * at the first slot holds back through the lead-in and one at the last
- * through its slot and the lead-out -- and fewer than two draw no curve.
- * From 0 at the bottom to 1 at the top -- or, with any value below
- * 0, about a dashed zero line through the middle. It is drawn as one box
- * annotation with its curve inside (`timing.analog`), so the curve's points
- * need not be on the grid while the box is. Its points take arrows, marks
- * and spans as a digital row's edges do; a mark on a point between the
- * extremes is a threshold, a dashed line at its level from the row's start.
- * Any row may be taller than two cells (`height`, even cells).
- *
- * A break leaves time out: two S curves down the middle of a slot, on
- * paper that hides the waves between them -- through every row at once, or
- * through each row on its own (`rows`). It belongs to its slot, not to an
- * edge, so it is drawn wherever that slot is.
+ * Timing diagram: one clock waveform per switch phase, and signal rows of
+ * the diagram's own (`timing.signal`), drawn under the drawing as
+ * annotations. The contract (waves as slots, lead-in, non-overlap gaps,
+ * analog rows, breaks, arrows, marks, spans) is docs/beats.md.
  *
  * A row's wave is, first to last: the one given for it; the one it had in
- * the diagram already; for a complement (a barred phase), its phase drawn
- * inverted, gaps included; one slot per beat, high where the phase's
- * switches are closed; else low throughout.
+ * the diagram already; for a complement, its phase inverted, gaps
+ * included; one slot per beat, high where the phase's switches are
+ * closed; else low throughout.
  *
- * The design keeps its diagram (`Circuit#timing`): the clock the analyses
- * and beats read, which the timing window edits (setTimingDiagram). It is
- * drawn only when annotated (addTimingDiagram, annotateTimingDiagram, the
- * `timing` command), and the drawn annotations remember their waves
- * (`LabelInstance#timing`), so drawing the diagram again replaces it where
- * it stands. A design from before keeps only the drawn diagram, read as
- * its own until it is set.
+ * The design keeps its diagram (`Circuit#timing`, setTimingDiagram), which
+ * analyses and beats read; it is drawn only when annotated, and the drawn
+ * annotations remember their waves (`LabelInstance#timing`) so drawing it
+ * again replaces it in place. A design from before keeps only the drawn
+ * diagram, read as its own until it is set.
  */
 
 
@@ -52615,10 +52646,6 @@ function openAnnotateMenu(button) {
   menu.style.top = `${Math.max(4, rect.top - menu.offsetHeight - 4)}px`;
 }
 
-/** Whether the window's mode has anything to annotate now. */
-const annotationsReady = () => annotationItems().some((item) => item.available);
-
-__exports.annotationsReady = annotationsReady;
 };
 
 __modules["src/web/annotation-tools.js"] = function (__require, __exports) {
@@ -58434,7 +58461,7 @@ __exports.appendBeatContextItems = appendBeatContextItems;
 __exports.openPresenter = openPresenter;
 __exports.onPresenterKey = onPresenterKey;
 __exports.installBeatsUi = installBeatsUi;
-let element; __bind(() => { ({ element } = __require("src/web/dom.js")); });
+let element, setText; __bind(() => { ({ element, setText } = __require("src/web/dom.js")); });
 let DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, MAX_ROW_CELLS, annotateTimingDiagram, parseTimingValue, timingStates, beatTimingBits, defaultTimingPairs, drawnTimingDiagram, existingTimingDiagram, removeTimingDiagram, setTimingDiagram, timingBeatBands, timingMissing, timingPhases, timingRowSources; __bind(() => { ({ DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, MAX_ROW_CELLS, annotateTimingDiagram, parseTimingValue, timingStates, beatTimingBits, defaultTimingPairs, drawnTimingDiagram, existingTimingDiagram, removeTimingDiagram, setTimingDiagram, timingBeatBands, timingMissing, timingPhases, timingRowSources } = __require("src/core/timing-diagram.js")); });
 let addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey, switchPhases; __bind(() => { ({ addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey, switchPhases } = __require("src/core/beats.js")); });
 let plainTexText, svgString, texToLabelMarkup; __bind(() => { ({ plainTexText, svgString, texToLabelMarkup } = __require("src/core/render.js")); });
@@ -58796,11 +58823,9 @@ function renderBeatStrip() {
       chip.setAttribute('aria-pressed', String(i === index));
       chip.classList.toggle('picked', editor.selectedBeatIds.size > 1 && editor.selectedBeatIds.has(editor.circuit.beats[i]?.id));
     }
-    if (beatHintEl) {
-      beatHintEl.textContent = editor.selectedBeatIds.size > 1
-        ? `${editor.selectedBeatIds.size} beats picked — Delete removes them · right-click to merge them · Esc lets go`
-        : beatHintText(index);
-    }
+    setText(beatHintEl, editor.selectedBeatIds.size > 1
+      ? `${editor.selectedBeatIds.size} beats picked — Delete removes them · right-click to merge them · Esc lets go`
+      : beatHintText(index));
   };
   const key = `${visible}|${editor.modelRevision}|${editor.circuit.beats.length}|${ids.join(',')}|${editor.circuit.beats.map((beat) => beat.name).join('|')}`;
   if (key === editor.beatStripKey && beatStripEl.hidden === !visible) {
@@ -60054,12 +60079,11 @@ let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let markSettingsChanged, onDocumentShown, render; __bind(() => { ({ markSettingsChanged, onDocumentShown, render } = __require("src/web/main.js")); });
-let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let installPlotsWindow, offerPlots, plotsShown; __bind(() => { ({ installPlotsWindow, offerPlots, plotsShown } = __require("src/web/plots-window.js")); });
 let placeResponsePlot; __bind(() => { ({ placeResponsePlot } = __require("src/web/signal-flow-ui.js")); });
 let registerAnnotations; __bind(() => { ({ registerAnnotations } = __require("src/web/annotate-menu.js")); });
 let bodeGraphActions; __bind(() => { ({ bodeGraphActions } = __require("src/web/bode-actions.js")); });
-let differing, differingNames, heldName, holdButton, holdKey, legendActions, liveName, saveHolds, savedHolds; __bind(() => { ({ differing, differingNames, heldName, holdButton, holdKey, legendActions, liveName, saveHolds, savedHolds } = __require("src/web/trace-hold.js")); });
+let differing, differingNames, heldName, holdKey, liveName, saveHolds, savedHolds, traceLegendRow; __bind(() => { ({ differing, differingNames, heldName, holdKey, liveName, saveHolds, savedHolds, traceLegendRow } = __require("src/web/trace-hold.js")); });
 /**
  * The small-signal analysis's Bode plots, laid out as the signal-flow
  * analysis lays out its own: the graph in the Plots window (plots-window.js,
@@ -60076,7 +60100,6 @@ let differing, differingNames, heldName, holdButton, holdKey, legendActions, liv
  * on the symbolic solve, fail with it, or take its approximations. The
  * loop gain is drawn from its derived coefficients.
  */
-
 
 
 
@@ -60541,23 +60564,12 @@ function renderLegend() {
   const legend = plotsEl.querySelector('.bode-legend');
   legend.replaceChildren();
   for (const trace of traces) {
-    const check = el('input', { type: 'checkbox', 'aria-label': 'Show this trace' });
-    check.checked = trace.on;
-    check.addEventListener('change', () => {
-      trace.on = check.checked;
-      if (trace.held) holdsChanged(holds().map((record) => (record.key === trace.held.key ? { ...record, on: trace.on } : record)));
-      renderPlots();
-    });
-    const math = el('span', { class: 'signal-flow-legend-math' });
-    math.innerHTML = texToMathML(trace.held ? heldLabel(trace) : liveLabel(trace));
-    math.style.color = trace.color;
-    const remove = el('button', { type: 'button', class: 'signal-flow-legend-remove', 'aria-label': 'Remove this trace', title: 'Remove this trace from the graph', text: '×', onclick: () => {
-      traces = traces.filter((t) => t !== trace);
-      if (trace.held) holdsChanged(holds().filter((record) => record.key !== trace.held.key));
-      renderValues();
-      renderPlots();
-    } });
-    legend.append(el('div', { class: 'signal-flow-legend-row' }, [check, el('span', { class: 'signal-flow-swatch', style: `background:${trace.color}` }), math, legendActions(trace.held ? null : holdButton(() => holdTrace(trace)), remove)]));
+    legend.append(traceLegendRow(trace, {
+      label: trace.held ? heldLabel(trace) : liveLabel(trace), holds, holdsChanged,
+      onHold: () => holdTrace(trace),
+      onShow: renderPlots,
+      onRemove: () => { traces = traces.filter((t) => t !== trace); renderValues(); renderPlots(); },
+    }));
   }
   const actions = plotsEl.querySelector('.bode-plots-actions');
   actions.hidden = !traces.length;
@@ -65713,7 +65725,6 @@ __exports.displayPath = displayPath;
 __exports.onDocumentListChange = onDocumentListChange;
 __exports.allowFolderAccess = allowFolderAccess;
 __exports.restoreStartup = restoreStartup;
-__exports.savedHistoryBase = savedHistoryBase;
 __exports.saveCircuit = saveCircuit;
 __exports.openStateAsNewDesign = openStateAsNewDesign;
 __exports.saveWindowState = saveWindowState;
@@ -65751,12 +65762,14 @@ let clearLatestAnalysisResult, migrateAnalysisFormStorage, analysisFormScope; __
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let closeToolbarMenu, scheduleToolbarFit, toolbarMenus; __bind(() => { ({ closeToolbarMenu, scheduleToolbarFit, toolbarMenus } = __require("src/web/toolbar-ui.js")); });
 let applyJson, cancelPreviewTransaction, clearSymmetry, markModelChanged, render, setSelection, snapshot; __bind(() => { ({ applyJson, cancelPreviewTransaction, clearSymmetry, markModelChanged, render, setSelection, snapshot } = __require("src/web/main.js")); });
+let setAttr; __bind(() => { ({ setAttr } = __require("src/web/dom.js")); });
 /**
  * The open document's life in the editor: new, open, save, save as, and
  * delete; the unsaved-changes prompt; this window's local draft; following
  * the CLI's active document and reloading files changed on disk; and dropped
  * files. Storage itself is behind persistence.js.
  */
+
 
 
 
@@ -66095,11 +66108,6 @@ function adoptWrittenHistory(sent, data) {
   if (history) editor.circuit.history = history;
   const text = historyText(sent);
   historyBase = !history || history.base === textHash(text) ? text : null;
-}
-
-/** The save history's base text, for the history window. */
-function savedHistoryBase() {
-  return historyBase;
 }
 
 async function saveCircuit({ saveAs = false } = {}) {
@@ -66575,16 +66583,16 @@ function renderSaveState() {
   if (revealDocumentBtn) revealDocumentBtn.disabled = persistence.browserOnly || !editor.currentDocumentPath;
   const renameButton = document.getElementById('btn-rename-document');
   if (renameButton) renameButton.disabled = !canRenameDocument() || editor.saveInFlight > 0;
-  circuitNameEl.title = editor.currentDocumentPath ? `Design name · ${editor.currentDocumentPath}` : 'Design name';
+  setAttr(circuitNameEl, 'title', editor.currentDocumentPath ? `Design name · ${editor.currentDocumentPath}` : 'Design name');
   renderDeleteWording();
   const saveButton = document.getElementById('btn-save');
   if (saveButton) {
     // A new name typed for a saved design: Save (as Ctrl+S) makes a copy under it.
     const copyName = savesAsCopy();
     saveButton.disabled = !(dirty || copyName) || editor.saveInFlight > 0;
-    saveButton.title = copyName ? `Save as a copy named “${copyName}” (Ctrl/Cmd+S)`
+    setAttr(saveButton, 'title', copyName ? `Save as a copy named “${copyName}” (Ctrl/Cmd+S)`
       : dirty ? `Save (Ctrl/Cmd+S) · unsaved changes${editor.currentDocumentPath ? ` to ${editor.currentDocumentPath}` : ''}`
-        : editor.currentDocumentPath ? `Saved · ${editor.currentDocumentPath}` : 'Save (Ctrl/Cmd+S)';
+        : editor.currentDocumentPath ? `Saved · ${editor.currentDocumentPath}` : 'Save (Ctrl/Cmd+S)');
   }
 }
 
@@ -67258,6 +67266,14 @@ __exports.persistence = persistence;
 __modules["src/web/dom.js"] = function (__require, __exports) {
 __exports.element = element;
 __exports.onFieldCommit = onFieldCommit;
+__exports.mathSpan = mathSpan;
+__exports.setAttr = setAttr;
+__exports.setText = setText;
+__exports.setHidden = setHidden;
+__exports.setClassName = setClassName;
+let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
+
+
 /**
  * A DOM element in one call: `props` sets `class`, `text`, `html`, `on…`
  * listeners, and attributes (true as a bare attribute; false, null, and
@@ -67302,6 +67318,32 @@ function onFieldCommit(input, apply) {
   });
 }
 
+/** TeX as MathML in a span of `className`, inline or (`display`) on a line of its own. */
+function mathSpan(tex, className, display = false) {
+  const span = element('span', { class: `${className}${display ? ' display' : ''}` });
+  const markup = texToMathML(tex);
+  span.innerHTML = display ? markup : markup.replace('display="block"', 'display="inline"');
+  return span;
+}
+
+// Writes for what render() keeps up to date: it runs on every pointer
+// frame, and a write of the same value still restyles or wakes observers.
+function setAttr(el, name, value) {
+  if (el && el.getAttribute(name) !== value) el.setAttribute(name, value);
+}
+
+function setText(el, text) {
+  if (el && el.textContent !== text) el.textContent = text;
+}
+
+function setHidden(el, hidden) {
+  if (el && el.hidden !== hidden) el.hidden = hidden;
+}
+
+function setClassName(el, name) {
+  if (el && el.className !== name) el.className = name;
+}
+
 };
 
 __modules["src/web/drawing-export.js"] = function (__require, __exports) {
@@ -67309,8 +67351,11 @@ __exports.svgToPngDataUrl = svgToPngDataUrl;
 __exports.applyExportDarkTheme = applyExportDarkTheme;
 __exports.embeddedMathFontFace = embeddedMathFontFace;
 __exports.withEmbeddedMathFont = withEmbeddedMathFont;
-let svgPixelSize; __bind(() => { ({ svgPixelSize } = __require("src/core/render.js")); });
+__exports.designPicture = designPicture;
+let svgPixelSize, svgString; __bind(() => { ({ svgPixelSize, svgString } = __require("src/core/render.js")); });
+let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __require("src/core/selection-drawing.js")); });
 let withPngDensity; __bind(() => { ({ withPngDensity } = __require("src/core/png-export.js")); });
+
 
 
 
@@ -67391,6 +67436,21 @@ async function withEmbeddedMathFont(svg) {
   if (!svg.includes('schematic-math-label') && !svg.includes('Latin Modern Math')) return svg;
   const face = await embeddedMathFontFace();
   return face ? svg.replace(/(<svg\b[^>]*>)/, `$1<style>${face}</style>`) : svg;
+}
+
+const svgDataUrl = (svg) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+
+/** A whole design as its export draws it, in both themes (a link bubble's
+ *  or the reference window's picture): `{ svg, box, href: { light, dark } }`,
+ *  `svg` as drawn for an export to nest as vector drawing; null when empty. */
+async function designPicture(circuit) {
+  if (!circuit.components.size && !circuit.labels.size) return null;
+  const svg = svgString(circuit, { ...DRAWING_EXPORT_OPTIONS, background: false, emptyHint: false });
+  const match = svg.match(/viewBox="([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)"/);
+  if (!match) return null;
+  const [light, dark] = await Promise.all([withEmbeddedMathFont(svg), withEmbeddedMathFont(applyExportDarkTheme(svg))]);
+  const [x, y, w, h] = match.slice(1).map(Number);
+  return { svg, box: { x, y, w, h }, href: { light: svgDataUrl(light), dark: svgDataUrl(dark) } };
 }
 
 };
@@ -68476,7 +68536,6 @@ function installExportUi() {
 };
 
 __modules["src/web/figure-annotate.js"] = function (__require, __exports) {
-__exports.equationCells = equationCells;
 __exports.writeMathFigure = writeMathFigure;
 __exports.annotateMathFigure = annotateMathFigure;
 __exports.installArrangeFigures = installArrangeFigures;
@@ -68503,22 +68562,6 @@ let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")
 
 /** What is selected, as figures.js chooseFigure takes it: label ids and part names. */
 const selectedFigureMembers = () => [...selectedLabels().map((label) => label.id), ...selectedComps().map((component) => component.refdes)];
-
-/** Splits an equation at its first `=` outside braces: [left, '= right'],
- *  or ['', equation] without one -- the two columns of an equation table. */
-function equationCells(equation) {
-  const text = String(equation);
-  let depth = 0;
-  for (let i = 0; i < text.length; i += 1) {
-    const ch = text[i];
-    if (ch === '{') depth += 1;
-    else if (ch === '}') depth -= 1;
-    else if (ch === '=' && depth === 0 && text[i - 1] !== '\\' && !'<>!'.includes(text[i - 1] || '') && text[i + 1] !== '=') {
-      return [text.slice(0, i).trim(), `= ${text.slice(i + 1).trim()}`];
-    }
-  }
-  return ['', text.trim()];
-}
 
 /**
  * Write the table `text` (TeX lines, `columns` their alignment) as the
@@ -70588,8 +70631,6 @@ __exports.workspaceDesigns = workspaceDesigns;
 __exports.openLinkBubbleMenu = openLinkBubbleMenu;
 __exports.installHierarchy = installHierarchy;
 let loadDocument; __bind(() => { ({ loadDocument } = __require("src/core/document.js")); });
-let svgString; __bind(() => { ({ svgString } = __require("src/core/render.js")); });
-let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __require("src/core/selection-drawing.js")); });
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let designIndex, searchKey; __bind(() => { ({ designIndex, searchKey } = __require("src/core/design-index.js")); });
 let brokenLinks; __bind(() => { ({ brokenLinks } = __require("src/core/workspace-check.js")); });
@@ -70597,7 +70638,7 @@ let noteDesignLinks; __bind(() => { ({ noteDesignLinks } = __require("src/core/n
 let loadDesign, namedExamples; __bind(() => { ({ loadDesign, namedExamples } = __require("src/web/example-designs.js")); });
 let INDEX_CACHE, cacheGet, cachePut, renderingKey; __bind(() => { ({ INDEX_CACHE, cacheGet, cachePut, renderingKey } = __require("src/web/atlas-cache.js")); });
 let BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, connectorPath, layoutBubbles; __bind(() => { ({ BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, connectorPath, layoutBubbles } = __require("src/core/link-bubble.js")); });
-let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
+let designPicture; __bind(() => { ({ designPicture } = __require("src/web/drawing-export.js")); });
 let logLine, hintLine; __bind(() => { ({ logLine, hintLine } = __require("src/web/status-bar-ui.js")); });
 let animateViewTo, fitTarget, fitView; __bind(() => { ({ animateViewTo, fitTarget, fitView } = __require("src/web/canvas-view.js")); });
 let viewFitting; __bind(() => { ({ viewFitting } = __require("src/web/atlas-layout.js")); });
@@ -70624,8 +70665,6 @@ let openAtlas; __bind(() => { ({ openAtlas } = __require("src/web/atlas.js")); }
  * in this browser; they are never saved in the document or undone. Parts
  * linked to one design share one bubble, a connector to each.
  */
-
-
 
 
 
@@ -70694,24 +70733,6 @@ function linkableDesigns() {
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
 }
 
-// ----- pictures ----------------------------------------------------------------------
-
-const dataUrl = (svg) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-
-/** A design drawn as a bubble's picture, in both themes; null when empty.
- *  The bubble shows the whole design as its own export draws it: equations,
- *  timing diagrams, pasted pictures, and Bode sketches too. */
-async function pictureOf(circuit) {
-  if (!circuit.components.size && !circuit.labels.size) return null;
-  const svg = svgString(circuit, { ...DRAWING_EXPORT_OPTIONS, background: false, emptyHint: false });
-  const match = svg.match(/viewBox="([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)"/);
-  if (!match) return null;
-  const [light, dark] = await Promise.all([withEmbeddedMathFont(svg), withEmbeddedMathFont(applyExportDarkTheme(svg))]);
-  const [x, y, w, h] = match.slice(1).map(Number);
-  // `svg` stays as drawn, for exports to nest as vector drawing.
-  return { svg, box: { x, y, w, h }, href: { light: dataUrl(light), dark: dataUrl(dark) } };
-}
-
 /** The document a link names, asking for the workspace's documents when
  *  the editor has not listed them yet (right after launch) or lists them
  *  without it, so a link is only broken when the design is really gone. */
@@ -70742,7 +70763,7 @@ async function loadBubble(refdes, name) {
     let picture = cached && (!doc.revision || cached.revision === doc.revision) ? cached : null;
     if (!picture) {
       const data = await loadDesign(doc);
-      picture = await pictureOf(loadDocument(data.state));
+      picture = await designPicture(loadDocument(data.state));
       if (picture) pictures.set(doc.path, { ...picture, revision: doc.revision || data.revision || null });
     }
     settle(picture
@@ -71253,7 +71274,7 @@ async function leaveLinkedDesign(levels = 1) {
   const childPath = editor.currentDocumentPath;
   let picture = null;
   if (levels === 1) {
-    try { picture = await pictureOf(loadDocument(JSON.parse(editor.lastSavedSnapshot))); } catch { picture = null; }
+    try { picture = await designPicture(loadDocument(JSON.parse(editor.lastSavedSnapshot))); } catch { picture = null; }
   }
   navigating = true;
   let opened;
@@ -71692,10 +71713,6 @@ async function writeHistory(history, done) {
 
 // ----- actions ---------------------------------------------------------------------
 
-function entryNamed(id) {
-  return file?.entries?.find((entry) => entry.id === id) || null;
-}
-
 function titleOf(entry) {
   return `${editor.currentCircuitName || 'design'} @ ${entry.name || when(entry)}`;
 }
@@ -71966,7 +71983,7 @@ __exports.bindHoverPreview = bindHoverPreview;
 __exports.updateCanvasHover = updateCanvasHover;
 let INTERFACE_PIN_TYPES, isReferenceMarker; __bind(() => { ({ INTERFACE_PIN_TYPES, isReferenceMarker } = __require("src/core/model.js")); });
 let isPinDragCandidate; __bind(() => { ({ isPinDragCandidate } = __require("src/web/gestures.js")); });
-let canvasEl, componentsListEl, netsListEl; __bind(() => { ({ canvasEl, componentsListEl, netsListEl } = __require("src/web/elements.js")); });
+let componentsListEl, netsListEl; __bind(() => { ({ componentsListEl, netsListEl } = __require("src/web/elements.js")); });
 let updateAlignHover; __bind(() => { ({ updateAlignHover } = __require("src/web/align-tool.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let syncNetBeams; __bind(() => { ({ syncNetBeams } = __require("src/web/net-beams.js")); });
@@ -71985,6 +72002,9 @@ let annotationEndpointAt, annotationGeometryAt, annotationTextAt, namedGroupNets
 
 
 let hoverMove = false; // pointer rests where a press moves a block or box
+
+/** Whether a press where the pointer rests moves a block or box: the overlay shows it by the cursor. */
+const hoverMoves = () => hoverMove;
 
 /** Parts that stand for a net itself: the reference markers (ground, supply,
  * VCM) and interface ports on it. A net highlight, selected or hovered, glows
@@ -72055,7 +72075,7 @@ function updateCanvasHover(w) {
     : !!(hitComponent?.type === 'block' && !hit.term && !pickLabel(w));
   if (move !== hoverMove) {
     hoverMove = move;
-    canvasEl.classList.toggle('hover-move', move);
+    scheduleInteractionRender();
   }
   let net = null;
   if (!quiet) {
@@ -72080,6 +72100,7 @@ function updateCanvasHover(w) {
   syncNetBeams();
 }
 
+__exports.hoverMoves = hoverMoves;
 };
 
 __modules["src/web/icon-paths.js"] = function (__require, __exports) {
@@ -74210,12 +74231,11 @@ __modules["src/web/logic-synthesis-ui.js"] = function (__require, __exports) {
 __exports.installLogicSynthesisUi = installLogicSynthesisUi;
 let MAX_SYNTHESIS_INPUTS, MAX_SYNTHESIS_OUTPUTS, SYNTHESIS_GATES, compactNames, drawSynthesis, gateSummary, rowCount, signalNames, synthesizeLogic; __bind(() => { ({ MAX_SYNTHESIS_INPUTS, MAX_SYNTHESIS_OUTPUTS, SYNTHESIS_GATES, compactNames, drawSynthesis, gateSummary, rowCount, signalNames, synthesizeLogic } = __require("src/core/analysis/logic-synthesis.js")); });
 let logicNameTex; __bind(() => { ({ logicNameTex } = __require("src/core/analysis/logic.js")); });
-let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
 let registerAnalysisMode; __bind(() => { ({ registerAnalysisMode } = __require("src/web/signal-flow-ui.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let commit, markSettingsChanged, onDocumentShown, render, setSelection; __bind(() => { ({ commit, markSettingsChanged, onDocumentShown, render, setSelection } = __require("src/web/main.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
-let el, onFieldCommit; __bind(() => { ({ element: el, onFieldCommit } = __require("src/web/dom.js")); });
+let el, mathSpan, onFieldCommit; __bind(() => { ({ element: el, mathSpan, onFieldCommit } = __require("src/web/dom.js")); });
 let annotateMathFigure; __bind(() => { ({ annotateMathFigure } = __require("src/web/figure-annotate.js")); });
 let registerAnnotations; __bind(() => { ({ registerAnnotations } = __require("src/web/annotate-menu.js")); });
 let fitView; __bind(() => { ({ fitView } = __require("src/web/canvas-view.js")); });
@@ -74228,7 +74248,6 @@ let fitView; __bind(() => { ({ fitView } = __require("src/web/canvas-view.js"));
  * equations on the drawing, with their ports. The table and the choices
  * are saved with the design (analysisValues.synthesis).
  */
-
 
 
 
@@ -74327,12 +74346,7 @@ function setOption(patch) {
   renderEquations();
 }
 
-function math(tex, display = false) {
-  const span = el('span', { class: `logic-math${display ? ' display' : ''}` });
-  const markup = texToMathML(tex);
-  span.innerHTML = display ? markup : markup.replace('display="block"', 'display="inline"');
-  return span;
-}
+const math = (tex, display = false) => mathSpan(tex, 'logic-math', display);
 
 /** The synthesis of the table as it stands, of the outputs `only` if given. */
 function synthesized(only = null) {
@@ -74608,12 +74622,11 @@ function installLogicSynthesisUi() {
 __modules["src/web/logic-ui.js"] = function (__require, __exports) {
 __exports.installLogicUi = installLogicUi;
 let analyzeLogic, logicNameTex; __bind(() => { ({ analyzeLogic, logicNameTex } = __require("src/core/analysis/logic.js")); });
-let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
 let registerAnalysisMode; __bind(() => { ({ registerAnalysisMode } = __require("src/web/signal-flow-ui.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let markSettingsChanged, onDocumentShown; __bind(() => { ({ markSettingsChanged, onDocumentShown } = __require("src/web/main.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
-let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
+let el, mathSpan; __bind(() => { ({ element: el, mathSpan } = __require("src/web/dom.js")); });
 let annotateMathFigure; __bind(() => { ({ annotateMathFigure } = __require("src/web/figure-annotate.js")); });
 let registerAnnotations; __bind(() => { ({ registerAnnotations } = __require("src/web/annotate-menu.js")); });
 let deriving; __bind(() => { ({ deriving } = __require("src/web/analysis-busy.js")); });
@@ -74627,7 +74640,6 @@ let deriving; __bind(() => { ({ deriving } = __require("src/web/analysis-busy.js
  * saved with the design. Annotate puts the table, or the equations, on the
  * drawing.
  */
-
 
 
 
@@ -74668,12 +74680,7 @@ function suggested(circuit) {
   return parts.some((c) => LOGIC_TYPES.test(c.type)) && !parts.some((c) => ANALOG_TYPES.test(c.type));
 }
 
-function math(tex, display = false) {
-  const span = el('span', { class: `logic-math${display ? ' display' : ''}` });
-  const markup = texToMathML(tex);
-  span.innerHTML = display ? markup : markup.replace('display="block"', 'display="inline"');
-  return span;
-}
+const math = (tex, display = false) => mathSpan(tex, 'logic-math', display);
 
 /** The table's columns: the state then the inputs, the next state then the outputs. */
 function columnsOf(result) {
@@ -74987,6 +74994,7 @@ let logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announc
 let resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi; __bind(() => { ({ resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi } = __require("src/web/design-check-ui.js")); });
 let partialVertexPicks, selectAllNetIds; __bind(() => { ({ partialVertexPicks, selectAllNetIds } = __require("src/core/selection.js")); });
 let paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, fitView, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect; __bind(() => { ({ paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, fitView, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect } = __require("src/web/canvas-view.js")); });
+let adoptDrawing, patchChildren, patchDrawing; __bind(() => { ({ adoptDrawing, patchChildren, patchDrawing } = __require("src/web/svg-patch.js")); });
 let syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock; __bind(() => { ({ syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock } = __require("src/web/analysis-ui.js")); });
 let closeComponentContextMenu, openContextMenuAt, installContextMenu; __bind(() => { ({ closeComponentContextMenu, openContextMenuAt, installContextMenu } = __require("src/web/context-menu.js")); });
 let boxState, restoreBoxState, openComponentChildLabelEditor, inlineEditLabel; __bind(() => { ({ boxState, restoreBoxState, openComponentChildLabelEditor, inlineEditLabel } = __require("src/web/label-editor.js")); });
@@ -75022,13 +75030,14 @@ let installSizing, renderSizingWindow, sizingDocumentShown, toggleSizing; __bind
 let togglePlots; __bind(() => { ({ togglePlots } = __require("src/web/plots-window.js")); });
 let paddedLineBounds; __bind(() => { ({ paddedLineBounds } = __require("src/web/label-measure.js")); });
 let syncChromeQuiet; __bind(() => { ({ syncChromeQuiet } = __require("src/web/chrome-quiet.js")); });
-let captureNetGeometry, captureRouteGeometry, captureRunNetGeometry, cloneWireStyles, translateNetGeometry; __bind(() => { ({ captureNetGeometry, captureRouteGeometry, captureRunNetGeometry, cloneWireStyles, translateNetGeometry } = __require("src/web/net-geometry.js")); });
+let captureNetGeometry, captureRunNetGeometry, cloneWireStyles, translateNetGeometry; __bind(() => { ({ captureNetGeometry, captureRunNetGeometry, cloneWireStyles, translateNetGeometry } = __require("src/web/net-geometry.js")); });
 let copyHoveredReference, fitHoveredReference, installReferenceWindows, toggleReferenceWindows; __bind(() => { ({ copyHoveredReference, fitHoveredReference, installReferenceWindows, toggleReferenceWindows } = __require("src/web/reference-window.js")); });
 let enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, linkBubbleFrame, moveLinkBubble, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles; __bind(() => { ({ enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, linkBubbleFrame, moveLinkBubble, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles } = __require("src/web/hierarchy.js")); });
 let askAnnotationText, askNetLabelNames, moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines; __bind(() => { ({ askAnnotationText, askNetLabelNames, moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines } = __require("src/web/annotation-tools.js")); });
 let refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste; __bind(() => { ({ refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste } = __require("src/web/copy-paste.js")); });
-let netMarkerRefs, setHoverTarget, updateCanvasHover; __bind(() => { ({ netMarkerRefs, setHoverTarget, updateCanvasHover } = __require("src/web/hover-preview.js")); });
+let hoverMoves, netMarkerRefs, setHoverTarget, updateCanvasHover; __bind(() => { ({ hoverMoves, netMarkerRefs, setHoverTarget, updateCanvasHover } = __require("src/web/hover-preview.js")); });
 let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => { ({ syncSnapPulse, annotationReach, cutAlong, withGestureOverlay } = __require("src/web/gesture-overlay.js")); });
+let setHidden; __bind(() => { ({ setHidden } = __require("src/web/dom.js")); });
 /**
  * Mosfeteer — keyboard-driven schematic editor.
  *
@@ -75040,6 +75049,8 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
+
 
 
 
@@ -75424,6 +75435,7 @@ let wireHitIndexRevision = -1;
 let committedCanvasKey = '';
 let committedViewKey = '';
 let canvasSvgEl = null;
+let mountedDocumentPath; // the design the mounted drawing is of
 let overlayEl = null;
 let labelMetricsRenderPending = false;
 // Cross-net collinear wire overlaps (B4): highlighted spans + status warning.
@@ -75696,15 +75708,9 @@ function applyJson(blob, { document: replacesDocument = false } = {}) {
   terminalSnap = false;
   clearSymmetry();
   drag = null;
-  moveMode = null;
-  copyMode = false;
-  deleteMode = false;
+  disarmTools();
   if (alignTool) alignTool = { source: null, hover: null };
-  movePending = false;
-  copyPending = false;
   mode = 'normal';
-  labelMode = null;
-  annotationPoints = [];
   resetCheckState();
   const previous = circuit;
   circuit = loadDocument(JSON.parse(blob));
@@ -76405,7 +76411,7 @@ function updateAlignControls() {
   const panel = document.getElementById('align-panel');
   if (!panel) return;
   const selection = layoutSelection();
-  panel.hidden = selection.count < 2;
+  setHidden(panel, selection.count < 2);
   if (panel.hidden) { layoutPreviewRects = []; return; }
   document.getElementById('align-count').textContent = `${selection.count} selected`;
   const measure = document.getElementById('align-measure')?.value || 'gaps';
@@ -77494,7 +77500,7 @@ function syncEmptyState() {
   const card = document.getElementById('empty-state');
   if (!card) return;
   const empty = !circuit.components.size && !circuit.labels.size && !circuit.nets.size;
-  card.hidden = !empty || mode === 'insert' || !!wire || !!labelMode || !!tutorial;
+  setHidden(card, !empty || mode === 'insert' || !!wire || !!labelMode || !!tutorial);
   if (card.hidden) return;
   card.querySelector('.empty-state-title').textContent = 'Empty schematic';
   syncRecentDesigns(card);
@@ -77830,8 +77836,13 @@ function keepAlignedEdge(label, before) {
 let mathLayerEl = null;
 let mathLayerMarkup = null;
 
+// A move cursor on a layer of its own under the overlay: set on the drawing's
+// root, the cursor (inherited) made every element of a large drawing restyle.
+const HOVER_MOVE_AREA = '<rect class="hover-move-area" x="-1e7" y="-1e7" width="2e7" height="2e7" fill="none" pointer-events="all"/>';
+
 function syncMathLayer(parts) {
-  const markup = themeInkSvg(parts.join('\n'));
+  // The ink pass runs over the whole layer: only when its source changed.
+  const source = parts.join('\n');
   if (!mathLayerEl || mathLayerEl.parentNode !== canvasEl) {
     mathLayerEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     mathLayerEl.setAttribute('class', 'math-layer');
@@ -77840,9 +77851,17 @@ function syncMathLayer(parts) {
     mathLayerMarkup = null;
   }
   for (const name of ['width', 'height', 'viewBox']) mathLayerEl.setAttribute(name, canvasSvgEl.getAttribute(name));
-  if (markup === mathLayerMarkup) return;
-  mathLayerMarkup = markup;
-  mathLayerEl.innerHTML = markup;
+  if (source === mathLayerMarkup) return;
+  const first = mathLayerMarkup === null;
+  mathLayerMarkup = source;
+  if (first) {
+    mathLayerEl.innerHTML = themeInkSvg(source);
+    return;
+  }
+  // Only the labels that changed are replaced, as in the drawing.
+  const template = document.createElement('template');
+  template.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg">${themeInkSvg(source)}</svg>`;
+  patchChildren(mathLayerEl, template.content.firstChild);
 }
 
 function syncRenderedLabelMetrics() {
@@ -77949,16 +77968,25 @@ function renderCanvas(modelKey) {
       editingLabel: editingLabelId,
       ...(beatView ? { beat: { view: beatView, fade: true, timing: timingBeatBands(circuit, beatView.index) } } : {}),
     });
-    // Swap the drawing alone: the math layer beside it stays in the page.
     const template = document.createElement('template');
     template.innerHTML = markup;
     const nextSvg = template.content.querySelector('svg');
+    // The same design, the drawing changes in place (svg-patch.js), its
+    // other layers (the overlay, the beams, the rubber box) kept; another
+    // design shares nothing to keep, and is put in whole.
     const previousSvg = canvasSvgEl?.parentNode === canvasEl ? canvasSvgEl : null;
-    if (previousSvg) canvasEl.replaceChild(nextSvg, previousSvg);
-    else canvasEl.replaceChildren(nextSvg);
-    canvasSvgEl = nextSvg;
+    if (previousSvg && mountedDocumentPath === currentDocumentPath) patchDrawing(previousSvg, nextSvg);
+    else {
+      adoptDrawing(nextSvg);
+      if (previousSvg) canvasEl.replaceChild(nextSvg, previousSvg);
+      else canvasEl.replaceChildren(nextSvg);
+      canvasSvgEl = nextSvg;
+      mountedDocumentPath = currentDocumentPath;
+    }
     syncMathLayer(mathParts);
     if (syncRenderedLabelMetrics()) scheduleMeasuredLabelRender();
+  }
+  if (canvasRebuilt && canvasSvgEl && !overlayEl?.isConnected) {
     overlayEl = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     overlayEl.setAttribute('class', 'editor-overlay');
     canvasSvgEl.appendChild(overlayEl);
@@ -78127,7 +78155,7 @@ function renderCanvas(modelKey) {
     cursorCrosshair: crosshairVisible && cursorInCanvas ? view : null,
   });
   // Ghosts and previews use the same theme-aware ink as the committed drawing.
-  overlayEl.innerHTML = themeInkSvg(withGestureOverlay(overlay, ghost));
+  overlayEl.innerHTML = themeInkSvg((hoverMoves() ? HOVER_MOVE_AREA : '') + withGestureOverlay(overlay, ghost));
   drawRubber();
   syncLinkBubbles();
   syncSnapPulse();
@@ -82253,14 +82281,8 @@ function onNormalKey(key, shiftKey = false) {
       return;
     }
     pendingKey = null;
-    moveMode = null;
-    copyMode = false;
-    deleteMode = false;
-    movePending = false;
-    copyPending = false;
-    labelMode = null;
+    disarmTools();
     annotationStart = null;
-    annotationPoints = [];
     setLabelSelection([]);
     selectedNets.clear();
     render();
@@ -82411,14 +82433,9 @@ function activateLabelPlacement(kind) {
   pendingPlace = null;
   clearSymmetry();
   insertQuery = '';
-  moveMode = null;
-  copyMode = false;
-  deleteMode = false;
-  movePending = false;
-  copyPending = false;
+  disarmTools();
   labelMode = kind;
   annotationStart = null;
-  annotationPoints = [];
   hintLine(kind === 'net'
     ? 'NET LABEL: click a physical wire; stays active until Esc'
     : kind === 'highlight'
@@ -82491,8 +82508,8 @@ function wrapSelectionInBox() {
   return true;
 }
 
-function activatePlace() {
-  leaveActiveInteraction();
+/** Disarm the one-shot tools: move, copy, delete, label and annotation placement. */
+function disarmTools() {
   moveMode = null;
   copyMode = false;
   deleteMode = false;
@@ -82500,6 +82517,11 @@ function activatePlace() {
   copyPending = false;
   labelMode = null;
   annotationPoints = [];
+}
+
+function activatePlace() {
+  leaveActiveInteraction();
+  disarmTools();
   mode = 'insert';
   terminalSnap = false;
   pendingPlace = null;
@@ -82515,13 +82537,7 @@ function activateSelect() {
   pendingPlace = null;
   clearSymmetry();
   insertQuery = '';
-  labelMode = null;
-  annotationPoints = [];
-  moveMode = null;
-  copyMode = false;
-  deleteMode = false;
-  movePending = false;
-  copyPending = false;
+  disarmTools();
   render();
 }
 function activateDelete() {
@@ -82534,12 +82550,7 @@ function activateDelete() {
   }
   mode = 'normal';
   terminalSnap = false;
-  moveMode = null;
-  copyMode = false;
-  movePending = false;
-  copyPending = false;
-  labelMode = null;
-  annotationPoints = [];
+  disarmTools();
   deleteMode = true;
   render();
 }
@@ -82549,13 +82560,7 @@ function activateWire() {
   // a partially drawn path, including its manually entered waypoints.
   if (hasWireDraft()) { logLine('active interaction retained'); render(); return; }
   leaveActiveInteraction();
-  moveMode = null;
-  copyMode = false;
-  deleteMode = false;
-  movePending = false;
-  copyPending = false;
-  labelMode = null;
-  annotationPoints = [];
+  disarmTools();
   mode = 'normal';
   terminalSnap = !!altHeld;
   // F3 changes the route style of this same managed workflow.  Diagonal wires
@@ -82571,12 +82576,7 @@ function activateMove(kind = 'connected') {
   noteTip('move-start');
   mode = 'normal';
   terminalSnap = false;
-  copyMode = false;
-  deleteMode = false;
-  movePending = false;
-  copyPending = false;
-  labelMode = null;
-  annotationPoints = [];
+  disarmTools();
   moveMode = kind === 'detached' ? 'detached' : 'connected';
   render();
 }
@@ -82585,12 +82585,7 @@ function activateCopy() {
   leaveActiveInteraction();
   mode = 'normal';
   terminalSnap = false;
-  moveMode = null;
-  deleteMode = false;
-  movePending = false;
-  copyPending = false;
-  labelMode = null;
-  annotationPoints = [];
+  disarmTools();
   copyMode = true; // source click and placement are handled by the canvas
   hintLine('COPY: click an object, move the copy, then click · Esc exits');
   render();
@@ -82599,13 +82594,7 @@ function activateCopy() {
 function activateAlign() {
   leaveActiveInteraction();
   terminalSnap = false;
-  moveMode = null;
-  copyMode = false;
-  deleteMode = false;
-  movePending = false;
-  copyPending = false;
-  labelMode = null;
-  annotationPoints = [];
+  disarmTools();
   alignTool = { source: null, hover: null };
   hintLine(ALIGN_SOURCE_HINT);
   render();
@@ -84259,10 +84248,12 @@ let reportExampleDesigns; __bind(() => { ({ reportExampleDesigns } = __require("
 let showNotes; __bind(() => { ({ showNotes } = __require("src/web/notes-window.js")); });
 let applyJson, render; __bind(() => { ({ applyJson, render } = __require("src/web/main.js")); });
 let leaveAtlasNow; __bind(() => { ({ leaveAtlasNow } = __require("src/web/atlas.js")); });
+let setHidden; __bind(() => { ({ setHidden } = __require("src/web/dom.js")); });
 /**
  * Onboarding in the editor: the contextual tip card and the first-drawing
  * tutorial. The rules live in tips.js and tutorial.js; this shows them.
  */
+
 
 
 
@@ -84405,7 +84396,7 @@ function tutorialElapsed() {
 
 function syncTutorial() {
   if (!tutorialCardEl) return;
-  tutorialCardEl.hidden = !editor.tutorial;
+  setHidden(tutorialCardEl, !editor.tutorial);
   const progress = currentTutorialProgress();
   if (!progress) return;
   const tutorial = currentTutorial();
@@ -86632,21 +86623,28 @@ function sourceOf(el) {
   return el.getAttribute('href') || el.getAttribute('src') || '';
 }
 
+/** Mark or unmark a picture, writing its class only when that changes: the
+ *  observer below hears class writes, and `classList.remove` writes the
+ *  attribute even when the class is not there. */
+function setMark(el, light) {
+  if (el.classList.contains('light-picture') !== light) el.classList.toggle('light-picture', light);
+}
+
 function mark(el) {
   const src = sourceOf(el);
   // A design drawn into a reference window is already in the theme.
   if (!src.startsWith('data:image/') || src.startsWith('data:image/svg')) {
-    el.classList.remove('light-picture');
+    setMark(el, false);
     return;
   }
   const known = judged.get(src);
   if (typeof known === 'boolean') {
-    el.classList.toggle('light-picture', known);
+    setMark(el, known);
     return;
   }
-  el.classList.remove('light-picture');
+  setMark(el, false);
   judge(src).then((light) => {
-    if (sourceOf(el) === src) el.classList.toggle('light-picture', light);
+    if (sourceOf(el) === src) setMark(el, light);
   });
 }
 
@@ -86659,15 +86657,16 @@ function markWithin(node) {
 function installPictureTheme() {
   invertPicturesButton?.addEventListener('click', () => setPicturesFollowTheme(!on));
   sync();
-  // Pictures come and go as the drawing and the notes are redrawn; a judged
-  // source is marked before the frame is painted.
+  // Pictures come and go as the drawing and the notes are redrawn, and a
+  // drawing patched in place (svg-patch.js) resets their class to its
+  // markup's; a judged source is marked before the frame is painted.
   new MutationObserver((records) => {
     for (const record of records) {
       if (record.type === 'attributes') {
         if (record.target.matches?.(PICTURES)) mark(record.target);
       } else for (const node of record.addedNodes) markWithin(node);
     }
-  }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['src', 'href'] });
+  }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['src', 'href', 'class'] });
   markWithin(document.body);
 }
 
@@ -86813,7 +86812,7 @@ __exports.createPlotView = createPlotView;
 __exports.linkPlots = linkPlots;
 let mathRuns; __bind(() => { ({ mathRuns } = __require("src/core/math-text.js")); });
 let axisTicks, fitRange, logMinorGrid, fromU, thinSeries, toU, valueAt, zoomAbout, zoomAxes; __bind(() => { ({ axisTicks, fitRange, logMinorGrid, fromU, thinSeries, toU, valueAt, zoomAbout, zoomAxes } = __require("src/core/plot-scale.js")); });
-let cursorCurves, cursorLayout, nearestCurve; __bind(() => { ({ cursorCurves, cursorLayout, nearestCurve } = __require("src/core/plot-cursors.js")); });
+let cursorCurves, cursorLayout, cursorNumber, nearestCurve; __bind(() => { ({ cursorCurves, cursorLayout, cursorNumber, nearestCurve } = __require("src/core/plot-cursors.js")); });
 /**
  * The one interactive plot every analysis view uses (responses, steps,
  * swing, root locus, loop gain, Bode, the optimizer's run, the
@@ -86866,13 +86865,8 @@ function markupText(text, attrs) {
   return node;
 }
 
-/** A number as the readout shows it. */
-function readoutNumber(value) {
-  if (!Number.isFinite(value)) return '–';
-  const magnitude = Math.abs(value);
-  if (magnitude !== 0 && (magnitude < 1e-3 || magnitude >= 1e6)) return value.toExponential(3).replace(/\.?0+e/, 'e');
-  return String(Number(value.toPrecision(5)));
-}
+/** A number as the readout shows it: five figures. */
+const readoutNumber = (value) => cursorNumber(value, 5);
 
 const plain = (tex) => String(tex || '').replace(/\\text\{([^{}]*)\}/g, '$1').replace(/\\/g, '').replace(/[{}$]/g, '');
 
@@ -87077,6 +87071,7 @@ function createPlotView({ height = 230, fill = false, aspect = null, maxHeight =
         if (dot.color) node.style.fill = dot.color;
         marks.append(node);
       }
+      for (const { leader } of layout.texts) if (leader) marks.append(svg('line', { ...leader, class: 'plot-marker-leader' }));
       for (const text of layout.texts) marks.append(markupText(text.text, { x: text.x, y: text.y, 'text-anchor': text.anchor, class: 'plot-marker-value' }));
       root.append(marks);
     }
@@ -87884,9 +87879,7 @@ __exports.referenceWindowsShown = referenceWindowsShown;
 __exports.toggleReferenceWindows = toggleReferenceWindows;
 __exports.installReferenceWindows = installReferenceWindows;
 let loadDocument; __bind(() => { ({ loadDocument } = __require("src/core/document.js")); });
-let svgString; __bind(() => { ({ svgString } = __require("src/core/render.js")); });
-let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __require("src/core/selection-drawing.js")); });
-let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
+let designPicture; __bind(() => { ({ designPicture } = __require("src/web/drawing-export.js")); });
 let floatingWindow; __bind(() => { ({ floatingWindow } = __require("src/web/floating-window.js")); });
 let wheelIntent; __bind(() => { ({ wheelIntent } = __require("src/web/gestures.js")); });
 let buttonIcon; __bind(() => { ({ buttonIcon } = __require("src/web/icons.js")); });
@@ -87938,8 +87931,6 @@ let pngDataUrlBlob, writeDrawingToClipboard; __bind(() => { ({ pngDataUrlBlob, w
 
 
 
-
-
 /** How often a shown window asks whether its design's file changed. */
 const POLL_MS = 2000;
 /** The closest zoom, in screen pixels per drawing unit (the editor's). */
@@ -87950,7 +87941,6 @@ const windows = []; // { el, slot, doc | pasted, picture, view, fitted, etag, re
 let hidden = false;
 let pollTimer = null;
 
-const dataUrl = (svg) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 const dark = () => document.documentElement.classList.contains('dark');
 
 // ----- remembering ------------------------------------------------------------------
@@ -87996,17 +87986,6 @@ function restoreWindows() {
 
 // ----- the picture ------------------------------------------------------------------
 
-/** The whole design as drawn by its export, in both themes. */
-async function pictureOf(circuit) {
-  if (!circuit.components.size && !circuit.labels.size) return null;
-  const svg = svgString(circuit, { ...DRAWING_EXPORT_OPTIONS, background: false, emptyHint: false });
-  const match = svg.match(/viewBox="([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)"/);
-  if (!match) return null;
-  const [light, darkSvg] = await Promise.all([withEmbeddedMathFont(svg), withEmbeddedMathFont(applyExportDarkTheme(svg))]);
-  const [x, y, w, h] = match.slice(1).map(Number);
-  return { svg, box: { x, y, w, h }, href: { light: dataUrl(light), dark: dataUrl(darkSvg) } };
-}
-
 function showMessage(win, text) {
   win.message.textContent = text || '';
   win.message.hidden = !text;
@@ -88024,7 +88003,7 @@ async function loadInto(win, { force = false } = {}) {
     }
     const data = await loadDesign(doc, force || !win.etag ? {} : { ifNoneMatch: win.etag });
     if (win.doc !== doc || data.notModified) return;
-    const picture = await pictureOf(loadDocument(data.state));
+    const picture = await designPicture(loadDocument(data.state));
     if (win.doc !== doc) return;
     win.etag = data.etag || null;
     win.revision = data.revision || null;
@@ -88338,7 +88317,7 @@ async function setState(win, title, state) {
   showMessage(win, 'Loading…');
   remember();
   try {
-    const picture = await pictureOf(loadDocument(state));
+    const picture = await designPicture(loadDocument(state));
     if (!windows.includes(win) || win.doc || win.pasted) return;
     win.picture = picture;
     if (!picture) {
@@ -88362,7 +88341,7 @@ async function setModel(win, circuit) {
     showMessage(win, 'No small-signal model: derive the analysis again');
     return;
   }
-  const picture = await pictureOf(circuit);
+  const picture = await designPicture(circuit);
   if (!windows.includes(win)) return;
   const first = !win.picture;
   win.picture = picture;
@@ -89745,11 +89724,11 @@ let optimizeSection, renderOptimize, resetOptimize; __bind(() => { ({ optimizeSe
 let swingTestFrequency; __bind(() => { ({ swingTestFrequency } = __require("src/core/analysis/optimize.js")); });
 let fractionText; __bind(() => { ({ fractionText } = __require("src/core/analysis/rounding.js")); });
 let normalizeBand; __bind(() => { ({ normalizeBand } = __require("src/core/analysis/optimize-setup.js")); });
-let el, onFieldCommit; __bind(() => { ({ element: el, onFieldCommit } = __require("src/web/dom.js")); });
+let el, mathSpan, onFieldCommit; __bind(() => { ({ element: el, mathSpan, onFieldCommit } = __require("src/web/dom.js")); });
 let netPicker; __bind(() => { ({ netPicker } = __require("src/web/net-picker.js")); });
 let deriving; __bind(() => { ({ deriving } = __require("src/web/analysis-busy.js")); });
 let startWorker; __bind(() => { ({ startWorker } = __require("src/web/worker-thread.js")); });
-let differing, differingNames, heldName, heldNumber, holdButton, holdKey, liveName, saveHolds, savedHolds; __bind(() => { ({ differing, differingNames, heldName, heldNumber, holdButton, holdKey, liveName, saveHolds, savedHolds } = __require("src/web/trace-hold.js")); });
+let differing, differingNames, heldName, heldNumber, holdButton, holdKey, liveName, saveHolds, savedHolds, traceLegendRow; __bind(() => { ({ differing, differingNames, heldName, heldNumber, holdButton, holdKey, liveName, saveHolds, savedHolds, traceLegendRow } = __require("src/web/trace-hold.js")); });
 let installSweepPlot, showSweep, sweepSection; __bind(() => { ({ installSweepPlot, showSweep, sweepSection } = __require("src/web/sweep-plot.js")); });
 let simulatedSpectrum; __bind(() => { ({ simulatedSpectrum } = __require("src/core/analysis/spectrum-run.js")); });
 /**
@@ -89958,9 +89937,7 @@ function domainsGuide() {
       if (typeof part === 'string') p.append(part);
       else {
         // In the run of the text; a pulse (a fraction) on a line of its own.
-        const math = el('span', { class: `signal-flow-guide-math${part.display ? ' display' : ''}` });
-        math.innerHTML = part.display ? texToMathML(part.tex) : texToMathML(part.tex).replace('display="block"', 'display="inline"');
-        p.append(math);
+        p.append(mathSpan(part.tex, 'signal-flow-guide-math', part.display));
       }
     }
     return p;
@@ -91096,28 +91073,12 @@ function renderGraph() {
   } else host.append(el('p', { class: 'field-hint', text: view === 'step' && shownTraces().length ? 'These results have no step response here (a loop holding a delay).' : 'Check a trace below to plot it.' }));
   const legend = el('div', { class: 'signal-flow-legend' });
   for (const trace of traces) {
-    const check = el('input', { type: 'checkbox', 'aria-label': 'Show this trace' });
-    check.checked = trace.on;
-    check.addEventListener('change', () => {
-      trace.on = check.checked;
-      // A held one's box is saved with it.
-      if (trace.held) holdsChanged(holds().map((record) => (record.key === trace.held.key ? { ...record, on: trace.on } : record)));
-      renderGraph();
-    });
-    const math = el('span', { class: 'signal-flow-legend-math' });
-    math.style.color = trace.color;
-    math.innerHTML = texToMathML(trace.held ? heldLabel(trace) : liveLabel(trace));
-    if (trace.held) math.dataset.hold = trace.held.key;
-    else math.dataset.live = trace.id;
-    const remove = el('button', { type: 'button', class: 'signal-flow-legend-remove', 'aria-label': 'Remove this trace', title: 'Remove', text: '×', onclick: () => {
-      traces = traces.filter((t) => t !== trace);
-      if (trace.held) holdsChanged(holds().filter((record) => record.key !== trace.held.key));
-      renderCoefficients();
-      renderGraph();
-    } });
-    // A live trace can be held: a copy at these numbers stays as the sliders move.
-    const hold = trace.held ? null : holdButton(() => holdTrace(trace));
-    legend.append(el('div', { class: 'signal-flow-legend-row' }, [check, el('span', { class: 'signal-flow-swatch', style: `background:${trace.color}` }), math, el('span', { class: 'signal-flow-legend-actions' }, [...(hold ? [hold] : []), remove])]));
+    legend.append(traceLegendRow(trace, {
+      label: trace.held ? heldLabel(trace) : liveLabel(trace), holds, holdsChanged,
+      onHold: () => holdTrace(trace),
+      onShow: renderGraph,
+      onRemove: () => { traces = traces.filter((t) => t !== trace); renderCoefficients(); renderGraph(); },
+    }));
   }
   // The simulated spectrum and those held, on the magnitude view.
   if (view === 'magnitude' && spectrumShown()) {
@@ -92754,11 +92715,13 @@ let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); 
 let paneSize; __bind(() => { ({ paneSize } = __require("src/web/canvas-view.js")); });
 let syncInteractionUI; __bind(() => { ({ syncInteractionUI } = __require("src/web/toolbar-ui.js")); });
 let keyHintContext, selectedComp, selectedComps, selectedLabel, selectedLabels, symmetryAxisText, symmetryTwin; __bind(() => { ({ keyHintContext, selectedComp, selectedComps, selectedLabel, selectedLabels, symmetryAxisText, symmetryTwin } = __require("src/web/main.js")); });
+let setClassName, setHidden, setText; __bind(() => { ({ setClassName, setHidden, setText } = __require("src/web/dom.js")); });
 /**
  * The status bar and the log drawer: the mode chip, selection and cursor
  * readouts, the message chip, and the log it opens. The fields' wording is
  * in status-bar.js.
  */
+
 
 
 
@@ -92900,23 +92863,18 @@ function renderStatus() {
     cursor: editor.cursor,
     hints: parts,
   });
-  statusEl.textContent = fields.hint;
+  setText(statusEl, fields.hint);
   renderKeyHints(!fields.hint);
-  statusEl.className = `status ${interaction.key}`;
-  if (editor.wire) statusEl.classList.add('wire');
-  else if (editor.mode === 'insert') statusEl.classList.add('insert');
-  if (statusModeEl) {
-    statusModeEl.textContent = fields.mode;
-    statusModeEl.className = `status-mode ${statusEl.className.replace(/^status\s*/, '')}`;
-  }
-  if (statusSelectionEl) {
-    statusSelectionEl.textContent = fields.selection;
-    statusSelectionEl.hidden = !fields.selection;
-  }
-  if (statusCursorEl) statusCursorEl.textContent = fields.cursor;
+  const modeClass = `${interaction.key}${editor.wire ? ' wire' : editor.mode === 'insert' ? ' insert' : ''}`;
+  setClassName(statusEl, `status ${modeClass}`);
+  setText(statusModeEl, fields.mode);
+  setClassName(statusModeEl, `status-mode ${modeClass}`);
+  setText(statusSelectionEl, fields.selection);
+  setHidden(statusSelectionEl, !fields.selection);
+  setText(statusCursorEl, fields.cursor);
   // render() measured the pane before writing the DOM; measuring again here
   // would force a synchronous layout on every frame.
-  if (statusZoomEl) statusZoomEl.textContent = `${zoomPercent(editor.view, (editor.viewPane || paneSize())?.w, editor.zoom)}%`;
+  setText(statusZoomEl, `${zoomPercent(editor.view, (editor.viewPane || paneSize())?.w, editor.zoom)}%`);
 }
 
 /** The footer's key strip: the few keys that matter now, while no mode hint
@@ -93174,11 +93132,13 @@ let ICON_PATHS; __bind(() => { ({ ICON_PATHS } = __require("src/web/icons.js"));
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let commit, keyToWire, render, selectedComps, selectedLabels; __bind(() => { ({ commit, keyToWire, render, selectedComps, selectedLabels } = __require("src/web/main.js")); });
+let setHidden; __bind(() => { ({ setHidden } = __require("src/web/dom.js")); });
 /**
  * The style controls for the selection: color, line dash and arrowheads,
  * width, text alignment, bold, italic, and monospace. The side panel and the context
  * menu's style strip share them; Ctrl+Shift+V pastes a copied style.
  */
+
 
 
 
@@ -93517,7 +93477,7 @@ function updateStyleControls() {
   const state = selectionStyleState();
   const panel = document.getElementById('style-panel');
   if (panel) {
-    panel.hidden = !state;
+    setHidden(panel, !state);
     if (state) {
       syncStyleControls(panel, state);
       const linePattern = document.getElementById('style-line-pattern');
@@ -93537,6 +93497,82 @@ function updateStyleControls() {
 
 function installStyleControls() {
   document.getElementById('style-panel')?.addEventListener('click', (ev) => handleStyleControlClick(ev.currentTarget, ev));
+}
+
+};
+
+__modules["src/web/svg-patch.js"] = function (__require, __exports) {
+__exports.adoptDrawing = adoptDrawing;
+__exports.patchChildren = patchChildren;
+__exports.patchDrawing = patchDrawing;
+/**
+ * The drawing brought up to date in place: its new markup, parsed, is laid
+ * over the mounted drawing and only the subtrees that differ are replaced.
+ * A preview that moves one part of a large drawing then restyles and lays
+ * out that part, not every element of the drawing again. The equal-subtree
+ * test is the browser's own (`isEqualNode`), so unchanged branches cost a
+ * native walk, no script.
+ */
+
+/** The top-level nodes of the mounted drawing that are its own markup's:
+ *  the layers other modules add to its root (the overlay, a mask, the
+ *  beams) are not, and are left where they are. */
+const own = new WeakSet();
+
+/** Mark `svg`'s children as its markup's own: right after it is parsed. */
+function adoptDrawing(svg) {
+  for (const node of svg.childNodes) own.add(node);
+}
+
+function syncAttributes(target, next) {
+  for (const { name } of [...target.attributes]) if (!next.hasAttribute(name)) target.removeAttribute(name);
+  for (const { name, value } of next.attributes) if (target.getAttribute(name) !== value) target.setAttribute(name, value);
+}
+
+function patchNode(target, next) {
+  if (target.isEqualNode(next)) return;
+  if (target.nodeType !== 1 || target.nodeName !== next.nodeName || target.childNodes.length !== next.childNodes.length) {
+    target.replaceWith(next);
+    return;
+  }
+  syncAttributes(target, next);
+  const fresh = [...next.childNodes];
+  [...target.childNodes].forEach((child, i) => patchNode(child, fresh[i]));
+}
+
+/** Bring `target`'s children to `next`'s (a parsed copy of new markup),
+ *  pair by pair; with another number of children, all swapped. */
+function patchChildren(target, next) {
+  const old = [...target.childNodes];
+  const fresh = [...next.childNodes];
+  if (old.length !== fresh.length) {
+    target.replaceChildren(...fresh);
+    return;
+  }
+  old.forEach((node, i) => patchNode(node, fresh[i]));
+}
+
+/** Bring the mounted `svg` to `next` (its new markup, parsed): its root's
+ *  attributes and its own children, the others' layers kept. */
+function patchDrawing(svg, next) {
+  syncAttributes(svg, next);
+  const old = [...svg.childNodes].filter((node) => own.has(node));
+  const fresh = [...next.childNodes];
+  if (old.length === fresh.length) {
+    old.forEach((node, i) => {
+      patchNode(node, fresh[i]);
+      // Replaced whole, the new node is the drawing's now.
+      if (fresh[i].parentNode === svg) own.add(fresh[i]);
+    });
+    return;
+  }
+  // Another number of layers: the drawing's own swapped whole, in its place.
+  const before = old[0] || svg.firstChild;
+  for (const node of fresh) {
+    svg.insertBefore(node, before);
+    own.add(node);
+  }
+  for (const node of old) node.remove();
 }
 
 };
@@ -93926,7 +93962,7 @@ let calculate, siResult; __bind(() => { ({ calculate, siResult } = __require("sr
 let TRACE_COLORS, complexText, transferTex, numericRootsOf, responsePlot, resultSymbols, withCoefficients; __bind(() => { ({ TRACE_COLORS, complexText, transferTex, numericRootsOf, responsePlot, resultSymbols, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
 let symbolText; __bind(() => { ({ symbolText } = __require("src/core/analysis/present.js")); });
 let responseSpec; __bind(() => { ({ responseSpec } = __require("src/core/plot-spec.js")); });
-let plainTexText, texToMathML; __bind(() => { ({ plainTexText, texToMathML } = __require("src/core/render.js")); });
+let plainTexText; __bind(() => { ({ plainTexText } = __require("src/core/render.js")); });
 let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js")); });
 let canonicalNetName; __bind(() => { ({ canonicalNetName } = __require("src/core/model.js")); });
 let setPartValue; __bind(() => { ({ setPartValue } = __require("src/core/part-moves.js")); });
@@ -93938,12 +93974,12 @@ let PER_DECADE; __bind(() => { ({ PER_DECADE } = __require("src/web/e-series.js"
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let commit, markSettingsChanged, onDocumentShown, render; __bind(() => { ({ commit, markSettingsChanged, onDocumentShown, render } = __require("src/web/main.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
-let el, onFieldCommit; __bind(() => { ({ element: el, onFieldCommit } = __require("src/web/dom.js")); });
+let el, mathSpan, onFieldCommit; __bind(() => { ({ element: el, mathSpan, onFieldCommit } = __require("src/web/dom.js")); });
 let annotateMathFigure; __bind(() => { ({ annotateMathFigure } = __require("src/web/figure-annotate.js")); });
 let registerAnnotations; __bind(() => { ({ registerAnnotations } = __require("src/web/annotate-menu.js")); });
 let bodeGraphActions; __bind(() => { ({ bodeGraphActions } = __require("src/web/bode-actions.js")); });
 let deriving; __bind(() => { ({ deriving } = __require("src/web/analysis-busy.js")); });
-let differing, differingNames, heldName, holdButton, holdKey, legendActions, liveName, saveHolds, savedHolds; __bind(() => { ({ differing, differingNames, heldName, holdButton, holdKey, legendActions, liveName, saveHolds, savedHolds } = __require("src/web/trace-hold.js")); });
+let differing, differingNames, heldName, holdKey, liveName, saveHolds, savedHolds, traceLegendRow; __bind(() => { ({ differing, differingNames, heldName, holdKey, liveName, saveHolds, savedHolds, traceLegendRow } = __require("src/web/trace-hold.js")); });
 /**
  * The analysis window's switched-capacitor mode: a drawn SC circuit's exact
  * H(z) (core/analysis/switched-cap.js), beside the circuit and signal-flow
@@ -94018,12 +94054,7 @@ function suggested(circuit) {
 }
 
 /** TeX as MathML, inline or on a line of its own. */
-function math(tex, display = false) {
-  const span = el('span', { class: `sc-math${display ? ' display' : ''}` });
-  const markup = texToMathML(tex);
-  span.innerHTML = display ? markup : markup.replace('display="block"', 'display="inline"');
-  return span;
-}
+const math = (tex, display = false) => mathSpan(tex, 'sc-math', display);
 
 /** A phase's name as written: TeX drawn as math, plain text as it is. */
 const phaseName = (name) => (/^\$.*\$$/.test(name) ? math(name.replace(/^\$+|\$+$/g, '')) : el('span', { text: name }));
@@ -94558,25 +94589,12 @@ function renderPlots() {
     host.replaceChildren(el('p', { class: 'field-hint', text: traces.length ? 'Check a trace below to plot it.' : '' }));
   }
   const legend = plotsEl.querySelector('.sc-legend');
-  legend.replaceChildren(...traces.map((trace) => {
-    const check = el('input', { type: 'checkbox', 'aria-label': 'Show this trace' });
-    check.checked = trace.on;
-    check.addEventListener('change', () => {
-      trace.on = check.checked;
-      if (trace.held) holdsChanged(holds().map((record) => (record.key === trace.held.key ? { ...record, on: trace.on } : record)));
-      renderPlots();
-    });
-    const label = el('span', { class: 'signal-flow-legend-math' });
-    label.innerHTML = texToMathML(trace.held ? heldLabel(trace) : liveLabel(trace));
-    label.style.color = trace.color;
-    const remove = el('button', { type: 'button', class: 'signal-flow-legend-remove', 'aria-label': 'Remove this trace', title: 'Remove this trace from the graph', text: '×', onclick: () => {
-      traces = traces.filter((t) => t !== trace);
-      if (trace.held) holdsChanged(holds().filter((record) => record.key !== trace.held.key));
-      renderValues();
-      renderPlots();
-    } });
-    return el('div', { class: 'signal-flow-legend-row' }, [check, el('span', { class: 'signal-flow-swatch', style: `background:${trace.color}` }), label, legendActions(trace.held ? null : holdButton(() => holdTrace(trace)), remove)]);
-  }));
+  legend.replaceChildren(...traces.map((trace) => traceLegendRow(trace, {
+    label: trace.held ? heldLabel(trace) : liveLabel(trace), holds, holdsChanged,
+    onHold: () => holdTrace(trace),
+    onShow: renderPlots,
+    onRemove: () => { traces = traces.filter((t) => t !== trace); renderValues(); renderPlots(); },
+  })));
   const actions = plotsEl.querySelector('.sc-plots-actions');
   actions.hidden = !traces.length;
   actions.replaceChildren(...bodeGraphActions({
@@ -95558,12 +95576,14 @@ let saveCircuit; __bind(() => { ({ saveCircuit } = __require("src/web/document-s
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let removeAllNetHighlights; __bind(() => { ({ removeAllNetHighlights } = __require("src/web/annotation-tools.js")); });
 let activateAlign, activateAnnotation, activateCopy, activateDelete, activateHighlight, activateMove, activateNetLabel, activatePlace, activateSelect, activateShapeAnnotation, activateWire, hasWireDraft, interactionState, render, restackSelected, selectedTransform; __bind(() => { ({ activateAlign, activateAnnotation, activateCopy, activateDelete, activateHighlight, activateMove, activateNetLabel, activatePlace, activateSelect, activateShapeAnnotation, activateWire, hasWireDraft, interactionState, render, restackSelected, selectedTransform } = __require("src/web/main.js")); });
+let setAttr; __bind(() => { ({ setAttr } = __require("src/web/dom.js")); });
 /**
  * The toolbar and tool rail: fitting the toolbar to the window, the tool
  * buttons' pressed state and flyouts, the wire route mode, the document and
  * settings menus, and the theme, grid, guides, crosshair, scroll scheme,
  * and page guide toggles. Fitting's rules are in toolbar-fit.js.
  */
+
 
 
 
@@ -95732,7 +95752,7 @@ function syncRailFlyout(state) {
   if (!railFlyoutProxyEl) return;
   if (RAIL_FLYOUT_TOOLS.includes(state.toolbar)) railFlyoutTool = state.toolbar;
   const active = RAIL_FLYOUT_TOOLS.includes(state.toolbar);
-  railFlyoutProxyEl.setAttribute('aria-pressed', String(active));
+  setAttr(railFlyoutProxyEl, 'aria-pressed', String(active));
   railFlyoutProxyEl.classList.toggle('active', active);
   const source = railFlyoutButton(railFlyoutTool);
   const icon = railFlyoutProxyEl.querySelector('.button-icon');
@@ -95740,7 +95760,7 @@ function syncRailFlyout(state) {
     railFlyoutProxyEl.dataset.icon = source.dataset.icon;
     icon.innerHTML = ICON_PATHS[source.dataset.icon] || '';
   }
-  if (source) railFlyoutProxyEl.title = source.title;
+  if (source) setAttr(railFlyoutProxyEl, 'title', source.title);
 }
 
 /** Hover, right-click, or a long press on a rail slot opens its flyout strip
@@ -95841,8 +95861,8 @@ function syncInteractionUI() {
   for (const action of Object.keys(TOOLBAR_IDS)) {
     const active = state.toolbar === action;
     for (const el of toolbarElements(action)) {
-      el.setAttribute('aria-pressed', String(active));
-      el.setAttribute('aria-current', active ? 'true' : 'false');
+      setAttr(el, 'aria-pressed', String(active));
+      setAttr(el, 'aria-current', String(active));
       el.classList.toggle('active', active);
     }
   }
@@ -95851,8 +95871,8 @@ function syncInteractionUI() {
     // tool in use.
     const active = editor.routeMode === kind && state.toolbar === 'wire';
     for (const el of routeModeElements(kind)) {
-      el.setAttribute('aria-pressed', String(active));
-      el.setAttribute('aria-current', active ? 'true' : 'false');
+      setAttr(el, 'aria-pressed', String(active));
+      setAttr(el, 'aria-current', String(active));
       if (el.tagName === 'INPUT') el.checked = active;
       el.classList.toggle('active', active);
     }
@@ -96837,6 +96857,8 @@ __exports.liveName = liveName;
 __exports.heldName = heldName;
 __exports.holdButton = holdButton;
 __exports.legendActions = legendActions;
+__exports.traceLegendRow = traceLegendRow;
+let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let markSettingsChanged; __bind(() => { ({ markSettingsChanged } = __require("src/web/main.js")); });
@@ -96847,6 +96869,7 @@ let markSettingsChanged; __bind(() => { ({ markSettingsChanged } = __require("sr
  * leave as it is. Each graph keeps its own copies, saved with the design;
  * this is where they are kept, their name, and their button.
  */
+
 
 
 
@@ -96910,6 +96933,34 @@ function holdButton(onHold, label = 'Hold this trace') {
 /** A legend row's Hold (for a live trace) and ×, at the row's end. */
 function legendActions(hold, remove) {
   return el('span', { class: 'signal-flow-legend-actions' }, [...(hold ? [hold] : []), remove]);
+}
+
+/**
+ * A trace's legend row: a box that shows or hides it (a held one's choice
+ * saved with it), its swatch, its TeX `label` in its color, Hold for a
+ * live one, and ×. `holds()` and `holdsChanged(records)` are the graph's
+ * held records; `onShow()` redraws after the box changes, `onRemove()`
+ * takes the trace off (its held record already gone).
+ */
+function traceLegendRow(trace, { label, holds, holdsChanged, onHold, onShow, onRemove }) {
+  const check = el('input', { type: 'checkbox', 'aria-label': 'Show this trace' });
+  check.checked = trace.on;
+  check.addEventListener('change', () => {
+    trace.on = check.checked;
+    if (trace.held) holdsChanged(holds().map((record) => (record.key === trace.held.key ? { ...record, on: trace.on } : record)));
+    onShow();
+  });
+  const name = el('span', { class: 'signal-flow-legend-math' });
+  name.innerHTML = texToMathML(label);
+  name.style.color = trace.color;
+  // Found again to rename when the numbers move (signal-flow-ui.js).
+  if (trace.held) name.dataset.hold = trace.held.key;
+  else if (trace.id !== undefined) name.dataset.live = trace.id;
+  const remove = el('button', { type: 'button', class: 'signal-flow-legend-remove', 'aria-label': 'Remove this trace', title: 'Remove', text: '×', onclick: () => {
+    if (trace.held) holdsChanged(holds().filter((record) => record.key !== trace.held.key));
+    onRemove();
+  } });
+  return el('div', { class: 'signal-flow-legend-row' }, [check, el('span', { class: 'signal-flow-swatch', style: `background:${trace.color}` }), name, legendActions(trace.held ? null : holdButton(onHold), remove)]);
 }
 
 __exports.holdKey = holdKey;

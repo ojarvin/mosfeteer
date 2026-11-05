@@ -5,7 +5,7 @@ import { describe, before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { start, sleep, browserSkip } from './harness.js';
+import { start, browserSkip } from './harness.js';
 import { amplifier, withBeats } from './fixtures.js';
 import { normalizePageGuide, pageGuideWidth } from '../../src/core/page-guide.js';
 

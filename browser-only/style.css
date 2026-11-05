@@ -2968,7 +2968,7 @@ html.dark.invert-pictures .light-picture {
 .canvas svg .resize-handles [data-resize-handle="nw"],
 .canvas svg .resize-handles [data-resize-handle="se"] { cursor: nwse-resize; }
 /* The outline of a resizable object away from its handles moves it. */
-.canvas.hover-move svg { cursor: move; }
+.canvas svg .hover-move-area { cursor: move; }
 
 /* Placement/move target: intentionally lighter than selection and wire
    overlays, while still using the editor's accent. */
@@ -8103,7 +8103,6 @@ body.chrome-away [data-editor-edge="right"] {
 
 /* Behind or before the curves: a simulated spectrum, a run's start. */
 .plot-view-svg .role-background {
-  stroke-width: 1.25;
   stroke-opacity: 0.8;
 }
 
@@ -8145,6 +8144,11 @@ body.chrome-away [data-editor-edge="right"] {
   fill: var(--text);
   stroke: none;
   font: var(--text-xs) var(--font-mono);
+}
+
+.plot-view-svg .plot-marker-leader {
+  stroke: var(--text);
+  stroke-width: 0.75;
 }
 
 .plot-view.dragging-marker { cursor: grabbing; }

@@ -16,6 +16,7 @@ import { reportExampleDesigns } from './examples/report-example.js';
 import { showNotes } from './notes-window.js';
 import { applyJson, render } from './main.js';
 import { leaveAtlasNow } from './atlas.js';
+import { setHidden } from './dom.js';
 
 // ----- contextual tips ---------------------------------------------------------
 // One quiet line in the canvas corner when a faster way exists for what the
@@ -144,7 +145,7 @@ function tutorialElapsed() {
 
 export function syncTutorial() {
   if (!tutorialCardEl) return;
-  tutorialCardEl.hidden = !editor.tutorial;
+  setHidden(tutorialCardEl, !editor.tutorial);
   const progress = currentTutorialProgress();
   if (!progress) return;
   const tutorial = currentTutorial();

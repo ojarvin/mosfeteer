@@ -31,12 +31,11 @@ import { texToMathML } from '../core/render.js';
 import { element as el } from './dom.js';
 import { editor } from './editor-state.js';
 import { markSettingsChanged, onDocumentShown, render } from './main.js';
-import { logLine } from './status-bar-ui.js';
 import { installPlotsWindow, offerPlots, plotsShown } from './plots-window.js';
 import { placeResponsePlot } from './signal-flow-ui.js';
 import { registerAnnotations } from './annotate-menu.js';
 import { bodeGraphActions } from './bode-actions.js';
-import { differing, differingNames, heldName, holdButton, holdKey, legendActions, liveName, saveHolds, savedHolds } from './trace-hold.js';
+import { differing, differingNames, heldName, holdKey, liveName, saveHolds, savedHolds, traceLegendRow } from './trace-hold.js';
 
 const EMPTY_TEXT = 'Derive in the analysis window (Shift+S) to plot its gain here.';
 const QUANTITIES = {
@@ -482,23 +481,12 @@ function renderLegend() {
   const legend = plotsEl.querySelector('.bode-legend');
   legend.replaceChildren();
   for (const trace of traces) {
-    const check = el('input', { type: 'checkbox', 'aria-label': 'Show this trace' });
-    check.checked = trace.on;
-    check.addEventListener('change', () => {
-      trace.on = check.checked;
-      if (trace.held) holdsChanged(holds().map((record) => (record.key === trace.held.key ? { ...record, on: trace.on } : record)));
-      renderPlots();
-    });
-    const math = el('span', { class: 'signal-flow-legend-math' });
-    math.innerHTML = texToMathML(trace.held ? heldLabel(trace) : liveLabel(trace));
-    math.style.color = trace.color;
-    const remove = el('button', { type: 'button', class: 'signal-flow-legend-remove', 'aria-label': 'Remove this trace', title: 'Remove this trace from the graph', text: '×', onclick: () => {
-      traces = traces.filter((t) => t !== trace);
-      if (trace.held) holdsChanged(holds().filter((record) => record.key !== trace.held.key));
-      renderValues();
-      renderPlots();
-    } });
-    legend.append(el('div', { class: 'signal-flow-legend-row' }, [check, el('span', { class: 'signal-flow-swatch', style: `background:${trace.color}` }), math, legendActions(trace.held ? null : holdButton(() => holdTrace(trace)), remove)]));
+    legend.append(traceLegendRow(trace, {
+      label: trace.held ? heldLabel(trace) : liveLabel(trace), holds, holdsChanged,
+      onHold: () => holdTrace(trace),
+      onShow: renderPlots,
+      onRemove: () => { traces = traces.filter((t) => t !== trace); renderValues(); renderPlots(); },
+    }));
   }
   const actions = plotsEl.querySelector('.bode-plots-actions');
   actions.hidden = !traces.length;

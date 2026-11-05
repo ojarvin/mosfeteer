@@ -12,12 +12,11 @@ import {
   MAX_SYNTHESIS_INPUTS, MAX_SYNTHESIS_OUTPUTS, SYNTHESIS_GATES, compactNames, drawSynthesis, gateSummary, rowCount, signalNames, synthesizeLogic,
 } from '../core/analysis/logic-synthesis.js';
 import { logicNameTex } from '../core/analysis/logic.js';
-import { texToMathML } from '../core/render.js';
 import { registerAnalysisMode } from './signal-flow-ui.js';
 import { editor } from './editor-state.js';
 import { commit, markSettingsChanged, onDocumentShown, render, setSelection } from './main.js';
 import { logLine } from './status-bar-ui.js';
-import { element as el, onFieldCommit } from './dom.js';
+import { element as el, mathSpan, onFieldCommit } from './dom.js';
 import { annotateMathFigure } from './figure-annotate.js';
 import { registerAnnotations } from './annotate-menu.js';
 import { fitView } from './canvas-view.js';
@@ -108,12 +107,7 @@ function setOption(patch) {
   renderEquations();
 }
 
-function math(tex, display = false) {
-  const span = el('span', { class: `logic-math${display ? ' display' : ''}` });
-  const markup = texToMathML(tex);
-  span.innerHTML = display ? markup : markup.replace('display="block"', 'display="inline"');
-  return span;
-}
+const math = (tex, display = false) => mathSpan(tex, 'logic-math', display);
 
 /** The synthesis of the table as it stands, of the outputs `only` if given. */
 function synthesized(only = null) {

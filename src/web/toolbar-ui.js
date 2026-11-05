@@ -18,6 +18,7 @@ import { saveCircuit } from './document-session.js';
 import { editor } from './editor-state.js';
 import { removeAllNetHighlights } from './annotation-tools.js';
 import { activateAlign, activateAnnotation, activateCopy, activateDelete, activateHighlight, activateMove, activateNetLabel, activatePlace, activateSelect, activateShapeAnnotation, activateWire, hasWireDraft, interactionState, render, restackSelected, selectedTransform } from './main.js';
+import { setAttr } from './dom.js';
 
 // The top toolbar drops button text in stages as its row runs out of space (see
 // toolbar-fit.js). Refit when the bar resizes or the document title changes.
@@ -172,7 +173,7 @@ function syncRailFlyout(state) {
   if (!railFlyoutProxyEl) return;
   if (RAIL_FLYOUT_TOOLS.includes(state.toolbar)) railFlyoutTool = state.toolbar;
   const active = RAIL_FLYOUT_TOOLS.includes(state.toolbar);
-  railFlyoutProxyEl.setAttribute('aria-pressed', String(active));
+  setAttr(railFlyoutProxyEl, 'aria-pressed', String(active));
   railFlyoutProxyEl.classList.toggle('active', active);
   const source = railFlyoutButton(railFlyoutTool);
   const icon = railFlyoutProxyEl.querySelector('.button-icon');
@@ -180,7 +181,7 @@ function syncRailFlyout(state) {
     railFlyoutProxyEl.dataset.icon = source.dataset.icon;
     icon.innerHTML = ICON_PATHS[source.dataset.icon] || '';
   }
-  if (source) railFlyoutProxyEl.title = source.title;
+  if (source) setAttr(railFlyoutProxyEl, 'title', source.title);
 }
 
 /** Hover, right-click, or a long press on a rail slot opens its flyout strip
@@ -281,8 +282,8 @@ export function syncInteractionUI() {
   for (const action of Object.keys(TOOLBAR_IDS)) {
     const active = state.toolbar === action;
     for (const el of toolbarElements(action)) {
-      el.setAttribute('aria-pressed', String(active));
-      el.setAttribute('aria-current', active ? 'true' : 'false');
+      setAttr(el, 'aria-pressed', String(active));
+      setAttr(el, 'aria-current', String(active));
       el.classList.toggle('active', active);
     }
   }
@@ -291,8 +292,8 @@ export function syncInteractionUI() {
     // tool in use.
     const active = editor.routeMode === kind && state.toolbar === 'wire';
     for (const el of routeModeElements(kind)) {
-      el.setAttribute('aria-pressed', String(active));
-      el.setAttribute('aria-current', active ? 'true' : 'false');
+      setAttr(el, 'aria-pressed', String(active));
+      setAttr(el, 'aria-current', String(active));
       if (el.tagName === 'INPUT') el.checked = active;
       el.classList.toggle('active', active);
     }

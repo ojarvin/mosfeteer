@@ -1,14 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  add,
-  formatExpression,
-  integer,
-  multiply,
-  power,
-  rationalFunction,
-  symbol,
-} from '../src/core/analysis/rational.js';
+import { add, formatExpression, integer, multiply, rationalFunction, symbol } from '../src/core/analysis/rational.js';
 import { analyzeResponse, processResponses } from '../src/core/analysis/response.js';
 import { renderRootEquation } from '../src/core/analysis/present.js';
 

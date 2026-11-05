@@ -4,7 +4,7 @@ import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
 import { createCmaes, seededRandom, symmetricEigen } from '../src/core/analysis/cmaes.js';
 import { normalizeOptimizeSetup } from '../src/core/analysis/optimize-setup.js';
-import { fitnessOf, isFeasible, optimizationParameters, pointValues, prepareObjective, runOptimization, specIntervals, swingTestFrequencies, swingTestFrequency } from '../src/core/analysis/optimize.js';
+import { fitnessOf, optimizationParameters, pointValues, prepareObjective, runOptimization, specIntervals, swingTestFrequencies, swingTestFrequency } from '../src/core/analysis/optimize.js';
 import { prepareSimulation } from '../src/core/analysis/simulate.js';
 
 // A short swing test, for the tests of the search itself.

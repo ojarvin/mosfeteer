@@ -1,58 +1,19 @@
 /**
- * Timing diagram: one clock waveform per switch phase, drawn under the
- * drawing as annotations -- each phase's name (its own spelling, TeX drawn
- * as math) and its wave, two cells tall with vertical edges. Rows may also
- * be signals of the diagram's own (a clock, an enable, a drawing with no
- * switches at all): added and removed by name, and kept by the drawn
- * diagram (`timing.signal`). They are drawn like phases but play no part
- * in beats.
- *
- * A wave is typed as slots, one character each: `1` high, `0` low. A short
- * wave holds its last level. The waves repeat, so each row
- * shows a little of its last slot before the start and of its first after
- * the end, where its transitions are -- unless the diagram leaves the
- * lead-in and lead-out out (`lead: false`): then it starts at the first
- * slot and ends with the last.
- *
- * Non-overlap is kept between the pairs of phases asked for: none in a new
- * diagram; 'auto' picks every two that are never high in the same slot (and
- * a diagram saved before the setting was its own keeps that). Where one of a pair falls and the other
- * rises, a one-cell gap opens in every row; in it the pair's fall comes early
- * and its rise late, so the two are never high at once. Other phases change
- * at the start of the gap.
- *
- * A signal row may instead be analog: a value from -1 to 1 at the start of
- * a slot (`values`, null where none is set), joined by straight lines
- * across the slots between, or held until the next (`hold`); a short list
- * holds its last value; nothing is drawn before the first value or after
- * the last -- except that a value
- * at the first slot holds back through the lead-in and one at the last
- * through its slot and the lead-out -- and fewer than two draw no curve.
- * From 0 at the bottom to 1 at the top -- or, with any value below
- * 0, about a dashed zero line through the middle. It is drawn as one box
- * annotation with its curve inside (`timing.analog`), so the curve's points
- * need not be on the grid while the box is. Its points take arrows, marks
- * and spans as a digital row's edges do; a mark on a point between the
- * extremes is a threshold, a dashed line at its level from the row's start.
- * Any row may be taller than two cells (`height`, even cells).
- *
- * A break leaves time out: two S curves down the middle of a slot, on
- * paper that hides the waves between them -- through every row at once, or
- * through each row on its own (`rows`). It belongs to its slot, not to an
- * edge, so it is drawn wherever that slot is.
+ * Timing diagram: one clock waveform per switch phase, and signal rows of
+ * the diagram's own (`timing.signal`), drawn under the drawing as
+ * annotations. The contract (waves as slots, lead-in, non-overlap gaps,
+ * analog rows, breaks, arrows, marks, spans) is docs/beats.md.
  *
  * A row's wave is, first to last: the one given for it; the one it had in
- * the diagram already; for a complement (a barred phase), its phase drawn
- * inverted, gaps included; one slot per beat, high where the phase's
- * switches are closed; else low throughout.
+ * the diagram already; for a complement, its phase inverted, gaps
+ * included; one slot per beat, high where the phase's switches are
+ * closed; else low throughout.
  *
- * The design keeps its diagram (`Circuit#timing`): the clock the analyses
- * and beats read, which the timing window edits (setTimingDiagram). It is
- * drawn only when annotated (addTimingDiagram, annotateTimingDiagram, the
- * `timing` command), and the drawn annotations remember their waves
- * (`LabelInstance#timing`), so drawing the diagram again replaces it where
- * it stands. A design from before keeps only the drawn diagram, read as
- * its own until it is set.
+ * The design keeps its diagram (`Circuit#timing`, setTimingDiagram), which
+ * analyses and beats read; it is drawn only when annotated, and the drawn
+ * annotations remember their waves (`LabelInstance#timing`) so drawing it
+ * again replaces it in place. A design from before keeps only the drawn
+ * diagram, read as its own until it is set.
  */
 
 import { GRID, ceilGrid, floorGrid, snap } from './grid.js';

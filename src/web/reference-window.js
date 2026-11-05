@@ -21,9 +21,7 @@
  */
 
 import { loadDocument } from '../core/document.js';
-import { svgString } from '../core/render.js';
-import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
-import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
+import { designPicture } from './drawing-export.js';
 import { floatingWindow } from './floating-window.js';
 import { wheelIntent } from './gestures.js';
 import { buttonIcon } from './icons.js';
@@ -48,7 +46,6 @@ const windows = []; // { el, slot, doc | pasted, picture, view, fitted, etag, re
 let hidden = false;
 let pollTimer = null;
 
-const dataUrl = (svg) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 const dark = () => document.documentElement.classList.contains('dark');
 
 // ----- remembering ------------------------------------------------------------------
@@ -94,17 +91,6 @@ function restoreWindows() {
 
 // ----- the picture ------------------------------------------------------------------
 
-/** The whole design as drawn by its export, in both themes. */
-async function pictureOf(circuit) {
-  if (!circuit.components.size && !circuit.labels.size) return null;
-  const svg = svgString(circuit, { ...DRAWING_EXPORT_OPTIONS, background: false, emptyHint: false });
-  const match = svg.match(/viewBox="([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)"/);
-  if (!match) return null;
-  const [light, darkSvg] = await Promise.all([withEmbeddedMathFont(svg), withEmbeddedMathFont(applyExportDarkTheme(svg))]);
-  const [x, y, w, h] = match.slice(1).map(Number);
-  return { svg, box: { x, y, w, h }, href: { light: dataUrl(light), dark: dataUrl(darkSvg) } };
-}
-
 function showMessage(win, text) {
   win.message.textContent = text || '';
   win.message.hidden = !text;
@@ -122,7 +108,7 @@ async function loadInto(win, { force = false } = {}) {
     }
     const data = await loadDesign(doc, force || !win.etag ? {} : { ifNoneMatch: win.etag });
     if (win.doc !== doc || data.notModified) return;
-    const picture = await pictureOf(loadDocument(data.state));
+    const picture = await designPicture(loadDocument(data.state));
     if (win.doc !== doc) return;
     win.etag = data.etag || null;
     win.revision = data.revision || null;
@@ -436,7 +422,7 @@ async function setState(win, title, state) {
   showMessage(win, 'Loading…');
   remember();
   try {
-    const picture = await pictureOf(loadDocument(state));
+    const picture = await designPicture(loadDocument(state));
     if (!windows.includes(win) || win.doc || win.pasted) return;
     win.picture = picture;
     if (!picture) {
@@ -460,7 +446,7 @@ async function setModel(win, circuit) {
     showMessage(win, 'No small-signal model: derive the analysis again');
     return;
   }
-  const picture = await pictureOf(circuit);
+  const picture = await designPicture(circuit);
   if (!windows.includes(win)) return;
   const first = !win.picture;
   win.picture = picture;

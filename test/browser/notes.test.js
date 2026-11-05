@@ -4,7 +4,7 @@
 
 import { describe, before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { start, sleep, browserSkip } from './harness.js';
 import { amplifier } from './fixtures.js';

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Circuit, componentNameIdentity, NET_HIGHLIGHT_COLORS, referenceMarkerNameConflicts, ComponentInstance, Net, parseTermRef, LabelInstance, applyMarkup, containedWireSegments, extractWireIslands, extractWireFragments, transformWorldPoints, transformComponentWorld, parseLabelRuns } from '../src/core/model.js';
-import { GRID, snap, onGrid } from '../src/core/grid.js';
+import { Circuit, componentNameIdentity, NET_HIGHLIGHT_COLORS, referenceMarkerNameConflicts, Net, parseTermRef, applyMarkup, containedWireSegments, extractWireIslands, extractWireFragments, transformWorldPoints, transformComponentWorld, parseLabelRuns } from '../src/core/model.js';
+import { GRID, onGrid } from '../src/core/grid.js';
 import { segThroughInterior } from '../src/core/router.js';
 import { svgString } from '../src/core/render.js';
 import { moveWireRun } from '../src/core/wireedit.js';

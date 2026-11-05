@@ -3,7 +3,7 @@
 
 import { describe, before, after, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { start, sleep, browserSkip } from './harness.js';
+import { start, browserSkip } from './harness.js';
 import { twoResistors } from './fixtures.js';
 
 describe('wiring', { skip: browserSkip() }, () => {

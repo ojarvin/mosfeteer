@@ -1,4 +1,5 @@
-import { svgPixelSize } from '../core/render.js';
+import { svgPixelSize, svgString } from '../core/render.js';
+import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
 import { withPngDensity } from '../core/png-export.js';
 
 /** Rasterize `svg` at `scale` pixels per SVG unit; `dpi`, when given, is
@@ -78,4 +79,19 @@ export async function withEmbeddedMathFont(svg) {
   if (!svg.includes('schematic-math-label') && !svg.includes('Latin Modern Math')) return svg;
   const face = await embeddedMathFontFace();
   return face ? svg.replace(/(<svg\b[^>]*>)/, `$1<style>${face}</style>`) : svg;
+}
+
+const svgDataUrl = (svg) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+
+/** A whole design as its export draws it, in both themes (a link bubble's
+ *  or the reference window's picture): `{ svg, box, href: { light, dark } }`,
+ *  `svg` as drawn for an export to nest as vector drawing; null when empty. */
+export async function designPicture(circuit) {
+  if (!circuit.components.size && !circuit.labels.size) return null;
+  const svg = svgString(circuit, { ...DRAWING_EXPORT_OPTIONS, background: false, emptyHint: false });
+  const match = svg.match(/viewBox="([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)"/);
+  if (!match) return null;
+  const [light, dark] = await Promise.all([withEmbeddedMathFont(svg), withEmbeddedMathFont(applyExportDarkTheme(svg))]);
+  const [x, y, w, h] = match.slice(1).map(Number);
+  return { svg, box: { x, y, w, h }, href: { light: svgDataUrl(light), dark: svgDataUrl(dark) } };
 }

@@ -50,6 +50,3 @@ export function openAnnotateMenu(button) {
   // A footer button: the menu opens upward.
   menu.style.top = `${Math.max(4, rect.top - menu.offsetHeight - 4)}px`;
 }
-
-/** Whether the window's mode has anything to annotate now. */
-export const annotationsReady = () => annotationItems().some((item) => item.available);

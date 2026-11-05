@@ -12,7 +12,7 @@
  * asymptote, start (a run's starting point), band, marker, zero.
  */
 
-import { plainTex, swingLimit } from './bode-figure.js';
+import { swingLimit, swingLimitText } from './bode-figure.js';
 
 /** 10^x, exact at whole powers (V8 before 12 gives 10 ** -4 as 0.00009999999999999999). */
 const pow10 = (x) => (Number.isInteger(x) ? Number(`1e${x}`) : 10 ** x);
@@ -99,9 +99,6 @@ export function dataSpec(plot) {
 /** Each net's peak against the input amplitude (the swing simulation). */
 export function swingSpec(plot) {
   const limit = swingLimit(plot.traces);
-  const limitText = limit && (limit.kind === 'full-scale'
-    ? `${limit.label ? `${plainTex(limit.label)} ` : ''}full scale ${Number(limit.a.toFixed(1))} dBFS`
-    : `runaway ${Number(limit.a.toFixed(2))} dBFS`);
   return {
     key: 'swing',
     title: 'Peak against input amplitude',
@@ -114,7 +111,7 @@ export function swingSpec(plot) {
       role: 'curve',
       points: trace.points.map((p) => [p.a, Number.isFinite(p.db) ? p.db : null]),
     })),
-    vlines: limit ? [{ x: limit.a, role: 'marker', label: limitText }] : [],
+    vlines: limit ? [{ x: limit.a, role: 'marker', label: swingLimitText(limit) }] : [],
     hlines: [{ y: 0, role: 'zero' }],
   };
 }

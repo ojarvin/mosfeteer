@@ -74,6 +74,10 @@ test('a plot annotated zoomed keeps its limits: saved, drawn at them, its curves
   for (const curve of curves) for (const p of curve.points) {
     assert.ok(p.x >= pane.x - 1e-6 && p.x <= pane.x + pane.w + 1e-6 && p.y >= pane.y - 1e-6 && p.y <= pane.y + pane.h + 1e-6, JSON.stringify(p));
   }
+  // Zoomed in x alone, a curve runs from edge to edge of the pane.
+  const wide = responseFigure(normalizePlot({ ...plot, view: { x: [0.0101, 0.0497] } }));
+  const xs = wide.items.filter((item) => item.role === 'curve').flatMap((curve) => curve.points.map((p) => p.x));
+  assert.ok(Math.abs(Math.min(...xs) - wide.pane.x) < 1e-6 && Math.abs(Math.max(...xs) - (wide.pane.x + wide.pane.w)) < 1e-6, `${Math.min(...xs)} ${Math.max(...xs)} ${JSON.stringify(wide.pane)}`);
   // The axes read in the zoom: no decade ticks, numbers inside it.
   const numbers = figure.items.filter((item) => item.role === 'number').map((item) => item.text);
   assert.ok(numbers.includes('0.02') && numbers.includes('-40'), JSON.stringify(numbers));
@@ -282,7 +286,9 @@ test('a simulated spectrum behind a response has a legend entry after the curves
   for (const [i, text] of ['$NTF$', '$\\text{simulated output}$', 'sim'].entries()) circuit.addLabel({ text, math: text.startsWith('$'), parent: box.id, role: 'plot-legend', align: 'left', x: 880, y: 40 + 80 * i });
   const samples = [...svgString(circuit).matchAll(/<line class="plot-legend-sample"[^>]*>/g)].map((m) => m[0]);
   assert.equal(samples.length, 3);
-  assert.match(samples[1], /stroke-opacity="0.35"/);
+  // The spectrum in an opaque gray: the grid stays under it.
+  assert.match(samples[1], /stroke="#a6a6a6"/);
+  assert.doesNotMatch(samples[1], /stroke-opacity/);
   assert.doesNotMatch(samples[0], /stroke-opacity/);
   assert.match(samples[2], /stroke-dasharray/);
 });

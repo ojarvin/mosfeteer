@@ -16,7 +16,7 @@ import { calculate, siResult } from '../core/calculator.js';
 import { TRACE_COLORS, complexText, transferTex, numericRootsOf, responsePlot, resultSymbols, withCoefficients } from '../core/analysis/signal-flow.js';
 import { symbolText } from '../core/analysis/present.js';
 import { responseSpec } from '../core/plot-spec.js';
-import { plainTexText, texToMathML } from '../core/render.js';
+import { plainTexText } from '../core/render.js';
 import { switchState } from '../core/beats.js';
 import { canonicalNetName } from '../core/model.js';
 import { setPartValue } from '../core/part-moves.js';
@@ -28,12 +28,12 @@ import { PER_DECADE } from './e-series.js';
 import { editor } from './editor-state.js';
 import { commit, markSettingsChanged, onDocumentShown, render } from './main.js';
 import { logLine } from './status-bar-ui.js';
-import { element as el, onFieldCommit } from './dom.js';
+import { element as el, mathSpan, onFieldCommit } from './dom.js';
 import { annotateMathFigure } from './figure-annotate.js';
 import { registerAnnotations } from './annotate-menu.js';
 import { bodeGraphActions } from './bode-actions.js';
 import { deriving } from './analysis-busy.js';
-import { differing, differingNames, heldName, holdButton, holdKey, legendActions, liveName, saveHolds, savedHolds } from './trace-hold.js';
+import { differing, differingNames, heldName, holdKey, liveName, saveHolds, savedHolds, traceLegendRow } from './trace-hold.js';
 
 // A design this window never changed keeps no settings of its own: its
 // defaults are held aside, and join the design with its first change
@@ -72,12 +72,7 @@ function suggested(circuit) {
 }
 
 /** TeX as MathML, inline or on a line of its own. */
-function math(tex, display = false) {
-  const span = el('span', { class: `sc-math${display ? ' display' : ''}` });
-  const markup = texToMathML(tex);
-  span.innerHTML = display ? markup : markup.replace('display="block"', 'display="inline"');
-  return span;
-}
+const math = (tex, display = false) => mathSpan(tex, 'sc-math', display);
 
 /** A phase's name as written: TeX drawn as math, plain text as it is. */
 const phaseName = (name) => (/^\$.*\$$/.test(name) ? math(name.replace(/^\$+|\$+$/g, '')) : el('span', { text: name }));
@@ -612,25 +607,12 @@ function renderPlots() {
     host.replaceChildren(el('p', { class: 'field-hint', text: traces.length ? 'Check a trace below to plot it.' : '' }));
   }
   const legend = plotsEl.querySelector('.sc-legend');
-  legend.replaceChildren(...traces.map((trace) => {
-    const check = el('input', { type: 'checkbox', 'aria-label': 'Show this trace' });
-    check.checked = trace.on;
-    check.addEventListener('change', () => {
-      trace.on = check.checked;
-      if (trace.held) holdsChanged(holds().map((record) => (record.key === trace.held.key ? { ...record, on: trace.on } : record)));
-      renderPlots();
-    });
-    const label = el('span', { class: 'signal-flow-legend-math' });
-    label.innerHTML = texToMathML(trace.held ? heldLabel(trace) : liveLabel(trace));
-    label.style.color = trace.color;
-    const remove = el('button', { type: 'button', class: 'signal-flow-legend-remove', 'aria-label': 'Remove this trace', title: 'Remove this trace from the graph', text: '×', onclick: () => {
-      traces = traces.filter((t) => t !== trace);
-      if (trace.held) holdsChanged(holds().filter((record) => record.key !== trace.held.key));
-      renderValues();
-      renderPlots();
-    } });
-    return el('div', { class: 'signal-flow-legend-row' }, [check, el('span', { class: 'signal-flow-swatch', style: `background:${trace.color}` }), label, legendActions(trace.held ? null : holdButton(() => holdTrace(trace)), remove)]);
-  }));
+  legend.replaceChildren(...traces.map((trace) => traceLegendRow(trace, {
+    label: trace.held ? heldLabel(trace) : liveLabel(trace), holds, holdsChanged,
+    onHold: () => holdTrace(trace),
+    onShow: renderPlots,
+    onRemove: () => { traces = traces.filter((t) => t !== trace); renderValues(); renderPlots(); },
+  })));
   const actions = plotsEl.querySelector('.sc-plots-actions');
   actions.hidden = !traces.length;
   actions.replaceChildren(...bodeGraphActions({

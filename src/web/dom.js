@@ -1,3 +1,5 @@
+import { texToMathML } from '../core/render.js';
+
 /**
  * A DOM element in one call: `props` sets `class`, `text`, `html`, `on…`
  * listeners, and attributes (true as a bare attribute; false, null, and
@@ -40,4 +42,30 @@ export function onFieldCommit(input, apply) {
     ev.stopPropagation();
     commit();
   });
+}
+
+/** TeX as MathML in a span of `className`, inline or (`display`) on a line of its own. */
+export function mathSpan(tex, className, display = false) {
+  const span = element('span', { class: `${className}${display ? ' display' : ''}` });
+  const markup = texToMathML(tex);
+  span.innerHTML = display ? markup : markup.replace('display="block"', 'display="inline"');
+  return span;
+}
+
+// Writes for what render() keeps up to date: it runs on every pointer
+// frame, and a write of the same value still restyles or wakes observers.
+export function setAttr(el, name, value) {
+  if (el && el.getAttribute(name) !== value) el.setAttribute(name, value);
+}
+
+export function setText(el, text) {
+  if (el && el.textContent !== text) el.textContent = text;
+}
+
+export function setHidden(el, hidden) {
+  if (el && el.hidden !== hidden) el.hidden = hidden;
+}
+
+export function setClassName(el, name) {
+  if (el && el.className !== name) el.className = name;
 }

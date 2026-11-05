@@ -4,7 +4,7 @@ import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
 import { plainTexText, svgString } from '../src/core/render.js';
 import { addBeat, setSwitchFrom, switchStateAt } from '../src/core/beats.js';
-import { addTimingDiagram, annotateTimingDiagram, defaultTimingPairs, drawnTimingDiagram, existingTimingDiagram, removeTimingDiagram, setTimingDiagram, timingMissing, parseTimingBits, timingBeatBands, timingBeatStates, timingColumns, timingPairs, timingRowEdges, timingRowGeometry, timingRowSources, timingStates } from '../src/core/timing-diagram.js';
+import { annotateTimingDiagram, defaultTimingPairs, drawnTimingDiagram, existingTimingDiagram, removeTimingDiagram, setTimingDiagram, timingMissing, parseTimingBits, timingBeatBands, timingBeatStates, timingColumns, timingPairs, timingRowEdges, timingRowGeometry, timingRowSources, timingStates } from '../src/core/timing-diagram.js';
 
 const run = (circuit, ...lines) => lines.map((line) => runCommand(circuit, line));
 

@@ -2,7 +2,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
 import { analyzeSmallSignalV2 } from '../src/core/analysis/engine.js';
-import { formatExpression } from '../src/core/analysis/rational.js';
 import { smallSignalGoldenCorpus } from './fixtures/small-signal-golden.js';
 import { adaptCombinedReport } from '../src/core/analysis/report-adapter.js';
 import { texToMathML } from '../src/core/render.js';

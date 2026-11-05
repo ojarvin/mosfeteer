@@ -17,22 +17,6 @@ import { logLine } from './status-bar-ui.js';
 /** What is selected, as figures.js chooseFigure takes it: label ids and part names. */
 export const selectedFigureMembers = () => [...selectedLabels().map((label) => label.id), ...selectedComps().map((component) => component.refdes)];
 
-/** Splits an equation at its first `=` outside braces: [left, '= right'],
- *  or ['', equation] without one -- the two columns of an equation table. */
-export function equationCells(equation) {
-  const text = String(equation);
-  let depth = 0;
-  for (let i = 0; i < text.length; i += 1) {
-    const ch = text[i];
-    if (ch === '{') depth += 1;
-    else if (ch === '}') depth -= 1;
-    else if (ch === '=' && depth === 0 && text[i - 1] !== '\\' && !'<>!'.includes(text[i - 1] || '') && text[i + 1] !== '=') {
-      return [text.slice(0, i).trim(), `= ${text.slice(i + 1).trim()}`];
-    }
-  }
-  return ['', text.trim()];
-}
-
 /**
  * Write the table `text` (TeX lines, `columns` their alignment) as the
  * figure `{ kind, source, key }`, or rewrite the one there; inside a

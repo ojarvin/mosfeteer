@@ -25,6 +25,7 @@ import { clearLatestAnalysisResult, migrateAnalysisFormStorage, analysisFormScop
 import { editor } from './editor-state.js';
 import { closeToolbarMenu, scheduleToolbarFit, toolbarMenus } from './toolbar-ui.js';
 import { applyJson, cancelPreviewTransaction, clearSymmetry, markModelChanged, render, setSelection, snapshot } from './main.js';
+import { setAttr } from './dom.js';
 
 export const persistence = createPersistenceAdapter();
 
@@ -342,11 +343,6 @@ function adoptWrittenHistory(sent, data) {
   if (history) editor.circuit.history = history;
   const text = historyText(sent);
   historyBase = !history || history.base === textHash(text) ? text : null;
-}
-
-/** The save history's base text, for the history window. */
-export function savedHistoryBase() {
-  return historyBase;
 }
 
 export async function saveCircuit({ saveAs = false } = {}) {
@@ -822,16 +818,16 @@ export function renderSaveState() {
   if (revealDocumentBtn) revealDocumentBtn.disabled = persistence.browserOnly || !editor.currentDocumentPath;
   const renameButton = document.getElementById('btn-rename-document');
   if (renameButton) renameButton.disabled = !canRenameDocument() || editor.saveInFlight > 0;
-  circuitNameEl.title = editor.currentDocumentPath ? `Design name · ${editor.currentDocumentPath}` : 'Design name';
+  setAttr(circuitNameEl, 'title', editor.currentDocumentPath ? `Design name · ${editor.currentDocumentPath}` : 'Design name');
   renderDeleteWording();
   const saveButton = document.getElementById('btn-save');
   if (saveButton) {
     // A new name typed for a saved design: Save (as Ctrl+S) makes a copy under it.
     const copyName = savesAsCopy();
     saveButton.disabled = !(dirty || copyName) || editor.saveInFlight > 0;
-    saveButton.title = copyName ? `Save as a copy named “${copyName}” (Ctrl/Cmd+S)`
+    setAttr(saveButton, 'title', copyName ? `Save as a copy named “${copyName}” (Ctrl/Cmd+S)`
       : dirty ? `Save (Ctrl/Cmd+S) · unsaved changes${editor.currentDocumentPath ? ` to ${editor.currentDocumentPath}` : ''}`
-        : editor.currentDocumentPath ? `Saved · ${editor.currentDocumentPath}` : 'Save (Ctrl/Cmd+S)';
+        : editor.currentDocumentPath ? `Saved · ${editor.currentDocumentPath}` : 'Save (Ctrl/Cmd+S)');
   }
 }
 

@@ -4,7 +4,7 @@
  * presenter. The beat model is core/beats.js.
  */
 
-import { element } from './dom.js';
+import { element, setText } from './dom.js';
 import { DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, MAX_ROW_CELLS, annotateTimingDiagram, parseTimingValue, timingStates, beatTimingBits, defaultTimingPairs, drawnTimingDiagram, existingTimingDiagram, removeTimingDiagram, setTimingDiagram, timingBeatBands, timingMissing, timingPhases, timingRowSources } from '../core/timing-diagram.js';
 import { addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey, switchPhases } from '../core/beats.js';
 import { plainTexText, svgString, texToLabelMarkup } from '../core/render.js';
@@ -343,11 +343,9 @@ export function renderBeatStrip() {
       chip.setAttribute('aria-pressed', String(i === index));
       chip.classList.toggle('picked', editor.selectedBeatIds.size > 1 && editor.selectedBeatIds.has(editor.circuit.beats[i]?.id));
     }
-    if (beatHintEl) {
-      beatHintEl.textContent = editor.selectedBeatIds.size > 1
-        ? `${editor.selectedBeatIds.size} beats picked — Delete removes them · right-click to merge them · Esc lets go`
-        : beatHintText(index);
-    }
+    setText(beatHintEl, editor.selectedBeatIds.size > 1
+      ? `${editor.selectedBeatIds.size} beats picked — Delete removes them · right-click to merge them · Esc lets go`
+      : beatHintText(index));
   };
   const key = `${visible}|${editor.modelRevision}|${editor.circuit.beats.length}|${ids.join(',')}|${editor.circuit.beats.map((beat) => beat.name).join('|')}`;
   if (key === editor.beatStripKey && beatStripEl.hidden === !visible) {

@@ -6,6 +6,7 @@
  * this is where they are kept, their name, and their button.
  */
 
+import { texToMathML } from '../core/render.js';
 import { element as el } from './dom.js';
 import { editor } from './editor-state.js';
 import { markSettingsChanged } from './main.js';
@@ -68,4 +69,32 @@ export function holdButton(onHold, label = 'Hold this trace') {
 /** A legend row's Hold (for a live trace) and ×, at the row's end. */
 export function legendActions(hold, remove) {
   return el('span', { class: 'signal-flow-legend-actions' }, [...(hold ? [hold] : []), remove]);
+}
+
+/**
+ * A trace's legend row: a box that shows or hides it (a held one's choice
+ * saved with it), its swatch, its TeX `label` in its color, Hold for a
+ * live one, and ×. `holds()` and `holdsChanged(records)` are the graph's
+ * held records; `onShow()` redraws after the box changes, `onRemove()`
+ * takes the trace off (its held record already gone).
+ */
+export function traceLegendRow(trace, { label, holds, holdsChanged, onHold, onShow, onRemove }) {
+  const check = el('input', { type: 'checkbox', 'aria-label': 'Show this trace' });
+  check.checked = trace.on;
+  check.addEventListener('change', () => {
+    trace.on = check.checked;
+    if (trace.held) holdsChanged(holds().map((record) => (record.key === trace.held.key ? { ...record, on: trace.on } : record)));
+    onShow();
+  });
+  const name = el('span', { class: 'signal-flow-legend-math' });
+  name.innerHTML = texToMathML(label);
+  name.style.color = trace.color;
+  // Found again to rename when the numbers move (signal-flow-ui.js).
+  if (trace.held) name.dataset.hold = trace.held.key;
+  else if (trace.id !== undefined) name.dataset.live = trace.id;
+  const remove = el('button', { type: 'button', class: 'signal-flow-legend-remove', 'aria-label': 'Remove this trace', title: 'Remove', text: '×', onclick: () => {
+    if (trace.held) holdsChanged(holds().filter((record) => record.key !== trace.held.key));
+    onRemove();
+  } });
+  return el('div', { class: 'signal-flow-legend-row' }, [check, el('span', { class: 'signal-flow-swatch', style: `background:${trace.color}` }), name, legendActions(trace.held ? null : holdButton(onHold), remove)]);
 }

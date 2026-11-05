@@ -544,6 +544,3 @@ function compareProducts(a, b) {
   }
   return 0;
 }
-
-/** A table cell: 0, 1, Z, X. */
-export const logicValueText = (v) => String(v);

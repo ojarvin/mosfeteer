@@ -10,12 +10,11 @@
  */
 
 import { analyzeLogic, logicNameTex } from '../core/analysis/logic.js';
-import { texToMathML } from '../core/render.js';
 import { registerAnalysisMode } from './signal-flow-ui.js';
 import { editor } from './editor-state.js';
 import { markSettingsChanged, onDocumentShown } from './main.js';
 import { logLine } from './status-bar-ui.js';
-import { element as el } from './dom.js';
+import { element as el, mathSpan } from './dom.js';
 import { annotateMathFigure } from './figure-annotate.js';
 import { registerAnnotations } from './annotate-menu.js';
 import { deriving } from './analysis-busy.js';
@@ -49,12 +48,7 @@ function suggested(circuit) {
   return parts.some((c) => LOGIC_TYPES.test(c.type)) && !parts.some((c) => ANALOG_TYPES.test(c.type));
 }
 
-function math(tex, display = false) {
-  const span = el('span', { class: `logic-math${display ? ' display' : ''}` });
-  const markup = texToMathML(tex);
-  span.innerHTML = display ? markup : markup.replace('display="block"', 'display="inline"');
-  return span;
-}
+const math = (tex, display = false) => mathSpan(tex, 'logic-math', display);
 
 /** The table's columns: the state then the inputs, the next state then the outputs. */
 function columnsOf(result) {

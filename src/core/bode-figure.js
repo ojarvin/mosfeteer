@@ -28,6 +28,20 @@ function axisTitles(items, pane, em, { x, y }) {
   items.push({ type: 'text', x: 1.05 * em, y: pane.y + pane.h / 2, text: y, anchor: 'middle', role: 'label', rotate: -90 });
 }
 
+/** A plot's pane in a `width` x `height` box: room left of it and under it
+ *  for the numbers and axis titles. */
+function framePane(width, height, em) {
+  const left = AXIS_LEFT_EM * em;
+  const top = 0.9 * em;
+  return { x: left, y: top, w: Math.max(10, width - left - 0.9 * em), h: Math.max(10, height - top - AXIS_BOTTOM_EM * em) };
+}
+
+/** The pane's left and bottom axes. */
+function frameAxes(items, pane) {
+  items.push({ type: 'line', x1: pane.x, y1: pane.y, x2: pane.x, y2: pane.y + pane.h, role: 'axis' });
+  items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });
+}
+
 function niceRange(values, step, pad) {
   const finite = values.filter(Number.isFinite);
   if (!finite.length) return [-step, step];
@@ -297,11 +311,7 @@ export function responseFigure(plot, { width = 480, height = 260, fontSize = 11 
   // A zoomed plot keeps the limits it was annotated at (`view`).
   const view = plot.view || {};
   const [low, high] = view.x ? view.x.map(Math.log10) : rangeWithExtra(plot, { log: true });
-  const left = AXIS_LEFT_EM * em;
-  const right = 0.9 * em;
-  const top = 0.9 * em;
-  const bottom = AXIS_BOTTOM_EM * em;
-  const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
+  const pane = framePane(width, height, em);
   const x = (f) => pane.x + ((Math.log10(f) - low) / (high - low)) * pane.w;
   // The axis fits every curve, in whole 20 dB steps; its ticks spread out on
   // a wide range (a high-order noise shaper reaches far down).
@@ -313,8 +323,7 @@ export function responseFigure(plot, { width = 480, height = 260, fontSize = 11 
   const span = dbHigh - dbLow;
   const step = phase ? (span > 720 ? 180 : span > 360 ? 90 : 45) : span > 400 ? 100 : span > 200 ? 50 : span > 100 ? 40 : 20;
   const y = (db) => pane.y + ((dbHigh - clamp(db, dbLow, dbHigh)) / (dbHigh - dbLow)) * pane.h;
-  items.push({ type: 'line', x1: pane.x, y1: pane.y, x2: pane.x, y2: pane.y + pane.h, role: 'axis' });
-  items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });
+  frameAxes(items, pane);
   if (dbLow < 0 && dbHigh > 0) items.push({ type: 'line', x1: pane.x, y1: y(0), x2: pane.x + pane.w, y2: y(0), role: 'zero' });
   const xTicks = view.x
     ? zoomTicks('log', low, high, pane.w, 6 * em).map((tick) => ({ at: pane.x + ((tick.u - low) / (high - low)) * pane.w, text: tick.text }))
@@ -341,7 +350,10 @@ export function responseFigure(plot, { width = 480, height = 260, fontSize = 11 
   plot.traces.forEach((trace, index) => {
     if (trace.hidden) return;
     // Only what lies in the frequency range (a spectrum's lowest bins may not).
-    const samples = trace.points.filter((p) => Math.log10(p.f) >= low - 1e-9 && Math.log10(p.f) <= high + 1e-9).map((p) => ({ f: p.f, value: p.db }));
+    // Zoomed, a point either side of the range too: the curve runs to the
+    // pane's edge, where clipToPane cuts it.
+    const inRange = (p) => p && Math.log10(p.f) >= low - 1e-9 && Math.log10(p.f) <= high + 1e-9;
+    const samples = trace.points.filter((p, i, all) => inRange(p) || (view.x && (inRange(all[i - 1]) || inRange(all[i + 1])))).map((p) => ({ f: p.f, value: p.db }));
     for (const path of clippedPaths(samples, (s) => x(s.f), y, dbLow, dbHigh, trace.background ? 'spectrum' : 'curve')) items.push({ ...path, color: trace.color, trace: index });
   });
   items.push(...extraPaths(plot, (f) => (f > 0 ? x(f) : NaN), (db) => pane.y + ((dbHigh - db) / (dbHigh - dbLow)) * pane.h, pane, plot.traces.length));
@@ -381,11 +393,7 @@ export function responseFigure(plot, { width = 480, height = 260, fontSize = 11 
 export function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const items = [];
   const em = fontSize;
-  const left = AXIS_LEFT_EM * em;
-  const right = 0.9 * em;
-  const top = 0.9 * em;
-  const bottom = AXIS_BOTTOM_EM * em;
-  const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
+  const pane = framePane(width, height, em);
   const view = plot.view || {};
   const [low, high] = view.x || rangeWithExtra(plot);
   const x = (t) => pane.x + ((t - low) / (high - low || 1)) * pane.w;
@@ -398,8 +406,7 @@ export function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = 
   const [yLow, yHigh] = view.y || [Math.floor((yBottom - (yBottom < 0 ? 0.08 * span : 0)) / ystep) * ystep, Math.ceil((yTop + 0.08 * span) / ystep) * ystep || ystep];
   // Zoomed, a curve runs out of the pane (cut there) rather than along its edge.
   const y = view.y ? (v) => pane.y + ((yHigh - v) / (yHigh - yLow)) * pane.h : (v) => pane.y + ((yHigh - Math.max(yLow, Math.min(yHigh, v))) / (yHigh - yLow)) * pane.h;
-  items.push({ type: 'line', x1: pane.x, y1: pane.y, x2: pane.x, y2: pane.y + pane.h, role: 'axis' });
-  items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });
+  frameAxes(items, pane);
   if (yLow < 0 && yHigh > 0) items.push({ type: 'line', x1: pane.x, y1: y(0), x2: pane.x + pane.w, y2: y(0), role: 'zero' });
   const xstep = niceStep((high - low) / 5);
   const xTicks = view.x
@@ -444,11 +451,7 @@ export function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = 
 export function dataFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const items = [];
   const em = fontSize;
-  const left = AXIS_LEFT_EM * em;
-  const right = 0.9 * em;
-  const top = 0.9 * em;
-  const bottom = AXIS_BOTTOM_EM * em;
-  const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
+  const pane = framePane(width, height, em);
   const xs = plot.x?.scale === 'log' ? 'log' : 'linear';
   const ys = plot.y?.scale === 'log' ? 'log' : 'linear';
   const curves = plot.traces.map((trace) => trace.points.map(([px, py]) => [toU(xs, px), toU(ys, py)])
@@ -459,8 +462,7 @@ export function dataFigure(plot, { width = 480, height = 260, fontSize = 11 } = 
   const [y0, y1] = range(plot.view?.y, ys, 1);
   const x = (u) => pane.x + ((u - x0) / (x1 - x0 || 1)) * pane.w;
   const y = (v) => pane.y + ((y1 - v) / (y1 - y0 || 1)) * pane.h;
-  items.push({ type: 'line', x1: pane.x, y1: pane.y, x2: pane.x, y2: pane.y + pane.h, role: 'axis' });
-  items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });
+  frameAxes(items, pane);
   if (ys === 'linear' && y0 < 0 && y1 > 0) items.push({ type: 'line', x1: pane.x, y1: y(0), x2: pane.x + pane.w, y2: y(0), role: 'zero' });
   const xTicks = zoomTicks(xs, x0, x1, pane.w, 6 * em);
   const yTicks = zoomTicks(ys, y0, y1, pane.h, 2.5 * em);
@@ -514,11 +516,7 @@ export function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } =
   const em = fontSize;
   const view = plot.view || {};
   const [low, high] = view.x || rangeWithExtra(plot);
-  const left = AXIS_LEFT_EM * em;
-  const right = 0.9 * em;
-  const top = 0.9 * em;
-  const bottom = AXIS_BOTTOM_EM * em;
-  const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
+  const pane = framePane(width, height, em);
   const x = (a) => pane.x + ((a - low) / (high - low)) * pane.w;
   // The peaks fit in whole 10 dB steps; a loop blowing up runs off the top.
   const values = [...plot.traces.flatMap((trace) => trace.points.map((p) => p.db)), ...extraValues(plot)].filter((db) => Number.isFinite(db) && db > -200);
@@ -528,8 +526,7 @@ export function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } =
   if (view.y) [dbLow, dbHigh] = view.y;
   const step = dbHigh - dbLow > 80 ? 20 : 10;
   const y = (db) => pane.y + ((dbHigh - clamp(db, dbLow, dbHigh)) / (dbHigh - dbLow)) * pane.h;
-  items.push({ type: 'line', x1: pane.x, y1: pane.y, x2: pane.x, y2: pane.y + pane.h, role: 'axis' });
-  items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });
+  frameAxes(items, pane);
   if (dbLow < 0 && dbHigh > 0) items.push({ type: 'line', x1: pane.x, y1: y(0), x2: pane.x + pane.w, y2: y(0), role: 'zero' });
   if (low < 0 && high > 0) items.push({ type: 'line', x1: x(0), y1: pane.y, x2: x(0), y2: pane.y + pane.h, role: 'zero' });
   const xStep = high - low > 60 ? 20 : 10;
@@ -555,10 +552,7 @@ export function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } =
     items.push({ type: 'line', x1: x(limit.a), y1: pane.y, x2: x(limit.a), y2: pane.y + pane.h, role: 'marker' });
     // At the top, clear of the axis titles: left of the line in the right half, else right of it.
     const right = x(limit.a) > pane.x + pane.w / 2;
-    const text = limit.kind === 'full-scale'
-      ? `${limit.label ? `${plainTex(limit.label)} ` : ''}full scale ${Number(limit.a.toFixed(1))} dBFS`
-      : `runaway ${Number(limit.a.toFixed(2))} dBFS`;
-    items.push({ type: 'text', x: x(limit.a) + (right ? -0.35 : 0.35) * em, y: pane.y + 1.2 * em, text, anchor: right ? 'end' : 'start', role: 'marker' });
+    items.push({ type: 'text', x: x(limit.a) + (right ? -0.35 : 0.35) * em, y: pane.y + 1.2 * em, text: swingLimitText(limit), anchor: right ? 'end' : 'start', role: 'marker' });
   }
   plot.traces.forEach((trace, index) => {
     const samples = trace.points.map((p) => ({ f: p.a, value: Number.isFinite(p.db) ? p.db : dbHigh + 100 }));
@@ -567,6 +561,13 @@ export function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } =
   items.push(...extraPaths(plot, x, (db) => pane.y + ((dbHigh - db) / (dbHigh - dbLow)) * pane.h, pane, plot.traces.length));
   axisTitles(items, pane, em, { x: 'Input amplitude (dBFS)', y: 'Peak swing (dBFS)' });
   return { width, height, items: plot.view ? clipToPane(items, pane) : items, pane, ranges: { db: [dbLow, dbHigh] }, toPx: { x, y: (db) => pane.y + ((dbHigh - db) / (dbHigh - dbLow)) * pane.h } };
+}
+
+/** A swing limit (swingLimit) as its marker names it. */
+export function swingLimitText(limit) {
+  return limit.kind === 'full-scale'
+    ? `${limit.label ? `${plainTex(limit.label)} ` : ''}full scale ${Number(limit.a.toFixed(1))} dBFS`
+    : `runaway ${Number(limit.a.toFixed(2))} dBFS`;
 }
 
 /** A trace's TeX name as plot text, which knows only `_{}` and `^{}`:
@@ -667,11 +668,7 @@ export function swingLimit(traces) {
 export function locusFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const items = [];
   const em = fontSize;
-  const left = AXIS_LEFT_EM * em;
-  const right = 0.9 * em;
-  const top = 0.9 * em;
-  const bottom = AXIS_BOTTOM_EM * em;
-  const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
+  const pane = framePane(width, height, em);
   const z = plot.variable === 'z';
   // In z the view stays near the unit circle: a pole far outside is
   // unstable either way, and following it would shrink the circle away.
@@ -688,8 +685,7 @@ export function locusFigure(plot, { width = 480, height = 260, fontSize = 11 } =
   const cx = (reLow + reHigh) / 2;
   const x = (re) => pane.x + pane.w / 2 + (re - cx) / scale;
   const y = (im) => pane.y + pane.h / 2 - im / scale;
-  items.push({ type: 'line', x1: pane.x, y1: pane.y, x2: pane.x, y2: pane.y + pane.h, role: 'axis' });
-  items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });
+  frameAxes(items, pane);
   // The real and imaginary axes through the origin, when in view.
   if (y(0) > pane.y && y(0) < pane.y + pane.h) items.push({ type: 'line', x1: pane.x, y1: y(0), x2: pane.x + pane.w, y2: y(0), role: 'grid' });
   if (x(0) > pane.x && x(0) < pane.x + pane.w) items.push({ type: 'line', x1: x(0), y1: pane.y, x2: x(0), y2: pane.y + pane.h, role: z ? 'grid' : 'band' });

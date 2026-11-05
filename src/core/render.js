@@ -803,10 +803,14 @@ const PLOT_STROKES = {
   grid: { width: 1 },
   minor: { width: 1, opacity: 0.3 },
   band: { width: 3, dash: '18 9' },
-  spectrum: { width: 3 },
+  spectrum: { width: 6 },
   marker: { width: 3, dash: '18 9' },
   cursor: { width: 2, dash: '10 6' },
 };
+
+/** A simulated spectrum in a black plot: an opaque gray, so the grid
+ *  stays under it rather than showing through. */
+const SPECTRUM_GRAY = '#a6a6a6';
 
 /** A black-and-white plot's traces, told apart as a journal figure's are:
  *  solid, dashed, dash-dot, dotted, then around again. */
@@ -889,7 +893,7 @@ function plotAnnotationSvg(label, opacity = '') {
   const curve = (item) => {
     if (!black) return stroke(item.role, item.color ? escapeSvg(item.color) : color);
     const attrs = stroke(item.role);
-    if (item.role === 'spectrum') return `${attrs} stroke-opacity="0.35"${heldDash.has(item.trace) ? ` stroke-dasharray="${dashOf(heldDash.get(item.trace))}"` : ''}`;
+    if (item.role === 'spectrum') return `${stroke(item.role, SPECTRUM_GRAY)}${heldDash.has(item.trace) ? ` stroke-dasharray="${dashOf(heldDash.get(item.trace))}"` : ''}`;
     const dash = item.role === 'curve' && rank.has(item.trace) ? dashOf(rank.get(item.trace)) : '';
     return dash ? `${attrs} stroke-dasharray="${dash}"` : attrs;
   };
@@ -908,6 +912,7 @@ function plotAnnotationSvg(label, opacity = '') {
     return [
       ...layout.lines.map((l) => `<line class="plot-cursor" x1="${fmt(l.x1)}" y1="${fmt(l.y1)}" x2="${fmt(l.x2)}" y2="${fmt(l.y2)}" ${stroke('cursor')} stroke-linecap="butt"/>`),
       ...layout.dots.map((d) => `<circle class="plot-cursor-dot" cx="${fmt(d.x)}" cy="${fmt(d.y)}" r="${fmt((d.point ? 0.24 : 0.17) * fontSize)}" fill="${d.color && !black ? escapeSvg(d.color) : color}" stroke="#fff" stroke-width="${fmt(0.05 * fontSize)}"/>`),
+      ...layout.texts.filter((t) => t.leader).map(({ leader: l }) => `<line class="plot-cursor-leader" x1="${fmt(l.x1)}" y1="${fmt(l.y1)}" x2="${fmt(l.x2)}" y2="${fmt(l.y2)}" stroke="${color}" stroke-width="${fmt(0.06 * fontSize)}"/>`),
       ...layout.texts.map((t) => text({ ...t, size: 0.8 * fontSize })),
     ].join('');
   })() : '';
@@ -921,7 +926,7 @@ function plotAnnotationSvg(label, opacity = '') {
       const x2 = b.x - 6 - x;
       // A spectrum's sample is gray, as its curve is.
       const curve = legendCurves[n];
-      const look = curve.spectrum ? `${stroke('curve')} stroke-opacity="0.35"${curve.held !== undefined ? ` stroke-dasharray="${dashOf(curve.held + 1)}"` : ''}` : `${stroke('curve')}${dashOf(curve.rank) ? ` stroke-dasharray="${dashOf(curve.rank)}"` : ''}`;
+      const look = curve.spectrum ? `${stroke('curve', SPECTRUM_GRAY)}${curve.held !== undefined ? ` stroke-dasharray="${dashOf(curve.held + 1)}"` : ''}` : `${stroke('curve')}${dashOf(curve.rank) ? ` stroke-dasharray="${dashOf(curve.rank)}"` : ''}`;
       return `<line class="plot-legend-sample" x1="${fmt(x1)}" y1="${fmt(cy)}" x2="${fmt(x2)}" y2="${fmt(cy)}" ${look} stroke-linecap="butt"/>`;
     }).join('')
     : '';

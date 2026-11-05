@@ -238,7 +238,7 @@ test('a held spectrum draws gray and dashed in black, apart from the live one', 
   for (const [i, text] of ['$A$', '$held$', '$live$'].entries()) circuit.addLabel({ text, math: true, parent: box.id, role: 'plot-legend', align: 'left', x: 800, y: 40 + 40 * i });
   assert.deepEqual(circuit.plotLegendCurves(box), [{ trace: 0, rank: 0 }, { trace: 1, spectrum: true, held: 0 }, { trace: 2, spectrum: true }]);
   const svg = svgString(circuit);
-  const spectra = svg.match(/stroke-opacity="0\.35"[^>]*/g) || [];
+  const spectra = svg.match(/stroke="#a6a6a6"[^>]*/g) || [];
   assert.ok(spectra.some((attrs) => /stroke-dasharray/.test(attrs)), spectra.join('\n'));
   assert.ok(spectra.some((attrs) => !/stroke-dasharray/.test(attrs)), spectra.join('\n'));
 });

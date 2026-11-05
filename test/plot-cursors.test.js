@@ -101,3 +101,33 @@ test('a marker\'s label writes an exponent as a power of ten', () => {
   assert.equal(cursorLabel(-2.5e7), '-2.5·10^{7}');
   assert.equal(cursorLabel(0.25), '0.25');
 });
+
+test('a marker\'s number keeps off the traces where a spot near its point is free', () => {
+  const pane = { x: 0, y: 0, w: 300, h: 200 };
+  // A trace rising through the point, right and up of it: up-right would sit on it.
+  const curves = [[{ x: 100, y: 100 }, { x: 200, y: 0 }]];
+  const [label] = placeCursorLabels([{ x: 100, y: 100, text: '1.234' }], pane, { size: 10, curves });
+  const box = label.box;
+  assert.ok(!(box.x < 200 && box.x + box.w > 100 && box.y < 100 && box.y + box.h > 0 && box.y + box.h > 100 - (box.x + box.w - 100)), JSON.stringify(box));
+  assert.ok(Math.abs(box.y - 100) < 30, 'still beside its point');
+  // Moved out from its point, it has a leader to it; beside it, none.
+  const crowded = placeCursorLabels([{ x: 100, y: 100, text: '1.234' }], pane, { size: 10, curves: [[{ x: 60, y: 140 }, { x: 160, y: 40 }], [{ x: 40, y: 100 }, { x: 160, y: 100 }]] })[0];
+  if (crowded.leader) assert.ok(Math.hypot(crowded.leader.x1 - 100, crowded.leader.y1 - 100) <= 3.01, JSON.stringify(crowded.leader));
+  // With no trace near, the first spot: up and right.
+  const [free] = placeCursorLabels([{ x: 100, y: 100, text: '1.234' }], pane, { size: 10 });
+  assert.ok(free.box.x > 100 && free.box.y + free.box.h < 100);
+  assert.equal(free.leader, undefined);
+});
+
+test('a marker\'s number placed a row or more out from its point has a leader from the point to it', () => {
+  const pane = { x: 0, y: 0, w: 300, h: 200 };
+  // Five numbers on one point: four fill the spots beside it, the fifth goes a row out.
+  const placed = placeCursorLabels(['a', 'b', 'c', 'd', 'e'].map((t) => ({ x: 100, y: 100, text: t.repeat(4) })), pane, { size: 10, gap: 3 });
+  assert.ok(placed.slice(0, 4).every((p) => !p.leader));
+  const second = placed[4];
+  assert.ok(second.leader, JSON.stringify(second));
+  const { x1, y1, x2, y2 } = second.leader;
+  assert.ok(Math.abs(Math.hypot(x1 - 100, y1 - 100) - 3) < 1e-9, 'starts clear of the dot');
+  const b = second.box;
+  assert.ok(x2 >= b.x && x2 <= b.x + b.w && y2 >= b.y && y2 <= b.y + b.h, 'ends on its box');
+});

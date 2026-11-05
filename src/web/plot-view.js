@@ -25,7 +25,7 @@
 
 import { mathRuns } from '../core/math-text.js';
 import { axisTicks, fitRange, logMinorGrid, fromU, thinSeries, toU, valueAt, zoomAbout, zoomAxes } from '../core/plot-scale.js';
-import { cursorCurves, cursorLayout, nearestCurve } from '../core/plot-cursors.js';
+import { cursorCurves, cursorLayout, cursorNumber, nearestCurve } from '../core/plot-cursors.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const MARGIN = { left: 46, right: 12, top: 10, bottom: 24 };
@@ -50,13 +50,8 @@ function markupText(text, attrs) {
   return node;
 }
 
-/** A number as the readout shows it. */
-function readoutNumber(value) {
-  if (!Number.isFinite(value)) return '–';
-  const magnitude = Math.abs(value);
-  if (magnitude !== 0 && (magnitude < 1e-3 || magnitude >= 1e6)) return value.toExponential(3).replace(/\.?0+e/, 'e');
-  return String(Number(value.toPrecision(5)));
-}
+/** A number as the readout shows it: five figures. */
+const readoutNumber = (value) => cursorNumber(value, 5);
 
 const plain = (tex) => String(tex || '').replace(/\\text\{([^{}]*)\}/g, '$1').replace(/\\/g, '').replace(/[{}$]/g, '');
 
@@ -261,6 +256,7 @@ export function createPlotView({ height = 230, fill = false, aspect = null, maxH
         if (dot.color) node.style.fill = dot.color;
         marks.append(node);
       }
+      for (const { leader } of layout.texts) if (leader) marks.append(svg('line', { ...leader, class: 'plot-marker-leader' }));
       for (const text of layout.texts) marks.append(markupText(text.text, { x: text.x, y: text.y, 'text-anchor': text.anchor, class: 'plot-marker-value' }));
       root.append(marks);
     }

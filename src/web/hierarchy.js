@@ -17,8 +17,6 @@
  */
 
 import { loadDocument } from '../core/document.js';
-import { svgString } from '../core/render.js';
-import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
 import { GRID } from '../core/grid.js';
 import { designIndex, searchKey } from '../core/design-index.js';
 import { brokenLinks } from '../core/workspace-check.js';
@@ -26,7 +24,7 @@ import { noteDesignLinks } from '../core/notes.js';
 import { loadDesign, namedExamples } from './example-designs.js';
 import { INDEX_CACHE, cacheGet, cachePut, renderingKey } from './atlas-cache.js';
 import { BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, connectorPath, layoutBubbles } from '../core/link-bubble.js';
-import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
+import { designPicture } from './drawing-export.js';
 import { logLine, hintLine } from './status-bar-ui.js';
 import { animateViewTo, fitTarget, fitView } from './canvas-view.js';
 import { viewFitting } from './atlas-layout.js';
@@ -85,24 +83,6 @@ function linkableDesigns() {
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
 }
 
-// ----- pictures ----------------------------------------------------------------------
-
-const dataUrl = (svg) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-
-/** A design drawn as a bubble's picture, in both themes; null when empty.
- *  The bubble shows the whole design as its own export draws it: equations,
- *  timing diagrams, pasted pictures, and Bode sketches too. */
-async function pictureOf(circuit) {
-  if (!circuit.components.size && !circuit.labels.size) return null;
-  const svg = svgString(circuit, { ...DRAWING_EXPORT_OPTIONS, background: false, emptyHint: false });
-  const match = svg.match(/viewBox="([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)"/);
-  if (!match) return null;
-  const [light, dark] = await Promise.all([withEmbeddedMathFont(svg), withEmbeddedMathFont(applyExportDarkTheme(svg))]);
-  const [x, y, w, h] = match.slice(1).map(Number);
-  // `svg` stays as drawn, for exports to nest as vector drawing.
-  return { svg, box: { x, y, w, h }, href: { light: dataUrl(light), dark: dataUrl(dark) } };
-}
-
 /** The document a link names, asking for the workspace's documents when
  *  the editor has not listed them yet (right after launch) or lists them
  *  without it, so a link is only broken when the design is really gone. */
@@ -133,7 +113,7 @@ async function loadBubble(refdes, name) {
     let picture = cached && (!doc.revision || cached.revision === doc.revision) ? cached : null;
     if (!picture) {
       const data = await loadDesign(doc);
-      picture = await pictureOf(loadDocument(data.state));
+      picture = await designPicture(loadDocument(data.state));
       if (picture) pictures.set(doc.path, { ...picture, revision: doc.revision || data.revision || null });
     }
     settle(picture
@@ -644,7 +624,7 @@ export async function leaveLinkedDesign(levels = 1) {
   const childPath = editor.currentDocumentPath;
   let picture = null;
   if (levels === 1) {
-    try { picture = await pictureOf(loadDocument(JSON.parse(editor.lastSavedSnapshot))); } catch { picture = null; }
+    try { picture = await designPicture(loadDocument(JSON.parse(editor.lastSavedSnapshot))); } catch { picture = null; }
   }
   navigating = true;
   let opened;

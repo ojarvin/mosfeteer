@@ -106,8 +106,15 @@ export function setColorToken(token, value) {
   return value;
 }
 
-/** Escape a value for use in SVG text or a quoted attribute. */
-export const escapeSvg = (value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+const SVG_SPECIAL = /[&<>"']/;
+const SVG_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' };
+
+/** Escape a value for use in SVG text or a quoted attribute. Most values
+ *  have nothing to escape, and pass through without a copy. */
+export function escapeSvg(value) {
+  const text = String(value);
+  return SVG_SPECIAL.test(text) ? text.replace(/[&<>"']/g, (ch) => SVG_ESCAPES[ch]) : text;
+}
 
 function strokeParts(styleName, miterLimit, color = DEFAULT_INK, width) {
   const s = STROKES[styleName] || STROKES.line;

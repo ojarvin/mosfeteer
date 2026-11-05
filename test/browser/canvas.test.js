@@ -3,7 +3,7 @@
 
 import { describe, before, after, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { start, sleep, browserSkip } from './harness.js';
+import { start, browserSkip } from './harness.js';
 import { amplifier } from './fixtures.js';
 import { Circuit } from '../../src/core/model.js';
 import { runCommand } from '../../src/core/commands.js';

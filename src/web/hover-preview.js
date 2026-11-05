@@ -5,13 +5,16 @@
 
 import { INTERFACE_PIN_TYPES, isReferenceMarker } from '../core/model.js';
 import { isPinDragCandidate } from './gestures.js';
-import { canvasEl, componentsListEl, netsListEl } from './elements.js';
+import { componentsListEl, netsListEl } from './elements.js';
 import { updateAlignHover } from './align-tool.js';
 import { editor } from './editor-state.js';
 import { syncNetBeams } from './net-beams.js';
 import { annotationEndpointAt, annotationGeometryAt, annotationTextAt, namedGroupNets, nearestTerminal, pickAt, pickLabel, pickWire, removableVertexAt, scheduleInteractionRender } from './main.js';
 
 let hoverMove = false; // pointer rests where a press moves a block or box
+
+/** Whether a press where the pointer rests moves a block or box: the overlay shows it by the cursor. */
+export const hoverMoves = () => hoverMove;
 
 /** Parts that stand for a net itself: the reference markers (ground, supply,
  * VCM) and interface ports on it. A net highlight, selected or hovered, glows
@@ -82,7 +85,7 @@ export function updateCanvasHover(w) {
     : !!(hitComponent?.type === 'block' && !hit.term && !pickLabel(w));
   if (move !== hoverMove) {
     hoverMove = move;
-    canvasEl.classList.toggle('hover-move', move);
+    scheduleInteractionRender();
   }
   let net = null;
   if (!quiet) {

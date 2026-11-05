@@ -92,12 +92,12 @@ export function curveCrossings(curve, v, max = 3) {
   return out;
 }
 
-/** A number as a marker shows it: four figures. */
-export function cursorNumber(value) {
+/** A number as a marker shows it: four figures (`digits`). */
+export function cursorNumber(value, digits = 4) {
   if (!Number.isFinite(value)) return '–';
   const magnitude = Math.abs(value);
   if (magnitude !== 0 && (magnitude < 1e-3 || magnitude >= 1e6)) return value.toExponential(3).replace(/\.?0+e/, 'e');
-  return String(Number(value.toPrecision(4)));
+  return String(Number(value.toPrecision(digits)));
 }
 
 /** A number as a marker's label writes it, an exponent as a power of
@@ -154,33 +154,82 @@ export function cursorReadings(spec, cursors = spec?.cursors || []) {
   });
 }
 
+/** Whether the segment a-b passes through `box`. */
+function segmentHitsBox(a, b, box) {
+  const x1 = box.x + box.w;
+  const y1 = box.y + box.h;
+  if (Math.max(a.x, b.x) < box.x || Math.min(a.x, b.x) > x1 || Math.max(a.y, b.y) < box.y || Math.min(a.y, b.y) > y1) return false;
+  // Clipped to the box's x span, the segment's y range meets the box's.
+  const dx = b.x - a.x;
+  const at = (x) => (dx ? a.y + ((x - a.x) / dx) * (b.y - a.y) : a.y);
+  const lo = Math.max(box.x, Math.min(a.x, b.x));
+  const hi = Math.min(x1, Math.max(a.x, b.x));
+  const ys = dx ? [at(lo), at(hi)] : [a.y, b.y];
+  return Math.max(...ys) >= box.y && Math.min(...ys) <= y1;
+}
+
 /**
  * Small texts placed beside their points, none over another or over a
- * point, inside `pane`: `labels` `[{ x, y, text }]` (px), each tried
- * up-right, down-right, up-left, down-left of its point, then further up
- * and down; one with no clear place takes its first inside the pane.
- * `size` is the text's height; widths are estimated. Returns `[{ x, y
- * (baseline), anchor, text, box }]`.
+ * point, inside `pane`, and as few as can be over the traces: `labels`
+ * `[{ x, y, text }]` (px), `curves` the traces as px polylines. Each label
+ * is tried up-right, down-right, up-left, and down-left of its point, then
+ * a row further out at a time; the nearest spot over no trace wins, and a
+ * spot over one trace costs as much as four rows further out. One with no
+ * clear place takes its first inside the pane. `size` is the text's
+ * height; widths are estimated. Returns `[{ x, y (baseline), anchor,
+ * text, box, leader? }]`: a label moved out a row or more has a leader,
+ * `{ x1, y1, x2, y2 }`, from its point to the nearest of its box.
  */
-export function placeCursorLabels(labels, pane, { size = 10, gap = 3 } = {}) {
+export function placeCursorLabels(labels, pane, { size = 10, gap = 3, curves = [] } = {}) {
   const placed = [];
-  // Plot markup (^{}) takes no room of its own; a superscript is smaller.
-  const width = (text) => 0.58 * size * text.replace(/\^\{([^}]*)\}/g, (m, sup) => sup.slice(0, Math.ceil(0.7 * sup.length))).length;
+  // In the math font a figure is half an em; markup (^{}) takes no room of
+  // its own, and a superscript is two thirds the size.
+  const width = (text) => {
+    const sup = [...text.matchAll(/\^\{([^}]*)\}/g)].reduce((n, m) => n + m[1].length, 0);
+    const base = text.replace(/\^\{[^}]*\}/g, '').length;
+    return 0.52 * size * (base + 0.68 * sup);
+  };
   const points = labels.map((l) => ({ x: l.x - gap, y: l.y - gap, w: 2 * gap, h: 2 * gap }));
-  const clear = (b) => ![...placed.map((p) => p.box), ...points].some((o) => b.x < o.x + o.w && o.x < b.x + b.w && b.y < o.y + o.h && o.y < b.y + b.h);
+  const overlaps = (b, o) => b.x < o.x + o.w && o.x < b.x + b.w && b.y < o.y + o.h && o.y < b.y + b.h;
+  const clear = (b) => ![...placed.map((p) => p.box), ...points].some((o) => overlaps(b, o));
   const inside = (b) => b.x >= pane.x && b.y >= pane.y && b.x + b.w <= pane.x + pane.w && b.y + b.h <= pane.y + pane.h;
+  const segments = curves.flatMap((line) => line.slice(1).map((b, i) => [line[i], b]));
+  const crossings = (box) => {
+    const near = { x: box.x - 1, y: box.y - 1, w: box.w + 2, h: box.h + 2 };
+    let n = 0;
+    for (const [a, b] of segments) if (segmentHitsBox(a, b, near)) n += 1;
+    return n;
+  };
+  const ROWS = 5;
   for (const label of labels) {
     const w = width(label.text);
     const h = size;
     const spots = [];
-    for (let row = 0; row < 5; row++) {
+    for (let row = 0; row < ROWS; row++) {
       const up = label.y - gap - h - row * (h + 1);
       const down = label.y + gap + row * (h + 1);
-      spots.push([label.x + gap, up], [label.x + gap, down], [label.x - gap - w, up], [label.x - gap - w, down]);
+      for (const [x, y] of [[label.x + gap, up], [label.x + gap, down], [label.x - gap - w, up], [label.x - gap - w, down]]) spots.push({ x, y, w, h, row });
     }
-    const boxes = spots.map(([x, y]) => ({ x, y, w, h })).filter(inside);
-    const box = boxes.find(clear) || boxes[0] || { x: Math.min(Math.max(pane.x, label.x + gap), pane.x + pane.w - w), y: Math.max(pane.y, label.y - gap - h), w, h };
-    placed.push({ x: box.x, y: box.y + 0.82 * h, anchor: 'start', text: label.text, box });
+    const boxes = spots.filter(inside);
+    let best = null;
+    for (const box of boxes) {
+      if (best && box.row >= best.cost) break;
+      if (!clear(box)) continue;
+      const cost = box.row + 4 * crossings(box);
+      if (!best || cost < best.cost) best = { box, cost };
+    }
+    const box = best?.box || boxes[0] || { x: Math.min(Math.max(pane.x, label.x + gap), pane.x + pane.w - w), y: Math.max(pane.y, label.y - gap - h), w, h };
+    // Away from its point, a label shows which point is its.
+    let leader;
+    if (box.row > 0) {
+      const to = { x: Math.max(box.x, Math.min(box.x + box.w, label.x)), y: Math.max(box.y, Math.min(box.y + box.h, label.y)) };
+      const length = Math.hypot(to.x - label.x, to.y - label.y);
+      if (length > 2 * gap) {
+        const from = gap / length;
+        leader = { x1: label.x + (to.x - label.x) * from, y1: label.y + (to.y - label.y) * from, x2: to.x, y2: to.y };
+      }
+    }
+    placed.push({ x: box.x, y: box.y + 0.82 * h, anchor: 'start', text: label.text, box: { x: box.x, y: box.y, w: box.w, h: box.h }, ...(leader ? { leader } : {}) });
   }
   return placed;
 }
@@ -191,7 +240,7 @@ export function placeCursorLabels(labels, pane, { size = 10, gap = 3 } = {}) {
  * dots: [{ x, y, color }], texts }` (placeCursorLabels's), the lines and
  * dots only those in the pane, the texts left out when `values` is false.
  */
-export function cursorLayout(spec, { toPx, pane, size = 10, values = spec?.cursorValues !== false, cursors = spec?.cursors || [] } = {}) {
+export function cursorLayout(spec, { toPx, pane, size = 10, gap = 3, values = spec?.cursorValues !== false, cursors = spec?.cursors || [] } = {}) {
   const lines = [];
   const dots = [];
   const labels = [];
@@ -216,5 +265,8 @@ export function cursorLayout(spec, { toPx, pane, size = 10, values = spec?.curso
       labels.push({ x, y, text: hit.text });
     }
   }
-  return { lines, dots, texts: values ? placeCursorLabels(labels, pane, { size }) : [] };
+  if (!values) return { lines, dots, texts: [] };
+  // The traces as drawn, for the numbers to keep off them.
+  const curves = labels.length ? cursorCurves(spec).map((curve) => curve.points.filter(([, v]) => v !== null).map(([u, v]) => ({ x: toPx.x(u), y: toPx.y(v) }))) : [];
+  return { lines, dots, texts: placeCursorLabels(labels, pane, { size, gap, curves }) };
 }

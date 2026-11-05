@@ -46,11 +46,11 @@ import { optimizeSection, renderOptimize, resetOptimize } from './optimize-ui.js
 import { swingTestFrequency } from '../core/analysis/optimize.js';
 import { fractionText } from '../core/analysis/rounding.js';
 import { normalizeBand } from '../core/analysis/optimize-setup.js';
-import { element as el, onFieldCommit } from './dom.js';
+import { element as el, mathSpan, onFieldCommit } from './dom.js';
 import { netPicker } from './net-picker.js';
 import { deriving } from './analysis-busy.js';
 import { startWorker } from './worker-thread.js';
-import { differing, differingNames, heldName, heldNumber, holdButton, holdKey, liveName, saveHolds, savedHolds } from './trace-hold.js';
+import { differing, differingNames, heldName, heldNumber, holdButton, holdKey, liveName, saveHolds, savedHolds, traceLegendRow } from './trace-hold.js';
 import { installSweepPlot, showSweep, sweepSection } from './sweep-plot.js';
 import { simulatedSpectrum } from '../core/analysis/spectrum-run.js';
 
@@ -204,9 +204,7 @@ function domainsGuide() {
       if (typeof part === 'string') p.append(part);
       else {
         // In the run of the text; a pulse (a fraction) on a line of its own.
-        const math = el('span', { class: `signal-flow-guide-math${part.display ? ' display' : ''}` });
-        math.innerHTML = part.display ? texToMathML(part.tex) : texToMathML(part.tex).replace('display="block"', 'display="inline"');
-        p.append(math);
+        p.append(mathSpan(part.tex, 'signal-flow-guide-math', part.display));
       }
     }
     return p;
@@ -1342,28 +1340,12 @@ function renderGraph() {
   } else host.append(el('p', { class: 'field-hint', text: view === 'step' && shownTraces().length ? 'These results have no step response here (a loop holding a delay).' : 'Check a trace below to plot it.' }));
   const legend = el('div', { class: 'signal-flow-legend' });
   for (const trace of traces) {
-    const check = el('input', { type: 'checkbox', 'aria-label': 'Show this trace' });
-    check.checked = trace.on;
-    check.addEventListener('change', () => {
-      trace.on = check.checked;
-      // A held one's box is saved with it.
-      if (trace.held) holdsChanged(holds().map((record) => (record.key === trace.held.key ? { ...record, on: trace.on } : record)));
-      renderGraph();
-    });
-    const math = el('span', { class: 'signal-flow-legend-math' });
-    math.style.color = trace.color;
-    math.innerHTML = texToMathML(trace.held ? heldLabel(trace) : liveLabel(trace));
-    if (trace.held) math.dataset.hold = trace.held.key;
-    else math.dataset.live = trace.id;
-    const remove = el('button', { type: 'button', class: 'signal-flow-legend-remove', 'aria-label': 'Remove this trace', title: 'Remove', text: '×', onclick: () => {
-      traces = traces.filter((t) => t !== trace);
-      if (trace.held) holdsChanged(holds().filter((record) => record.key !== trace.held.key));
-      renderCoefficients();
-      renderGraph();
-    } });
-    // A live trace can be held: a copy at these numbers stays as the sliders move.
-    const hold = trace.held ? null : holdButton(() => holdTrace(trace));
-    legend.append(el('div', { class: 'signal-flow-legend-row' }, [check, el('span', { class: 'signal-flow-swatch', style: `background:${trace.color}` }), math, el('span', { class: 'signal-flow-legend-actions' }, [...(hold ? [hold] : []), remove])]));
+    legend.append(traceLegendRow(trace, {
+      label: trace.held ? heldLabel(trace) : liveLabel(trace), holds, holdsChanged,
+      onHold: () => holdTrace(trace),
+      onShow: renderGraph,
+      onRemove: () => { traces = traces.filter((t) => t !== trace); renderCoefficients(); renderGraph(); },
+    }));
   }
   // The simulated spectrum and those held, on the magnitude view.
   if (view === 'magnitude' && spectrumShown()) {

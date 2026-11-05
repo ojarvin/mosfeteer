@@ -95,10 +95,6 @@ async function writeHistory(history, done) {
 
 // ----- actions ---------------------------------------------------------------------
 
-function entryNamed(id) {
-  return file?.entries?.find((entry) => entry.id === id) || null;
-}
-
 function titleOf(entry) {
   return `${editor.currentCircuitName || 'design'} @ ${entry.name || when(entry)}`;
 }

@@ -143,6 +143,18 @@ export function partsTableParts(circuit, table) {
 
 const PREFIX_TEXT = { f: 'f', p: 'p', n: 'n', u: 'µ', m: 'm' };
 
+/** What a table's layout reads, as one string: the table, its text size,
+ *  and each part's name, type, size, and value. Equal keys, equal layouts. */
+export function partsTableKey(circuit, table, width = 'normal') {
+  let key = `${width}|${table?.parts ? table.parts.join(',') : '*'}`;
+  for (const component of circuit.components.values()) {
+    if (!partKind(component)) continue;
+    const { size } = component;
+    key += `|${component.refdes}:${component.type}:${component.drawingOnly ? 1 : 0}:${size ? `${size.w},${size.l},${size.m}` : ''}:${component.value ?? ''}:${circuit.labelOf(component.refdes)?._text ?? ''}`;
+  }
+  return key;
+}
+
 /** A stored length (`2u`, `400n`) as a table shows it: 2 µm, 400 nm. */
 export function lengthText(length) {
   const match = String(length || '').match(/^(.*?)([fpnum])$/);

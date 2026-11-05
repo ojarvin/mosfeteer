@@ -5,7 +5,7 @@
 
 import { describe, before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { start, sleep, browserSkip } from './harness.js';
+import { start, browserSkip } from './harness.js';
 import { amplifier } from './fixtures.js';
 
 describe('reference windows', { skip: browserSkip() }, () => {

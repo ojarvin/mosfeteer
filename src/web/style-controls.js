@@ -12,6 +12,7 @@ import { ICON_PATHS } from './icons.js';
 import { logLine } from './status-bar-ui.js';
 import { editor } from './editor-state.js';
 import { commit, keyToWire, render, selectedComps, selectedLabels } from './main.js';
+import { setHidden } from './dom.js';
 
 /** Text-bearing selection: labels and annotation captions. */
 function selectedTextTargets() {
@@ -341,7 +342,7 @@ export function updateStyleControls() {
   const state = selectionStyleState();
   const panel = document.getElementById('style-panel');
   if (panel) {
-    panel.hidden = !state;
+    setHidden(panel, !state);
     if (state) {
       syncStyleControls(panel, state);
       const linePattern = document.getElementById('style-line-pattern');
