@@ -1913,6 +1913,102 @@ html.dark.invert-pictures .light-picture {
   cursor: pointer;
 }
 
+/* The guides: their titles down the left, the one picked beside them. */
+.help-guides {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: minmax(12rem, 17rem) minmax(0, 1fr);
+  gap: 24px;
+  min-height: 0;
+}
+
+.help-guide-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.help-guide-item {
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background: none;
+  font: inherit;
+  font-size: var(--text-md);
+  text-align: left;
+  cursor: pointer;
+}
+
+.help-guide-item:hover {
+  background: var(--accent-tint);
+}
+
+.help-guide-item[aria-current="true"] {
+  color: var(--accent);
+  background: var(--accent-tint);
+}
+
+.help-guide {
+  min-height: 0;
+  max-width: 40rem;
+  overflow: auto;
+  padding-right: 4px;
+  line-height: 1.5;
+}
+
+.help-guide h3 {
+  margin: 0 0 6px;
+  font-size: var(--text-lg);
+}
+
+.help-guide-intro {
+  margin: 0 0 12px;
+  color: var(--text-dim);
+}
+
+.help-guide-steps {
+  margin: 0 0 14px;
+  padding-left: 1.6em;
+}
+
+.help-guide-steps li {
+  margin: 0 0 6px;
+}
+
+.help-guide kbd {
+  display: inline-block;
+  min-width: 1.4em;
+  padding: 0 5px;
+  color: var(--text);
+  font: 600 var(--text-xs)/1.5 var(--font-mono);
+  text-align: center;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.help-guide-more {
+  margin: 0;
+  color: var(--text-dim);
+}
+
+.help-guide-matches {
+  margin-bottom: 18px;
+}
+
+.help-guide-match {
+  display: block;
+  padding: 2px 0;
+}
+
+.help-guide-match .help-link {
+  text-align: left;
+}
+
 .help-symbol-group h3 {
   margin: 0 0 6px;
   padding-bottom: 4px;

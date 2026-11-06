@@ -1,6 +1,7 @@
 /**
  * Learn (?): the one place to learn the editor. Its tabs are the keymap and
- * command reference (searchable), the tutorials, every symbol (to look at:
+ * command reference (searchable, with the guides that match), the guides
+ * (src/web/guides.js), the tutorials, every symbol (to look at:
  * hovering one names its type and pins), and every tip. Settings holds
  * preferences only.
  */
@@ -13,8 +14,10 @@ import { helpDialog, helpDialogContent, helpSearch } from './elements.js';
 import { symbolPreviewSvg } from './insert-menu.js';
 import { offerTutorial, openReportExample, tipStates, tipsOn } from './onboarding.js';
 import { TUTORIALS } from './tutorial.js';
+import { GUIDES, guideDocUrl, guideRuns, searchGuides } from './guides.js';
 
 let helpCommandText = '';
+let shownGuide = GUIDES[0].id;
 
 function helpKeyNodes(keys) {
   const container = document.createElement('span');
@@ -46,9 +49,28 @@ export function renderHelpSearch() {
   const query = helpSearch?.value.trim().toLowerCase() || '';
   const matches = (...parts) => !query || parts.some((part) => part.toLowerCase().includes(query));
   helpDialogContent.replaceChildren();
+  let count = 0;
+  const guides = query ? searchGuides(query) : [];
+  if (guides.length) {
+    const block = document.createElement('section');
+    block.className = 'help-section help-guide-matches';
+    const title = document.createElement('h3');
+    title.textContent = 'Guides';
+    block.appendChild(title);
+    for (const guide of guides) {
+      const link = Object.assign(document.createElement('button'), { type: 'button', className: 'help-link', textContent: guide.title });
+      link.dataset.guide = guide.id;
+      link.addEventListener('click', () => showGuide(guide.id));
+      const row = document.createElement('div');
+      row.className = 'help-row help-guide-match';
+      row.append(link);
+      block.appendChild(row);
+      count++;
+    }
+    helpDialogContent.appendChild(block);
+  }
   const grid = document.createElement('div');
   grid.className = 'help-sections';
-  let count = 0;
   for (const [section, entries] of editorKeymap()) {
     const rows = entries.filter(([keys, description]) => matches(keys, description, section));
     if (!rows.length) continue;
@@ -144,6 +166,82 @@ function renderTips() {
   }
 }
 
+/** A guide's text: plain words, controls in bold, keys as key caps. */
+function appendGuideText(parent, text) {
+  for (const run of guideRuns(text)) {
+    if (run.kind === 'text') parent.append(document.createTextNode(run.text));
+    else parent.append(Object.assign(document.createElement(run.kind === 'key' ? 'kbd' : 'strong'), { textContent: run.text }));
+  }
+  return parent;
+}
+
+function renderGuide(guide) {
+  const host = document.getElementById('help-guide');
+  if (!host) return;
+  host.replaceChildren();
+  if (!guide) return;
+  const steps = document.createElement('ol');
+  steps.className = 'help-guide-steps';
+  for (const step of guide.steps) steps.append(appendGuideText(document.createElement('li'), step));
+  host.append(
+    Object.assign(document.createElement('h3'), { textContent: guide.title }),
+    appendGuideText(Object.assign(document.createElement('p'), { className: 'help-guide-intro' }), guide.intro),
+    steps,
+  );
+  const tutorial = TUTORIALS.find((t) => t.id === guide.tutorial);
+  const url = guideDocUrl(guide);
+  if (!tutorial && !url) return;
+  const more = document.createElement('p');
+  more.className = 'help-guide-more';
+  if (tutorial) {
+    const start = Object.assign(document.createElement('button'), { type: 'button', className: 'help-link', textContent: `Start the tutorial: ${tutorial.title}` });
+    start.dataset.tutorial = tutorial.id;
+    start.addEventListener('click', () => {
+      helpDialog.close();
+      offerTutorial(tutorial.id);
+    });
+    more.append(start);
+  }
+  if (tutorial && url) more.append(document.createTextNode(' · '));
+  if (url) {
+    more.append(Object.assign(document.createElement('a'), { className: 'help-link', href: url, target: '_blank', rel: 'noopener', textContent: `Read more: ${guide.doc}` }));
+  }
+  host.append(more);
+}
+
+/** The guides matching the guide search, the shown one marked. */
+function renderGuides() {
+  const list = document.getElementById('help-guide-list');
+  if (!list) return;
+  const query = document.getElementById('help-guide-search')?.value.trim() || '';
+  const guides = searchGuides(query);
+  if (guides.length && !guides.some((guide) => guide.id === shownGuide)) shownGuide = guides[0].id;
+  list.replaceChildren(...guides.map((guide) => {
+    const item = Object.assign(document.createElement('button'), { type: 'button', className: 'help-guide-item', textContent: guide.title });
+    item.dataset.guide = guide.id;
+    if (guide.id === shownGuide) item.setAttribute('aria-current', 'true');
+    item.addEventListener('click', () => {
+      shownGuide = guide.id;
+      renderGuides();
+    });
+    return item;
+  }));
+  if (!guides.length) {
+    list.append(Object.assign(document.createElement('p'), { className: 'help-empty', textContent: `Nothing matches "${query}".` }));
+  }
+  renderGuide(guides.find((guide) => guide.id === shownGuide));
+}
+
+/** Open Learn's Guides tab on one guide. */
+export function showGuide(id) {
+  if (!GUIDES.some((guide) => guide.id === id)) return;
+  shownGuide = id;
+  const search = document.getElementById('help-guide-search');
+  if (search) search.value = '';
+  if (helpDialog && !helpDialog.open) showHelp('guides');
+  else showTab('guides');
+}
+
 function showTab(name) {
   for (const tab of helpDialog.querySelectorAll('[data-help-tab]')) {
     const on = tab.dataset.helpTab === name;
@@ -153,11 +251,13 @@ function showTab(name) {
   for (const panel of helpDialog.querySelectorAll('[data-help-panel]')) panel.hidden = panel.dataset.helpPanel !== name;
   if (name === 'symbols') renderSymbols();
   if (name === 'tips') renderTips();
+  if (name === 'guides') renderGuides();
   if (name === 'keys') helpSearch?.focus();
+  else if (name === 'guides') document.getElementById('help-guide-search')?.focus();
   else helpDialog.querySelector(`[data-help-tab="${name}"]`)?.focus();
 }
 
-/** Open Learn on a tab: keys (the default), tutorial, symbols, or tips. */
+/** Open Learn on a tab: keys (the default), guides, tutorial, symbols, or tips. */
 export function showHelp(tab = 'keys') {
   if (!helpDialog) return;
   try {
@@ -191,6 +291,11 @@ function reportExampleEntry() {
 export function installHelp() {
   helpSearch?.addEventListener('input', renderHelpSearch);
   helpSearch?.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') ev.preventDefault();
+  });
+  const guideSearch = document.getElementById('help-guide-search');
+  guideSearch?.addEventListener('input', renderGuides);
+  guideSearch?.addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter') ev.preventDefault();
   });
   for (const tab of helpDialog?.querySelectorAll('[data-help-tab]') || []) {

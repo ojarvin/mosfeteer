@@ -276,13 +276,14 @@
   </dialog>
 
   <!-- Learn (?): the one place to learn the editor -- its keys, the
-       tutorial, the symbols, and every tip. Settings holds preferences only. -->
+       guides, the tutorial, the symbols, and every tip. Settings holds preferences only. -->
   <dialog id="help-dialog" class="help-dialog" aria-labelledby="help-dialog-title">
     <form method="dialog">
       <header class="help-head">
         <h2 id="help-dialog-title">Learn</h2>
         <div class="segmented help-tabs" role="tablist" aria-label="Learn">
           <button type="button" class="icon-label" role="tab" data-help-tab="keys" data-icon="help" aria-selected="true" aria-controls="help-panel-keys">Keys</button>
+          <button type="button" class="icon-label" role="tab" data-help-tab="guides" data-icon="list" aria-selected="false" aria-controls="help-panel-guides">Guides</button>
           <button type="button" class="icon-label" role="tab" data-help-tab="tutorial" data-icon="graduation" aria-selected="false" aria-controls="help-panel-tutorial">Tutorial</button>
           <button type="button" class="icon-label" role="tab" data-help-tab="symbols" data-icon="symbols" aria-selected="false" aria-controls="help-panel-symbols">Symbols</button>
           <button type="button" class="icon-label" role="tab" data-help-tab="tips" data-icon="lightbulb" aria-selected="false" aria-controls="help-panel-tips">Tips</button>
@@ -290,8 +291,16 @@
         <button value="cancel" class="floating-window-close" aria-label="Close" title="Close (Esc)">×</button>
       </header>
       <section id="help-panel-keys" class="help-panel" role="tabpanel" data-help-panel="keys">
-        <input id="help-search" type="search" placeholder="Search shortcuts and commands" aria-label="Search help" autocomplete="off" spellcheck="false" />
+        <input id="help-search" type="search" placeholder="Search shortcuts, commands, and guides" aria-label="Search help" autocomplete="off" spellcheck="false" />
         <div id="help-dialog-content" class="help-content"></div>
+      </section>
+      <section id="help-panel-guides" class="help-panel" role="tabpanel" data-help-panel="guides" hidden>
+        <input id="help-guide-search" type="search" placeholder="Search guides" aria-label="Search guides" autocomplete="off" spellcheck="false" />
+        <!-- One entry per guide (src/web/guides.js), built by help.js. -->
+        <div class="help-guides">
+          <nav id="help-guide-list" class="help-guide-list" aria-label="Guides"></nav>
+          <article id="help-guide" class="help-guide" aria-live="polite"></article>
+        </div>
       </section>
       <section id="help-panel-tutorial" class="help-panel help-panel-text" role="tabpanel" data-help-panel="tutorial" hidden>
         <p class="help-panel-lead">Each opens a new document; a card at the bottom left walks you through it. Close it any time and the drawing stays.</p>
