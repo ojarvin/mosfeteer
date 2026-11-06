@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Circuit, normalizePlot } from '../src/core/model.js';
 import { plotSpec } from '../src/core/plot-spec.js';
-import { cursorLabel, cursorLayout, cursorReadings, cursorValue, curveCrossings, placeCursorLabels, remapCursorTraces } from '../src/core/plot-cursors.js';
+import { cursorLabel, cursorLayout, cursorReadings, cursorTitleRow, cursorValue, curveCrossings, placeCursorLabels, remapCursorTraces } from '../src/core/plot-cursors.js';
+import { dataFigure } from '../src/core/bode-figure.js';
 import { movePlotTrace, removePlotTrace, setPlotCursors } from '../src/core/data-plot.js';
 import { svgString } from '../src/core/render.js';
 
@@ -146,4 +147,40 @@ test('a typed marker place takes a number or a calculator expression', () => {
   assert.equal(cursorValue('2.7k/2.24M'), 2700 / 2.24e6);
   assert.equal(cursorValue('2pi*1k'), 2 * Math.PI * 1000);
   for (const bad of ['', 'abc', '1/0', '1+']) assert.equal(cursorValue(bad), null, bad);
+});
+
+test('a marker\'s label: a vertical line\'s over the plot, a horizontal one\'s at its right end, a point\'s before its numbers', () => {
+  const plot = data({ cursors: [{ kind: 'vertical', x: 5, label: '  f_{c} ' }, { kind: 'horizontal', y: 4, label: 'limit' }, { kind: 'point', trace: 0, x: 2, label: 'A' }, { kind: 'point', trace: 0, x: 8, label: 'B', values: false }, { kind: 'vertical', x: 1, label: '' }] });
+  assert.deepEqual(plot.cursors.map((c) => c.label), ['f_{c}', 'limit', 'A', 'B', undefined]);
+  const spec = plotSpec(plot);
+  const toPx = { x: (u) => 10 * u, y: (v) => 120 - 10 * v };
+  const pane = { x: 0, y: 20, w: 100, h: 100 };
+  const { texts } = cursorLayout(spec, { toPx, pane, size: 10, gap: 3 });
+  const of = (text) => texts.find((t) => t.text === text);
+  // Over the pane, centered on its line.
+  const fc = of('f_{c}');
+  assert.ok(fc.box.y + fc.box.h <= pane.y, JSON.stringify(fc.box));
+  assert.ok(Math.abs(fc.box.x + fc.box.w / 2 - 50) < 1e-9);
+  // Above its line, ending at the pane's right.
+  const limit = of('limit');
+  assert.ok(limit.box.y + limit.box.h <= 80 && limit.box.x + limit.box.w <= 100 && limit.box.x + limit.box.w > 90, JSON.stringify(limit.box));
+  // A point's name leads its numbers; with Values off it stands alone.
+  assert.ok(of('A: 2, 2'));
+  assert.ok(of('B'));
+  // The numbers keep off the names.
+  const overlaps = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+  for (const t of texts.filter((t) => t !== fc && t !== limit)) assert.ok(!overlaps(t.box, limit.box), t.text);
+  // A vertical line's label takes a row above the plot.
+  assert.equal(cursorTitleRow(plot.cursors), true);
+  assert.equal(cursorTitleRow([{ kind: 'horizontal', y: 1, label: 'a' }]), false);
+  const top = (cursors) => dataFigure(data({ cursors }), { width: 400, height: 300, fontSize: 10 }).pane.y;
+  assert.ok(top([{ kind: 'vertical', x: 5, label: 'a' }]) > top([{ kind: 'vertical', x: 5 }]));
+});
+
+test('a marker label in TeX draws as math on the drawing', () => {
+  const circuit = new Circuit();
+  circuit.addAnnotation('box', { x: 0, y: 0, end: { x: 720, y: 440 }, plot: data({ cursors: [{ kind: 'vertical', x: 5, label: '$2\\cdot f_s$' }] }) });
+  const svg = svgString(circuit);
+  assert.match(svg, /2·𝑓<tspan[^>]*>𝑠<\/tspan>/);
+  assert.doesNotMatch(svg, /cdot|\$/);
 });

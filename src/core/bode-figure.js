@@ -12,6 +12,7 @@
  */
 
 import { axisTicks, fitRange, logMinorGrid, toU } from './plot-scale.js';
+import { cursorTitleRow } from './plot-cursors.js';
 
 const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
 
@@ -30,9 +31,10 @@ function axisTitles(items, pane, em, { x, y }) {
 
 /** A plot's pane in a `width` x `height` box: room left of it and under it
  *  for the numbers and axis titles. */
-function framePane(width, height, em) {
+function framePane(width, height, em, plot = null) {
   const left = AXIS_LEFT_EM * em;
-  const top = 0.9 * em;
+  // A vertical marker's label (plot-cursors.js) takes a row above the plot.
+  const top = (cursorTitleRow(plot?.cursors) ? 2.1 : 0.9) * em;
   return { x: left, y: top, w: Math.max(10, width - left - 0.9 * em), h: Math.max(10, height - top - AXIS_BOTTOM_EM * em) };
 }
 
@@ -311,7 +313,7 @@ export function responseFigure(plot, { width = 480, height = 260, fontSize = 11 
   // A zoomed plot keeps the limits it was annotated at (`view`).
   const view = plot.view || {};
   const [low, high] = view.x ? view.x.map(Math.log10) : rangeWithExtra(plot, { log: true });
-  const pane = framePane(width, height, em);
+  const pane = framePane(width, height, em, plot);
   const x = (f) => pane.x + ((Math.log10(f) - low) / (high - low)) * pane.w;
   // The axis fits every curve, in whole 20 dB steps; its ticks spread out on
   // a wide range (a high-order noise shaper reaches far down).
@@ -393,7 +395,7 @@ export function responseFigure(plot, { width = 480, height = 260, fontSize = 11 
 export function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const items = [];
   const em = fontSize;
-  const pane = framePane(width, height, em);
+  const pane = framePane(width, height, em, plot);
   const view = plot.view || {};
   const [low, high] = view.x || rangeWithExtra(plot);
   const x = (t) => pane.x + ((t - low) / (high - low || 1)) * pane.w;
@@ -451,7 +453,7 @@ export function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = 
 export function dataFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const items = [];
   const em = fontSize;
-  const pane = framePane(width, height, em);
+  const pane = framePane(width, height, em, plot);
   const xs = plot.x?.scale === 'log' ? 'log' : 'linear';
   const ys = plot.y?.scale === 'log' ? 'log' : 'linear';
   const curves = plot.traces.map((trace) => trace.points.map(([px, py]) => [toU(xs, px), toU(ys, py)])
@@ -516,7 +518,7 @@ export function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } =
   const em = fontSize;
   const view = plot.view || {};
   const [low, high] = view.x || rangeWithExtra(plot);
-  const pane = framePane(width, height, em);
+  const pane = framePane(width, height, em, plot);
   const x = (a) => pane.x + ((a - low) / (high - low)) * pane.w;
   // The peaks fit in whole 10 dB steps; a loop blowing up runs off the top.
   const values = [...plot.traces.flatMap((trace) => trace.points.map((p) => p.db)), ...extraValues(plot)].filter((db) => Number.isFinite(db) && db > -200);
@@ -668,7 +670,7 @@ export function swingLimit(traces) {
 export function locusFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const items = [];
   const em = fontSize;
-  const pane = framePane(width, height, em);
+  const pane = framePane(width, height, em, plot);
   const z = plot.variable === 'z';
   // In z the view stays near the unit circle: a pole far outside is
   // unstable either way, and following it would shrink the circle away.

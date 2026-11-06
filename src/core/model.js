@@ -1,4 +1,5 @@
 import { RAIL_NAMES, railNameKey } from './rail-names.js';
+import { stripMathDelimiters } from './tex-markup.js';
 import { normalizeWindows, windowsJSON } from './window-state.js';
 import { normalizeNotes, notePictureIds, renameMentions } from './notes.js';
 import { normalizeHistory } from './save-history.js';
@@ -821,15 +822,7 @@ export function parseTermRef(s) {
   return { comp: s.slice(0, idx), term: s.slice(idx + 1) };
 }
 
-/** Strip the common inline/display math delimiters from an equation label.
- * The delimiters are retained in the editable source so users can see and
- * continue editing ordinary TeX, but never become visible glyphs. */
-export function stripMathDelimiters(value) {
-  let source = String(value ?? '').trim();
-  if (source.length >= 4 && source.startsWith('$$') && source.endsWith('$$')) return source.slice(2, -2).trim();
-  if (source.length >= 2 && source.startsWith('$') && source.endsWith('$')) return source.slice(1, -1).trim();
-  return source;
-}
+export { stripMathDelimiters };
 
 // A `$` that is not escaped (`\$` is a dollar sign).
 const DOLLAR = /(?<!\\)\$/g;

@@ -811,3 +811,23 @@ test('a sweep steps evenly or in ratio, and each point measures its run', async 
   assert.equal(simulatedMeasures({ circuit: modulator().toJSON(), options: { values: { k_1: 1, k_2: 2 }, sources: { U: 'input' }, input: 'U', output: 'name:V', frequency: 4 / 1024, samples: 4096, segment: 1024 }, amplitude: 3, segment: 1024 }).overloaded, true);
   assert.deepEqual(normalizeWindows({ sweep: { name: 'k_1', from: '1/2', to: '2', points: 999, scale: 'log', samples: 12, measures: ['sndr', 7] } }).sweep, { measures: ['sndr'], name: 'k_1', from: '1/2', to: '2', points: 201, scale: 'log', samples: 1024 });
 });
+
+test('a sweep plot puts the unit its measures share on the y axis, and one measure\'s name too', async () => {
+  const { sweepLabels } = await import('../src/core/analysis/spectrum-run.js');
+  const noise = { name: '\\text{Noise in band}', unit: 'dBFS' };
+  const tone = { name: '\\text{Output tone}', unit: 'dBFS' };
+  const sndr = { name: '\\text{SNDR in band}', unit: 'dB' };
+  const amp = (a) => `${a}\\ \\text{dBFS}`;
+  // One measure: its name and unit on the axis, the runs named by their notes.
+  assert.deepEqual(sweepLabels([noise], [{ notes: [amp(-80)], held: true }, { notes: [amp(-2)] }]),
+    { y: '\\text{Noise in band}\\text{ (dBFS)}', labels: [[amp(-80)], [amp(-2)]] });
+  // ... named by the measure when nothing differs; a held one says so.
+  assert.deepEqual(sweepLabels([noise], [{ notes: [], held: true }, { notes: [] }]).labels,
+    [['\\text{Noise in band}\\ \\text{(held)}'], ['\\text{Noise in band}']]);
+  // Two of one unit: the unit on the axis, the names in the legend.
+  assert.deepEqual(sweepLabels([noise, tone], [{ notes: [amp(-6)] }]),
+    { y: 'dBFS', labels: [[`\\text{Noise in band},\\ ${amp(-6)}`, `\\text{Output tone},\\ ${amp(-6)}`]] });
+  // Units that differ stay in the legend.
+  assert.deepEqual(sweepLabels([sndr, noise], [{ notes: [] }]),
+    { y: 'dB', labels: [['\\text{SNDR in band}\\text{ (dB)}', '\\text{Noise in band}\\text{ (dBFS)}']] });
+});

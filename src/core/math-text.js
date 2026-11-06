@@ -8,6 +8,7 @@
  */
 
 import { parseLabelRuns } from './model.js';
+import { plotTextMarkup } from './tex-markup.js';
 
 /** A letter's math italic form, or the letter when it has none. */
 export function mathItalic(ch) {
@@ -34,11 +35,12 @@ export function mathText(text) {
     .replace(new RegExp(`\\|(?=${ITALIC.source})`, 'gu'), `|${HAIR}`);
 }
 
-/** A plot text's runs (_{} and ^{} markup, as parseLabelRuns reads it),
- *  each run's text set as math. A run opening on a bar or parenthesis after
+/** A plot text's runs (_{} and ^{} markup, as parseLabelRuns reads it, and
+ *  TeX between $ signs as that markup, tex-markup.js), each run's text set
+ *  as math. A run opening on a bar or parenthesis after
  *  one ending in an italic letter (the |A_{v}| closing bar) is kept off it too. */
 export function mathRuns(text) {
-  const runs = parseLabelRuns(String(text)).map((run) => ({ ...run, text: mathText(run.text) }));
+  const runs = parseLabelRuns(plotTextMarkup(text)).map((run) => ({ ...run, text: mathText(run.text) }));
   for (let i = 1; i < runs.length; i++) {
     if (/^[|)]/.test(runs[i].text) && new RegExp(`${ITALIC.source}$`, 'u').test(runs[i - 1].text)) runs[i].text = HAIR + runs[i].text;
   }

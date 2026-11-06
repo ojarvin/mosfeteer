@@ -1566,14 +1566,14 @@ async function updatePlots() {
   const sweeps = boxes.filter((box) => box.plot.kind === 'data');
   for (const [i, box] of sweeps.entries()) {
     logLine(`Updating plots: running sweep ${i + 1} of ${sweeps.length}...`);
-    const traces = await sweepPlotUpdate(box.plot, () => circuit !== editor.circuit);
+    const update = await sweepPlotUpdate(box.plot, () => circuit !== editor.circuit);
     if (circuit !== editor.circuit) return;
-    if (traces) swept.set(box, traces);
+    if (update) swept.set(box, update);
   }
   const updates = [];
   const skipped = [];
   for (const box of boxes) {
-    const update = box.plot.kind === 'data' ? (swept.has(box) ? { traces: swept.get(box) } : null) : plotUpdate(box.plot);
+    const update = box.plot.kind === 'data' ? (swept.get(box) || null) : plotUpdate(box.plot);
     if (update) updates.push({ box, ...update });
     else skipped.push(box);
   }
@@ -1588,7 +1588,7 @@ async function updatePlots() {
     for (const update of updates) {
       if (update.traces) {
         // A sweep plot keeps its axes too; its sweep's entries are TeX.
-        const entries = replaceDataPlotTraces(circuit, update.box, { traces: update.traces }, { math: update.box.plot.sweep.count });
+        const entries = replaceDataPlotTraces(circuit, update.box, { traces: update.traces, ...(update.y ? { y: update.y } : {}) }, { math: update.box.plot.sweep.count });
         if (entries.length) written.push({ ids: entries.map((label) => label.id), left: Math.min(...entries.map((l) => l.bbox().x)), top: Math.min(...entries.map((l) => l.bbox().y)) });
         continue;
       }

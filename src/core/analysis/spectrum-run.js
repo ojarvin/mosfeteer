@@ -54,6 +54,26 @@ export function simulatedMeasures({ circuit, options, amplitude, segment, edges 
   }
 }
 
+/**
+ * A sweep plot's y axis and trace names. `measures` `[{ name, unit }]`
+ * (TeX, the unit plain), `runs` `[{ notes, held }]`: each run's notes (TeX,
+ * what it ran at that names it) and whether it is a held one. Measures of
+ * one unit put it on the axis; one measure puts its name there too, and
+ * its traces are named by their notes. Returns `{ y, labels }` (TeX),
+ * `labels` a row of names per run.
+ */
+export function sweepLabels(measures, runs) {
+  const unit = new Set(measures.map((m) => m.unit)).size === 1 ? measures[0]?.unit : null;
+  const full = (m) => `${m.name}\\text{ (${m.unit})}`;
+  const y = !unit ? 'dB' : measures.length === 1 ? full(measures[0]) : unit;
+  const labels = runs.map(({ notes = [], held = false }) => measures.map((m) => {
+    const head = unit && measures.length === 1 && notes.length ? [] : [unit ? m.name : full(m)];
+    const label = [...head, ...notes].join(',\\ ');
+    return held && !notes.length ? `${label}\\ \\text{(held)}` : label;
+  }));
+  return { y, labels };
+}
+
 /** The values a sweep runs: `points` from `from` to `to`, evenly spaced, or
  *  on `log` evenly in ratio (from and to of one sign, not zero). */
 export function sweepValues(from, to, points, log = false) {

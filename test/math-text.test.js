@@ -35,3 +35,17 @@ test('a bar or closing parenthesis stands a hair off an italic letter, across a 
   // Upright words keep their bars and parentheses close.
   assert.equal(mathText('|NTF| (dBFS)'), '|NTF| (dBFS)');
 });
+
+test('a plot text takes TeX between $ signs: letters, symbols, scripts', async () => {
+  const { plotTextMarkup, texToLabelMarkup } = await import('../src/core/tex-markup.js');
+  assert.equal(plotTextMarkup('$2\\cdot f_s$'), '2·f_{s}');
+  assert.equal(plotTextMarkup('Gain $A_v$ (dB)'), 'Gain A_{v} (dB)');
+  assert.equal(plotTextMarkup('$\\phi_1$ costs \\$5'), 'ϕ_{1} costs $5');
+  assert.equal(plotTextMarkup('$\\text{noise}\\ \\le -100$'), 'noise ≤-100');
+  assert.equal(plotTextMarkup('DC'), 'DC');
+  assert.equal(texToLabelMarkup('$f_{c}\\approx 1\\,\\mathrm{kHz}$'), 'f_{c}≈1 kHz');
+  // As runs: the subscript its own, the letters italic, no $ or \ left.
+  const runs = mathRuns('$2\\cdot f_s$');
+  assert.deepEqual(runs.map((r) => !!r.sub), [false, true]);
+  assert.equal(runs.map((r) => r.text).join(''), `2·${mathItalic('f')}${mathItalic('s')}`);
+});

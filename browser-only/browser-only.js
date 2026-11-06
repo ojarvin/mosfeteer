@@ -17864,6 +17864,7 @@ function withAliases(solved, system) {
 __modules["src/core/analysis/spectrum-run.js"] = function (__require, __exports) {
 __exports.simulatedSpectrum = simulatedSpectrum;
 __exports.simulatedMeasures = simulatedMeasures;
+__exports.sweepLabels = sweepLabels;
 __exports.sweepValues = sweepValues;
 let Circuit; __bind(() => { ({ Circuit } = __require("src/core/model.js")); });
 let prepareSimulation; __bind(() => { ({ prepareSimulation } = __require("src/core/analysis/simulate.js")); });
@@ -17922,6 +17923,26 @@ function simulatedMeasures({ circuit, options, amplitude, segment, edges = [] })
   } catch (error) {
     return { error: error.message };
   }
+}
+
+/**
+ * A sweep plot's y axis and trace names. `measures` `[{ name, unit }]`
+ * (TeX, the unit plain), `runs` `[{ notes, held }]`: each run's notes (TeX,
+ * what it ran at that names it) and whether it is a held one. Measures of
+ * one unit put it on the axis; one measure puts its name there too, and
+ * its traces are named by their notes. Returns `{ y, labels }` (TeX),
+ * `labels` a row of names per run.
+ */
+function sweepLabels(measures, runs) {
+  const unit = new Set(measures.map((m) => m.unit)).size === 1 ? measures[0]?.unit : null;
+  const full = (m) => `${m.name}\\text{ (${m.unit})}`;
+  const y = !unit ? 'dB' : measures.length === 1 ? full(measures[0]) : unit;
+  const labels = runs.map(({ notes = [], held = false }) => measures.map((m) => {
+    const head = unit && measures.length === 1 && notes.length ? [] : [unit ? m.name : full(m)];
+    const label = [...head, ...notes].join(',\\ ');
+    return held && !notes.length ? `${label}\\ \\text{(held)}` : label;
+  }));
+  return { y, labels };
 }
 
 /** The values a sweep runs: `points` from `from` to `to`, evenly spaced, or
@@ -21638,6 +21659,7 @@ __exports.swingFullScale = swingFullScale;
 __exports.swingLimit = swingLimit;
 __exports.locusFigure = locusFigure;
 let axisTicks, fitRange, logMinorGrid, toU; __bind(() => { ({ axisTicks, fitRange, logMinorGrid, toU } = __require("src/core/plot-scale.js")); });
+let cursorTitleRow; __bind(() => { ({ cursorTitleRow } = __require("src/core/plot-cursors.js")); });
 /**
  * The layout of a Bode sketch as plain drawing items in a box: lines, paths,
  * and short texts (with `_{}`/`^{}` markup). One layout, two renderers -- the
@@ -21650,6 +21672,7 @@ let axisTicks, fitRange, logMinorGrid, toU; __bind(() => { ({ axisTicks, fitRang
  * role }`. Roles: axis, zero (the 0 dB line), tick, grid, curve, asymptote,
  * corner, label, number. `zero` also marks the phase's multiples of 180°.
  */
+
 
 
 
@@ -21670,9 +21693,10 @@ function axisTitles(items, pane, em, { x, y }) {
 
 /** A plot's pane in a `width` x `height` box: room left of it and under it
  *  for the numbers and axis titles. */
-function framePane(width, height, em) {
+function framePane(width, height, em, plot = null) {
   const left = AXIS_LEFT_EM * em;
-  const top = 0.9 * em;
+  // A vertical marker's label (plot-cursors.js) takes a row above the plot.
+  const top = (cursorTitleRow(plot?.cursors) ? 2.1 : 0.9) * em;
   return { x: left, y: top, w: Math.max(10, width - left - 0.9 * em), h: Math.max(10, height - top - AXIS_BOTTOM_EM * em) };
 }
 
@@ -21951,7 +21975,7 @@ function responseFigure(plot, { width = 480, height = 260, fontSize = 11 } = {})
   // A zoomed plot keeps the limits it was annotated at (`view`).
   const view = plot.view || {};
   const [low, high] = view.x ? view.x.map(Math.log10) : rangeWithExtra(plot, { log: true });
-  const pane = framePane(width, height, em);
+  const pane = framePane(width, height, em, plot);
   const x = (f) => pane.x + ((Math.log10(f) - low) / (high - low)) * pane.w;
   // The axis fits every curve, in whole 20 dB steps; its ticks spread out on
   // a wide range (a high-order noise shaper reaches far down).
@@ -22033,7 +22057,7 @@ function responseFigure(plot, { width = 480, height = 260, fontSize = 11 } = {})
 function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const items = [];
   const em = fontSize;
-  const pane = framePane(width, height, em);
+  const pane = framePane(width, height, em, plot);
   const view = plot.view || {};
   const [low, high] = view.x || rangeWithExtra(plot);
   const x = (t) => pane.x + ((t - low) / (high - low || 1)) * pane.w;
@@ -22091,7 +22115,7 @@ function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
 function dataFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const items = [];
   const em = fontSize;
-  const pane = framePane(width, height, em);
+  const pane = framePane(width, height, em, plot);
   const xs = plot.x?.scale === 'log' ? 'log' : 'linear';
   const ys = plot.y?.scale === 'log' ? 'log' : 'linear';
   const curves = plot.traces.map((trace) => trace.points.map(([px, py]) => [toU(xs, px), toU(ys, py)])
@@ -22156,7 +22180,7 @@ function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const em = fontSize;
   const view = plot.view || {};
   const [low, high] = view.x || rangeWithExtra(plot);
-  const pane = framePane(width, height, em);
+  const pane = framePane(width, height, em, plot);
   const x = (a) => pane.x + ((a - low) / (high - low)) * pane.w;
   // The peaks fit in whole 10 dB steps; a loop blowing up runs off the top.
   const values = [...plot.traces.flatMap((trace) => trace.points.map((p) => p.db)), ...extraValues(plot)].filter((db) => Number.isFinite(db) && db > -200);
@@ -22308,7 +22332,7 @@ function swingLimit(traces) {
 function locusFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const items = [];
   const em = fontSize;
-  const pane = framePane(width, height, em);
+  const pane = framePane(width, height, em, plot);
   const z = plot.variable === 'z';
   // In z the view stays near the unit circle: a pole far outside is
   // unstable either way, and following it would shrink the circle away.
@@ -27845,14 +27869,14 @@ function appendPlotTraces(circuit, box, traces, { file = '' } = {}) {
 
 /** Replace a data plot's traces with `plot`'s (the file read again, or
  *  other columns, or a sweep run again), keeping its place, size, style,
- *  axes' names and scales, and zoom; its legend is written again where it
- *  was (`math`: as writeLegend's). */
+ *  axes' names and scales (but a `plot.y` given), and zoom; its legend is
+ *  written again where it was (`math`: as writeLegend's). */
 function replaceDataPlotTraces(circuit, box, plot, { math = false } = {}) {
   const old = dataPlotOf(box);
   const legend = circuit.plotLegend(box);
   const at = legend.length ? { x: Math.min(...legend.map((l) => l.bbox().x)), y: Math.min(...legend.map((l) => l.bbox().y)) } : null;
   for (const label of legend) circuit.removeLabel(label.id);
-  box.plot = normalizePlot({ ...old, file: plot.file || old.file, traces: plot.traces });
+  box.plot = normalizePlot({ ...old, file: plot.file || old.file, ...(plot.y ? { y: plot.y } : {}), traces: plot.traces });
   return writeLegend(circuit, box, box.plot.traces, at, { math });
 }
 
@@ -29783,6 +29807,7 @@ __exports.mathItalic = mathItalic;
 __exports.mathText = mathText;
 __exports.mathRuns = mathRuns;
 let parseLabelRuns; __bind(() => { ({ parseLabelRuns } = __require("src/core/model.js")); });
+let plotTextMarkup; __bind(() => { ({ plotTextMarkup } = __require("src/core/tex-markup.js")); });
 /**
  * Plot text set as TeX sets math, for the math font (Latin Modern Math): a
  * variable -- a single Latin letter or lowercase Greek one -- in the font's
@@ -29791,6 +29816,7 @@ let parseLabelRuns; __bind(() => { ({ parseLabelRuns } = __require("src/core/mod
  * own, so its italics are these letters rather than a slanted style. Used by
  * the plots on the drawing (render.js) and in the windows (plot-view.js).
  */
+
 
 
 
@@ -29819,11 +29845,12 @@ function mathText(text) {
     .replace(new RegExp(`\\|(?=${ITALIC.source})`, 'gu'), `|${HAIR}`);
 }
 
-/** A plot text's runs (_{} and ^{} markup, as parseLabelRuns reads it),
- *  each run's text set as math. A run opening on a bar or parenthesis after
+/** A plot text's runs (_{} and ^{} markup, as parseLabelRuns reads it, and
+ *  TeX between $ signs as that markup, tex-markup.js), each run's text set
+ *  as math. A run opening on a bar or parenthesis after
  *  one ending in an italic letter (the |A_{v}| closing bar) is kept off it too. */
 function mathRuns(text) {
-  const runs = parseLabelRuns(String(text)).map((run) => ({ ...run, text: mathText(run.text) }));
+  const runs = parseLabelRuns(plotTextMarkup(text)).map((run) => ({ ...run, text: mathText(run.text) }));
   for (let i = 1; i < runs.length; i++) {
     if (/^[|)]/.test(runs[i].text) && new RegExp(`${ITALIC.source}$`, 'u').test(runs[i - 1].text)) runs[i].text = HAIR + runs[i].text;
   }
@@ -29859,7 +29886,6 @@ __exports.transformNetLabelPlacement = transformNetLabelPlacement;
 __exports.transformComponentWorld = transformComponentWorld;
 __exports.netTerminalPositionKey = netTerminalPositionKey;
 __exports.parseTermRef = parseTermRef;
-__exports.stripMathDelimiters = stripMathDelimiters;
 __exports.hasInlineMath = hasInlineMath;
 __exports.inlineMathTex = inlineMathTex;
 __exports.normalizeComponentRefdes = normalizeComponentRefdes;
@@ -29873,6 +29899,7 @@ __exports.thinDataPoints = thinDataPoints;
 __exports.diagonalDraftPath = diagonalDraftPath;
 __exports.analyzedCircuit = analyzedCircuit;
 let RAIL_NAMES, railNameKey; __bind(() => { ({ RAIL_NAMES, railNameKey } = __require("src/core/rail-names.js")); });
+let stripMathDelimiters; __bind(() => { ({ stripMathDelimiters } = __require("src/core/tex-markup.js")); });
 let normalizeWindows, windowsJSON; __bind(() => { ({ normalizeWindows, windowsJSON } = __require("src/core/window-state.js")); });
 let normalizeNotes, notePictureIds, renameMentions; __bind(() => { ({ normalizeNotes, notePictureIds, renameMentions } = __require("src/core/notes.js")); });
 let normalizeHistory; __bind(() => { ({ normalizeHistory } = __require("src/core/save-history.js")); });
@@ -29897,6 +29924,7 @@ let fanStacks, normalizeStack, segmentEnters, stackRects, stackedBoxes, wireEcho
 let PART_VALUE_ROLE, VALUE_LABEL_MODES, VALUE_TYPES, valueLabelTex; __bind(() => { ({ PART_VALUE_ROLE, VALUE_LABEL_MODES, VALUE_TYPES, valueLabelTex } = __require("src/core/part-value.js")); });
 let MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize; __bind(() => { ({ MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize } = __require("src/core/mos-size.js")); });
 let cursorsOf; __bind(() => { ({ cursorsOf } = __require("src/core/plot-cursors.js")); });
+
 
 
 
@@ -30720,15 +30748,7 @@ function parseTermRef(s) {
   return { comp: s.slice(0, idx), term: s.slice(idx + 1) };
 }
 
-/** Strip the common inline/display math delimiters from an equation label.
- * The delimiters are retained in the editable source so users can see and
- * continue editing ordinary TeX, but never become visible glyphs. */
-function stripMathDelimiters(value) {
-  let source = String(value ?? '').trim();
-  if (source.length >= 4 && source.startsWith('$$') && source.endsWith('$$')) return source.slice(2, -2).trim();
-  if (source.length >= 2 && source.startsWith('$') && source.endsWith('$')) return source.slice(1, -1).trim();
-  return source;
-}
+
 
 // A `$` that is not escaped (`\$` is a dollar sign).
 const DOLLAR = /(?<!\\)\$/g;
@@ -37750,6 +37770,7 @@ function analyzedCircuit(circuit) {
   });
 }
 
+__exports.stripMathDelimiters = stripMathDelimiters;
 __exports.REFERENCE_MARKER_TYPES = REFERENCE_MARKER_TYPES;
 __exports.NET_HIGHLIGHT_COLORS = NET_HIGHLIGHT_COLORS;
 __exports.LABEL_FONT_SIZE = LABEL_FONT_SIZE;
@@ -39690,6 +39711,7 @@ __exports.placeCursorLabels = placeCursorLabels;
 __exports.cursorLayout = cursorLayout;
 let fromU, toU; __bind(() => { ({ fromU, toU } = __require("src/core/plot-scale.js")); });
 let calculate; __bind(() => { ({ calculate } = __require("src/core/calculator.js")); });
+let plotTextMarkup; __bind(() => { ({ plotTextMarkup } = __require("src/core/tex-markup.js")); });
 /**
  * Markers on a plot (`plot.cursors`, set in its settings): a point on a
  * trace, reading its x and y there; a vertical line at an x, reading each
@@ -39702,14 +39724,18 @@ let calculate; __bind(() => { ({ calculate } = __require("src/core/calculator.js
  * A marker: `{ kind: 'point', trace, x }` (`trace` a spec series' `trace`
  * id: the plot's own traces from 0, then those added from files),
  * `{ kind: 'vertical', x }`, `{ kind: 'horizontal', y }`, in the data's
- * own units, each with `values: false` when its numbers stay off.
+ * own units, each with `values: false` when its numbers stay off and a
+ * `label` when it has one: a vertical line's above the plot, a horizontal
+ * one's at its right end, a point's before its numbers.
  */
+
 
 
 
 
 const MAX_PLOT_CURSORS = 8;
 const CURSOR_KINDS = ['point', 'vertical', 'horizontal'];
+const MAX_CURSOR_LABEL = 60;
 
 const precise = (v) => Number(v.toPrecision(9));
 
@@ -39719,7 +39745,8 @@ const precise = (v) => Number(v.toPrecision(9));
 function cursorsOf(plot) {
   const allOff = plot?.cursorValues === false;
   const cursors = (Array.isArray(plot?.cursors) ? plot.cursors : []).filter((c) => CURSOR_KINDS.includes(c?.kind)).slice(0, MAX_PLOT_CURSORS).flatMap((c) => {
-    const off = allOff || c.values === false ? { values: false } : {};
+    const name = typeof c.label === 'string' ? c.label.trim().slice(0, MAX_CURSOR_LABEL) : '';
+    const off = { ...(allOff || c.values === false ? { values: false } : {}), ...(name ? { label: name } : {}) };
     if (c.kind === 'horizontal') return Number.isFinite(c.y) ? [{ kind: 'horizontal', y: precise(c.y), ...off }] : [];
     if (!Number.isFinite(c.x)) return [];
     if (c.kind === 'vertical') return [{ kind: 'vertical', x: precise(c.x), ...off }];
@@ -39787,6 +39814,9 @@ function curveCrossings(curve, v, max = 3) {
   }
   return out;
 }
+
+/** Whether a vertical line's label takes a row above the plot. */
+const cursorTitleRow = (cursors) => !!cursors?.some((c) => c.kind === 'vertical' && c.label);
 
 /** A typed marker place: a number or an expression the calculator takes
  *  (`1/64`, `2.7k/2.24M`); null when it is neither or not finite. */
@@ -39875,6 +39905,16 @@ function segmentHitsBox(a, b, box) {
   return Math.max(...ys) >= box.y && Math.min(...ys) <= y1;
 }
 
+/** A text's estimated width at `size`: in the math font a figure is half
+ *  an em; markup (^{} _{}) takes no room of its own, and a raised or
+ *  lowered part is two thirds the size. */
+function textWidth(source, size) {
+  const text = plotTextMarkup(source);
+  const small = [...text.matchAll(/[_^]\{([^}]*)\}/g)].reduce((n, m) => n + m[1].length, 0);
+  const base = text.replace(/[_^]\{[^}]*\}/g, '').length;
+  return 0.52 * size * (base + 0.68 * small);
+}
+
 /**
  * Small texts placed beside their points, none over another or over a
  * point, inside `pane`, and as few as can be over the traces: `labels`
@@ -39887,18 +39927,12 @@ function segmentHitsBox(a, b, box) {
  * text, box, leader? }]`: a label moved out a row or more has a leader,
  * `{ x1, y1, x2, y2 }`, from its point to the nearest of its box.
  */
-function placeCursorLabels(labels, pane, { size = 10, gap = 3, curves = [] } = {}) {
+function placeCursorLabels(labels, pane, { size = 10, gap = 3, curves = [], avoid = [] } = {}) {
   const placed = [];
-  // In the math font a figure is half an em; markup (^{}) takes no room of
-  // its own, and a superscript is two thirds the size.
-  const width = (text) => {
-    const sup = [...text.matchAll(/\^\{([^}]*)\}/g)].reduce((n, m) => n + m[1].length, 0);
-    const base = text.replace(/\^\{[^}]*\}/g, '').length;
-    return 0.52 * size * (base + 0.68 * sup);
-  };
+  const width = (text) => textWidth(text, size);
   const points = labels.map((l) => ({ x: l.x - gap, y: l.y - gap, w: 2 * gap, h: 2 * gap }));
   const overlaps = (b, o) => b.x < o.x + o.w && o.x < b.x + b.w && b.y < o.y + o.h && o.y < b.y + b.h;
-  const clear = (b) => ![...placed.map((p) => p.box), ...points].some((o) => overlaps(b, o));
+  const clear = (b) => ![...placed.map((p) => p.box), ...points, ...avoid].some((o) => overlaps(b, o));
   const inside = (b) => b.x >= pane.x && b.y >= pane.y && b.x + b.w <= pane.x + pane.w && b.y + b.h <= pane.y + pane.h;
   const segments = curves.flatMap((line) => line.slice(1).map((b, i) => [line[i], b]));
   const crossings = (box) => {
@@ -39946,12 +39980,16 @@ function placeCursorLabels(labels, pane, { size = 10, gap = 3, curves = [] } = {
  * a value, `pane` the plot's area. Returns `{ lines: [{ x1, y1, x2, y2 }],
  * dots: [{ x, y, color }], texts }` (placeCursorLabels's), the lines and
  * dots only those in the pane, the texts of a marker with `values: false`
- * left out, and all of them when `values` is false.
+ * left out, and all of them when `values` is false. A line's label goes
+ * first in the texts: a vertical one's centered over the pane (in the row
+ * the figure leaves above it, cursorTitleRow), a horizontal one's above its
+ * line at the pane's right end; a point's leads its numbers.
  */
 function cursorLayout(spec, { toPx, pane, size = 10, gap = 3, values = true, cursors = spec?.cursors || [] } = {}) {
   const lines = [];
   const dots = [];
   const labels = [];
+  const names = [];
   const within = (v, low, length) => v >= low - 0.5 && v <= low + length + 0.5;
   for (const reading of cursorReadings(spec, cursors)) {
     const shown = reading.cursor.values !== false;
@@ -39959,11 +39997,20 @@ function cursorLayout(spec, { toPx, pane, size = 10, gap = 3, values = true, cur
       const px = toPx.x(reading.u);
       if (!within(px, pane.x, pane.w)) continue;
       lines.push({ x1: px, y1: pane.y, x2: px, y2: pane.y + pane.h, index: reading.index });
+      if (reading.cursor.label) {
+        const w = textWidth(reading.cursor.label, size);
+        const x = Math.min(Math.max(px - w / 2, pane.x), pane.x + pane.w - w);
+        names.push({ text: reading.cursor.label, box: { x, y: pane.y - gap - size, w, h: size } });
+      }
       if (shown) labels.push({ x: px, y: pane.y + pane.h, text: reading.text });
     } else if (reading.kind === 'horizontal') {
       const py = toPx.y(reading.v);
       if (!within(py, pane.y, pane.h)) continue;
       lines.push({ x1: pane.x, y1: py, x2: pane.x + pane.w, y2: py, index: reading.index });
+      if (reading.cursor.label) {
+        const w = textWidth(reading.cursor.label, size);
+        names.push({ text: reading.cursor.label, box: { x: pane.x + pane.w - gap - w, y: py - gap - size, w, h: size } });
+      }
       if (shown) labels.push({ x: pane.x, y: py, text: reading.text });
     }
     for (const hit of reading.hits) {
@@ -39971,20 +40018,24 @@ function cursorLayout(spec, { toPx, pane, size = 10, gap = 3, values = true, cur
       const y = toPx.y(hit.v);
       if (!within(x, pane.x, pane.w) || !within(y, pane.y, pane.h)) continue;
       dots.push({ x, y, color: hit.color, index: reading.index, point: reading.kind === 'point' });
-      if (shown) labels.push({ x, y, text: hit.text });
+      const name = reading.kind === 'point' ? reading.cursor.label : '';
+      if (shown || name) labels.push({ x, y, text: name && shown ? `${name}: ${hit.text}` : name || hit.text });
     }
   }
   if (!values) return { lines, dots, texts: [] };
+  const titles = names.map(({ text, box }) => ({ x: box.x, y: box.y + 0.82 * box.h, anchor: 'start', text, box }));
   // The traces as drawn, and the marker lines, for the numbers to keep off them.
   const curves = labels.length ? [
     ...cursorCurves(spec).map((curve) => curve.points.filter(([, v]) => v !== null).map(([u, v]) => ({ x: toPx.x(u), y: toPx.y(v) }))),
     ...lines.map((l) => [{ x: l.x1, y: l.y1 }, { x: l.x2, y: l.y2 }]),
   ] : [];
-  return { lines, dots, texts: placeCursorLabels(labels, pane, { size, gap, curves }) };
+  return { lines, dots, texts: [...titles, ...placeCursorLabels(labels, pane, { size, gap, curves, avoid: titles.map((t) => t.box) })] };
 }
 
 __exports.MAX_PLOT_CURSORS = MAX_PLOT_CURSORS;
 __exports.CURSOR_KINDS = CURSOR_KINDS;
+__exports.MAX_CURSOR_LABEL = MAX_CURSOR_LABEL;
+__exports.cursorTitleRow = cursorTitleRow;
 };
 
 __modules["src/core/plot-export.js"] = function (__require, __exports) {
@@ -40715,8 +40766,6 @@ __exports.RAIL_NAMES = RAIL_NAMES;
 
 __modules["src/core/render.js"] = function (__require, __exports) {
 __exports.drawnBusCounts = drawnBusCounts;
-__exports.texToLabelMarkup = texToLabelMarkup;
-__exports.plainTexText = plainTexText;
 __exports.svgPixelSize = svgPixelSize;
 __exports.texToMathML = texToMathML;
 __exports.plotFontSize = plotFontSize;
@@ -40731,6 +40780,7 @@ let applyTransform, fmt, transformRect, transformToSvg; __bind(() => { ({ applyT
 let ceilGrid, floorGrid, GRID; __bind(() => { ({ ceilGrid, floorGrid, GRID } = __require("src/core/grid.js")); });
 let autoRoute; __bind(() => { ({ autoRoute } = __require("src/core/router.js")); });
 let TABLE_RULE_ROOM_EM, escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg; __bind(() => { ({ TABLE_RULE_ROOM_EM, escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } = __require("src/core/style.js")); });
+let GREEK_LOWER, GREEK_UPPER, plainTexText, plotTextMarkup, texToLabelMarkup; __bind(() => { ({ GREEK_LOWER, GREEK_UPPER, plainTexText, plotTextMarkup, texToLabelMarkup } = __require("src/core/tex-markup.js")); });
 let INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, hasInlineMath, plotLegendCurves, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters; __bind(() => { ({ INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, hasInlineMath, plotLegendCurves, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } = __require("src/core/model.js")); });
 let TIMING_ARROWHEAD, arrowheadEnds, curvedArrowGeometry, defaultArrowhead, polylineArrowheads; __bind(() => { ({ TIMING_ARROWHEAD, arrowheadEnds, curvedArrowGeometry, defaultArrowhead, polylineArrowheads } = __require("src/core/line-style.js")); });
 let hiddenSupplyBarLabels, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js")); });
@@ -40745,6 +40795,7 @@ let cursorLayout; __bind(() => { ({ cursorLayout } = __require("src/core/plot-cu
 let plotSpec; __bind(() => { ({ plotSpec } = __require("src/core/plot-spec.js")); });
 let mathRuns; __bind(() => { ({ mathRuns } = __require("src/core/math-text.js")); });
 let joinSegments, stackOutline, stackedBoxes, wireEchoes; __bind(() => { ({ joinSegments, stackOutline, stackedBoxes, wireEchoes } = __require("src/core/box-stack.js")); });
+
 
 
 
@@ -41053,50 +41104,6 @@ function italicCorrection(before, after) {
   return ITALIC_CORRECTION[letter] || 0;
 }
 
-// TeX sets lowercase Greek in math italic (an <mi> default) and uppercase
-// Greek upright, which needs the explicit variant.
-const GREEK_LOWER = {
-  alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ϵ', varepsilon: 'ε',
-  zeta: 'ζ', eta: 'η', theta: 'θ', vartheta: 'ϑ', iota: 'ι', kappa: 'κ',
-  lambda: 'λ', mu: 'μ', nu: 'ν', xi: 'ξ', pi: 'π', varpi: 'ϖ', rho: 'ρ',
-  varrho: 'ϱ', sigma: 'σ', varsigma: 'ς', tau: 'τ', upsilon: 'υ', phi: 'ϕ',
-  varphi: 'φ', chi: 'χ', psi: 'ψ', omega: 'ω',
-};
-const GREEK_UPPER = {
-  Gamma: 'Γ', Delta: 'Δ', Theta: 'Θ', Lambda: 'Λ', Xi: 'Ξ', Pi: 'Π',
-  Sigma: 'Σ', Upsilon: 'Υ', Phi: 'Φ', Psi: 'Ψ', Omega: 'Ω',
-};
-
-/** A short TeX phrase as label markup, for places that draw labels but not
- * math: $\phi_1$ becomes ϕ_{1}. Anything else is returned as it is. */
-function texToLabelMarkup(source) {
-  const text = String(source ?? '').trim();
-  if (!(text.length >= 2 && text.startsWith('$') && text.endsWith('$'))) return text;
-  return stripMathDelimiters(text)
-    // An overbar (a complementary phase) as a combining overline on each
-    // character under it, markup left as it is.
-    .replace(/\\(?:overline|bar)\{((?:[^{}]|\{[^{}]*\})*)\}/g, (_, inner) => inner.replace(/\\([A-Za-z]+)/g, (__, name) => GREEK_LOWER[name] || GREEK_UPPER[name] || name)
-      .replace(/([_^])([^{])/g, '$1{$2}').replace(/[^_^{}]/g, (ch) => `${ch}\u0305`))
-    .replace(/\\(?:mathrm|text)\{([^{}]*)\}/g, '$1')
-    .replace(/\\,|\\ /g, ' ')
-    .replace(/\\([A-Za-z]+)/g, (_, name) => GREEK_LOWER[name] || GREEK_UPPER[name] || name)
-    .replace(/([_^])([^{])/g, '$1{$2}');
-}
-
-/** Short TeX or label markup as readable plain text, for menus and
- * messages: $\phi_{1}$ reads ϕ1, V_{BN} reads VBN. */
-function plainTexText(source) {
-  return stripMathDelimiters(source)
-    // An overbar (a complementary phase, $\overline{\phi_1}$) as a combining
-    // overline over each character it covers: ϕ̅1̅.
-    .replace(/\\(?:overline|bar)\{((?:[^{}]|\{[^{}]*\})*)\}/g, (_, inner) => [...plainTexText(inner)].map((ch) => `${ch}\u0305`).join(''))
-    .replace(/\\(?:mathrm|text)\{([^{}]*)\}/g, '$1')
-    .replace(/\\,|\\ /g, ' ')
-    .replace(/\\([A-Za-z]+)/g, (_, name) => GREEK_LOWER[name] || GREEK_UPPER[name] || name)
-    .replace(/[_^]\{([^}]*)\}/g, '$1')
-    .replace(/[_^{}]/g, '');
-}
-
 // TeX Appendix G rule 18a: when the nucleus is a single character, the script
 // shift ignores that character's own height and depth, so `g_m` and `r_o` set
 // their subscripts on one line. MathML instead drops a subscript clear of a
@@ -41105,6 +41112,8 @@ function plainTexText(source) {
 // Zeroing the metric each shift is measured from restores TeX's rule; mpadded
 // changes only the reported box, so the glyph itself is untouched.
 const SINGLE_CHARACTER = /^<m[in](?: [^>]*)?>(?:[^<&]|&[a-z]+;|&#\d+;)<\/m[in]>$/;
+
+
 
 // A provenance wrapper (see the `\pv` branch below) must not hide the nucleus
 // it groups: the padding belongs on the character, the `data-node` attribute
@@ -42881,6 +42890,8 @@ function editorOverlay(circuit, opts = {}) {
   return parts.join('\n');
 }
 
+__exports.plainTexText = plainTexText;
+__exports.texToLabelMarkup = texToLabelMarkup;
 __exports.BEAT_DIM_INK = BEAT_DIM_INK;
 __exports.BEAT_FADE_INK = BEAT_FADE_INK;
 __exports.mathCells = mathCells;
@@ -47115,6 +47126,98 @@ function mirrorEdit(before, circuit, axis) {
   return done;
 }
 
+};
+
+__modules["src/core/tex-markup.js"] = function (__require, __exports) {
+__exports.stripMathDelimiters = stripMathDelimiters;
+__exports.texToLabelMarkup = texToLabelMarkup;
+__exports.plainTexText = plainTexText;
+__exports.plotTextMarkup = plotTextMarkup;
+/**
+ * Short TeX as plot and label markup (`_{}`, `^{}`, letters and symbols as
+ * characters), for the texts drawn without a math typesetter: a plot's axis
+ * titles and marker labels, menus, messages. Imports nothing, so the model
+ * and the plot modules can use it alike.
+ */
+
+/** Strip the common inline/display math delimiters from an equation label.
+ * The delimiters are retained in the editable source so users can see and
+ * continue editing ordinary TeX, but never become visible glyphs. */
+function stripMathDelimiters(value) {
+  const source = String(value ?? '').trim();
+  if (source.length >= 4 && source.startsWith('$$') && source.endsWith('$$')) return source.slice(2, -2).trim();
+  if (source.length >= 2 && source.startsWith('$') && source.endsWith('$')) return source.slice(1, -1).trim();
+  return source;
+}
+
+// TeX sets lowercase Greek in math italic (an <mi> default) and uppercase
+// Greek upright, which needs the explicit variant.
+const GREEK_LOWER = {
+  alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ϵ', varepsilon: 'ε',
+  zeta: 'ζ', eta: 'η', theta: 'θ', vartheta: 'ϑ', iota: 'ι', kappa: 'κ',
+  lambda: 'λ', mu: 'μ', nu: 'ν', xi: 'ξ', pi: 'π', varpi: 'ϖ', rho: 'ρ',
+  varrho: 'ϱ', sigma: 'σ', varsigma: 'ς', tau: 'τ', upsilon: 'υ', phi: 'ϕ',
+  varphi: 'φ', chi: 'χ', psi: 'ψ', omega: 'ω',
+};
+const GREEK_UPPER = {
+  Gamma: 'Γ', Delta: 'Δ', Theta: 'Θ', Lambda: 'Λ', Xi: 'Ξ', Pi: 'Π',
+  Sigma: 'Σ', Upsilon: 'Υ', Phi: 'Φ', Psi: 'Ψ', Omega: 'Ω',
+};
+
+/** TeX's symbol commands that read as one character. */
+const TEX_SYMBOLS = {
+  parallel: '∥', cdot: '·', times: '×', pm: '±', mp: '∓', div: '÷',
+  infty: '∞', approx: '≈', le: '≤', ge: '≥', leq: '≤', geq: '≥', neq: '≠', ne: '≠', to: '→', gg: '≫',
+  ll: '≪', equiv: '≡', propto: '∝', partial: '∂', sim: '∼', lesssim: '≲', gtrsim: '≳',
+  degree: '°', circ: '∘', ldots: '…', cdots: '⋯', prime: '′', sqrt: '√', angle: '∠', nabla: '∇',
+  rightarrow: '→', leftarrow: '←', leftrightarrow: '↔', uparrow: '↑', downarrow: '↓',
+};
+
+const symbol = (name) => GREEK_LOWER[name] || GREEK_UPPER[name] || TEX_SYMBOLS[name] || name;
+
+/** A short TeX phrase as label markup, for places that draw labels but not
+ * math: $\phi_1$ becomes ϕ_{1}, $2\cdot f_s$ 2·f_{s}. Anything else is
+ * returned as it is. */
+function texToLabelMarkup(source) {
+  const text = String(source ?? '').trim();
+  if (!(text.length >= 2 && text.startsWith('$') && text.endsWith('$'))) return text;
+  return stripMathDelimiters(text)
+    // An overbar (a complementary phase) as a combining overline on each
+    // character under it, markup left as it is.
+    .replace(/\\(?:overline|bar)\{((?:[^{}]|\{[^{}]*\})*)\}/g, (_, inner) => inner.replace(/\\([A-Za-z]+)/g, (__, name) => symbol(name))
+      .replace(/([_^])([^{])/g, '$1{$2}').replace(/[^_^{}]/g, (ch) => `${ch}\u0305`))
+    .replace(/\\(?:mathrm|text|operatorname)\{([^{}]*)\}/g, '$1')
+    .replace(/\\[,;: ]/g, ' ').replace(/\\!/g, '')
+    .replace(/\\([A-Za-z]+) ?/g, (_, name) => symbol(name))
+    .replace(/\\([{}$%&#_])/g, '$1')
+    .replace(/([_^])([^{])/g, '$1{$2}');
+}
+
+/** Short TeX or label markup as readable plain text, for menus and
+ * messages: $\phi_{1}$ reads ϕ1, V_{BN} reads VBN. */
+function plainTexText(source) {
+  return stripMathDelimiters(source)
+    // An overbar (a complementary phase, $\overline{\phi_1}$) as a combining
+    // overline over each character it covers: ϕ̅1̅.
+    .replace(/\\(?:overline|bar)\{((?:[^{}]|\{[^{}]*\})*)\}/g, (_, inner) => [...plainTexText(inner)].map((ch) => `${ch}\u0305`).join(''))
+    .replace(/\\(?:mathrm|text|operatorname)\{([^{}]*)\}/g, '$1')
+    .replace(/\\[,;: ]/g, ' ').replace(/\\!/g, '')
+    .replace(/\\([A-Za-z]+) ?/g, (_, name) => symbol(name))
+    .replace(/[_^]\{([^}]*)\}/g, '$1')
+    .replace(/[_^{}]/g, '');
+}
+
+/** A plot text with each `$...$` in it as label markup (texToLabelMarkup):
+ *  `Gain $A_v$ (dB)` reads Gain A_{v} (dB); `\$` is a dollar sign. */
+function plotTextMarkup(text) {
+  const source = String(text ?? '');
+  if (!source.includes('$')) return source;
+  return source.replace(/(?<!\\)\$\$?((?:[^$\\]|\\.)+?)\$\$?/g, (_, tex) => texToLabelMarkup(`$${tex}$`)).replace(/\\\$/g, '$');
+}
+
+__exports.GREEK_LOWER = GREEK_LOWER;
+__exports.GREEK_UPPER = GREEK_UPPER;
+__exports.TEX_SYMBOLS = TEX_SYMBOLS;
 };
 
 __modules["src/core/tidy.js"] = function (__require, __exports) {
@@ -64770,7 +64873,7 @@ let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js
 let MAX_DATA_POINTS, MAX_PLOT_EXTRA, normalizePlot; __bind(() => { ({ MAX_DATA_POINTS, MAX_PLOT_EXTRA, normalizePlot } = __require("src/core/model.js")); });
 let COLOR_PALETTE; __bind(() => { ({ COLOR_PALETTE } = __require("src/core/style.js")); });
 let ownTraceCount, plotSpec; __bind(() => { ({ ownTraceCount, plotSpec } = __require("src/core/plot-spec.js")); });
-let MAX_PLOT_CURSORS, cursorCurves, cursorNumber, cursorReadings, cursorValue; __bind(() => { ({ MAX_PLOT_CURSORS, cursorCurves, cursorNumber, cursorReadings, cursorValue } = __require("src/core/plot-cursors.js")); });
+let MAX_CURSOR_LABEL, MAX_PLOT_CURSORS, cursorCurves, cursorNumber, cursorReadings, cursorValue; __bind(() => { ({ MAX_CURSOR_LABEL, MAX_PLOT_CURSORS, cursorCurves, cursorNumber, cursorReadings, cursorValue } = __require("src/core/plot-cursors.js")); });
 let plainTex; __bind(() => { ({ plainTex } = __require("src/core/bode-figure.js")); });
 let createPlotView; __bind(() => { ({ createPlotView } = __require("src/web/plot-view.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
@@ -65011,6 +65114,8 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, 
         onchange: (ev) => { const v = cursorValue(ev.target.value); if (v === null) { ev.target.setAttribute('aria-invalid', 'true'); return; } ev.target.removeAttribute('aria-invalid'); setCursor(i, { ...draft.cursors[i], [axis]: v }); refreshCursors(); } });
       const trace = cursor.kind === 'point' ? el('select', { class: 'data-plot-marker-trace', 'aria-label': 'Point marker trace', onchange: (ev) => { setCursor(i, { ...draft.cursors[i], trace: Number(ev.target.value) }); refreshCursors(); } },
         curves.map((c) => el('option', { value: String(c.trace), text: plainTex(c.label) || `Trace ${c.trace + 1}`, selected: c.trace === cursor.trace }))) : null;
+      const name = el('input', { type: 'text', class: 'data-plot-marker-label', value: cursor.label || '', placeholder: 'Label', maxlength: String(MAX_CURSOR_LABEL), 'aria-label': `${MARKER_NAMES[cursor.kind]} marker label`, spellcheck: 'false',
+        onchange: (ev) => { const { label: _label, ...rest } = draft.cursors[i]; const text = ev.target.value.trim(); setCursor(i, text ? { ...rest, label: text } : rest); refreshCursors(); } });
       const values = el('input', { type: 'checkbox', class: 'data-plot-marker-values', 'aria-label': `${MARKER_NAMES[cursor.kind]} marker values`,
         onchange: (ev) => { const { values: _values, ...rest } = draft.cursors[i]; setCursor(i, ev.target.checked ? rest : { ...rest, values: false }); } });
       values.checked = cursor.values !== false;
@@ -65019,7 +65124,7 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, 
       return el('div', { class: 'data-plot-trace data-plot-marker' }, [
         el('span', { class: 'data-plot-marker-kind', text: MARKER_NAMES[cursor.kind] }),
         ...(trace ? [trace] : []),
-        el('span', { class: 'data-plot-marker-axis', text: `${axis} =` }), field,
+        el('span', { class: 'data-plot-marker-axis', text: `${axis} =` }), field, name,
         el('span', { class: 'data-plot-marker-reads', text: reads }),
         el('label', { class: 'data-plot-check' }, [values, ' Values']),
         el('button', { type: 'button', class: 'data-plot-trace-remove', text: '×', title: 'Remove', 'aria-label': `Remove ${MARKER_NAMES[cursor.kind].toLowerCase()} marker`,
@@ -87263,7 +87368,7 @@ __exports.createPlotView = createPlotView;
 __exports.linkPlots = linkPlots;
 let mathRuns; __bind(() => { ({ mathRuns } = __require("src/core/math-text.js")); });
 let axisTicks, fitRange, logMinorGrid, fromU, thinSeries, toU, valueAt, zoomAbout, zoomAxes; __bind(() => { ({ axisTicks, fitRange, logMinorGrid, fromU, thinSeries, toU, valueAt, zoomAbout, zoomAxes } = __require("src/core/plot-scale.js")); });
-let cursorCurves, cursorLayout, cursorNumber, nearestCurve; __bind(() => { ({ cursorCurves, cursorLayout, cursorNumber, nearestCurve } = __require("src/core/plot-cursors.js")); });
+let cursorCurves, cursorLayout, cursorNumber, cursorTitleRow, nearestCurve; __bind(() => { ({ cursorCurves, cursorLayout, cursorNumber, cursorTitleRow, nearestCurve } = __require("src/core/plot-cursors.js")); });
 /**
  * The one interactive plot every analysis view uses (responses, steps,
  * swing, root locus, loop gain, Bode, the optimizer's run, the
@@ -87376,7 +87481,9 @@ function createPlotView({ height = 230, fill = false, aspect = null, maxHeight =
 
   const scaleX = () => spec?.x.scale || 'linear';
   const scaleY = () => spec?.y.scale || 'linear';
-  const pane = () => ({ x: margin.left, y: margin.top, w: Math.max(10, size.w - margin.left - margin.right), h: Math.max(10, size.h - margin.top - margin.bottom) });
+  // A vertical marker's label takes a row above the plot.
+  const top = () => margin.top + (cursorTitleRow(spec?.cursors) ? 15 : 0);
+  const pane = () => ({ x: margin.left, y: top(), w: Math.max(10, size.w - margin.left - margin.right), h: Math.max(10, size.h - top() - margin.bottom) });
   // On a log y axis a value at or under zero is a gap.
   const uY = (y) => (y === null || scaleY() === 'linear' ? y : y > 0 ? Math.log10(y) : null);
   const uPoints = (series) => series.points.map(([x, y]) => [toU(scaleX(), x), uY(y)]).filter(([u]) => Number.isFinite(u));
@@ -91751,14 +91858,14 @@ async function updatePlots() {
   const sweeps = boxes.filter((box) => box.plot.kind === 'data');
   for (const [i, box] of sweeps.entries()) {
     logLine(`Updating plots: running sweep ${i + 1} of ${sweeps.length}...`);
-    const traces = await sweepPlotUpdate(box.plot, () => circuit !== editor.circuit);
+    const update = await sweepPlotUpdate(box.plot, () => circuit !== editor.circuit);
     if (circuit !== editor.circuit) return;
-    if (traces) swept.set(box, traces);
+    if (update) swept.set(box, update);
   }
   const updates = [];
   const skipped = [];
   for (const box of boxes) {
-    const update = box.plot.kind === 'data' ? (swept.has(box) ? { traces: swept.get(box) } : null) : plotUpdate(box.plot);
+    const update = box.plot.kind === 'data' ? (swept.get(box) || null) : plotUpdate(box.plot);
     if (update) updates.push({ box, ...update });
     else skipped.push(box);
   }
@@ -91773,7 +91880,7 @@ async function updatePlots() {
     for (const update of updates) {
       if (update.traces) {
         // A sweep plot keeps its axes too; its sweep's entries are TeX.
-        const entries = replaceDataPlotTraces(circuit, update.box, { traces: update.traces }, { math: update.box.plot.sweep.count });
+        const entries = replaceDataPlotTraces(circuit, update.box, { traces: update.traces, ...(update.y ? { y: update.y } : {}) }, { math: update.box.plot.sweep.count });
         if (entries.length) written.push({ ids: entries.map((label) => label.id), left: Math.min(...entries.map((l) => l.bbox().x)), top: Math.min(...entries.map((l) => l.bbox().y)) });
         continue;
       }
@@ -94055,11 +94162,12 @@ __exports.sweepPlotUpdate = sweepPlotUpdate;
 __exports.showSweep = showSweep;
 __exports.installSweepPlot = installSweepPlot;
 let TRACE_COLORS, bandEdges, diagramSymbols, hasSignalFlow, signalFlowGraph; __bind(() => { ({ TRACE_COLORS, bandEdges, diagramSymbols, hasSignalFlow, signalFlowGraph } = __require("src/core/analysis/signal-flow.js")); });
-let simulatedMeasures, sweepValues; __bind(() => { ({ simulatedMeasures, sweepValues } = __require("src/core/analysis/spectrum-run.js")); });
+let simulatedMeasures, sweepLabels, sweepValues; __bind(() => { ({ simulatedMeasures, sweepLabels, sweepValues } = __require("src/core/analysis/spectrum-run.js")); });
 let swingTestFrequency; __bind(() => { ({ swingTestFrequency } = __require("src/core/analysis/optimize.js")); });
 let normalizePlot; __bind(() => { ({ normalizePlot } = __require("src/core/model.js")); });
 let placeDataPlot; __bind(() => { ({ placeDataPlot } = __require("src/core/data-plot.js")); });
 let plotSpec; __bind(() => { ({ plotSpec } = __require("src/core/plot-spec.js")); });
+let plainTex; __bind(() => { ({ plainTex } = __require("src/core/bode-figure.js")); });
 let plotsBusy; __bind(() => { ({ plotsBusy } = __require("src/web/plots-window.js")); });
 let afterPaint; __bind(() => { ({ afterPaint } = __require("src/web/busy-indicator.js")); });
 let startWorker; __bind(() => { ({ startWorker } = __require("src/web/worker-thread.js")); });
@@ -94086,6 +94194,7 @@ let createPlotView; __bind(() => { ({ createPlotView } = __require("src/web/plot
  * them again (sweepPlotUpdate). What it sweeps, how, and what it shows
  * are saved with the design (`Circuit#windows.sweep`).
  */
+
 
 
 
@@ -94134,7 +94243,7 @@ function typedNumber(text) {
 const sweepable = () => diagramSymbols(editor.circuit).filter((name) => !Object.hasOwn(api?.links() || {}, name));
 
 /** The measures every run gives, before the nets' peaks. */
-const MEASURES = [['sndr', 'SNDR in band (dB)'], ['noise', 'Noise in band (dBFS)'], ['tone', 'Output tone (dBFS)']];
+const MEASURES = [['sndr', 'SNDR in band', 'dB'], ['noise', 'Noise in band', 'dBFS'], ['tone', 'Output tone', 'dBFS']];
 
 /** The view's element: what it sweeps, its stimulus, Sweep, the plot, the
  *  measures, and Annotate. */
@@ -94221,11 +94330,12 @@ function shownMeasures() {
 }
 
 /** Every measure a sweep's runs give: the three, then the peaks of the
- *  nets that swing. */
+ *  nets that swing. Each `[key, label, { name, unit }]`, the label its
+ *  name with its unit (TeX). */
 function measureList(of = result) {
   // The nets that swing: the states, the quantizers' inputs, the output (as the Swing view shows first).
-  const peaks = (of?.signals || []).filter((s) => ['state', 'quantizer-input', 'output'].includes(s.role)).map((s) => [`peak:${s.key}`, `${s.name}\\text{ peak (dBFS)}`]);
-  return [...MEASURES.map(([key, text]) => [key, `\\text{${text}}`]), ...peaks];
+  const peaks = (of?.signals || []).filter((s) => ['state', 'quantizer-input', 'output'].includes(s.role)).map((s) => [`peak:${s.key}`, `${s.name}\\text{ peak}`, 'dBFS']);
+  return [...MEASURES.map(([key, text, unit]) => [key, `\\text{${text}}`, unit]), ...peaks].map(([key, name, unit]) => [key, `${name}\\text{ (${unit})}`, { name, unit }]);
 }
 
 /** The sweep shown as a data plot. */
@@ -94236,30 +94346,31 @@ const sweepPlot = () => sweepPlotOf(result, held, shownMeasures());
 function sweepPlotOf(live, held, keys) {
   if (!live?.points.some((p) => p.measures)) return null;
   const shown = new Set(keys);
-  const curves = (of, i, note = '') => measureList(live).filter(([key]) => shown.has(key)).map(([key, label], k) => ({
-    label: `${label}${note}`,
-    color: TRACE_COLORS[(i + k) % TRACE_COLORS.length],
-    points: of.points.filter((p) => Number.isFinite(p.measures?.[key])).map((p) => [p.x, p.measures[key]]),
-  }));
+  const measures = measureList(live).filter(([key]) => shown.has(key));
   // Held sweeps of the same coefficient first, each named by what differs
   // from the sweep shown (the numbers it ran at).
   const same = held.filter((h) => h.result.name === live.name);
   // The live sweep names its own numbers for those its held ones name.
   const named = same.flatMap((h) => heldChanges(h, live));
-  const traces = [
-    ...same.flatMap((h, n) => curves(h.result, shown.size * (n + 1), heldNote(h, live))),
-    ...curves(live, 0, liveNote(live, named)),
-  ].filter((trace) => trace.points.length > 1);
+  const runs = [...same.map((h) => ({ of: h.result, notes: heldNotes(h, live), held: true })), { of: live, notes: liveNotes(live, named) }];
+  // A unit all the measures share goes on the axis (sweepLabels), as
+  // plain text: an axis takes no TeX but sub- and superscripts.
+  const { y, labels } = sweepLabels(measures.map(([, , m]) => m), runs);
+  const order = [...runs.keys()].slice(0, -1).map((n) => n + 1).concat(0);
+  const traces = runs.flatMap((run, r) => measures.map(([key], k) => ({
+    label: labels[r][k],
+    color: TRACE_COLORS[(shown.size * order[r] + k) % TRACE_COLORS.length],
+    points: run.of.points.filter((p) => Number.isFinite(p.measures?.[key])).map((p) => [p.x, p.measures[key]]),
+  }))).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   // The coefficient as an axis names it: a_r as a sub-scripted r.
-  return normalizePlot({ kind: 'data', x: { label: live.name.replace(/_([A-Za-z0-9]+)$/, '_{$1}'), scale: live.log ? 'log' : 'linear' }, y: { label: 'dB', scale: 'linear' }, traces });
+  return normalizePlot({ kind: 'data', x: { label: live.name.replace(/_([A-Za-z0-9]+)$/, '_{$1}'), scale: live.log ? 'log' : 'linear' }, y: { label: plainTex(y), scale: 'linear' }, traces });
 }
 
-/** A held sweep's note: the coefficients (but the swept one) and the
- *  amplitude it ran at that differ from the live sweep's, or "held". */
-function heldNote(h, live) {
-  const notes = heldChanges(h, live).map((name) => (name === AMPLITUDE ? `${h.amplitude}\\ \\text{dBFS}` : `${name} = ${Number(h.values[name].toPrecision(4))}`));
-  return notes.length ? `,\\ ${notes.join(',\\ ')}` : '\\ \\text{(held)}';
+/** A held sweep's notes: the coefficients (but the swept one) and the
+ *  amplitude it ran at that differ from the live sweep's. */
+function heldNotes(h, live) {
+  return heldChanges(h, live).map((name) => (name === AMPLITUDE ? `${h.amplitude}\\ \\text{dBFS}` : `${name} = ${Number(h.values[name].toPrecision(4))}`));
 }
 
 const AMPLITUDE = '\0amplitude';
@@ -94272,11 +94383,10 @@ function heldChanges(h, live) {
   return h.amplitude !== live.amplitude ? [...names, AMPLITUDE] : names;
 }
 
-/** The live sweep's note: its numbers for `names`. */
-function liveNote(live, names) {
+/** The live sweep's notes: its numbers for `names`. */
+function liveNotes(live, names) {
   const now = live.values;
-  const notes = [...new Set(names)].map((name) => (name === AMPLITUDE ? `${live.amplitude}\\ \\text{dBFS}` : `${name} = ${Number((now[name] ?? 1).toPrecision(4))}`));
-  return notes.length ? `,\\ ${notes.join(',\\ ')}` : '';
+  return [...new Set(names)].map((name) => (name === AMPLITUDE ? `${live.amplitude}\\ \\text{dBFS}` : `${name} = ${Number((now[name] ?? 1).toPrecision(4))}`));
 }
 
 /** Hold the sweep shown: a copy that stays as the sliders and the next sweep move. */
@@ -94454,8 +94564,9 @@ async function measureAll(asks, stale) {
 /**
  * A sweep plot (`plot.sweep`) run again: each of its sweeps in turn, the
  * held ones at the coefficients they ran at, the live one at those now,
- * over the same range with the same sine. Resolves to the plot's new
- * traces (the sweep's, colored as they were, then those added since), or
+ * over the same range with the same sine. Resolves to `{ traces, y? }`:
+ * the plot's new traces (the sweep's, colored as they were, then those
+ * added since) and, for a plot whose y axis is the old "dB", its new one; or
  * null when the diagram no longer runs or no longer has what it plotted;
  * null too once `stale()`.
  */
@@ -94484,7 +94595,10 @@ async function sweepPlotUpdate(plot, stale = () => false) {
   const next = sweepPlotOf(live, runs.slice(0, -1).map((r) => ({ result: r, values: r.values, amplitude: r.amplitude })), spec.measures);
   if (!next || next.traces.length !== spec.count) return null;
   const own = plot.traces.slice(0, spec.count);
-  return [...next.traces.map((trace, i) => ({ ...trace, color: own[i]?.color || trace.color })), ...plot.traces.slice(spec.count)];
+  const traces = [...next.traces.map((trace, i) => ({ ...trace, color: own[i]?.color || trace.color })), ...plot.traces.slice(spec.count)];
+  // A plot from before the unit went on the axis had "dB" there: it takes
+  // the axis its names now leave the unit to.
+  return { traces, ...(plot.y?.label === 'dB' && next.y.label !== 'dB' ? { y: { ...plot.y, label: next.y.label } } : {}) };
 }
 
 /** The view was shown: its controls, and the last sweep. */

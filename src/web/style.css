@@ -7053,6 +7053,7 @@ details.analysis-options > * + * {
 .data-plot-marker-kind { min-width: 5.5em; }
 .data-plot-marker-axis { color: var(--text-dim); }
 .data-plot-trace input.data-plot-marker-value { flex: 0 1 8em; min-width: 5em; font-family: var(--font-mono); }
+.data-plot-trace input.data-plot-marker-label { flex: 0 1 8em; min-width: 4em; }
 .data-plot-marker-trace { max-width: 12em; }
 .data-plot-marker-reads { flex: 1; overflow: hidden; color: var(--text-dim); font: var(--text-sm) var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
 .data-plot-trace-move { min-width: 24px; padding: 0 4px; }

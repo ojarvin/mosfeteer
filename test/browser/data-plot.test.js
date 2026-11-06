@@ -152,6 +152,10 @@ describe('data plot', { skip: browserSkip() }, () => {
     await h.evaluate(`document.querySelectorAll('.data-plot-marker-values')[1].click()`);
     await h.settle();
     assert.ok(await values() < shown);
+    // A label typed for the vertical line shows over the plot.
+    await h.evaluate(`(() => { const f = document.querySelectorAll('.data-plot-marker-label')[0]; f.value = 'f_{c}'; f.dispatchEvent(new Event('change')); })()`);
+    await h.settle();
+    assert.ok(await h.evaluate(`[...document.querySelectorAll('.data-plot-dialog .plot-marker-value')].some((t) => t.textContent.normalize('NFKC') === 'fc')`));
     // Typing M in a field types it.
     assert.equal(await h.evaluate(`(() => { const f = document.querySelector('.data-plot-marker-value'); const e = new KeyboardEvent('keydown', { key: 'm', bubbles: true, cancelable: true }); f.dispatchEvent(e); return e.defaultPrevented; })()`), false);
     await h.evaluate(`${button('.data-plot-dialog', 'Apply')}.click()`);
@@ -160,6 +164,7 @@ describe('data plot', { skip: browserSkip() }, () => {
     assert.deepEqual(after.plot.cursors.map((c) => c.kind), ['vertical', 'point', 'horizontal']);
     assert.equal(after.plot.cursors[0].x, 100);
     assert.deepEqual(after.plot.cursors.map((c) => c.values), [undefined, false, undefined]);
+    assert.deepEqual(after.plot.cursors.map((c) => c.label), ['f_{c}', undefined, undefined]);
     assert.ok(await h.evaluate(`document.querySelectorAll('#canvas .plot-annotation .plot-cursor').length`) >= 1);
     await h.key('z', { ctrlKey: true });
     assert.equal((await plot()).plot.cursors, undefined);

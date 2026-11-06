@@ -10,14 +10,18 @@
  * A marker: `{ kind: 'point', trace, x }` (`trace` a spec series' `trace`
  * id: the plot's own traces from 0, then those added from files),
  * `{ kind: 'vertical', x }`, `{ kind: 'horizontal', y }`, in the data's
- * own units, each with `values: false` when its numbers stay off.
+ * own units, each with `values: false` when its numbers stay off and a
+ * `label` when it has one: a vertical line's above the plot, a horizontal
+ * one's at its right end, a point's before its numbers.
  */
 
 import { fromU, toU } from './plot-scale.js';
 import { calculate } from './calculator.js';
+import { plotTextMarkup } from './tex-markup.js';
 
 export const MAX_PLOT_CURSORS = 8;
 export const CURSOR_KINDS = ['point', 'vertical', 'horizontal'];
+export const MAX_CURSOR_LABEL = 60;
 
 const precise = (v) => Number(v.toPrecision(9));
 
@@ -27,7 +31,8 @@ const precise = (v) => Number(v.toPrecision(9));
 export function cursorsOf(plot) {
   const allOff = plot?.cursorValues === false;
   const cursors = (Array.isArray(plot?.cursors) ? plot.cursors : []).filter((c) => CURSOR_KINDS.includes(c?.kind)).slice(0, MAX_PLOT_CURSORS).flatMap((c) => {
-    const off = allOff || c.values === false ? { values: false } : {};
+    const name = typeof c.label === 'string' ? c.label.trim().slice(0, MAX_CURSOR_LABEL) : '';
+    const off = { ...(allOff || c.values === false ? { values: false } : {}), ...(name ? { label: name } : {}) };
     if (c.kind === 'horizontal') return Number.isFinite(c.y) ? [{ kind: 'horizontal', y: precise(c.y), ...off }] : [];
     if (!Number.isFinite(c.x)) return [];
     if (c.kind === 'vertical') return [{ kind: 'vertical', x: precise(c.x), ...off }];
@@ -95,6 +100,9 @@ export function curveCrossings(curve, v, max = 3) {
   }
   return out;
 }
+
+/** Whether a vertical line's label takes a row above the plot. */
+export const cursorTitleRow = (cursors) => !!cursors?.some((c) => c.kind === 'vertical' && c.label);
 
 /** A typed marker place: a number or an expression the calculator takes
  *  (`1/64`, `2.7k/2.24M`); null when it is neither or not finite. */
@@ -183,6 +191,16 @@ function segmentHitsBox(a, b, box) {
   return Math.max(...ys) >= box.y && Math.min(...ys) <= y1;
 }
 
+/** A text's estimated width at `size`: in the math font a figure is half
+ *  an em; markup (^{} _{}) takes no room of its own, and a raised or
+ *  lowered part is two thirds the size. */
+function textWidth(source, size) {
+  const text = plotTextMarkup(source);
+  const small = [...text.matchAll(/[_^]\{([^}]*)\}/g)].reduce((n, m) => n + m[1].length, 0);
+  const base = text.replace(/[_^]\{[^}]*\}/g, '').length;
+  return 0.52 * size * (base + 0.68 * small);
+}
+
 /**
  * Small texts placed beside their points, none over another or over a
  * point, inside `pane`, and as few as can be over the traces: `labels`
@@ -195,18 +213,12 @@ function segmentHitsBox(a, b, box) {
  * text, box, leader? }]`: a label moved out a row or more has a leader,
  * `{ x1, y1, x2, y2 }`, from its point to the nearest of its box.
  */
-export function placeCursorLabels(labels, pane, { size = 10, gap = 3, curves = [] } = {}) {
+export function placeCursorLabels(labels, pane, { size = 10, gap = 3, curves = [], avoid = [] } = {}) {
   const placed = [];
-  // In the math font a figure is half an em; markup (^{}) takes no room of
-  // its own, and a superscript is two thirds the size.
-  const width = (text) => {
-    const sup = [...text.matchAll(/\^\{([^}]*)\}/g)].reduce((n, m) => n + m[1].length, 0);
-    const base = text.replace(/\^\{[^}]*\}/g, '').length;
-    return 0.52 * size * (base + 0.68 * sup);
-  };
+  const width = (text) => textWidth(text, size);
   const points = labels.map((l) => ({ x: l.x - gap, y: l.y - gap, w: 2 * gap, h: 2 * gap }));
   const overlaps = (b, o) => b.x < o.x + o.w && o.x < b.x + b.w && b.y < o.y + o.h && o.y < b.y + b.h;
-  const clear = (b) => ![...placed.map((p) => p.box), ...points].some((o) => overlaps(b, o));
+  const clear = (b) => ![...placed.map((p) => p.box), ...points, ...avoid].some((o) => overlaps(b, o));
   const inside = (b) => b.x >= pane.x && b.y >= pane.y && b.x + b.w <= pane.x + pane.w && b.y + b.h <= pane.y + pane.h;
   const segments = curves.flatMap((line) => line.slice(1).map((b, i) => [line[i], b]));
   const crossings = (box) => {
@@ -254,12 +266,16 @@ export function placeCursorLabels(labels, pane, { size = 10, gap = 3, curves = [
  * a value, `pane` the plot's area. Returns `{ lines: [{ x1, y1, x2, y2 }],
  * dots: [{ x, y, color }], texts }` (placeCursorLabels's), the lines and
  * dots only those in the pane, the texts of a marker with `values: false`
- * left out, and all of them when `values` is false.
+ * left out, and all of them when `values` is false. A line's label goes
+ * first in the texts: a vertical one's centered over the pane (in the row
+ * the figure leaves above it, cursorTitleRow), a horizontal one's above its
+ * line at the pane's right end; a point's leads its numbers.
  */
 export function cursorLayout(spec, { toPx, pane, size = 10, gap = 3, values = true, cursors = spec?.cursors || [] } = {}) {
   const lines = [];
   const dots = [];
   const labels = [];
+  const names = [];
   const within = (v, low, length) => v >= low - 0.5 && v <= low + length + 0.5;
   for (const reading of cursorReadings(spec, cursors)) {
     const shown = reading.cursor.values !== false;
@@ -267,11 +283,20 @@ export function cursorLayout(spec, { toPx, pane, size = 10, gap = 3, values = tr
       const px = toPx.x(reading.u);
       if (!within(px, pane.x, pane.w)) continue;
       lines.push({ x1: px, y1: pane.y, x2: px, y2: pane.y + pane.h, index: reading.index });
+      if (reading.cursor.label) {
+        const w = textWidth(reading.cursor.label, size);
+        const x = Math.min(Math.max(px - w / 2, pane.x), pane.x + pane.w - w);
+        names.push({ text: reading.cursor.label, box: { x, y: pane.y - gap - size, w, h: size } });
+      }
       if (shown) labels.push({ x: px, y: pane.y + pane.h, text: reading.text });
     } else if (reading.kind === 'horizontal') {
       const py = toPx.y(reading.v);
       if (!within(py, pane.y, pane.h)) continue;
       lines.push({ x1: pane.x, y1: py, x2: pane.x + pane.w, y2: py, index: reading.index });
+      if (reading.cursor.label) {
+        const w = textWidth(reading.cursor.label, size);
+        names.push({ text: reading.cursor.label, box: { x: pane.x + pane.w - gap - w, y: py - gap - size, w, h: size } });
+      }
       if (shown) labels.push({ x: pane.x, y: py, text: reading.text });
     }
     for (const hit of reading.hits) {
@@ -279,14 +304,16 @@ export function cursorLayout(spec, { toPx, pane, size = 10, gap = 3, values = tr
       const y = toPx.y(hit.v);
       if (!within(x, pane.x, pane.w) || !within(y, pane.y, pane.h)) continue;
       dots.push({ x, y, color: hit.color, index: reading.index, point: reading.kind === 'point' });
-      if (shown) labels.push({ x, y, text: hit.text });
+      const name = reading.kind === 'point' ? reading.cursor.label : '';
+      if (shown || name) labels.push({ x, y, text: name && shown ? `${name}: ${hit.text}` : name || hit.text });
     }
   }
   if (!values) return { lines, dots, texts: [] };
+  const titles = names.map(({ text, box }) => ({ x: box.x, y: box.y + 0.82 * box.h, anchor: 'start', text, box }));
   // The traces as drawn, and the marker lines, for the numbers to keep off them.
   const curves = labels.length ? [
     ...cursorCurves(spec).map((curve) => curve.points.filter(([, v]) => v !== null).map(([u, v]) => ({ x: toPx.x(u), y: toPx.y(v) }))),
     ...lines.map((l) => [{ x: l.x1, y: l.y1 }, { x: l.x2, y: l.y2 }]),
   ] : [];
-  return { lines, dots, texts: placeCursorLabels(labels, pane, { size, gap, curves }) };
+  return { lines, dots, texts: [...titles, ...placeCursorLabels(labels, pane, { size, gap, curves, avoid: titles.map((t) => t.box) })] };
 }

@@ -25,7 +25,7 @@
 
 import { mathRuns } from '../core/math-text.js';
 import { axisTicks, fitRange, logMinorGrid, fromU, thinSeries, toU, valueAt, zoomAbout, zoomAxes } from '../core/plot-scale.js';
-import { cursorCurves, cursorLayout, cursorNumber, nearestCurve } from '../core/plot-cursors.js';
+import { cursorCurves, cursorLayout, cursorNumber, cursorTitleRow, nearestCurve } from '../core/plot-cursors.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const MARGIN = { left: 46, right: 12, top: 10, bottom: 24 };
@@ -110,7 +110,9 @@ export function createPlotView({ height = 230, fill = false, aspect = null, maxH
 
   const scaleX = () => spec?.x.scale || 'linear';
   const scaleY = () => spec?.y.scale || 'linear';
-  const pane = () => ({ x: margin.left, y: margin.top, w: Math.max(10, size.w - margin.left - margin.right), h: Math.max(10, size.h - margin.top - margin.bottom) });
+  // A vertical marker's label takes a row above the plot.
+  const top = () => margin.top + (cursorTitleRow(spec?.cursors) ? 15 : 0);
+  const pane = () => ({ x: margin.left, y: top(), w: Math.max(10, size.w - margin.left - margin.right), h: Math.max(10, size.h - top() - margin.bottom) });
   // On a log y axis a value at or under zero is a gap.
   const uY = (y) => (y === null || scaleY() === 'linear' ? y : y > 0 ? Math.log10(y) : null);
   const uPoints = (series) => series.points.map(([x, y]) => [toU(scaleX(), x), uY(y)]).filter(([u]) => Number.isFinite(u));

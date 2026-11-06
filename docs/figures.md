@@ -143,8 +143,14 @@ columns separated by spaces (`src/core/csv-data.js`, `src/core/data-plot.js`,
   takes a typed x or y (a point its trace too): a number or a calculator
   expression (`1/64`, `2.7k/2.24M`). The numbers go small
   beside what they read, clear of one another; a marker's **Values** off
-  leaves its numbers out (its `values: false`). The drawing's plot shows them as the
-  editor does. A point names its trace by id (the plot's own traces from
+  leaves its numbers out (its `values: false`). A marker's optional
+  **Label** (`label`): a vertical line's centered above the plot, which
+  then leaves a row for it; a horizontal line's above it at the plot's
+  right end; a point's before its numbers. The drawing's plot shows them
+  as the editor does.
+- A plot's texts (axis titles, marker labels) take TeX between `$` signs
+  (`$2\cdot f_s$`), drawn as plot markup: letters, Greek, symbols, sub-
+  and superscripts (`src/core/tex-markup.js` `plotTextMarkup`). A point names its trace by id (the plot's own traces from
   0, then those from files), followed when traces move or go; an update
   from the analysis keeps the markers.
 - A renamed trace's legend entry keeps its left edge beside the plot, and

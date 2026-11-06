@@ -21,7 +21,7 @@ import { texToMathML } from '../core/render.js';
 import { MAX_DATA_POINTS, MAX_PLOT_EXTRA, normalizePlot } from '../core/model.js';
 import { COLOR_PALETTE } from '../core/style.js';
 import { ownTraceCount, plotSpec } from '../core/plot-spec.js';
-import { MAX_PLOT_CURSORS, cursorCurves, cursorNumber, cursorReadings, cursorValue } from '../core/plot-cursors.js';
+import { MAX_CURSOR_LABEL, MAX_PLOT_CURSORS, cursorCurves, cursorNumber, cursorReadings, cursorValue } from '../core/plot-cursors.js';
 import { plainTex } from '../core/bode-figure.js';
 import { createPlotView } from './plot-view.js';
 import { editor } from './editor-state.js';
@@ -232,6 +232,8 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, 
         onchange: (ev) => { const v = cursorValue(ev.target.value); if (v === null) { ev.target.setAttribute('aria-invalid', 'true'); return; } ev.target.removeAttribute('aria-invalid'); setCursor(i, { ...draft.cursors[i], [axis]: v }); refreshCursors(); } });
       const trace = cursor.kind === 'point' ? el('select', { class: 'data-plot-marker-trace', 'aria-label': 'Point marker trace', onchange: (ev) => { setCursor(i, { ...draft.cursors[i], trace: Number(ev.target.value) }); refreshCursors(); } },
         curves.map((c) => el('option', { value: String(c.trace), text: plainTex(c.label) || `Trace ${c.trace + 1}`, selected: c.trace === cursor.trace }))) : null;
+      const name = el('input', { type: 'text', class: 'data-plot-marker-label', value: cursor.label || '', placeholder: 'Label', maxlength: String(MAX_CURSOR_LABEL), 'aria-label': `${MARKER_NAMES[cursor.kind]} marker label`, spellcheck: 'false',
+        onchange: (ev) => { const { label: _label, ...rest } = draft.cursors[i]; const text = ev.target.value.trim(); setCursor(i, text ? { ...rest, label: text } : rest); refreshCursors(); } });
       const values = el('input', { type: 'checkbox', class: 'data-plot-marker-values', 'aria-label': `${MARKER_NAMES[cursor.kind]} marker values`,
         onchange: (ev) => { const { values: _values, ...rest } = draft.cursors[i]; setCursor(i, ev.target.checked ? rest : { ...rest, values: false }); } });
       values.checked = cursor.values !== false;
@@ -240,7 +242,7 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, 
       return el('div', { class: 'data-plot-trace data-plot-marker' }, [
         el('span', { class: 'data-plot-marker-kind', text: MARKER_NAMES[cursor.kind] }),
         ...(trace ? [trace] : []),
-        el('span', { class: 'data-plot-marker-axis', text: `${axis} =` }), field,
+        el('span', { class: 'data-plot-marker-axis', text: `${axis} =` }), field, name,
         el('span', { class: 'data-plot-marker-reads', text: reads }),
         el('label', { class: 'data-plot-check' }, [values, ' Values']),
         el('button', { type: 'button', class: 'data-plot-trace-remove', text: '×', title: 'Remove', 'aria-label': `Remove ${MARKER_NAMES[cursor.kind].toLowerCase()} marker`,

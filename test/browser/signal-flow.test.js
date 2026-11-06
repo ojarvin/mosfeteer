@@ -281,11 +281,14 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     await h.until(`!document.querySelector('.plots-window .sweep-run').dataset.running`, 30000);
     // Annotate puts it on the drawing as a data plot over k_1.
     await h.evaluate(`document.querySelector('.plots-window .sweep-annotate').click()`);
-    const plot = await h.evaluate(`${h.module('editor-state.js')}.then((m) => { const b = [...m.editor.circuit.labels.values()].find((l) => l.plot?.kind === 'data' && l.plot.x.label === 'k_{1}'); return b ? { traces: b.plot.traces.map((t) => t.label), points: b.plot.traces[0].points.length, math: m.editor.circuit.plotLegend(b).every((e) => e.math) } : null; })`);
+    const plot = await h.evaluate(`${h.module('editor-state.js')}.then((m) => { const b = [...m.editor.circuit.labels.values()].find((l) => l.plot?.kind === 'data' && l.plot.x.label === 'k_{1}'); return b ? { traces: b.plot.traces.map((t) => t.label), y: b.plot.y.label, points: b.plot.traces[0].points.length, math: m.editor.circuit.plotLegend(b).every((e) => e.math) } : null; })`);
     assert.equal(plot.points, 5);
     assert.equal(plot.traces.length, 4);
     assert.match(plot.traces[0], /k_2 = 2/);
     assert.match(plot.traces[2], /k_2 = 1\.5/);
+    // SNDR (dB) and noise (dBFS) differ in unit: each trace names its own.
+    assert.equal(plot.y, 'dB');
+    assert.match(plot.traces[0], /SNDR in band\}\\text\{ \(dB\)\}/);
     assert.equal(plot.math, true);
     // Update all plots runs its sweeps again: the held one at k_2 = 2, the
     // live one at the coefficients now, over the same range.

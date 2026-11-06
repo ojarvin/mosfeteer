@@ -2,6 +2,7 @@ import { applyTransform, fmt, transformRect, transformToSvg } from './geometry.j
 import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute } from './router.js';
 import { TABLE_RULE_ROOM_EM, escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } from './style.js';
+import { GREEK_LOWER, GREEK_UPPER, plainTexText, plotTextMarkup, texToLabelMarkup } from './tex-markup.js';
 import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, hasInlineMath, plotLegendCurves, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } from './model.js';
 import { TIMING_ARROWHEAD, arrowheadEnds, curvedArrowGeometry, defaultArrowhead, polylineArrowheads } from './line-style.js';
 import { hiddenSupplyBarLabels, supplyBars } from './supply-bars.js';
@@ -306,50 +307,6 @@ function italicCorrection(before, after) {
   return ITALIC_CORRECTION[letter] || 0;
 }
 
-// TeX sets lowercase Greek in math italic (an <mi> default) and uppercase
-// Greek upright, which needs the explicit variant.
-const GREEK_LOWER = {
-  alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ϵ', varepsilon: 'ε',
-  zeta: 'ζ', eta: 'η', theta: 'θ', vartheta: 'ϑ', iota: 'ι', kappa: 'κ',
-  lambda: 'λ', mu: 'μ', nu: 'ν', xi: 'ξ', pi: 'π', varpi: 'ϖ', rho: 'ρ',
-  varrho: 'ϱ', sigma: 'σ', varsigma: 'ς', tau: 'τ', upsilon: 'υ', phi: 'ϕ',
-  varphi: 'φ', chi: 'χ', psi: 'ψ', omega: 'ω',
-};
-const GREEK_UPPER = {
-  Gamma: 'Γ', Delta: 'Δ', Theta: 'Θ', Lambda: 'Λ', Xi: 'Ξ', Pi: 'Π',
-  Sigma: 'Σ', Upsilon: 'Υ', Phi: 'Φ', Psi: 'Ψ', Omega: 'Ω',
-};
-
-/** A short TeX phrase as label markup, for places that draw labels but not
- * math: $\phi_1$ becomes ϕ_{1}. Anything else is returned as it is. */
-export function texToLabelMarkup(source) {
-  const text = String(source ?? '').trim();
-  if (!(text.length >= 2 && text.startsWith('$') && text.endsWith('$'))) return text;
-  return stripMathDelimiters(text)
-    // An overbar (a complementary phase) as a combining overline on each
-    // character under it, markup left as it is.
-    .replace(/\\(?:overline|bar)\{((?:[^{}]|\{[^{}]*\})*)\}/g, (_, inner) => inner.replace(/\\([A-Za-z]+)/g, (__, name) => GREEK_LOWER[name] || GREEK_UPPER[name] || name)
-      .replace(/([_^])([^{])/g, '$1{$2}').replace(/[^_^{}]/g, (ch) => `${ch}\u0305`))
-    .replace(/\\(?:mathrm|text)\{([^{}]*)\}/g, '$1')
-    .replace(/\\,|\\ /g, ' ')
-    .replace(/\\([A-Za-z]+)/g, (_, name) => GREEK_LOWER[name] || GREEK_UPPER[name] || name)
-    .replace(/([_^])([^{])/g, '$1{$2}');
-}
-
-/** Short TeX or label markup as readable plain text, for menus and
- * messages: $\phi_{1}$ reads ϕ1, V_{BN} reads VBN. */
-export function plainTexText(source) {
-  return stripMathDelimiters(source)
-    // An overbar (a complementary phase, $\overline{\phi_1}$) as a combining
-    // overline over each character it covers: ϕ̅1̅.
-    .replace(/\\(?:overline|bar)\{((?:[^{}]|\{[^{}]*\})*)\}/g, (_, inner) => [...plainTexText(inner)].map((ch) => `${ch}\u0305`).join(''))
-    .replace(/\\(?:mathrm|text)\{([^{}]*)\}/g, '$1')
-    .replace(/\\,|\\ /g, ' ')
-    .replace(/\\([A-Za-z]+)/g, (_, name) => GREEK_LOWER[name] || GREEK_UPPER[name] || name)
-    .replace(/[_^]\{([^}]*)\}/g, '$1')
-    .replace(/[_^{}]/g, '');
-}
-
 // TeX Appendix G rule 18a: when the nucleus is a single character, the script
 // shift ignores that character's own height and depth, so `g_m` and `r_o` set
 // their subscripts on one line. MathML instead drops a subscript clear of a
@@ -358,6 +315,8 @@ export function plainTexText(source) {
 // Zeroing the metric each shift is measured from restores TeX's rule; mpadded
 // changes only the reported box, so the glyph itself is untouched.
 const SINGLE_CHARACTER = /^<m[in](?: [^>]*)?>(?:[^<&]|&[a-z]+;|&#\d+;)<\/m[in]>$/;
+
+export { plainTexText, texToLabelMarkup };
 
 // A provenance wrapper (see the `\pv` branch below) must not hide the nucleus
 // it groups: the padding belongs on the character, the `data-node` attribute

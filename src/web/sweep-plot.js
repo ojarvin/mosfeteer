@@ -17,11 +17,12 @@
  */
 
 import { TRACE_COLORS, bandEdges, diagramSymbols, hasSignalFlow, signalFlowGraph } from '../core/analysis/signal-flow.js';
-import { simulatedMeasures, sweepValues } from '../core/analysis/spectrum-run.js';
+import { simulatedMeasures, sweepLabels, sweepValues } from '../core/analysis/spectrum-run.js';
 import { swingTestFrequency } from '../core/analysis/optimize.js';
 import { normalizePlot } from '../core/model.js';
 import { placeDataPlot } from '../core/data-plot.js';
 import { plotSpec } from '../core/plot-spec.js';
+import { plainTex } from '../core/bode-figure.js';
 import { plotsBusy } from './plots-window.js';
 import { afterPaint } from './busy-indicator.js';
 import { startWorker } from './worker-thread.js';
@@ -63,7 +64,7 @@ function typedNumber(text) {
 const sweepable = () => diagramSymbols(editor.circuit).filter((name) => !Object.hasOwn(api?.links() || {}, name));
 
 /** The measures every run gives, before the nets' peaks. */
-const MEASURES = [['sndr', 'SNDR in band (dB)'], ['noise', 'Noise in band (dBFS)'], ['tone', 'Output tone (dBFS)']];
+const MEASURES = [['sndr', 'SNDR in band', 'dB'], ['noise', 'Noise in band', 'dBFS'], ['tone', 'Output tone', 'dBFS']];
 
 /** The view's element: what it sweeps, its stimulus, Sweep, the plot, the
  *  measures, and Annotate. */
@@ -150,11 +151,12 @@ function shownMeasures() {
 }
 
 /** Every measure a sweep's runs give: the three, then the peaks of the
- *  nets that swing. */
+ *  nets that swing. Each `[key, label, { name, unit }]`, the label its
+ *  name with its unit (TeX). */
 function measureList(of = result) {
   // The nets that swing: the states, the quantizers' inputs, the output (as the Swing view shows first).
-  const peaks = (of?.signals || []).filter((s) => ['state', 'quantizer-input', 'output'].includes(s.role)).map((s) => [`peak:${s.key}`, `${s.name}\\text{ peak (dBFS)}`]);
-  return [...MEASURES.map(([key, text]) => [key, `\\text{${text}}`]), ...peaks];
+  const peaks = (of?.signals || []).filter((s) => ['state', 'quantizer-input', 'output'].includes(s.role)).map((s) => [`peak:${s.key}`, `${s.name}\\text{ peak}`, 'dBFS']);
+  return [...MEASURES.map(([key, text, unit]) => [key, `\\text{${text}}`, unit]), ...peaks].map(([key, name, unit]) => [key, `${name}\\text{ (${unit})}`, { name, unit }]);
 }
 
 /** The sweep shown as a data plot. */
@@ -165,30 +167,31 @@ const sweepPlot = () => sweepPlotOf(result, held, shownMeasures());
 function sweepPlotOf(live, held, keys) {
   if (!live?.points.some((p) => p.measures)) return null;
   const shown = new Set(keys);
-  const curves = (of, i, note = '') => measureList(live).filter(([key]) => shown.has(key)).map(([key, label], k) => ({
-    label: `${label}${note}`,
-    color: TRACE_COLORS[(i + k) % TRACE_COLORS.length],
-    points: of.points.filter((p) => Number.isFinite(p.measures?.[key])).map((p) => [p.x, p.measures[key]]),
-  }));
+  const measures = measureList(live).filter(([key]) => shown.has(key));
   // Held sweeps of the same coefficient first, each named by what differs
   // from the sweep shown (the numbers it ran at).
   const same = held.filter((h) => h.result.name === live.name);
   // The live sweep names its own numbers for those its held ones name.
   const named = same.flatMap((h) => heldChanges(h, live));
-  const traces = [
-    ...same.flatMap((h, n) => curves(h.result, shown.size * (n + 1), heldNote(h, live))),
-    ...curves(live, 0, liveNote(live, named)),
-  ].filter((trace) => trace.points.length > 1);
+  const runs = [...same.map((h) => ({ of: h.result, notes: heldNotes(h, live), held: true })), { of: live, notes: liveNotes(live, named) }];
+  // A unit all the measures share goes on the axis (sweepLabels), as
+  // plain text: an axis takes no TeX but sub- and superscripts.
+  const { y, labels } = sweepLabels(measures.map(([, , m]) => m), runs);
+  const order = [...runs.keys()].slice(0, -1).map((n) => n + 1).concat(0);
+  const traces = runs.flatMap((run, r) => measures.map(([key], k) => ({
+    label: labels[r][k],
+    color: TRACE_COLORS[(shown.size * order[r] + k) % TRACE_COLORS.length],
+    points: run.of.points.filter((p) => Number.isFinite(p.measures?.[key])).map((p) => [p.x, p.measures[key]]),
+  }))).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   // The coefficient as an axis names it: a_r as a sub-scripted r.
-  return normalizePlot({ kind: 'data', x: { label: live.name.replace(/_([A-Za-z0-9]+)$/, '_{$1}'), scale: live.log ? 'log' : 'linear' }, y: { label: 'dB', scale: 'linear' }, traces });
+  return normalizePlot({ kind: 'data', x: { label: live.name.replace(/_([A-Za-z0-9]+)$/, '_{$1}'), scale: live.log ? 'log' : 'linear' }, y: { label: plainTex(y), scale: 'linear' }, traces });
 }
 
-/** A held sweep's note: the coefficients (but the swept one) and the
- *  amplitude it ran at that differ from the live sweep's, or "held". */
-function heldNote(h, live) {
-  const notes = heldChanges(h, live).map((name) => (name === AMPLITUDE ? `${h.amplitude}\\ \\text{dBFS}` : `${name} = ${Number(h.values[name].toPrecision(4))}`));
-  return notes.length ? `,\\ ${notes.join(',\\ ')}` : '\\ \\text{(held)}';
+/** A held sweep's notes: the coefficients (but the swept one) and the
+ *  amplitude it ran at that differ from the live sweep's. */
+function heldNotes(h, live) {
+  return heldChanges(h, live).map((name) => (name === AMPLITUDE ? `${h.amplitude}\\ \\text{dBFS}` : `${name} = ${Number(h.values[name].toPrecision(4))}`));
 }
 
 const AMPLITUDE = '\0amplitude';
@@ -201,11 +204,10 @@ function heldChanges(h, live) {
   return h.amplitude !== live.amplitude ? [...names, AMPLITUDE] : names;
 }
 
-/** The live sweep's note: its numbers for `names`. */
-function liveNote(live, names) {
+/** The live sweep's notes: its numbers for `names`. */
+function liveNotes(live, names) {
   const now = live.values;
-  const notes = [...new Set(names)].map((name) => (name === AMPLITUDE ? `${live.amplitude}\\ \\text{dBFS}` : `${name} = ${Number((now[name] ?? 1).toPrecision(4))}`));
-  return notes.length ? `,\\ ${notes.join(',\\ ')}` : '';
+  return [...new Set(names)].map((name) => (name === AMPLITUDE ? `${live.amplitude}\\ \\text{dBFS}` : `${name} = ${Number((now[name] ?? 1).toPrecision(4))}`));
 }
 
 /** Hold the sweep shown: a copy that stays as the sliders and the next sweep move. */
@@ -383,8 +385,9 @@ async function measureAll(asks, stale) {
 /**
  * A sweep plot (`plot.sweep`) run again: each of its sweeps in turn, the
  * held ones at the coefficients they ran at, the live one at those now,
- * over the same range with the same sine. Resolves to the plot's new
- * traces (the sweep's, colored as they were, then those added since), or
+ * over the same range with the same sine. Resolves to `{ traces, y? }`:
+ * the plot's new traces (the sweep's, colored as they were, then those
+ * added since) and, for a plot whose y axis is the old "dB", its new one; or
  * null when the diagram no longer runs or no longer has what it plotted;
  * null too once `stale()`.
  */
@@ -413,7 +416,10 @@ export async function sweepPlotUpdate(plot, stale = () => false) {
   const next = sweepPlotOf(live, runs.slice(0, -1).map((r) => ({ result: r, values: r.values, amplitude: r.amplitude })), spec.measures);
   if (!next || next.traces.length !== spec.count) return null;
   const own = plot.traces.slice(0, spec.count);
-  return [...next.traces.map((trace, i) => ({ ...trace, color: own[i]?.color || trace.color })), ...plot.traces.slice(spec.count)];
+  const traces = [...next.traces.map((trace, i) => ({ ...trace, color: own[i]?.color || trace.color })), ...plot.traces.slice(spec.count)];
+  // A plot from before the unit went on the axis had "dB" there: it takes
+  // the axis its names now leave the unit to.
+  return { traces, ...(plot.y?.label === 'dB' && next.y.label !== 'dB' ? { y: { ...plot.y, label: next.y.label } } : {}) };
 }
 
 /** The view was shown: its controls, and the last sweep. */

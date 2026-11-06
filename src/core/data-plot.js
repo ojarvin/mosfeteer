@@ -361,13 +361,13 @@ export function appendPlotTraces(circuit, box, traces, { file = '' } = {}) {
 
 /** Replace a data plot's traces with `plot`'s (the file read again, or
  *  other columns, or a sweep run again), keeping its place, size, style,
- *  axes' names and scales, and zoom; its legend is written again where it
- *  was (`math`: as writeLegend's). */
+ *  axes' names and scales (but a `plot.y` given), and zoom; its legend is
+ *  written again where it was (`math`: as writeLegend's). */
 export function replaceDataPlotTraces(circuit, box, plot, { math = false } = {}) {
   const old = dataPlotOf(box);
   const legend = circuit.plotLegend(box);
   const at = legend.length ? { x: Math.min(...legend.map((l) => l.bbox().x)), y: Math.min(...legend.map((l) => l.bbox().y)) } : null;
   for (const label of legend) circuit.removeLabel(label.id);
-  box.plot = normalizePlot({ ...old, file: plot.file || old.file, traces: plot.traces });
+  box.plot = normalizePlot({ ...old, file: plot.file || old.file, ...(plot.y ? { y: plot.y } : {}), traces: plot.traces });
   return writeLegend(circuit, box, box.plot.traces, at, { math });
 }
