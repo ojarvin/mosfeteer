@@ -225,7 +225,7 @@ export function plotSpec(plot) {
     : plot.kind === 'locus' ? locusSpec(plot)
     : null;
   if (!own) return own;
-  const spec = { ...own, ...(plot.cursors ? { cursors: plot.cursors } : {}), ...(plot.cursorValues === false ? { cursorValues: false } : {}) };
+  const spec = { ...own, ...(plot.cursors ? { cursors: plot.cursors } : {}) };
   if (!plot.extra) return spec;
   const parametric = plot.kind === 'locus' ? { parametric: true } : {};
   const base = ownTraceCount(plot);

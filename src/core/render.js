@@ -805,7 +805,7 @@ const PLOT_STROKES = {
   band: { width: 3, dash: '18 9' },
   spectrum: { width: 6 },
   marker: { width: 3, dash: '18 9' },
-  cursor: { width: 2, dash: '10 6' },
+  cursor: { width: 3, dash: '20 8' },
 };
 
 /** A simulated spectrum in a black plot: an opaque gray, so the grid

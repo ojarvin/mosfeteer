@@ -16,8 +16,8 @@ import { MAX_DATA_TRACES, readTable, tableTraces } from './csv-data.js';
 import { remapCursorTraces } from './plot-cursors.js';
 import { ownTraceCount } from './plot-spec.js';
 
-/** A new data plot's box, in cells. */
-const BOX = { w: 18, h: 11 };
+/** A new plot's box on the drawing, in cells. */
+export const PLOT_BOX = { w: 20, h: 12 };
 
 /** The plot `table`'s columns `y` against `x` make (null when they make no
  *  trace of two points), its axes named after the columns: one trace's own
@@ -69,10 +69,10 @@ export function dataPlotFromText(text, { file = '', x, y, xscale, yscale, ...rea
  */
 export function placeDataPlot(circuit, plot, { at = null, math = false } = {}) {
   const figure = { kind: 'plot', source: 'data', key: 'data', id: newFigureId(circuit) };
-  const spot = at || placeFigure(circuit, 'plot', { size: { w: (BOX.w + 6) * GRID, h: BOX.h * GRID } });
+  const spot = at || placeFigure(circuit, 'plot', { size: { w: (PLOT_BOX.w + 6) * GRID, h: PLOT_BOX.h * GRID } });
   const x = snap(spot.x);
   const y = snap(spot.y);
-  const box = circuit.addAnnotation('box', { x, y, end: { x: x + BOX.w * GRID, y: y + BOX.h * GRID }, plot, style: { lineStyle: 'solid', blackTraces: true }, figure });
+  const box = circuit.addAnnotation('box', { x, y, end: { x: x + PLOT_BOX.w * GRID, y: y + PLOT_BOX.h * GRID }, plot, style: { lineStyle: 'solid', blackTraces: true }, figure });
   if (!at) settlePlaced(circuit, figure.id);
   const legend = writeLegend(circuit, box, box.plot.traces, null, { math });
   return { box, legend };
@@ -315,13 +315,13 @@ export function removePlotTrace(circuit, box, index) {
 /** The trace id (plot-spec.js) of a plot's first editable trace. */
 const ownBase = (plot, own) => (own.key === 'extra' ? ownTraceCount(plot) : 0);
 
-/** Set a plot's markers (plot-cursors.js) and whether their numbers show.
- *  Returns whether anything changed. */
-export function setPlotCursors(box, cursors, { values = true } = {}) {
+/** Set a plot's markers (plot-cursors.js), each with whether its numbers
+ *  show. Returns whether anything changed. */
+export function setPlotCursors(box, cursors) {
   const plot = box?.plot;
   if (!plot || !takesFileTraces(box)) throw new Error(`"${box?.id}" takes no markers`);
   const { cursors: _cursors, cursorValues: _values, ...rest } = plot;
-  const next = normalizePlot({ ...rest, cursors, ...(values ? {} : { cursorValues: false }) });
+  const next = normalizePlot({ ...rest, cursors });
   if (JSON.stringify(next) === JSON.stringify(plot)) return false;
   box.plot = next;
   return true;

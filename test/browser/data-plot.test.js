@@ -145,6 +145,13 @@ describe('data plot', { skip: browserSkip() }, () => {
     await h.mouse('mouseReleased', line.x, line.y + 30);
     await h.settle();
     assert.ok(Number(await h.evaluate(`document.querySelectorAll('.data-plot-marker-value')[2].value`)) < Number(yBefore));
+    // Each marker's Values: the point's off takes its numbers away.
+    const values = () => h.evaluate(`document.querySelectorAll('.data-plot-dialog .plot-marker-value').length`);
+    const shown = await values();
+    assert.equal(await h.evaluate(`document.querySelectorAll('.data-plot-marker-values').length`), 3);
+    await h.evaluate(`document.querySelectorAll('.data-plot-marker-values')[1].click()`);
+    await h.settle();
+    assert.ok(await values() < shown);
     // Typing M in a field types it.
     assert.equal(await h.evaluate(`(() => { const f = document.querySelector('.data-plot-marker-value'); const e = new KeyboardEvent('keydown', { key: 'm', bubbles: true, cancelable: true }); f.dispatchEvent(e); return e.defaultPrevented; })()`), false);
     await h.evaluate(`${button('.data-plot-dialog', 'Apply')}.click()`);
@@ -152,6 +159,7 @@ describe('data plot', { skip: browserSkip() }, () => {
     const after = await plot();
     assert.deepEqual(after.plot.cursors.map((c) => c.kind), ['vertical', 'point', 'horizontal']);
     assert.equal(after.plot.cursors[0].x, 100);
+    assert.deepEqual(after.plot.cursors.map((c) => c.values), [undefined, false, undefined]);
     assert.ok(await h.evaluate(`document.querySelectorAll('#canvas .plot-annotation .plot-cursor').length`) >= 1);
     await h.key('z', { ctrlKey: true });
     assert.equal((await plot()).plot.cursors, undefined);

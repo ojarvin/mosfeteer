@@ -31,6 +31,7 @@ test('dataplot plots a file\'s columns as a figure with its legend, keeping the 
   assert.deepEqual(box.plot.traces.map((t) => t.label), ['CH1 (V)', 'CH2 (V)']);
   assert.deepEqual(circuit.plotLegend(box).map((l) => l.text), ['CH1 (V)', 'CH2 (V)']);
   assert.equal(box.style.blackTraces, true);
+  assert.deepEqual([box.bbox().w, box.bbox().h], [20 * 40, 12 * 40]);
   assert.deepEqual(listFigures(circuit).map((f) => [f.kind, f.source]), [['plot', 'data']]);
   const saved = JSON.stringify(circuit.toJSON());
   assert.doesNotMatch(saved, /Scope export/);

@@ -7036,7 +7036,6 @@ details.analysis-options > * + * {
   color: var(--text-dim);
 }
 
-.data-plot-marker-bar .data-plot-check { margin-left: auto; }
 .data-plot-marker-kind { min-width: 5.5em; }
 .data-plot-marker-axis { color: var(--text-dim); }
 .data-plot-trace input.data-plot-marker-value { flex: 0 1 8em; min-width: 5em; font-family: var(--font-mono); }
@@ -8226,8 +8225,8 @@ body.chrome-away [data-editor-edge="right"] {
    numbers small. */
 .plot-view-svg .plot-marker-line {
   stroke: var(--text);
-  stroke-width: 1;
-  stroke-dasharray: 4 3;
+  stroke-width: 1.5;
+  stroke-dasharray: 7 3;
 }
 
 .plot-view-svg .plot-marker-dot {

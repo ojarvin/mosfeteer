@@ -27500,8 +27500,8 @@ let ownTraceCount; __bind(() => { ({ ownTraceCount } = __require("src/core/plot-
 
 
 
-/** A new data plot's box, in cells. */
-const BOX = { w: 18, h: 11 };
+/** A new plot's box on the drawing, in cells. */
+const PLOT_BOX = { w: 20, h: 12 };
 
 /** The plot `table`'s columns `y` against `x` make (null when they make no
  *  trace of two points), its axes named after the columns: one trace's own
@@ -27553,10 +27553,10 @@ function dataPlotFromText(text, { file = '', x, y, xscale, yscale, ...read } = {
  */
 function placeDataPlot(circuit, plot, { at = null, math = false } = {}) {
   const figure = { kind: 'plot', source: 'data', key: 'data', id: newFigureId(circuit) };
-  const spot = at || placeFigure(circuit, 'plot', { size: { w: (BOX.w + 6) * GRID, h: BOX.h * GRID } });
+  const spot = at || placeFigure(circuit, 'plot', { size: { w: (PLOT_BOX.w + 6) * GRID, h: PLOT_BOX.h * GRID } });
   const x = snap(spot.x);
   const y = snap(spot.y);
-  const box = circuit.addAnnotation('box', { x, y, end: { x: x + BOX.w * GRID, y: y + BOX.h * GRID }, plot, style: { lineStyle: 'solid', blackTraces: true }, figure });
+  const box = circuit.addAnnotation('box', { x, y, end: { x: x + PLOT_BOX.w * GRID, y: y + PLOT_BOX.h * GRID }, plot, style: { lineStyle: 'solid', blackTraces: true }, figure });
   if (!at) settlePlaced(circuit, figure.id);
   const legend = writeLegend(circuit, box, box.plot.traces, null, { math });
   return { box, legend };
@@ -27799,13 +27799,13 @@ function removePlotTrace(circuit, box, index) {
 /** The trace id (plot-spec.js) of a plot's first editable trace. */
 const ownBase = (plot, own) => (own.key === 'extra' ? ownTraceCount(plot) : 0);
 
-/** Set a plot's markers (plot-cursors.js) and whether their numbers show.
- *  Returns whether anything changed. */
-function setPlotCursors(box, cursors, { values = true } = {}) {
+/** Set a plot's markers (plot-cursors.js), each with whether its numbers
+ *  show. Returns whether anything changed. */
+function setPlotCursors(box, cursors) {
   const plot = box?.plot;
   if (!plot || !takesFileTraces(box)) throw new Error(`"${box?.id}" takes no markers`);
   const { cursors: _cursors, cursorValues: _values, ...rest } = plot;
-  const next = normalizePlot({ ...rest, cursors, ...(values ? {} : { cursorValues: false }) });
+  const next = normalizePlot({ ...rest, cursors });
   if (JSON.stringify(next) === JSON.stringify(plot)) return false;
   box.plot = next;
   return true;
@@ -27856,6 +27856,7 @@ function replaceDataPlotTraces(circuit, box, plot, { math = false } = {}) {
   return writeLegend(circuit, box, box.plot.traces, at, { math });
 }
 
+__exports.PLOT_BOX = PLOT_BOX;
 };
 
 __modules["src/core/design-index.js"] = function (__require, __exports) {
@@ -39694,14 +39695,14 @@ let calculate; __bind(() => { ({ calculate } = __require("src/core/calculator.js
  * trace, reading its x and y there; a vertical line at an x, reading each
  * trace's y where it crosses; a horizontal line at a y, reading each
  * trace's x where it crosses. Their numbers go small beside what they
- * read, clear of one another (`plot.cursorValues: false` leaves them out).
+ * read, clear of one another (a marker's `values: false` leaves its out).
  * One reading and one layout for both renderers: the plot in a window
  * (web/plot-view.js) and the plot on the drawing (render.js).
  *
  * A marker: `{ kind: 'point', trace, x }` (`trace` a spec series' `trace`
  * id: the plot's own traces from 0, then those added from files),
  * `{ kind: 'vertical', x }`, `{ kind: 'horizontal', y }`, in the data's
- * own units.
+ * own units, each with `values: false` when its numbers stay off.
  */
 
 
@@ -39712,16 +39713,19 @@ const CURSOR_KINDS = ['point', 'vertical', 'horizontal'];
 
 const precise = (v) => Number(v.toPrecision(9));
 
-/** A plot's markers, checked, and whether their numbers show: for a
- *  normalized plot to spread in. */
+/** A plot's markers, checked: for a normalized plot to spread in. A plot
+ *  from before markers had their own Values (`plot.cursorValues: false`)
+ *  turns each one's numbers off. */
 function cursorsOf(plot) {
+  const allOff = plot?.cursorValues === false;
   const cursors = (Array.isArray(plot?.cursors) ? plot.cursors : []).filter((c) => CURSOR_KINDS.includes(c?.kind)).slice(0, MAX_PLOT_CURSORS).flatMap((c) => {
-    if (c.kind === 'horizontal') return Number.isFinite(c.y) ? [{ kind: 'horizontal', y: precise(c.y) }] : [];
+    const off = allOff || c.values === false ? { values: false } : {};
+    if (c.kind === 'horizontal') return Number.isFinite(c.y) ? [{ kind: 'horizontal', y: precise(c.y), ...off }] : [];
     if (!Number.isFinite(c.x)) return [];
-    if (c.kind === 'vertical') return [{ kind: 'vertical', x: precise(c.x) }];
-    return Number.isInteger(c.trace) && c.trace >= 0 && c.trace < 64 ? [{ kind: 'point', trace: c.trace, x: precise(c.x) }] : [];
+    if (c.kind === 'vertical') return [{ kind: 'vertical', x: precise(c.x), ...off }];
+    return Number.isInteger(c.trace) && c.trace >= 0 && c.trace < 64 ? [{ kind: 'point', trace: c.trace, x: precise(c.x), ...off }] : [];
   });
-  return { ...(cursors.length ? { cursors } : {}), ...(plot?.cursorValues === false ? { cursorValues: false } : {}) };
+  return cursors.length ? { cursors } : {};
 }
 
 /** Point markers moved with their traces: `order` the old indices of the
@@ -39941,36 +39945,41 @@ function placeCursorLabels(labels, pane, { size = 10, gap = 3, curves = [] } = {
  * The markers as drawing items on a pane: `toPx` `{ x(u), y(v) }` places
  * a value, `pane` the plot's area. Returns `{ lines: [{ x1, y1, x2, y2 }],
  * dots: [{ x, y, color }], texts }` (placeCursorLabels's), the lines and
- * dots only those in the pane, the texts left out when `values` is false.
+ * dots only those in the pane, the texts of a marker with `values: false`
+ * left out, and all of them when `values` is false.
  */
-function cursorLayout(spec, { toPx, pane, size = 10, gap = 3, values = spec?.cursorValues !== false, cursors = spec?.cursors || [] } = {}) {
+function cursorLayout(spec, { toPx, pane, size = 10, gap = 3, values = true, cursors = spec?.cursors || [] } = {}) {
   const lines = [];
   const dots = [];
   const labels = [];
   const within = (v, low, length) => v >= low - 0.5 && v <= low + length + 0.5;
   for (const reading of cursorReadings(spec, cursors)) {
+    const shown = reading.cursor.values !== false;
     if (reading.kind === 'vertical') {
       const px = toPx.x(reading.u);
       if (!within(px, pane.x, pane.w)) continue;
       lines.push({ x1: px, y1: pane.y, x2: px, y2: pane.y + pane.h, index: reading.index });
-      labels.push({ x: px, y: pane.y + pane.h, text: reading.text });
+      if (shown) labels.push({ x: px, y: pane.y + pane.h, text: reading.text });
     } else if (reading.kind === 'horizontal') {
       const py = toPx.y(reading.v);
       if (!within(py, pane.y, pane.h)) continue;
       lines.push({ x1: pane.x, y1: py, x2: pane.x + pane.w, y2: py, index: reading.index });
-      labels.push({ x: pane.x, y: py, text: reading.text });
+      if (shown) labels.push({ x: pane.x, y: py, text: reading.text });
     }
     for (const hit of reading.hits) {
       const x = toPx.x(hit.u);
       const y = toPx.y(hit.v);
       if (!within(x, pane.x, pane.w) || !within(y, pane.y, pane.h)) continue;
       dots.push({ x, y, color: hit.color, index: reading.index, point: reading.kind === 'point' });
-      labels.push({ x, y, text: hit.text });
+      if (shown) labels.push({ x, y, text: hit.text });
     }
   }
   if (!values) return { lines, dots, texts: [] };
-  // The traces as drawn, for the numbers to keep off them.
-  const curves = labels.length ? cursorCurves(spec).map((curve) => curve.points.filter(([, v]) => v !== null).map(([u, v]) => ({ x: toPx.x(u), y: toPx.y(v) }))) : [];
+  // The traces as drawn, and the marker lines, for the numbers to keep off them.
+  const curves = labels.length ? [
+    ...cursorCurves(spec).map((curve) => curve.points.filter(([, v]) => v !== null).map(([u, v]) => ({ x: toPx.x(u), y: toPx.y(v) }))),
+    ...lines.map((l) => [{ x: l.x1, y: l.y1 }, { x: l.x2, y: l.y2 }]),
+  ] : [];
   return { lines, dots, texts: placeCursorLabels(labels, pane, { size, gap, curves }) };
 }
 
@@ -40579,7 +40588,7 @@ function plotSpec(plot) {
     : plot.kind === 'locus' ? locusSpec(plot)
     : null;
   if (!own) return own;
-  const spec = { ...own, ...(plot.cursors ? { cursors: plot.cursors } : {}), ...(plot.cursorValues === false ? { cursorValues: false } : {}) };
+  const spec = { ...own, ...(plot.cursors ? { cursors: plot.cursors } : {}) };
   if (!plot.extra) return spec;
   const parametric = plot.kind === 'locus' ? { parametric: true } : {};
   const base = ownTraceCount(plot);
@@ -41543,7 +41552,7 @@ const PLOT_STROKES = {
   band: { width: 3, dash: '18 9' },
   spectrum: { width: 6 },
   marker: { width: 3, dash: '18 9' },
-  cursor: { width: 2, dash: '10 6' },
+  cursor: { width: 3, dash: '20 8' },
 };
 
 /** A simulated spectrum in a black plot: an opaque gray, so the grid
@@ -64895,7 +64904,6 @@ function select(label, id, choices, value, onchange) {
  */
 function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, base = null } = {}) {
   draft.cursors ||= [];
-  if (draft.cursorValues === undefined) draft.cursorValues = true;
   const view = createPlotView({ height: 260, wheel: 'always', className: 'data-plot-view', onCursors: (next) => { draft.cursors = next; show(); refreshCursors(); } });
   const shown = () => draft.traces.filter((t) => !t.removed);
   const traces = () => shown().map(({ label, color, points }) => ({ label, color, points }));
@@ -64919,7 +64927,7 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, 
   };
   // A response plot's own curves as the draft shows or hides them.
   const withShown = (plot) => (draft.curves ? { ...plot, traces: plot.traces.map(({ hidden: _hidden, ...trace }, i) => ({ ...trace, color: draft.curves[i]?.color || trace.color, ...(draft.curves[i]?.on === false ? { hidden: true } : {}) })) } : plot);
-  const marked = () => ({ cursors: draft.cursors, ...(draft.cursorValues ? {} : { cursorValues: false }) });
+  const marked = () => ({ cursors: draft.cursors });
   const bare = () => (base ? normalizePlot({ ...withShown(base), extra: traces(), ...marked() }) : normalizePlot({ kind: 'data', x: draft.x, y: draft.y, traces: traces(), ...marked() }));
   const show = ({ keepZoom = true } = {}) => {
     const zoom = keepZoom ? view.zoom() : null;
@@ -64983,12 +64991,9 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, 
   // The markers: added by their buttons or keys, dragged on the plot, a
   // line's place typed.
   const cursorList = el('div', { class: 'data-plot-traces data-plot-markers', role: 'group', 'aria-label': 'Markers' });
-  const valuesBox = el('input', { type: 'checkbox', class: 'data-plot-marker-values', onchange: (ev) => { draft.cursorValues = ev.target.checked; show(); } });
-  valuesBox.checked = draft.cursorValues;
   const addButtons = MARKERS.map(([kind, text, key]) => el('button', { type: 'button', class: 'data-plot-marker-add', 'data-kind': kind, text, title: `${text} marker (${key.toUpperCase()})`, onclick: () => add(kind) }));
   const markerBar = el('div', { class: 'data-plot-marker-bar' }, [
     el('span', { class: 'data-plot-marker-heading', text: 'Markers' }), ...addButtons,
-    el('label', { class: 'data-plot-check' }, [valuesBox, ' Values']),
   ]);
   const add = (kind) => {
     if (draft.cursors.length >= MAX_PLOT_CURSORS) return;
@@ -65006,6 +65011,9 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, 
         onchange: (ev) => { const v = cursorValue(ev.target.value); if (v === null) { ev.target.setAttribute('aria-invalid', 'true'); return; } ev.target.removeAttribute('aria-invalid'); setCursor(i, { ...draft.cursors[i], [axis]: v }); refreshCursors(); } });
       const trace = cursor.kind === 'point' ? el('select', { class: 'data-plot-marker-trace', 'aria-label': 'Point marker trace', onchange: (ev) => { setCursor(i, { ...draft.cursors[i], trace: Number(ev.target.value) }); refreshCursors(); } },
         curves.map((c) => el('option', { value: String(c.trace), text: plainTex(c.label) || `Trace ${c.trace + 1}`, selected: c.trace === cursor.trace }))) : null;
+      const values = el('input', { type: 'checkbox', class: 'data-plot-marker-values', 'aria-label': `${MARKER_NAMES[cursor.kind]} marker values`,
+        onchange: (ev) => { const { values: _values, ...rest } = draft.cursors[i]; setCursor(i, ev.target.checked ? rest : { ...rest, values: false }); } });
+      values.checked = cursor.values !== false;
       const read = readings.get(i);
       const reads = cursor.kind === 'point' ? (read ? read.hits[0].text : 'off its trace') : read ? read.hits.map((h) => h.text).join(', ') : '';
       return el('div', { class: 'data-plot-trace data-plot-marker' }, [
@@ -65013,6 +65021,7 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, 
         ...(trace ? [trace] : []),
         el('span', { class: 'data-plot-marker-axis', text: `${axis} =` }), field,
         el('span', { class: 'data-plot-marker-reads', text: reads }),
+        el('label', { class: 'data-plot-check' }, [values, ' Values']),
         el('button', { type: 'button', class: 'data-plot-trace-remove', text: '×', title: 'Remove', 'aria-label': `Remove ${MARKER_NAMES[cursor.kind].toLowerCase()} marker`,
           onclick: () => { draft.cursors = draft.cursors.filter((_, k) => k !== i); show(); refreshCursors(); } }),
       ]);
@@ -65032,8 +65041,8 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, 
     show: (options) => { show(options); refreshCursors(); },
     refresh,
     key,
-    /** The markers as edited: `{ cursors, values }`. */
-    cursors: () => ({ cursors: draft.cursors, values: draft.cursorValues }),
+    /** The markers as edited. */
+    cursors: () => draft.cursors,
     zoomTo: (range) => view.zoomTo(range),
     zoom: () => view.zoom(),
     /** The plot as shown, zoomed as shown (a zoom a log axis cannot show left out). */
@@ -65083,8 +65092,7 @@ function applyZoom(box, zoom) {
 
 /** The markers the plot editor set, on `box`. */
 function applyCursors(box, plotEdit) {
-  const { cursors, values } = plotEdit.cursors();
-  setPlotCursors(box, cursors, { values });
+  setPlotCursors(box, plotEdit.cursors());
 }
 
 /** An analysis plot as the plot editor draws under its added traces. */
@@ -65273,7 +65281,7 @@ function openDataPlotDialog(text, name, target = null, { mode = 'replace' } = {}
     edited.y = true;
   }
   const dialog = el('dialog', { class: 'confirm-dialog data-plot-dialog', 'aria-label': 'Data plot' });
-  if (target?.plot) Object.assign(draft, { cursors: [...(target.plot.cursors || [])], cursorValues: target.plot.cursorValues !== false });
+  if (target?.plot) Object.assign(draft, { cursors: [...(target.plot.cursors || [])] });
   dialog.append(
     el('h2', { text: adding ? `Add ${name} to the plot` : target ? `Read ${name} into the plot` : `Data plot from ${name}` }),
     el('h3', { class: 'data-plot-heading', text: 'File' }),
@@ -65302,7 +65310,7 @@ function openPlotSettings(box) {
   if (!takesFileTraces(box)) return;
   const data = box.plot.kind === 'data';
   const draft = { x: { ...box.plot.x }, y: { ...box.plot.y }, traces: editedTraces(box.plot), curves: box.plot.kind === 'response' ? box.plot.traces.map((trace) => ({ label: trace.label, color: trace.color, on: !trace.hidden })) : null,
-    cursors: [...(box.plot.cursors || [])], cursorValues: box.plot.cursorValues !== false };
+    cursors: [...(box.plot.cursors || [])] };
   const dialog = el('dialog', { class: 'confirm-dialog data-plot-dialog', 'aria-label': 'Plot settings' });
   const plotEdit = plotEditor(draft, { base: data ? null : analysisBase(box.plot) });
   const apply = () => {
@@ -90153,7 +90161,7 @@ let locusPlot, locusSteps, rootLocus; __bind(() => { ({ locusPlot, locusSteps, r
 let dbfsOffset, dbfsSpectrum, inBand, plotSpectrum; __bind(() => { ({ dbfsOffset, dbfsSpectrum, inBand, plotSpectrum } = __require("src/core/analysis/spectrum.js")); });
 let prepareSimulation, sweepAmplitudes; __bind(() => { ({ prepareSimulation, sweepAmplitudes } = __require("src/core/analysis/simulate.js")); });
 let PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, parseLabelRuns; __bind(() => { ({ PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, parseLabelRuns } = __require("src/core/model.js")); });
-let replaceDataPlotTraces; __bind(() => { ({ replaceDataPlotTraces } = __require("src/core/data-plot.js")); });
+let PLOT_BOX, replaceDataPlotTraces; __bind(() => { ({ PLOT_BOX, replaceDataPlotTraces } = __require("src/core/data-plot.js")); });
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
 let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
 let chooseFigure, newFigureId, placeFigure, plotKey, settlePlaced; __bind(() => { ({ chooseFigure, newFigureId, placeFigure, plotKey, settlePlaced } = __require("src/core/figures.js")); });
@@ -91633,10 +91641,10 @@ function writePlot(target, plot, shown, { identity = null } = {}) {
   } else {
     // Packed clear of what is there (figures.js): the box, and its legend
     // beside it about as wide as a third of the box.
-    const spot = placeFigure(circuit, 'plot', { size: { w: 24 * GRID, h: 11 * GRID } });
+    const spot = placeFigure(circuit, 'plot', { size: { w: (PLOT_BOX.w + 6) * GRID, h: PLOT_BOX.h * GRID } });
     // The legend beside the box, past the room its line samples take (a
     // new plot draws in black): its labels keep their own inset.
-    left = spot.x + 18 * GRID + PLOT_LEGEND_SAMPLE_ROOM;
+    left = spot.x + PLOT_BOX.w * GRID + PLOT_LEGEND_SAMPLE_ROOM;
     top = spot.y;
   }
   const ids = [];
@@ -91650,14 +91658,14 @@ function writePlot(target, plot, shown, { identity = null } = {}) {
     const wasHidden = (trace) => before.some((old) => old.hidden && (old.hold ? old.hold === trace.hold : !trace.hold && base(old.label) === base(trace.label) && !!old.background === !!trace.background));
     if (Array.isArray(plot.traces) && before.some((old) => old.hidden)) plot = { ...plot, traces: plot.traces.map((trace) => (wasHidden(trace) ? { ...trace, hidden: true } : trace)) };
     // Traces added from files, and the markers, stay through an update.
-    const { extra, cursors, cursorValues } = target.plot || {};
-    target.plot = normalizePlot({ ...plot, ...(extra ? { extra } : {}), ...(cursors ? { cursors } : {}), ...(cursorValues === false ? { cursorValues } : {}) });
+    const { extra, cursors } = target.plot || {};
+    target.plot = normalizePlot({ ...plot, ...(extra ? { extra } : {}), ...(cursors ? { cursors } : {}) });
     // A plot from before figures is this tool's from now on.
     if (figure && !target.figure) target.figure = figure;
     for (const label of legendOf(target)) circuit.removeLabel(label.id);
   } else {
-    const x = left - 18 * GRID - PLOT_LEGEND_SAMPLE_ROOM;
-    box = circuit.addAnnotation('box', { x, y: top, end: { x: x + 18 * GRID, y: top + 11 * GRID }, plot, style: { lineStyle: 'solid', blackTraces: true }, ...(figure ? { figure } : {}) });
+    const x = left - PLOT_BOX.w * GRID - PLOT_LEGEND_SAMPLE_ROOM;
+    box = circuit.addAnnotation('box', { x, y: top, end: { x: x + PLOT_BOX.w * GRID, y: top + PLOT_BOX.h * GRID }, plot, style: { lineStyle: 'solid', blackTraces: true }, ...(figure ? { figure } : {}) });
     if (figure) settlePlaced(circuit, figure.id);
   }
   let y = top;

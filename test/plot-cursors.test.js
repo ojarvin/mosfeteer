@@ -18,11 +18,13 @@ const data = (extra = {}) => normalizePlot({
 });
 
 test('a plot keeps its markers, checked; a point names its trace by id', () => {
-  const plot = data({ cursors: [{ kind: 'point', trace: 0, x: 2.5 }, { kind: 'vertical', x: 5 }, { kind: 'horizontal', y: 4 }, { kind: 'point', x: 1 }, { kind: 'diagonal', x: 1 }, { kind: 'vertical', x: 'a' }], cursorValues: false });
-  assert.deepEqual(plot.cursors, [{ kind: 'point', trace: 0, x: 2.5 }, { kind: 'vertical', x: 5 }, { kind: 'horizontal', y: 4 }]);
-  assert.equal(plot.cursorValues, false);
+  const plot = data({ cursors: [{ kind: 'point', trace: 0, x: 2.5 }, { kind: 'vertical', x: 5, values: false }, { kind: 'horizontal', y: 4, values: true }, { kind: 'point', x: 1 }, { kind: 'diagonal', x: 1 }, { kind: 'vertical', x: 'a' }] });
+  assert.deepEqual(plot.cursors, [{ kind: 'point', trace: 0, x: 2.5 }, { kind: 'vertical', x: 5, values: false }, { kind: 'horizontal', y: 4 }]);
   assert.equal(data().cursors, undefined);
-  assert.equal(data({ cursorValues: true }).cursorValues, undefined);
+  // A plot from before each marker had its Values: all off, each one off.
+  const old = data({ cursors: [{ kind: 'vertical', x: 5 }, { kind: 'horizontal', y: 4 }], cursorValues: false });
+  assert.deepEqual(old.cursors, [{ kind: 'vertical', x: 5, values: false }, { kind: 'horizontal', y: 4, values: false }]);
+  assert.equal(old.cursorValues, undefined);
   // The spec carries them, its series their trace ids.
   const spec = plotSpec(plot);
   assert.deepEqual(spec.cursors, plot.cursors);
@@ -67,7 +69,7 @@ test('marker numbers never overlap one another or a marked point, and stay in th
   assert.equal(placeCursorLabels([{ x: 295, y: 100, text: '1.234, 5.678' }], pane)[0].box.x < 295, true);
 });
 
-test('the layout draws only what the pane shows, and Values off leaves the numbers out', () => {
+test('the layout draws only what the pane shows, and a marker\'s Values off leaves its numbers out', () => {
   const spec = plotSpec(data({ cursors: [{ kind: 'vertical', x: 5 }, { kind: 'vertical', x: 50 }] }));
   const toPx = { x: (u) => 10 * u, y: (v) => 100 - 10 * v };
   const pane = { x: 0, y: 0, w: 100, h: 100 };
@@ -75,7 +77,12 @@ test('the layout draws only what the pane shows, and Values off leaves the numbe
   assert.equal(layout.lines.length, 1);
   assert.deepEqual(layout.dots.map((d) => [d.x, d.y]), [[50, 50], [50, 60]]);
   assert.deepEqual(layout.texts.map((t) => t.text).sort(), ['4', '5', '5']);
-  assert.deepEqual(cursorLayout({ ...spec, cursorValues: false }, { toPx, pane }).texts, []);
+  assert.deepEqual(cursorLayout(spec, { toPx, pane, values: false }).texts, []);
+  const one = plotSpec(data({ cursors: [{ kind: 'vertical', x: 5, values: false }, { kind: 'horizontal', y: 2 }] }));
+  const mixed = cursorLayout(one, { toPx, pane });
+  assert.equal(mixed.lines.length, 2);
+  assert.equal(mixed.dots.length, 3);
+  assert.deepEqual(mixed.texts.map((t) => t.text).sort(), ['2', '2']);
 });
 
 test('markers go on the drawing\'s plot, and follow their traces when they move or go', () => {
@@ -91,7 +98,7 @@ test('markers go on the drawing\'s plot, and follow their traces when they move 
   assert.deepEqual(box.plot.cursors[0], { kind: 'point', trace: 0, x: 3 });
   removePlotTrace(circuit, box, 0);
   assert.deepEqual(box.plot.cursors, [{ kind: 'horizontal', y: 4 }]);
-  setPlotCursors(box, box.plot.cursors, { values: false });
+  setPlotCursors(box, [{ ...box.plot.cursors[0], values: false }]);
   assert.doesNotMatch(svgString(circuit), />4</);
   assert.deepEqual(remapCursorTraces({ cursors: [{ kind: 'point', trace: 3, x: 0 }] }, 2, [1, 0]), { cursors: [{ kind: 'point', trace: 2, x: 0 }] });
 });

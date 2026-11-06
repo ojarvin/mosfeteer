@@ -125,7 +125,6 @@ function select(label, id, choices, value, onchange) {
  */
 function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, base = null } = {}) {
   draft.cursors ||= [];
-  if (draft.cursorValues === undefined) draft.cursorValues = true;
   const view = createPlotView({ height: 260, wheel: 'always', className: 'data-plot-view', onCursors: (next) => { draft.cursors = next; show(); refreshCursors(); } });
   const shown = () => draft.traces.filter((t) => !t.removed);
   const traces = () => shown().map(({ label, color, points }) => ({ label, color, points }));
@@ -149,7 +148,7 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, 
   };
   // A response plot's own curves as the draft shows or hides them.
   const withShown = (plot) => (draft.curves ? { ...plot, traces: plot.traces.map(({ hidden: _hidden, ...trace }, i) => ({ ...trace, color: draft.curves[i]?.color || trace.color, ...(draft.curves[i]?.on === false ? { hidden: true } : {}) })) } : plot);
-  const marked = () => ({ cursors: draft.cursors, ...(draft.cursorValues ? {} : { cursorValues: false }) });
+  const marked = () => ({ cursors: draft.cursors });
   const bare = () => (base ? normalizePlot({ ...withShown(base), extra: traces(), ...marked() }) : normalizePlot({ kind: 'data', x: draft.x, y: draft.y, traces: traces(), ...marked() }));
   const show = ({ keepZoom = true } = {}) => {
     const zoom = keepZoom ? view.zoom() : null;
@@ -213,12 +212,9 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, 
   // The markers: added by their buttons or keys, dragged on the plot, a
   // line's place typed.
   const cursorList = el('div', { class: 'data-plot-traces data-plot-markers', role: 'group', 'aria-label': 'Markers' });
-  const valuesBox = el('input', { type: 'checkbox', class: 'data-plot-marker-values', onchange: (ev) => { draft.cursorValues = ev.target.checked; show(); } });
-  valuesBox.checked = draft.cursorValues;
   const addButtons = MARKERS.map(([kind, text, key]) => el('button', { type: 'button', class: 'data-plot-marker-add', 'data-kind': kind, text, title: `${text} marker (${key.toUpperCase()})`, onclick: () => add(kind) }));
   const markerBar = el('div', { class: 'data-plot-marker-bar' }, [
     el('span', { class: 'data-plot-marker-heading', text: 'Markers' }), ...addButtons,
-    el('label', { class: 'data-plot-check' }, [valuesBox, ' Values']),
   ]);
   const add = (kind) => {
     if (draft.cursors.length >= MAX_PLOT_CURSORS) return;
@@ -236,6 +232,9 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, 
         onchange: (ev) => { const v = cursorValue(ev.target.value); if (v === null) { ev.target.setAttribute('aria-invalid', 'true'); return; } ev.target.removeAttribute('aria-invalid'); setCursor(i, { ...draft.cursors[i], [axis]: v }); refreshCursors(); } });
       const trace = cursor.kind === 'point' ? el('select', { class: 'data-plot-marker-trace', 'aria-label': 'Point marker trace', onchange: (ev) => { setCursor(i, { ...draft.cursors[i], trace: Number(ev.target.value) }); refreshCursors(); } },
         curves.map((c) => el('option', { value: String(c.trace), text: plainTex(c.label) || `Trace ${c.trace + 1}`, selected: c.trace === cursor.trace }))) : null;
+      const values = el('input', { type: 'checkbox', class: 'data-plot-marker-values', 'aria-label': `${MARKER_NAMES[cursor.kind]} marker values`,
+        onchange: (ev) => { const { values: _values, ...rest } = draft.cursors[i]; setCursor(i, ev.target.checked ? rest : { ...rest, values: false }); } });
+      values.checked = cursor.values !== false;
       const read = readings.get(i);
       const reads = cursor.kind === 'point' ? (read ? read.hits[0].text : 'off its trace') : read ? read.hits.map((h) => h.text).join(', ') : '';
       return el('div', { class: 'data-plot-trace data-plot-marker' }, [
@@ -243,6 +242,7 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, 
         ...(trace ? [trace] : []),
         el('span', { class: 'data-plot-marker-axis', text: `${axis} =` }), field,
         el('span', { class: 'data-plot-marker-reads', text: reads }),
+        el('label', { class: 'data-plot-check' }, [values, ' Values']),
         el('button', { type: 'button', class: 'data-plot-trace-remove', text: '×', title: 'Remove', 'aria-label': `Remove ${MARKER_NAMES[cursor.kind].toLowerCase()} marker`,
           onclick: () => { draft.cursors = draft.cursors.filter((_, k) => k !== i); show(); refreshCursors(); } }),
       ]);
@@ -262,8 +262,8 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, 
     show: (options) => { show(options); refreshCursors(); },
     refresh,
     key,
-    /** The markers as edited: `{ cursors, values }`. */
-    cursors: () => ({ cursors: draft.cursors, values: draft.cursorValues }),
+    /** The markers as edited. */
+    cursors: () => draft.cursors,
     zoomTo: (range) => view.zoomTo(range),
     zoom: () => view.zoom(),
     /** The plot as shown, zoomed as shown (a zoom a log axis cannot show left out). */
@@ -313,8 +313,7 @@ function applyZoom(box, zoom) {
 
 /** The markers the plot editor set, on `box`. */
 function applyCursors(box, plotEdit) {
-  const { cursors, values } = plotEdit.cursors();
-  setPlotCursors(box, cursors, { values });
+  setPlotCursors(box, plotEdit.cursors());
 }
 
 /** An analysis plot as the plot editor draws under its added traces. */
@@ -503,7 +502,7 @@ export function openDataPlotDialog(text, name, target = null, { mode = 'replace'
     edited.y = true;
   }
   const dialog = el('dialog', { class: 'confirm-dialog data-plot-dialog', 'aria-label': 'Data plot' });
-  if (target?.plot) Object.assign(draft, { cursors: [...(target.plot.cursors || [])], cursorValues: target.plot.cursorValues !== false });
+  if (target?.plot) Object.assign(draft, { cursors: [...(target.plot.cursors || [])] });
   dialog.append(
     el('h2', { text: adding ? `Add ${name} to the plot` : target ? `Read ${name} into the plot` : `Data plot from ${name}` }),
     el('h3', { class: 'data-plot-heading', text: 'File' }),
@@ -532,7 +531,7 @@ export function openPlotSettings(box) {
   if (!takesFileTraces(box)) return;
   const data = box.plot.kind === 'data';
   const draft = { x: { ...box.plot.x }, y: { ...box.plot.y }, traces: editedTraces(box.plot), curves: box.plot.kind === 'response' ? box.plot.traces.map((trace) => ({ label: trace.label, color: trace.color, on: !trace.hidden })) : null,
-    cursors: [...(box.plot.cursors || [])], cursorValues: box.plot.cursorValues !== false };
+    cursors: [...(box.plot.cursors || [])] };
   const dialog = el('dialog', { class: 'confirm-dialog data-plot-dialog', 'aria-label': 'Plot settings' });
   const plotEdit = plotEditor(draft, { base: data ? null : analysisBase(box.plot) });
   const apply = () => {

@@ -32,7 +32,7 @@ import { locusPlot, locusSteps, rootLocus } from '../core/analysis/locus.js';
 import { dbfsOffset, dbfsSpectrum, inBand, plotSpectrum } from '../core/analysis/spectrum.js';
 import { prepareSimulation, sweepAmplitudes } from '../core/analysis/simulate.js';
 import { PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, parseLabelRuns } from '../core/model.js';
-import { replaceDataPlotTraces } from '../core/data-plot.js';
+import { PLOT_BOX, replaceDataPlotTraces } from '../core/data-plot.js';
 import { texToMathML } from '../core/render.js';
 import { GRID, snap } from '../core/grid.js';
 import { chooseFigure, newFigureId, placeFigure, plotKey, settlePlaced } from '../core/figures.js';
@@ -1456,10 +1456,10 @@ function writePlot(target, plot, shown, { identity = null } = {}) {
   } else {
     // Packed clear of what is there (figures.js): the box, and its legend
     // beside it about as wide as a third of the box.
-    const spot = placeFigure(circuit, 'plot', { size: { w: 24 * GRID, h: 11 * GRID } });
+    const spot = placeFigure(circuit, 'plot', { size: { w: (PLOT_BOX.w + 6) * GRID, h: PLOT_BOX.h * GRID } });
     // The legend beside the box, past the room its line samples take (a
     // new plot draws in black): its labels keep their own inset.
-    left = spot.x + 18 * GRID + PLOT_LEGEND_SAMPLE_ROOM;
+    left = spot.x + PLOT_BOX.w * GRID + PLOT_LEGEND_SAMPLE_ROOM;
     top = spot.y;
   }
   const ids = [];
@@ -1473,14 +1473,14 @@ function writePlot(target, plot, shown, { identity = null } = {}) {
     const wasHidden = (trace) => before.some((old) => old.hidden && (old.hold ? old.hold === trace.hold : !trace.hold && base(old.label) === base(trace.label) && !!old.background === !!trace.background));
     if (Array.isArray(plot.traces) && before.some((old) => old.hidden)) plot = { ...plot, traces: plot.traces.map((trace) => (wasHidden(trace) ? { ...trace, hidden: true } : trace)) };
     // Traces added from files, and the markers, stay through an update.
-    const { extra, cursors, cursorValues } = target.plot || {};
-    target.plot = normalizePlot({ ...plot, ...(extra ? { extra } : {}), ...(cursors ? { cursors } : {}), ...(cursorValues === false ? { cursorValues } : {}) });
+    const { extra, cursors } = target.plot || {};
+    target.plot = normalizePlot({ ...plot, ...(extra ? { extra } : {}), ...(cursors ? { cursors } : {}) });
     // A plot from before figures is this tool's from now on.
     if (figure && !target.figure) target.figure = figure;
     for (const label of legendOf(target)) circuit.removeLabel(label.id);
   } else {
-    const x = left - 18 * GRID - PLOT_LEGEND_SAMPLE_ROOM;
-    box = circuit.addAnnotation('box', { x, y: top, end: { x: x + 18 * GRID, y: top + 11 * GRID }, plot, style: { lineStyle: 'solid', blackTraces: true }, ...(figure ? { figure } : {}) });
+    const x = left - PLOT_BOX.w * GRID - PLOT_LEGEND_SAMPLE_ROOM;
+    box = circuit.addAnnotation('box', { x, y: top, end: { x: x + PLOT_BOX.w * GRID, y: top + PLOT_BOX.h * GRID }, plot, style: { lineStyle: 'solid', blackTraces: true }, ...(figure ? { figure } : {}) });
     if (figure) settlePlaced(circuit, figure.id);
   }
   let y = top;

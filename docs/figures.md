@@ -142,8 +142,8 @@ columns separated by spaces (`src/core/csv-data.js`, `src/core/data-plot.js`,
   is, drags on the plot (a point to the trace nearest the pointer), and
   takes a typed x or y (a point its trace too): a number or a calculator
   expression (`1/64`, `2.7k/2.24M`). The numbers go small
-  beside what they read, clear of one another; **Values** off leaves them
-  out (`cursorValues: false`). The drawing's plot shows them as the
+  beside what they read, clear of one another; a marker's **Values** off
+  leaves its numbers out (its `values: false`). The drawing's plot shows them as the
   editor does. A point names its trace by id (the plot's own traces from
   0, then those from files), followed when traces move or go; an update
   from the analysis keeps the markers.
