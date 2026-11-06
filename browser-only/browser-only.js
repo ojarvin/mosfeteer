@@ -27563,14 +27563,16 @@ function placeDataPlot(circuit, plot, { at = null, math = false } = {}) {
 }
 
 /** A legend for `traces` beside `box`, one label under another, past the
- *  room the line samples take in black. */
+ *  room the line samples take in black. `math`: whether the labels are
+ *  TeX, or how many of the first ones are. */
 function writeLegend(circuit, box, traces, at = null, { math = false } = {}) {
   const frame = box.bbox();
   const left = at?.x ?? frame.x + frame.w + PLOT_LEGEND_SAMPLE_ROOM;
   let top = at?.y ?? frame.y;
-  return traces.map((trace) => {
+  return traces.map((trace, i) => {
     // A label of TeX (`math`: a sweep's) in the math font, as an analysis plot's.
-    const label = circuit.addLabel({ text: math ? `$${trace.label}$` : trace.label || ' ', ...(math ? { math: true } : {}), parent: box.id, role: PLOT_LEGEND_ROLE, align: 'left', x: 0, y: 0, style: { color: trace.color } });
+    const tex = math === true || i < math;
+    const label = circuit.addLabel({ text: tex ? `$${trace.label}$` : trace.label || ' ', ...(tex ? { math: true } : {}), parent: box.id, role: PLOT_LEGEND_ROLE, align: 'left', x: 0, y: 0, style: { color: trace.color } });
     const size = label.bbox();
     label.moveTo(snap(left + size.w / 2), snap(top + size.h / 2));
     top = label.bbox().y + label.bbox().h;
@@ -27842,15 +27844,16 @@ function appendPlotTraces(circuit, box, traces, { file = '' } = {}) {
 }
 
 /** Replace a data plot's traces with `plot`'s (the file read again, or
- *  other columns), keeping its place, size, style, axes' names and scales,
- *  and zoom; its legend is written again where it was. */
-function replaceDataPlotTraces(circuit, box, plot) {
+ *  other columns, or a sweep run again), keeping its place, size, style,
+ *  axes' names and scales, and zoom; its legend is written again where it
+ *  was (`math`: as writeLegend's). */
+function replaceDataPlotTraces(circuit, box, plot, { math = false } = {}) {
   const old = dataPlotOf(box);
   const legend = circuit.plotLegend(box);
   const at = legend.length ? { x: Math.min(...legend.map((l) => l.bbox().x)), y: Math.min(...legend.map((l) => l.bbox().y)) } : null;
   for (const label of legend) circuit.removeLabel(label.id);
   box.plot = normalizePlot({ ...old, file: plot.file || old.file, traces: plot.traces });
-  return writeLegend(circuit, box, box.plot.traces, at);
+  return writeLegend(circuit, box, box.plot.traces, at, { math });
 }
 
 };
@@ -31334,7 +31337,41 @@ function normalizeDataPlot(plot) {
   const x = axis(plot.x);
   const y = axis(plot.y);
   const file = text(plot.file, 200);
-  return { kind: 'data', ...(file ? { file } : {}), x, y, traces, ...viewOf(plot, { positiveX: x.scale === 'log', positiveY: y.scale === 'log' }), ...cursorsOf(plot) };
+  return { kind: 'data', ...(file ? { file } : {}), x, y, traces, ...viewOf(plot, { positiveX: x.scale === 'log', positiveY: y.scale === 'log' }), ...cursorsOf(plot), ...sweepOf(plot.sweep) };
+}
+
+/** The most sweeps a sweep plot names (the held ones and the live one). */
+const MAX_SWEEP_RUNS = 8;
+
+/**
+ * A data plot annotated from the signal-flow Sweep (sweep-plot.js): what
+ * Update all plots runs again. `{ name, measures: [key], count, runs: [{
+ * from, to, points, log, input, amplitude, frequency, samples, values? }] }`
+ * -- the coefficient swept, the measures shown, how many of the plot's
+ * traces are the sweep's (the first ones), and each sweep drawn, the held
+ * ones at their coefficients (`values`), the last the live one, at the
+ * coefficients now.
+ */
+function sweepOf(sweep) {
+  if (!sweep || typeof sweep !== 'object' || typeof sweep.name !== 'string' || !/^[A-Za-z][\w]{0,40}$/.test(sweep.name)) return {};
+  const runs = (Array.isArray(sweep.runs) ? sweep.runs : []).slice(-MAX_SWEEP_RUNS).map((run) => {
+    const values = {};
+    for (const [name, number] of Object.entries(run?.values || {})) if (/^[A-Za-z][\w]{0,40}$/.test(name) && finite(number)) values[name] = number;
+    const points = Math.round(Number(run?.points));
+    if (!finite(run?.from) || !finite(run?.to) || run.from === run.to || !(points >= 2 && points <= 201)) return null;
+    if (!finite(run.amplitude) || !finite(run.frequency) || run.frequency < 0 || !(Number.isInteger(run.samples) && run.samples >= 256 && run.samples <= 65536)) return null;
+    return {
+      from: run.from, to: run.to, points, log: run.log === true,
+      input: typeof run.input === 'string' ? run.input.slice(0, 200) : '',
+      amplitude: run.amplitude, frequency: run.frequency, samples: run.samples,
+      ...(run.values ? { values } : {}),
+    };
+  });
+  if (!runs.length || runs.some((run) => !run)) return {};
+  const measures = (Array.isArray(sweep.measures) ? sweep.measures : []).filter((key) => typeof key === 'string' && key.length <= 200).slice(0, 40);
+  const count = Math.round(Number(sweep.count));
+  if (!measures.length || !(count >= 1 && count <= 8)) return {};
+  return { sweep: { name: sweep.name, measures, count, runs } };
 }
 
 /** A swing plot (signal-flow simulation): colored traces of each net's
@@ -54419,17 +54456,22 @@ function neighborhoodOrder(items, affinity) {
   return order;
 }
 
-/** Longest side, in device pixels, of the two baked renderings. */
+/** Longest side, in device pixels, of the three baked renderings. */
 const SMALL_PX = 256;
+const MEDIUM_PX = 640;
 const LARGE_PX = 1280;
+
+/** The baked renderings, smallest first. */
+const IMAGE_LEVELS = ['small', 'medium', 'large'];
 
 /**
  * How to draw a tile whose longest side covers `px` device pixels: the
- * small or large rendering, and live vector drawing once even the large one
- * would be blurred.
+ * small, medium or large rendering, and live vector drawing once even the
+ * large one would be blurred.
  */
 function tileDetail(px) {
   if (px <= SMALL_PX * 1.25) return 'small';
+  if (px <= MEDIUM_PX * 1.25) return 'medium';
   if (px <= LARGE_PX * 1.25) return 'large';
   return 'vector';
 }
@@ -54621,7 +54663,9 @@ function carryDeskPlace(from, to, storage = globalThis.localStorage) {
 __exports.ATLAS_GAP = ATLAS_GAP;
 __exports.ATLAS_CAPTION = ATLAS_CAPTION;
 __exports.SMALL_PX = SMALL_PX;
+__exports.MEDIUM_PX = MEDIUM_PX;
 __exports.LARGE_PX = LARGE_PX;
+__exports.IMAGE_LEVELS = IMAGE_LEVELS;
 __exports.DESK_KEY = DESK_KEY;
 };
 
@@ -54744,7 +54788,7 @@ let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let relatednessOf; __bind(() => { ({ relatednessOf } = __require("src/core/design-related.js")); });
 let linkArrow, linkCurve, linkDepths, linkGraph; __bind(() => { ({ linkArrow, linkCurve, linkDepths, linkGraph } = __require("src/core/design-links.js")); });
-let ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, layoutAtlasShaped, neighborTile, rectsIntersect, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, layoutAtlasShaped, neighborTile, rectsIntersect, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing } = __require("src/web/atlas-layout.js")); });
+let ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, IMAGE_LEVELS, LARGE_PX, MEDIUM_PX, SMALL_PX, floatClear, layoutAtlas, layoutAtlasShaped, neighborTile, rectsIntersect, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, IMAGE_LEVELS, LARGE_PX, MEDIUM_PX, SMALL_PX, floatClear, layoutAtlas, layoutAtlasShaped, neighborTile, rectsIntersect, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing } = __require("src/web/atlas-layout.js")); });
 let DESK_ASPECT, arrangeAtlas; __bind(() => { ({ DESK_ASPECT, arrangeAtlas } = __require("src/web/atlas-arrange.js")); });
 let INDEX_CACHE, bakeTiles, cacheGet, cachePut, renderingKey, trimCache; __bind(() => { ({ INDEX_CACHE, bakeTiles, cacheGet, cachePut, renderingKey, trimCache } = __require("src/web/atlas-cache.js")); });
 let wheelIntent, lerpView; __bind(() => { ({ wheelIntent, lerpView } = __require("src/web/gestures.js")); });
@@ -54886,7 +54930,10 @@ const isSheet = (source) => source === 'symbols' || source === 'drawings';
 /** Live SVGs at most at once; the rest stay on their large images. */
 const MAX_VECTOR_TILES = 6;
 /** Large images decoded at once (each is up to ~6 MB of pixels). */
-const MAX_LARGE_BITMAPS = 24;
+/** The most images of each level above the small kept at once: past it,
+ *  those nearest the middle of the screen have theirs. A screen at rest
+ *  holds no more medium ones than this (each covers over 320 device px). */
+const MAX_BITMAPS = { medium: 128, large: 24 };
 const ZOOM_IN_PX_PER_UNIT = 3; // the editor's closest zoom: 120 px per grid cell
 /** Each design's own reveal: it fades and grows in this long, after a delay
  *  that ripples out from the middle of the view (REVEAL_STEP_MS a design,
@@ -55249,7 +55296,7 @@ async function rasterize(entry, level) {
     image.onerror = () => reject(new Error('could not draw the design'));
     image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
   });
-  const longest = level === 'small' ? SMALL_PX : LARGE_PX;
+  const longest = { small: SMALL_PX, medium: MEDIUM_PX, large: LARGE_PX }[level];
   const k = longest / Math.max(entry.box.w, entry.box.h);
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(entry.box.w * k));
@@ -55275,10 +55322,10 @@ async function bake(entry, level) {
 
 /** Load every cached small image, for at most `budget` ms. */
 async function warmSmallImages(generation, budget) {
-  // The open design's images are never cached: bake both now, so the
+  // The open design's images are never cached: bake them now, so the
   // flight back can show them.
   const current = state.tiles.map((tile) => state.entries.get(tile.id)).find((entry) => entry.current);
-  const baking = current ? ['small', 'large'].map(async (level) => {
+  const baking = current ? IMAGE_LEVELS.map(async (level) => {
     const key = bitmapKey(current, level);
     if (!state.bitmaps.has(key)) state.bitmaps.set(key, await bake(current, level));
   }) : [];
@@ -55305,7 +55352,7 @@ async function prepareStartupImages(generation, target) {
   await document.fonts.ready;
   const k = paneSize().w / target.w * (window.devicePixelRatio || 1);
   await bakeTiles(state.tiles.map((tile) => ({ tile, entry: state.entries.get(tile.id) })), {
-    levels: ({ tile }) => (tileDetail(Math.max(tile.w, tile.h) * k) === 'small' ? ['small'] : ['small', 'large']),
+    levels: ({ tile }) => imageLevels(tileDetail(Math.max(tile.w, tile.h) * k)),
     bake: ({ entry }, level) => bake(entry, level),
     keep: ({ entry }, level, bitmap) => state.bitmaps.set(bitmapKey(entry, level), bitmap),
     failed: ({ entry }, level) => state.failed.add(bitmapKey(entry, level)),
@@ -55330,7 +55377,7 @@ async function pump() {
         // An image that arrives once the desk shows fades in (see draw); the
         // open design is on it from the start, as the editor showed it.
         if (!entry.current && !rootEl.classList.contains('preparing')) state.arrived.set(key, performance.now());
-        if (level === 'large') evictLargeBitmaps(key);
+        if (level !== 'small') evictBitmaps(level, key);
         requestDraw();
       } catch {
         state?.failed.add(key);
@@ -55341,14 +55388,20 @@ async function pump() {
   }
 }
 
-/** Past MAX_LARGE_BITMAPS, drop the oldest large images the screen does
+/** The level a tile of `detail` is drawn from (a live one: the large). */
+const imageLevel = (detail) => (detail === 'vector' ? 'large' : detail);
+
+/** The images a tile of `detail` asks for: the small one, and its own. */
+const imageLevels = (detail) => [...new Set(['small', imageLevel(detail)])];
+
+/** Past MAX_BITMAPS, drop the oldest images of `level` the screen does
  *  not use, never `keep` or one it does. */
-function evictLargeBitmaps(keep) {
-  const large = [...state.bitmaps.keys()].filter((key) => key.endsWith('\nlarge'));
-  let excess = large.length - MAX_LARGE_BITMAPS;
-  for (const key of large) {
+function evictBitmaps(level, keep) {
+  const kept = [...state.bitmaps.keys()].filter((key) => key.endsWith(`\n${level}`));
+  let excess = kept.length - MAX_BITMAPS[level];
+  for (const key of kept) {
     if (excess <= 0) break;
-    if (key === keep || state.largeInUse?.has(key)) continue;
+    if (key === keep || state.inUse?.has(key)) continue;
     state.bitmaps.get(key)?.close?.();
     state.bitmaps.delete(key);
     excess -= 1;
@@ -55529,9 +55582,9 @@ function draw() {
     ctx.globalAlpha = alpha;
     if (found?.hits.length && document.activeElement === searchEl) drawHits(ctx, tile, entry, found.hits, palette);
     ctx.globalAlpha = (entry.current ? 1 : Math.min(1, reveal * 1.6)) * fade;
-    const level = detail === 'small' ? 'small' : 'large';
-    const bitmap = state.bitmaps.get(bitmapKey(entry, level)) ||
-      state.bitmaps.get(bitmapKey(entry, level === 'large' ? 'small' : 'large'));
+    const level = imageLevel(detail);
+    // Its own image, else the sharpest one there is.
+    const bitmap = [level, ...IMAGE_LEVELS.slice().reverse()].map((l) => state.bitmaps.get(bitmapKey(entry, l))).find(Boolean);
     if (bitmap && !flying && !(live.has(tile.id) && state.overlays.get(tile.id)?.dataset.ready)) {
       // Best filtering at rest; in motion the cheap one, which no one sees.
       ctx.imageSmoothingQuality = moving ? 'low' : 'high';
@@ -55543,9 +55596,9 @@ function draw() {
       ctx.drawImage(bitmap, rect.x, rect.y, rect.w, rect.h);
     }
     const distance = Math.hypot(tile.x + tile.w / 2 - center.x, tile.y + tile.h / 2 - center.y);
-    // Mid-animation only small images are fetched: decoding a large one
+    // Mid-animation only small images are fetched: decoding a larger one
     // would drop frames, and the view does not rest here anyway.
-    for (const need of level === 'large' && !moving ? ['small', 'large'] : ['small']) {
+    for (const need of moving ? ['small'] : imageLevels(detail)) {
       const key = bitmapKey(entry, need);
       wanted.push({ entry, level: need, key, distance });
     }
@@ -55557,14 +55610,15 @@ function draw() {
   drawLinks(ctx, palette, shown);
   if (state.flight) drawFlight(ctx, palette, w, h);
   drawZoomBox(ctx, palette);
-  // Every small image first (the whole desk becomes recognizable), then large.
-  wanted.sort((a, b) => (a.level === b.level ? a.distance - b.distance : a.level === 'small' ? -1 : 1));
-  // Only as many large images as are kept: the nearest the middle. Asking
+  // Every small image first (the whole desk becomes recognizable), then
+  // the rest, nearest the middle first.
+  wanted.sort((a, b) => ((a.level === 'small') === (b.level === 'small') ? a.distance - b.distance : a.level === 'small' ? -1 : 1));
+  // Only as many of a level as are kept: the nearest the middle. Asking
   // for more would have each new one evict another still on screen, which
   // is asked for again, round and round.
   // In motion none is asked for; those in use stay so.
-  if (!moving) state.largeInUse = new Set(wanted.filter((need) => need.level === 'large').slice(0, MAX_LARGE_BITMAPS).map((need) => need.key));
-  state.wanted = wanted.filter((need) => (need.level === 'small' || state.largeInUse?.has(need.key)) && !state.bitmaps.has(need.key));
+  if (!moving) state.inUse = new Set(['medium', 'large'].flatMap((level) => wanted.filter((need) => need.level === level).slice(0, MAX_BITMAPS[level]).map((need) => need.key)));
+  state.wanted = wanted.filter((need) => (need.level === 'small' || state.inUse?.has(need.key)) && !state.bitmaps.has(need.key));
   void pump();
   syncVectorOverlays(vector, moving);
 }
@@ -56816,7 +56870,7 @@ async function saveTags(entry, text) {
       if (revision) {
         await cachePut(renderingKey(entry.path, revision, DRAWING_CACHE), entry.svg);
         await cachePut(renderingKey(entry.path, revision, INDEX_CACHE), index);
-        for (const level of ['small', 'large']) {
+        for (const level of IMAGE_LEVELS) {
           const bitmap = state?.bitmaps.get(bitmapKey(entry, level));
           if (bitmap) state.bitmaps.set(`${entry.id}\n${revision}\n${theme()}\n${level}`, bitmap);
         }
@@ -57454,7 +57508,7 @@ function drawFlight(ctx, palette, w, h) {
     ctx.restore();
   }
   if (design) {
-    const bitmap = state.bitmaps.get(bitmapKey(entry, 'large')) || state.bitmaps.get(bitmapKey(entry, 'small'));
+    const bitmap = IMAGE_LEVELS.slice().reverse().map((level) => state.bitmaps.get(bitmapKey(entry, level))).find(Boolean);
     if (bitmap) {
       ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(bitmap, design.x, design.y, design.w, design.h);
@@ -57887,7 +57941,7 @@ async function openDesk(generation, source, animate, startup) {
 async function bakeOpenDesign(budget) {
   const entry = state.tiles.map((tile) => state.entries.get(tile.id)).find((candidate) => candidate?.current);
   if (!entry) return;
-  const jobs = ['small', 'large'].map(async (level) => {
+  const jobs = IMAGE_LEVELS.map(async (level) => {
     const key = bitmapKey(entry, level);
     if (state.bitmaps.has(key)) return;
     const bitmap = await bake(entry, level).catch(() => null);
@@ -89710,6 +89764,7 @@ let locusPlot, locusSteps, rootLocus; __bind(() => { ({ locusPlot, locusSteps, r
 let dbfsOffset, dbfsSpectrum, inBand, plotSpectrum; __bind(() => { ({ dbfsOffset, dbfsSpectrum, inBand, plotSpectrum } = __require("src/core/analysis/spectrum.js")); });
 let prepareSimulation, sweepAmplitudes; __bind(() => { ({ prepareSimulation, sweepAmplitudes } = __require("src/core/analysis/simulate.js")); });
 let PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, parseLabelRuns; __bind(() => { ({ PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, parseLabelRuns } = __require("src/core/model.js")); });
+let replaceDataPlotTraces; __bind(() => { ({ replaceDataPlotTraces } = __require("src/core/data-plot.js")); });
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
 let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
 let chooseFigure, newFigureId, placeFigure, plotKey, settlePlaced; __bind(() => { ({ chooseFigure, newFigureId, placeFigure, plotKey, settlePlaced } = __require("src/core/figures.js")); });
@@ -89729,7 +89784,7 @@ let netPicker; __bind(() => { ({ netPicker } = __require("src/web/net-picker.js"
 let deriving; __bind(() => { ({ deriving } = __require("src/web/analysis-busy.js")); });
 let startWorker; __bind(() => { ({ startWorker } = __require("src/web/worker-thread.js")); });
 let differing, differingNames, heldName, heldNumber, holdButton, holdKey, liveName, saveHolds, savedHolds, traceLegendRow; __bind(() => { ({ differing, differingNames, heldName, heldNumber, holdButton, holdKey, liveName, saveHolds, savedHolds, traceLegendRow } = __require("src/web/trace-hold.js")); });
-let installSweepPlot, showSweep, sweepSection; __bind(() => { ({ installSweepPlot, showSweep, sweepSection } = __require("src/web/sweep-plot.js")); });
+let installSweepPlot, showSweep, sweepPlotUpdate, sweepSection; __bind(() => { ({ installSweepPlot, showSweep, sweepPlotUpdate, sweepSection } = __require("src/web/sweep-plot.js")); });
 let simulatedSpectrum; __bind(() => { ({ simulatedSpectrum } = __require("src/core/analysis/spectrum-run.js")); });
 /**
  * The analysis window's signal-flow mode (core/analysis/signal-flow.js): for a
@@ -89749,6 +89804,7 @@ let simulatedSpectrum; __bind(() => { ({ simulatedSpectrum } = __require("src/co
  * drawing with its legend, Annotate equations the equations, and Annotate
  * coefficients the coefficients' numbers as a table.
  */
+
 
 
 
@@ -91279,12 +91335,13 @@ function annotateCoefficients() {
  * one edit: each graph and step plot from the traces of the same names
  * (a plot naming one no longer on the graph is left as it is), a loop
  * plot at its signal, a root locus over its coefficient and range, a swing
- * plot from a fresh sweep of the nets it shows.
+ * plot from a fresh sweep of the nets it shows, a sweep plot from its
+ * sweeps run again (sweep-plot.js sweepPlotUpdate).
  */
 async function updatePlots() {
   const circuit = editor.circuit;
-  // A data plot is its file's, never the analysis's.
-  const boxes = [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.plot && label.plot.kind !== 'data');
+  // A data plot is its file's, never the analysis's; but a sweep's.
+  const boxes = [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.plot && (label.plot.kind !== 'data' || label.plot.sweep));
   if (!boxes.length) { logLine('No plots on the drawing to update.'); return; }
   if (flow().spectrum?.on) runSpectrum();
   if (boxes.some((box) => box.plot.kind === 'swing')) {
@@ -91292,10 +91349,19 @@ async function updatePlots() {
     await runSwing();
   }
   if (circuit !== editor.circuit) return;
+  // Each sweep plot's sweeps, one after another (each point a simulation).
+  const swept = new Map();
+  const sweeps = boxes.filter((box) => box.plot.kind === 'data');
+  for (const [i, box] of sweeps.entries()) {
+    logLine(`Updating plots: running sweep ${i + 1} of ${sweeps.length}...`);
+    const traces = await sweepPlotUpdate(box.plot, () => circuit !== editor.circuit);
+    if (circuit !== editor.circuit) return;
+    if (traces) swept.set(box, traces);
+  }
   const updates = [];
   const skipped = [];
   for (const box of boxes) {
-    const update = plotUpdate(box.plot);
+    const update = box.plot.kind === 'data' ? (swept.has(box) ? { traces: swept.get(box) } : null) : plotUpdate(box.plot);
     if (update) updates.push({ box, ...update });
     else skipped.push(box);
   }
@@ -91307,7 +91373,15 @@ async function updatePlots() {
     // they move to the table.
     const hadValues = updates.some((update) => legendOf(update.box).some((label) => /\s=\s/.test(String(label.text))));
     // Each keeps the limits it was annotated at.
-    for (const update of updates) written.push(writePlot(update.box, update.box.plot.view ? { ...update.plot, view: update.box.plot.view } : update.plot, update.shown));
+    for (const update of updates) {
+      if (update.traces) {
+        // A sweep plot keeps its axes too; its sweep's entries are TeX.
+        const entries = replaceDataPlotTraces(circuit, update.box, { traces: update.traces }, { math: update.box.plot.sweep.count });
+        if (entries.length) written.push({ ids: entries.map((label) => label.id), left: Math.min(...entries.map((l) => l.bbox().x)), top: Math.min(...entries.map((l) => l.bbox().y)) });
+        continue;
+      }
+      written.push(writePlot(update.box, update.box.plot.view ? { ...update.plot, view: update.box.plot.view } : update.plot, update.shown));
+    }
     // The coefficients table, at the same numbers.
     const rows = coefficientRows();
     if (rows.length) table = writeMathFigure({ ...COEFFICIENTS, text: rows.join('\n'), create: hadValues });
@@ -91315,7 +91389,7 @@ async function updatePlots() {
   for (const item of written) alignLabelColumn(item.ids, { left: item.left, top: item.top, gap: 0 });
   table?.settle();
   render();
-  const kinds = (list) => list.map((box) => (box.plot.role === 'loop' ? 'loop' : box.plot.kind === 'response' ? (box.plot.quantity === 'phase' ? 'phase' : 'magnitude') : box.plot.kind));
+  const kinds = (list) => list.map((box) => (box.plot.role === 'loop' ? 'loop' : box.plot.kind === 'response' ? (box.plot.quantity === 'phase' ? 'phase' : 'magnitude') : box.plot.kind === 'data' ? 'sweep' : box.plot.kind));
   logLine(`updated ${updates.length} plot${updates.length === 1 ? '' : 's'}${updates.length ? ` (${kinds(updates.map((u) => u.box)).join(', ')})` : ''}${skipped.length ? `; left ${skipped.length} as ${skipped.length === 1 ? 'it was' : 'they were'} (${kinds(skipped).join(', ')}: its traces are no longer on the graph, or derive or sweep first)` : ''}`, skipped.length && !updates.length ? 'error' : undefined);
 }
 
@@ -93580,6 +93654,7 @@ function patchDrawing(svg, next) {
 __modules["src/web/sweep-plot.js"] = function (__require, __exports) {
 __exports.sweepSection = sweepSection;
 __exports.sweep = sweep;
+__exports.sweepPlotUpdate = sweepPlotUpdate;
 __exports.showSweep = showSweep;
 __exports.installSweepPlot = installSweepPlot;
 let TRACE_COLORS, bandEdges, diagramSymbols, hasSignalFlow, signalFlowGraph; __bind(() => { ({ TRACE_COLORS, bandEdges, diagramSymbols, hasSignalFlow, signalFlowGraph } = __require("src/core/analysis/signal-flow.js")); });
@@ -93609,8 +93684,10 @@ let createPlotView; __bind(() => { ({ createPlotView } = __require("src/web/plot
  * It runs on Sweep only (each point is a full simulation). Hold keeps a
  * copy of the sweep shown, drawn with the next ones of the same
  * coefficient and named by what differs since (the window's, not saved).
- * Annotate puts the measures shown on the drawing as a data plot. What it sweeps, how,
- * and what it shows are saved with the design (`Circuit#windows.sweep`).
+ * Annotate puts the measures shown on the drawing as a data plot, with
+ * what each sweep drawn ran at (`plot.sweep`), so Update all plots runs
+ * them again (sweepPlotUpdate). What it sweeps, how, and what it shows
+ * are saved with the design (`Circuit#windows.sweep`).
  */
 
 
@@ -93634,7 +93711,8 @@ const AVERAGES = 4;
 
 let api = null; // { flow(), links(), resolvedWith(values), visible() } from signal-flow-ui.js
 let parts = null;
-let result = null; // { name, xs, points: [{ x, measures } | { x, overloaded } | { x, error }], signals, log }
+// { name, xs, from, to, log, points: [{ x, measures } | { x, overloaded } | { x, error }], signals, values, amplitude, stimulus }
+let result = null;
 let run = 0; // the sweep running; a newer one (or another design) stops it
 // Held sweeps, drawn with the live one: { result, values (the sliders then), amplitude }.
 let held = [];
@@ -93747,55 +93825,60 @@ function shownMeasures() {
 
 /** Every measure a sweep's runs give: the three, then the peaks of the
  *  nets that swing. */
-function measureList() {
+function measureList(of = result) {
   // The nets that swing: the states, the quantizers' inputs, the output (as the Swing view shows first).
-  const peaks = (result?.signals || []).filter((s) => ['state', 'quantizer-input', 'output'].includes(s.role)).map((s) => [`peak:${s.key}`, `${s.name}\\text{ peak (dBFS)}`]);
+  const peaks = (of?.signals || []).filter((s) => ['state', 'quantizer-input', 'output'].includes(s.role)).map((s) => [`peak:${s.key}`, `${s.name}\\text{ peak (dBFS)}`]);
   return [...MEASURES.map(([key, text]) => [key, `\\text{${text}}`]), ...peaks];
 }
 
-/** The sweep as a data plot: each measure shown a trace over the values. */
-function sweepPlot() {
-  if (!result?.points.some((p) => p.measures)) return null;
-  const shown = new Set(shownMeasures());
-  const curves = (of, i, note = '') => measureList().filter(([key]) => shown.has(key)).map(([key, label], k) => ({
+/** The sweep shown as a data plot. */
+const sweepPlot = () => sweepPlotOf(result, held, shownMeasures());
+
+/** Sweep `live` as a data plot, with those `held` of its coefficient: each
+ *  of the measures `keys` a trace over the values. */
+function sweepPlotOf(live, held, keys) {
+  if (!live?.points.some((p) => p.measures)) return null;
+  const shown = new Set(keys);
+  const curves = (of, i, note = '') => measureList(live).filter(([key]) => shown.has(key)).map(([key, label], k) => ({
     label: `${label}${note}`,
     color: TRACE_COLORS[(i + k) % TRACE_COLORS.length],
     points: of.points.filter((p) => Number.isFinite(p.measures?.[key])).map((p) => [p.x, p.measures[key]]),
   }));
   // Held sweeps of the same coefficient first, each named by what differs
   // from the sweep shown (the numbers it ran at).
-  const now = result.values;
-  const same = held.filter((h) => h.result.name === result.name);
+  const same = held.filter((h) => h.result.name === live.name);
   // The live sweep names its own numbers for those its held ones name.
-  const named = same.flatMap((h) => heldChanges(h, now));
+  const named = same.flatMap((h) => heldChanges(h, live));
   const traces = [
-    ...same.flatMap((h, n) => curves(h.result, shown.size * (n + 1), heldNote(h, now))),
-    ...curves(result, 0, liveNote(now, named)),
+    ...same.flatMap((h, n) => curves(h.result, shown.size * (n + 1), heldNote(h, live))),
+    ...curves(live, 0, liveNote(live, named)),
   ].filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   // The coefficient as an axis names it: a_r as a sub-scripted r.
-  return normalizePlot({ kind: 'data', x: { label: result.name.replace(/_([A-Za-z0-9]+)$/, '_{$1}'), scale: result.log ? 'log' : 'linear' }, y: { label: 'dB', scale: 'linear' }, traces });
+  return normalizePlot({ kind: 'data', x: { label: live.name.replace(/_([A-Za-z0-9]+)$/, '_{$1}'), scale: live.log ? 'log' : 'linear' }, y: { label: 'dB', scale: 'linear' }, traces });
 }
 
 /** A held sweep's note: the coefficients (but the swept one) and the
- *  amplitude it ran at that differ from now, or "held". */
-function heldNote(h, now) {
-  const notes = heldChanges(h, now).map((name) => (name === AMPLITUDE ? `${h.amplitude}\\ \\text{dBFS}` : `${name} = ${Number(h.values[name].toPrecision(4))}`));
+ *  amplitude it ran at that differ from the live sweep's, or "held". */
+function heldNote(h, live) {
+  const notes = heldChanges(h, live).map((name) => (name === AMPLITUDE ? `${h.amplitude}\\ \\text{dBFS}` : `${name} = ${Number(h.values[name].toPrecision(4))}`));
   return notes.length ? `,\\ ${notes.join(',\\ ')}` : '\\ \\text{(held)}';
 }
 
 const AMPLITUDE = '\0amplitude';
 
-/** What differs between a held sweep and now: coefficient names (but the
- *  swept one), and AMPLITUDE for the input's. */
-function heldChanges(h, now) {
+/** What differs between a held sweep and the live one: coefficient names
+ *  (but the swept one), and AMPLITUDE for the input's. */
+function heldChanges(h, live) {
+  const now = live.values;
   const names = Object.entries(h.values).filter(([name, value]) => name !== h.result.name && Math.abs(value - (now[name] ?? 1)) > 1e-12 * Math.max(1, Math.abs(value))).map(([name]) => name);
-  return h.amplitude !== result.amplitude ? [...names, AMPLITUDE] : names;
+  return h.amplitude !== live.amplitude ? [...names, AMPLITUDE] : names;
 }
 
-/** The live sweep's note: its numbers now for `names`. */
-function liveNote(now, names) {
-  const notes = [...new Set(names)].map((name) => (name === AMPLITUDE ? `${result.amplitude}\\ \\text{dBFS}` : `${name} = ${Number((now[name] ?? 1).toPrecision(4))}`));
+/** The live sweep's note: its numbers for `names`. */
+function liveNote(live, names) {
+  const now = live.values;
+  const notes = [...new Set(names)].map((name) => (name === AMPLITUDE ? `${live.amplitude}\\ \\text{dBFS}` : `${name} = ${Number((now[name] ?? 1).toPrecision(4))}`));
   return notes.length ? `,\\ ${notes.join(',\\ ')}` : '';
 }
 
@@ -93829,17 +93912,23 @@ function say(text, error = false) {
   parts.status.classList.toggle('analysis-error', error);
 }
 
-/** What one run of the sweep simulates at `values`. */
-function request(values) {
+/** The sine the settings drive the sweep with: `{ input, amplitude,
+ *  frequency, samples }` (f/fs on a bin of a segment of `samples`). */
+function stimulusNow() {
   const settings = state();
-  const segment = SEGMENTS.includes(settings.samples) ? settings.samples : 8192;
+  const samples = SEGMENTS.includes(settings.samples) ? settings.samples : 8192;
   const typed = typedNumber(settings.frequency);
   const f = Number.isFinite(typed) && settings.frequency ? typed : swingTestFrequency({ frequency: '' }, editor.circuit.analysisValues.band);
-  const frequency = f === 0 ? 0 : Math.max(1, Math.round(f * segment)) / segment;
-  const amplitude = settings.amplitude ? Number(settings.amplitude) : -6;
+  const frequency = f === 0 ? 0 : Math.max(1, Math.round(f * samples)) / samples;
+  return { input: parts.input.value, amplitude: settings.amplitude ? Number(settings.amplitude) : -6, frequency, samples };
+}
+
+/** What one run of a sweep simulates at `values`, driven by `stimulus`. */
+function request(values, stimulus) {
+  const { input, amplitude, frequency, samples: segment } = stimulus;
   const diagram = Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, values[name] ?? 1]));
   return {
-    options: { values: diagram, sources: api.flow().sources, input: parts.input.value, output: api.flow().output, frequency, samples: AVERAGES * segment, segment },
+    options: { values: diagram, sources: api.flow().sources, input, output: api.flow().output, frequency, samples: AVERAGES * segment, segment },
     amplitude,
     segment,
     edges: bandEdges(editor.circuit.analysisValues.band),
@@ -93881,7 +93970,8 @@ function sweep() {
   const id = ++run;
   const circuit = editor.circuit.toJSON();
   // The numbers it runs at, for its name beside held sweeps.
-  result = { name, xs, points: [], signals: null, log, values: { ...api.resolvedWith({}) }, amplitude: Number(settings.amplitude || -6) };
+  const stimulus = stimulusNow();
+  result = { name, xs, from, to, log, points: [], signals: null, values: { ...api.resolvedWith({}) }, amplitude: stimulus.amplitude, stimulus };
   plotsBusy.set('sweep', true);
   parts.go.dataset.running = '1';
   parts.go.textContent = 'Stop';
@@ -93898,7 +93988,7 @@ function sweep() {
       say(failed ? failed.error : `${xs.length} points of ${name} from ${Number(from.toPrecision(4))} to ${Number(to.toPrecision(4))}${away ? `; the loop ran away at ${away} of them` : ''}.`, !!failed);
       return;
     }
-    const ask = { circuit, ...request(api.resolvedWith({ [name]: xs[index] })) };
+    const ask = { circuit, ...request(api.resolvedWith({ [name]: xs[index] }), stimulus) };
     const take = (data) => {
       if (id !== run) return;
       result.signals ||= data.signals || null;
@@ -93918,10 +94008,18 @@ function sweep() {
   next(0);
 }
 
+/** What Update all plots runs again of a sweep: its range and its sine,
+ *  and for a held one the coefficients it ran at (model.js sweepOf). */
+function sweepRun(of, values) {
+  return { from: of.from, to: of.to, points: of.xs.length, log: of.log, ...of.stimulus, ...(values ? { values } : {}) };
+}
+
 /** The sweep shown onto the drawing, as a data plot. */
 function annotate() {
-  const plot = sweepPlot();
+  let plot = sweepPlot();
   if (!plot) return;
+  const same = held.filter((h) => h.result.name === result.name);
+  plot = normalizePlot({ ...plot, sweep: { name: result.name, measures: shownMeasures(), count: plot.traces.length, runs: [...same.map((h) => sweepRun(h.result, h.values)), sweepRun(result)] } });
   let placed = null;
   commit(() => { placed = placeDataPlot(editor.circuit, plot, { math: true }); });
   if (!placed) return;
@@ -93931,6 +94029,65 @@ function annotate() {
   setLabelSelection([placed.box.id]);
   logLine('placed the sweep on the drawing; drag to move it, its corners to resize');
   render();
+}
+
+/** Each run of `asks` (simulatedMeasures requests) in turn, in a worker
+ *  thread where one starts; the results in order, or null once `stale()`. */
+async function measureAll(asks, stale) {
+  let thread = startWorker();
+  const results = [];
+  try {
+    for (const [index, ask] of asks.entries()) {
+      if (stale()) return null;
+      const data = thread ? await new Promise((resolve) => {
+        thread.onmessage = ({ data: reply }) => { if (reply.type === 'measures' && reply.index === index) resolve(reply); };
+        thread.onerror = (ev) => { ev.preventDefault?.(); thread?.terminate(); thread = null; resolve(simulatedMeasures(ask)); };
+        thread.postMessage({ type: 'measures', id: 0, index, ...ask });
+      }) : await new Promise((resolve) => afterPaint(() => resolve(simulatedMeasures(ask))));
+      results.push(data);
+      // A diagram that cannot run stops at its first point.
+      if (data.error && !data.signals) return results;
+    }
+    return results;
+  } finally {
+    thread?.terminate();
+  }
+}
+
+/**
+ * A sweep plot (`plot.sweep`) run again: each of its sweeps in turn, the
+ * held ones at the coefficients they ran at, the live one at those now,
+ * over the same range with the same sine. Resolves to the plot's new
+ * traces (the sweep's, colored as they were, then those added since), or
+ * null when the diagram no longer runs or no longer has what it plotted;
+ * null too once `stale()`.
+ */
+async function sweepPlotUpdate(plot, stale = () => false) {
+  const spec = plot?.sweep;
+  if (!spec || !api || !hasSignalFlow(editor.circuit)) return null;
+  if (!diagramSymbols(editor.circuit).includes(spec.name)) return null;
+  const circuit = editor.circuit.toJSON();
+  const sources = new Set(signalFlowGraph(editor.circuit).sources.filter((s) => !s.quantizer && !s.dither).map((s) => s.id));
+  const runs = [];
+  for (const run of spec.runs) {
+    if (!sources.has(run.input)) return null;
+    const xs = sweepValues(run.from, run.to, run.points, run.log);
+    if (!xs.length) return null;
+    const values = run.values ? { ...api.resolvedWith(run.values) } : { ...api.resolvedWith({}) };
+    const asks = xs.map((x) => ({ circuit, ...request(api.resolvedWith({ ...(run.values || {}), [spec.name]: x }), run) }));
+    const data = await measureAll(asks, stale);
+    if (!data) return null;
+    const points = data.map((d, i) => ({ x: xs[i], ...(d.measures ? { measures: d.measures } : d.overloaded ? { overloaded: true } : { error: d.error }) }));
+    runs.push({ name: spec.name, xs, from: run.from, to: run.to, log: run.log, points, signals: data.find((d) => d.signals)?.signals || null, values, amplitude: run.amplitude, stimulus: run });
+  }
+  const live = runs.at(-1);
+  // Every measure it showed is still there to show.
+  const keys = new Set(measureList(live).map(([key]) => key));
+  if (spec.measures.some((key) => !keys.has(key))) return null;
+  const next = sweepPlotOf(live, runs.slice(0, -1).map((r) => ({ result: r, values: r.values, amplitude: r.amplitude })), spec.measures);
+  if (!next || next.traces.length !== spec.count) return null;
+  const own = plot.traces.slice(0, spec.count);
+  return [...next.traces.map((trace, i) => ({ ...trace, color: own[i]?.color || trace.color })), ...plot.traces.slice(spec.count)];
 }
 
 /** The view was shown: its controls, and the last sweep. */

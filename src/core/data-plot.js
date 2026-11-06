@@ -79,14 +79,16 @@ export function placeDataPlot(circuit, plot, { at = null, math = false } = {}) {
 }
 
 /** A legend for `traces` beside `box`, one label under another, past the
- *  room the line samples take in black. */
+ *  room the line samples take in black. `math`: whether the labels are
+ *  TeX, or how many of the first ones are. */
 function writeLegend(circuit, box, traces, at = null, { math = false } = {}) {
   const frame = box.bbox();
   const left = at?.x ?? frame.x + frame.w + PLOT_LEGEND_SAMPLE_ROOM;
   let top = at?.y ?? frame.y;
-  return traces.map((trace) => {
+  return traces.map((trace, i) => {
     // A label of TeX (`math`: a sweep's) in the math font, as an analysis plot's.
-    const label = circuit.addLabel({ text: math ? `$${trace.label}$` : trace.label || ' ', ...(math ? { math: true } : {}), parent: box.id, role: PLOT_LEGEND_ROLE, align: 'left', x: 0, y: 0, style: { color: trace.color } });
+    const tex = math === true || i < math;
+    const label = circuit.addLabel({ text: tex ? `$${trace.label}$` : trace.label || ' ', ...(tex ? { math: true } : {}), parent: box.id, role: PLOT_LEGEND_ROLE, align: 'left', x: 0, y: 0, style: { color: trace.color } });
     const size = label.bbox();
     label.moveTo(snap(left + size.w / 2), snap(top + size.h / 2));
     top = label.bbox().y + label.bbox().h;
@@ -358,13 +360,14 @@ export function appendPlotTraces(circuit, box, traces, { file = '' } = {}) {
 }
 
 /** Replace a data plot's traces with `plot`'s (the file read again, or
- *  other columns), keeping its place, size, style, axes' names and scales,
- *  and zoom; its legend is written again where it was. */
-export function replaceDataPlotTraces(circuit, box, plot) {
+ *  other columns, or a sweep run again), keeping its place, size, style,
+ *  axes' names and scales, and zoom; its legend is written again where it
+ *  was (`math`: as writeLegend's). */
+export function replaceDataPlotTraces(circuit, box, plot, { math = false } = {}) {
   const old = dataPlotOf(box);
   const legend = circuit.plotLegend(box);
   const at = legend.length ? { x: Math.min(...legend.map((l) => l.bbox().x)), y: Math.min(...legend.map((l) => l.bbox().y)) } : null;
   for (const label of legend) circuit.removeLabel(label.id);
   box.plot = normalizePlot({ ...old, file: plot.file || old.file, traces: plot.traces });
-  return writeLegend(circuit, box, box.plot.traces, at);
+  return writeLegend(circuit, box, box.plot.traces, at, { math });
 }

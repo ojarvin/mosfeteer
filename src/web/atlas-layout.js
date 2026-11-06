@@ -203,17 +203,22 @@ function neighborhoodOrder(items, affinity) {
   return order;
 }
 
-/** Longest side, in device pixels, of the two baked renderings. */
+/** Longest side, in device pixels, of the three baked renderings. */
 export const SMALL_PX = 256;
+export const MEDIUM_PX = 640;
 export const LARGE_PX = 1280;
+
+/** The baked renderings, smallest first. */
+export const IMAGE_LEVELS = ['small', 'medium', 'large'];
 
 /**
  * How to draw a tile whose longest side covers `px` device pixels: the
- * small or large rendering, and live vector drawing once even the large one
- * would be blurred.
+ * small, medium or large rendering, and live vector drawing once even the
+ * large one would be blurred.
  */
 export function tileDetail(px) {
   if (px <= SMALL_PX * 1.25) return 'small';
+  if (px <= MEDIUM_PX * 1.25) return 'medium';
   if (px <= LARGE_PX * 1.25) return 'large';
   return 'vector';
 }

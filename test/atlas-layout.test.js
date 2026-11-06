@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, carryDeskPlace, floatClear, layoutAtlas, neighborTile, rectsIntersect, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing, layoutAtlasShaped, extraShapeTries } from '../src/web/atlas-layout.js';
+import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, MEDIUM_PX, SMALL_PX, carryDeskPlace, floatClear, layoutAtlas, neighborTile, rectsIntersect, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing, layoutAtlasShaped, extraShapeTries } from '../src/web/atlas-layout.js';
 import { GRID } from '../src/core/grid.js';
 
 const items = [
@@ -60,6 +60,10 @@ test('the same designs always get the same layout', () => {
 test('detail grows with the pixels a tile covers', () => {
   assert.equal(tileDetail(10), 'small');
   assert.equal(tileDetail(SMALL_PX), 'small');
+  // Between the small and the large a medium one: a tile a few hundred
+  // pixels across never stretches the small one.
+  assert.equal(tileDetail(SMALL_PX * 2), 'medium');
+  assert.equal(tileDetail(MEDIUM_PX), 'medium');
   assert.equal(tileDetail(LARGE_PX), 'large');
   assert.equal(tileDetail(LARGE_PX * 2), 'vector');
 });

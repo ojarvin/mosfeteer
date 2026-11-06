@@ -337,7 +337,10 @@ and the measures shown are saved with the design
 (`Circuit#windows.sweep`); Hold keeps a copy of the sweep shown, drawn
 with later sweeps of the same coefficient and named by the coefficients
 and amplitude that differ since (the window's, not saved; Clear held
-drops them); Annotate puts the measures shown on the drawing as a data plot.
+drops them); Annotate puts the measures shown on the drawing as a data plot,
+with what each sweep on it ran at (`plot.sweep`: the coefficient, the
+measures, and per sweep its range, its sine, and for a held one its
+coefficients).
 
 A new plot is drawn in black (`style.blackTraces`): its traces in its ink,
 told apart by dash (solid, dashed, dash-dot, dotted, then around again),
@@ -473,7 +476,10 @@ drawing at the coefficients' numbers now, in one undo step: a graph or step
 plot from the traces of the same names (one naming a trace no longer on the
 graph is left as it is), a loop plot at the signal it was broken at, a root
 locus over its coefficient and range (`plot.source`), a swing plot from a
-fresh sweep of the nets it shows. The coefficients table, if there, is
+fresh sweep of the nets it shows, a sweep plot from its sweeps run again in
+turn (the held ones at their coefficients, the live one at those now, the
+same range and sine; the axes, zoom and traces added from files stay). The
+coefficients table, if there, is
 rewritten at the same numbers; a plot from before the table, with the
 numbers under its legend, has them moved to a new table.
 

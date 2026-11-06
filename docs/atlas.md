@@ -305,10 +305,12 @@ open no design: a double-click zooms to a card, Esc returns.
   side its place puts it) while pulled back to their places and toward the
   middle, and laid on the grid from the middle out.
 - **Levels of detail**: one canvas paints every design from a baked image, small (256 px longest
-  side) or large (1280 px), and once even the large one would blur, the live
-  SVG is laid over it (at most six at a time). At most 24 large images
-  are kept; past that the designs nearest the middle of the screen have
-  theirs and the rest show the small one, so a desk at rest stops baking.
+  side), medium (640 px) or large (1280 px), the one nearest its size on
+  screen (at most 1.25 times stretched), and once even the large one would
+  blur, the live SVG is laid over it (at most six at a time). At most 128
+  medium and 24 large images are kept; past that the designs nearest the
+  middle of the screen have theirs and the rest show the sharpest they
+  have, so a desk at rest stops baking.
 - **Cache** (`src/web/atlas-cache.js`): each design's export SVG and its
   baked images are kept in IndexedDB keyed by document path and file
   revision (the workspace listing carries `revision`), so a second visit

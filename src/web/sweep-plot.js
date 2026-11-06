@@ -10,8 +10,10 @@
  * It runs on Sweep only (each point is a full simulation). Hold keeps a
  * copy of the sweep shown, drawn with the next ones of the same
  * coefficient and named by what differs since (the window's, not saved).
- * Annotate puts the measures shown on the drawing as a data plot. What it sweeps, how,
- * and what it shows are saved with the design (`Circuit#windows.sweep`).
+ * Annotate puts the measures shown on the drawing as a data plot, with
+ * what each sweep drawn ran at (`plot.sweep`), so Update all plots runs
+ * them again (sweepPlotUpdate). What it sweeps, how, and what it shows
+ * are saved with the design (`Circuit#windows.sweep`).
  */
 
 import { TRACE_COLORS, bandEdges, diagramSymbols, hasSignalFlow, signalFlowGraph } from '../core/analysis/signal-flow.js';
@@ -35,7 +37,8 @@ const AVERAGES = 4;
 
 let api = null; // { flow(), links(), resolvedWith(values), visible() } from signal-flow-ui.js
 let parts = null;
-let result = null; // { name, xs, points: [{ x, measures } | { x, overloaded } | { x, error }], signals, log }
+// { name, xs, from, to, log, points: [{ x, measures } | { x, overloaded } | { x, error }], signals, values, amplitude, stimulus }
+let result = null;
 let run = 0; // the sweep running; a newer one (or another design) stops it
 // Held sweeps, drawn with the live one: { result, values (the sliders then), amplitude }.
 let held = [];
@@ -148,55 +151,60 @@ function shownMeasures() {
 
 /** Every measure a sweep's runs give: the three, then the peaks of the
  *  nets that swing. */
-function measureList() {
+function measureList(of = result) {
   // The nets that swing: the states, the quantizers' inputs, the output (as the Swing view shows first).
-  const peaks = (result?.signals || []).filter((s) => ['state', 'quantizer-input', 'output'].includes(s.role)).map((s) => [`peak:${s.key}`, `${s.name}\\text{ peak (dBFS)}`]);
+  const peaks = (of?.signals || []).filter((s) => ['state', 'quantizer-input', 'output'].includes(s.role)).map((s) => [`peak:${s.key}`, `${s.name}\\text{ peak (dBFS)}`]);
   return [...MEASURES.map(([key, text]) => [key, `\\text{${text}}`]), ...peaks];
 }
 
-/** The sweep as a data plot: each measure shown a trace over the values. */
-function sweepPlot() {
-  if (!result?.points.some((p) => p.measures)) return null;
-  const shown = new Set(shownMeasures());
-  const curves = (of, i, note = '') => measureList().filter(([key]) => shown.has(key)).map(([key, label], k) => ({
+/** The sweep shown as a data plot. */
+const sweepPlot = () => sweepPlotOf(result, held, shownMeasures());
+
+/** Sweep `live` as a data plot, with those `held` of its coefficient: each
+ *  of the measures `keys` a trace over the values. */
+function sweepPlotOf(live, held, keys) {
+  if (!live?.points.some((p) => p.measures)) return null;
+  const shown = new Set(keys);
+  const curves = (of, i, note = '') => measureList(live).filter(([key]) => shown.has(key)).map(([key, label], k) => ({
     label: `${label}${note}`,
     color: TRACE_COLORS[(i + k) % TRACE_COLORS.length],
     points: of.points.filter((p) => Number.isFinite(p.measures?.[key])).map((p) => [p.x, p.measures[key]]),
   }));
   // Held sweeps of the same coefficient first, each named by what differs
   // from the sweep shown (the numbers it ran at).
-  const now = result.values;
-  const same = held.filter((h) => h.result.name === result.name);
+  const same = held.filter((h) => h.result.name === live.name);
   // The live sweep names its own numbers for those its held ones name.
-  const named = same.flatMap((h) => heldChanges(h, now));
+  const named = same.flatMap((h) => heldChanges(h, live));
   const traces = [
-    ...same.flatMap((h, n) => curves(h.result, shown.size * (n + 1), heldNote(h, now))),
-    ...curves(result, 0, liveNote(now, named)),
+    ...same.flatMap((h, n) => curves(h.result, shown.size * (n + 1), heldNote(h, live))),
+    ...curves(live, 0, liveNote(live, named)),
   ].filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   // The coefficient as an axis names it: a_r as a sub-scripted r.
-  return normalizePlot({ kind: 'data', x: { label: result.name.replace(/_([A-Za-z0-9]+)$/, '_{$1}'), scale: result.log ? 'log' : 'linear' }, y: { label: 'dB', scale: 'linear' }, traces });
+  return normalizePlot({ kind: 'data', x: { label: live.name.replace(/_([A-Za-z0-9]+)$/, '_{$1}'), scale: live.log ? 'log' : 'linear' }, y: { label: 'dB', scale: 'linear' }, traces });
 }
 
 /** A held sweep's note: the coefficients (but the swept one) and the
- *  amplitude it ran at that differ from now, or "held". */
-function heldNote(h, now) {
-  const notes = heldChanges(h, now).map((name) => (name === AMPLITUDE ? `${h.amplitude}\\ \\text{dBFS}` : `${name} = ${Number(h.values[name].toPrecision(4))}`));
+ *  amplitude it ran at that differ from the live sweep's, or "held". */
+function heldNote(h, live) {
+  const notes = heldChanges(h, live).map((name) => (name === AMPLITUDE ? `${h.amplitude}\\ \\text{dBFS}` : `${name} = ${Number(h.values[name].toPrecision(4))}`));
   return notes.length ? `,\\ ${notes.join(',\\ ')}` : '\\ \\text{(held)}';
 }
 
 const AMPLITUDE = '\0amplitude';
 
-/** What differs between a held sweep and now: coefficient names (but the
- *  swept one), and AMPLITUDE for the input's. */
-function heldChanges(h, now) {
+/** What differs between a held sweep and the live one: coefficient names
+ *  (but the swept one), and AMPLITUDE for the input's. */
+function heldChanges(h, live) {
+  const now = live.values;
   const names = Object.entries(h.values).filter(([name, value]) => name !== h.result.name && Math.abs(value - (now[name] ?? 1)) > 1e-12 * Math.max(1, Math.abs(value))).map(([name]) => name);
-  return h.amplitude !== result.amplitude ? [...names, AMPLITUDE] : names;
+  return h.amplitude !== live.amplitude ? [...names, AMPLITUDE] : names;
 }
 
-/** The live sweep's note: its numbers now for `names`. */
-function liveNote(now, names) {
-  const notes = [...new Set(names)].map((name) => (name === AMPLITUDE ? `${result.amplitude}\\ \\text{dBFS}` : `${name} = ${Number((now[name] ?? 1).toPrecision(4))}`));
+/** The live sweep's note: its numbers for `names`. */
+function liveNote(live, names) {
+  const now = live.values;
+  const notes = [...new Set(names)].map((name) => (name === AMPLITUDE ? `${live.amplitude}\\ \\text{dBFS}` : `${name} = ${Number((now[name] ?? 1).toPrecision(4))}`));
   return notes.length ? `,\\ ${notes.join(',\\ ')}` : '';
 }
 
@@ -230,17 +238,23 @@ function say(text, error = false) {
   parts.status.classList.toggle('analysis-error', error);
 }
 
-/** What one run of the sweep simulates at `values`. */
-function request(values) {
+/** The sine the settings drive the sweep with: `{ input, amplitude,
+ *  frequency, samples }` (f/fs on a bin of a segment of `samples`). */
+function stimulusNow() {
   const settings = state();
-  const segment = SEGMENTS.includes(settings.samples) ? settings.samples : 8192;
+  const samples = SEGMENTS.includes(settings.samples) ? settings.samples : 8192;
   const typed = typedNumber(settings.frequency);
   const f = Number.isFinite(typed) && settings.frequency ? typed : swingTestFrequency({ frequency: '' }, editor.circuit.analysisValues.band);
-  const frequency = f === 0 ? 0 : Math.max(1, Math.round(f * segment)) / segment;
-  const amplitude = settings.amplitude ? Number(settings.amplitude) : -6;
+  const frequency = f === 0 ? 0 : Math.max(1, Math.round(f * samples)) / samples;
+  return { input: parts.input.value, amplitude: settings.amplitude ? Number(settings.amplitude) : -6, frequency, samples };
+}
+
+/** What one run of a sweep simulates at `values`, driven by `stimulus`. */
+function request(values, stimulus) {
+  const { input, amplitude, frequency, samples: segment } = stimulus;
   const diagram = Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, values[name] ?? 1]));
   return {
-    options: { values: diagram, sources: api.flow().sources, input: parts.input.value, output: api.flow().output, frequency, samples: AVERAGES * segment, segment },
+    options: { values: diagram, sources: api.flow().sources, input, output: api.flow().output, frequency, samples: AVERAGES * segment, segment },
     amplitude,
     segment,
     edges: bandEdges(editor.circuit.analysisValues.band),
@@ -282,7 +296,8 @@ export function sweep() {
   const id = ++run;
   const circuit = editor.circuit.toJSON();
   // The numbers it runs at, for its name beside held sweeps.
-  result = { name, xs, points: [], signals: null, log, values: { ...api.resolvedWith({}) }, amplitude: Number(settings.amplitude || -6) };
+  const stimulus = stimulusNow();
+  result = { name, xs, from, to, log, points: [], signals: null, values: { ...api.resolvedWith({}) }, amplitude: stimulus.amplitude, stimulus };
   plotsBusy.set('sweep', true);
   parts.go.dataset.running = '1';
   parts.go.textContent = 'Stop';
@@ -299,7 +314,7 @@ export function sweep() {
       say(failed ? failed.error : `${xs.length} points of ${name} from ${Number(from.toPrecision(4))} to ${Number(to.toPrecision(4))}${away ? `; the loop ran away at ${away} of them` : ''}.`, !!failed);
       return;
     }
-    const ask = { circuit, ...request(api.resolvedWith({ [name]: xs[index] })) };
+    const ask = { circuit, ...request(api.resolvedWith({ [name]: xs[index] }), stimulus) };
     const take = (data) => {
       if (id !== run) return;
       result.signals ||= data.signals || null;
@@ -319,10 +334,18 @@ export function sweep() {
   next(0);
 }
 
+/** What Update all plots runs again of a sweep: its range and its sine,
+ *  and for a held one the coefficients it ran at (model.js sweepOf). */
+function sweepRun(of, values) {
+  return { from: of.from, to: of.to, points: of.xs.length, log: of.log, ...of.stimulus, ...(values ? { values } : {}) };
+}
+
 /** The sweep shown onto the drawing, as a data plot. */
 function annotate() {
-  const plot = sweepPlot();
+  let plot = sweepPlot();
   if (!plot) return;
+  const same = held.filter((h) => h.result.name === result.name);
+  plot = normalizePlot({ ...plot, sweep: { name: result.name, measures: shownMeasures(), count: plot.traces.length, runs: [...same.map((h) => sweepRun(h.result, h.values)), sweepRun(result)] } });
   let placed = null;
   commit(() => { placed = placeDataPlot(editor.circuit, plot, { math: true }); });
   if (!placed) return;
@@ -332,6 +355,65 @@ function annotate() {
   setLabelSelection([placed.box.id]);
   logLine('placed the sweep on the drawing; drag to move it, its corners to resize');
   render();
+}
+
+/** Each run of `asks` (simulatedMeasures requests) in turn, in a worker
+ *  thread where one starts; the results in order, or null once `stale()`. */
+async function measureAll(asks, stale) {
+  let thread = startWorker();
+  const results = [];
+  try {
+    for (const [index, ask] of asks.entries()) {
+      if (stale()) return null;
+      const data = thread ? await new Promise((resolve) => {
+        thread.onmessage = ({ data: reply }) => { if (reply.type === 'measures' && reply.index === index) resolve(reply); };
+        thread.onerror = (ev) => { ev.preventDefault?.(); thread?.terminate(); thread = null; resolve(simulatedMeasures(ask)); };
+        thread.postMessage({ type: 'measures', id: 0, index, ...ask });
+      }) : await new Promise((resolve) => afterPaint(() => resolve(simulatedMeasures(ask))));
+      results.push(data);
+      // A diagram that cannot run stops at its first point.
+      if (data.error && !data.signals) return results;
+    }
+    return results;
+  } finally {
+    thread?.terminate();
+  }
+}
+
+/**
+ * A sweep plot (`plot.sweep`) run again: each of its sweeps in turn, the
+ * held ones at the coefficients they ran at, the live one at those now,
+ * over the same range with the same sine. Resolves to the plot's new
+ * traces (the sweep's, colored as they were, then those added since), or
+ * null when the diagram no longer runs or no longer has what it plotted;
+ * null too once `stale()`.
+ */
+export async function sweepPlotUpdate(plot, stale = () => false) {
+  const spec = plot?.sweep;
+  if (!spec || !api || !hasSignalFlow(editor.circuit)) return null;
+  if (!diagramSymbols(editor.circuit).includes(spec.name)) return null;
+  const circuit = editor.circuit.toJSON();
+  const sources = new Set(signalFlowGraph(editor.circuit).sources.filter((s) => !s.quantizer && !s.dither).map((s) => s.id));
+  const runs = [];
+  for (const run of spec.runs) {
+    if (!sources.has(run.input)) return null;
+    const xs = sweepValues(run.from, run.to, run.points, run.log);
+    if (!xs.length) return null;
+    const values = run.values ? { ...api.resolvedWith(run.values) } : { ...api.resolvedWith({}) };
+    const asks = xs.map((x) => ({ circuit, ...request(api.resolvedWith({ ...(run.values || {}), [spec.name]: x }), run) }));
+    const data = await measureAll(asks, stale);
+    if (!data) return null;
+    const points = data.map((d, i) => ({ x: xs[i], ...(d.measures ? { measures: d.measures } : d.overloaded ? { overloaded: true } : { error: d.error }) }));
+    runs.push({ name: spec.name, xs, from: run.from, to: run.to, log: run.log, points, signals: data.find((d) => d.signals)?.signals || null, values, amplitude: run.amplitude, stimulus: run });
+  }
+  const live = runs.at(-1);
+  // Every measure it showed is still there to show.
+  const keys = new Set(measureList(live).map(([key]) => key));
+  if (spec.measures.some((key) => !keys.has(key))) return null;
+  const next = sweepPlotOf(live, runs.slice(0, -1).map((r) => ({ result: r, values: r.values, amplitude: r.amplitude })), spec.measures);
+  if (!next || next.traces.length !== spec.count) return null;
+  const own = plot.traces.slice(0, spec.count);
+  return [...next.traces.map((trace, i) => ({ ...trace, color: own[i]?.color || trace.color })), ...plot.traces.slice(spec.count)];
 }
 
 /** The view was shown: its controls, and the last sweep. */

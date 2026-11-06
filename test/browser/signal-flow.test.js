@@ -287,6 +287,28 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     assert.match(plot.traces[0], /k_2 = 2/);
     assert.match(plot.traces[2], /k_2 = 1\.5/);
     assert.equal(plot.math, true);
+    // Update all plots runs its sweeps again: the held one at k_2 = 2, the
+    // live one at the coefficients now, over the same range.
+    const sweepBox = `${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].find((l) => l.plot?.kind === 'data' && l.plot.sweep))`;
+    const spec = await h.evaluate(`${sweepBox}.then((b) => b.plot.sweep)`);
+    assert.equal(spec.runs.length, 2);
+    assert.equal(spec.runs[0].values.k_2, 2);
+    assert.deepEqual(spec.measures, ['sndr', 'noise']);
+    const before = await h.evaluate(`${sweepBox}.then((b) => JSON.stringify(b.plot.traces))`);
+    await h.evaluate(`${h.module('editor-state.js')}.then((m) => { m.editor.circuit.analysisValues.coefficients.k_2 = 1.2; })`);
+    await annotate('Update all plots');
+    await h.until(`${sweepBox}.then((b) => /k_2 = 1\\.2/.test(b.plot.traces[2].label))`, 60000);
+    const after = await h.evaluate(`${sweepBox}.then((b) => ({ traces: b.plot.traces, legend: [...b.circuit.plotLegend(b)].map((l) => l.text), x: b.plot.x.label }))`);
+    assert.equal(after.x, 'k_{1}');
+    assert.equal(after.traces.length, 4);
+    assert.match(after.traces[0].label, /k_2 = 2/);
+    // (a point where the loop runs away at the numbers now has no value)
+    assert.ok(after.traces[2].points.length >= 2);
+    // The held sweep reads as it did; the live one moved.
+    assert.deepEqual(after.traces[0].points, JSON.parse(before)[0].points);
+    assert.notDeepEqual(after.traces[2].points, JSON.parse(before)[2].points);
+    assert.deepEqual(after.traces.map((t) => t.color), JSON.parse(before).map((t) => t.color));
+    assert.ok(after.legend.every((text) => text.startsWith('$')), JSON.stringify(after.legend));
   });
 
   test('a coefficient typed as a ratio applies, again after a slider move, and is tabled as typed', async () => {

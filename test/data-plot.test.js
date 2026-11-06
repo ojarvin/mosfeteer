@@ -242,3 +242,23 @@ test('a held spectrum draws gray and dashed in black, apart from the live one', 
   assert.ok(spectra.some((attrs) => /stroke-dasharray/.test(attrs)), spectra.join('\n'));
   assert.ok(spectra.some((attrs) => !/stroke-dasharray/.test(attrs)), spectra.join('\n'));
 });
+
+test('a sweep plot keeps what it ran (plot.sweep) through saving and its edits; its traces replaced, its own entries are TeX', () => {
+  const { circuit, box } = plotted();
+  const run = { from: 0.5, to: 1.5, points: 5, log: false, input: 'U1', amplitude: -20, frequency: 1 / 256, samples: 4096 };
+  const sweep = { name: 'k_1', measures: ['sndr'], count: 2, runs: [{ ...run, values: { k_1: 1, k_2: 2 } }, run] };
+  box.plot = { ...box.plot, sweep };
+  replaceDataPlotTraces(circuit, box, { traces: box.plot.traces });
+  assert.deepEqual(box.plot.sweep, sweep);
+  runCommand(circuit, `annotation plotaxis ${box.id} x --label k`);
+  const again = loadDocument(JSON.parse(JSON.stringify(circuit.toJSON())));
+  const loaded = [...again.labels.values()].find((l) => l.plot?.kind === 'data');
+  assert.deepEqual(loaded.plot.sweep, sweep);
+  // The sweep's own two entries TeX, one added from a file after them plain.
+  replaceDataPlotTraces(circuit, box, dataPlotFromText('t,a,b,c\n0,1,2,3\n1,2,3,4\n'), { math: 2 });
+  assert.deepEqual(circuit.plotLegend(box).map((l) => [l.text, !!l.math]), [['$a$', true], ['$b$', true], ['c', false]]);
+  // A malformed one is dropped, the plot kept.
+  box.plot = { ...box.plot, sweep: { ...sweep, runs: [{ ...run, points: 1 }] } };
+  const bad = loadDocument(JSON.parse(JSON.stringify(circuit.toJSON())));
+  assert.equal([...bad.labels.values()].find((l) => l.plot?.kind === 'data').plot.sweep, undefined);
+});

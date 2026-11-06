@@ -1439,7 +1439,41 @@ function normalizeDataPlot(plot) {
   const x = axis(plot.x);
   const y = axis(plot.y);
   const file = text(plot.file, 200);
-  return { kind: 'data', ...(file ? { file } : {}), x, y, traces, ...viewOf(plot, { positiveX: x.scale === 'log', positiveY: y.scale === 'log' }), ...cursorsOf(plot) };
+  return { kind: 'data', ...(file ? { file } : {}), x, y, traces, ...viewOf(plot, { positiveX: x.scale === 'log', positiveY: y.scale === 'log' }), ...cursorsOf(plot), ...sweepOf(plot.sweep) };
+}
+
+/** The most sweeps a sweep plot names (the held ones and the live one). */
+const MAX_SWEEP_RUNS = 8;
+
+/**
+ * A data plot annotated from the signal-flow Sweep (sweep-plot.js): what
+ * Update all plots runs again. `{ name, measures: [key], count, runs: [{
+ * from, to, points, log, input, amplitude, frequency, samples, values? }] }`
+ * -- the coefficient swept, the measures shown, how many of the plot's
+ * traces are the sweep's (the first ones), and each sweep drawn, the held
+ * ones at their coefficients (`values`), the last the live one, at the
+ * coefficients now.
+ */
+function sweepOf(sweep) {
+  if (!sweep || typeof sweep !== 'object' || typeof sweep.name !== 'string' || !/^[A-Za-z][\w]{0,40}$/.test(sweep.name)) return {};
+  const runs = (Array.isArray(sweep.runs) ? sweep.runs : []).slice(-MAX_SWEEP_RUNS).map((run) => {
+    const values = {};
+    for (const [name, number] of Object.entries(run?.values || {})) if (/^[A-Za-z][\w]{0,40}$/.test(name) && finite(number)) values[name] = number;
+    const points = Math.round(Number(run?.points));
+    if (!finite(run?.from) || !finite(run?.to) || run.from === run.to || !(points >= 2 && points <= 201)) return null;
+    if (!finite(run.amplitude) || !finite(run.frequency) || run.frequency < 0 || !(Number.isInteger(run.samples) && run.samples >= 256 && run.samples <= 65536)) return null;
+    return {
+      from: run.from, to: run.to, points, log: run.log === true,
+      input: typeof run.input === 'string' ? run.input.slice(0, 200) : '',
+      amplitude: run.amplitude, frequency: run.frequency, samples: run.samples,
+      ...(run.values ? { values } : {}),
+    };
+  });
+  if (!runs.length || runs.some((run) => !run)) return {};
+  const measures = (Array.isArray(sweep.measures) ? sweep.measures : []).filter((key) => typeof key === 'string' && key.length <= 200).slice(0, 40);
+  const count = Math.round(Number(sweep.count));
+  if (!measures.length || !(count >= 1 && count <= 8)) return {};
+  return { sweep: { name: sweep.name, measures, count, runs } };
 }
 
 /** A swing plot (signal-flow simulation): colored traces of each net's

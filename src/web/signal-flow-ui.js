@@ -32,6 +32,7 @@ import { locusPlot, locusSteps, rootLocus } from '../core/analysis/locus.js';
 import { dbfsOffset, dbfsSpectrum, inBand, plotSpectrum } from '../core/analysis/spectrum.js';
 import { prepareSimulation, sweepAmplitudes } from '../core/analysis/simulate.js';
 import { PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, parseLabelRuns } from '../core/model.js';
+import { replaceDataPlotTraces } from '../core/data-plot.js';
 import { texToMathML } from '../core/render.js';
 import { GRID, snap } from '../core/grid.js';
 import { chooseFigure, newFigureId, placeFigure, plotKey, settlePlaced } from '../core/figures.js';
@@ -51,7 +52,7 @@ import { netPicker } from './net-picker.js';
 import { deriving } from './analysis-busy.js';
 import { startWorker } from './worker-thread.js';
 import { differing, differingNames, heldName, heldNumber, holdButton, holdKey, liveName, saveHolds, savedHolds, traceLegendRow } from './trace-hold.js';
-import { installSweepPlot, showSweep, sweepSection } from './sweep-plot.js';
+import { installSweepPlot, showSweep, sweepPlotUpdate, sweepSection } from './sweep-plot.js';
 import { simulatedSpectrum } from '../core/analysis/spectrum-run.js';
 
 // Devices the small-signal analysis models: a drawing with any opens in it.
@@ -1546,12 +1547,13 @@ function annotateCoefficients() {
  * one edit: each graph and step plot from the traces of the same names
  * (a plot naming one no longer on the graph is left as it is), a loop
  * plot at its signal, a root locus over its coefficient and range, a swing
- * plot from a fresh sweep of the nets it shows.
+ * plot from a fresh sweep of the nets it shows, a sweep plot from its
+ * sweeps run again (sweep-plot.js sweepPlotUpdate).
  */
 async function updatePlots() {
   const circuit = editor.circuit;
-  // A data plot is its file's, never the analysis's.
-  const boxes = [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.plot && label.plot.kind !== 'data');
+  // A data plot is its file's, never the analysis's; but a sweep's.
+  const boxes = [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.plot && (label.plot.kind !== 'data' || label.plot.sweep));
   if (!boxes.length) { logLine('No plots on the drawing to update.'); return; }
   if (flow().spectrum?.on) runSpectrum();
   if (boxes.some((box) => box.plot.kind === 'swing')) {
@@ -1559,10 +1561,19 @@ async function updatePlots() {
     await runSwing();
   }
   if (circuit !== editor.circuit) return;
+  // Each sweep plot's sweeps, one after another (each point a simulation).
+  const swept = new Map();
+  const sweeps = boxes.filter((box) => box.plot.kind === 'data');
+  for (const [i, box] of sweeps.entries()) {
+    logLine(`Updating plots: running sweep ${i + 1} of ${sweeps.length}...`);
+    const traces = await sweepPlotUpdate(box.plot, () => circuit !== editor.circuit);
+    if (circuit !== editor.circuit) return;
+    if (traces) swept.set(box, traces);
+  }
   const updates = [];
   const skipped = [];
   for (const box of boxes) {
-    const update = plotUpdate(box.plot);
+    const update = box.plot.kind === 'data' ? (swept.has(box) ? { traces: swept.get(box) } : null) : plotUpdate(box.plot);
     if (update) updates.push({ box, ...update });
     else skipped.push(box);
   }
@@ -1574,7 +1585,15 @@ async function updatePlots() {
     // they move to the table.
     const hadValues = updates.some((update) => legendOf(update.box).some((label) => /\s=\s/.test(String(label.text))));
     // Each keeps the limits it was annotated at.
-    for (const update of updates) written.push(writePlot(update.box, update.box.plot.view ? { ...update.plot, view: update.box.plot.view } : update.plot, update.shown));
+    for (const update of updates) {
+      if (update.traces) {
+        // A sweep plot keeps its axes too; its sweep's entries are TeX.
+        const entries = replaceDataPlotTraces(circuit, update.box, { traces: update.traces }, { math: update.box.plot.sweep.count });
+        if (entries.length) written.push({ ids: entries.map((label) => label.id), left: Math.min(...entries.map((l) => l.bbox().x)), top: Math.min(...entries.map((l) => l.bbox().y)) });
+        continue;
+      }
+      written.push(writePlot(update.box, update.box.plot.view ? { ...update.plot, view: update.box.plot.view } : update.plot, update.shown));
+    }
     // The coefficients table, at the same numbers.
     const rows = coefficientRows();
     if (rows.length) table = writeMathFigure({ ...COEFFICIENTS, text: rows.join('\n'), create: hadValues });
@@ -1582,7 +1601,7 @@ async function updatePlots() {
   for (const item of written) alignLabelColumn(item.ids, { left: item.left, top: item.top, gap: 0 });
   table?.settle();
   render();
-  const kinds = (list) => list.map((box) => (box.plot.role === 'loop' ? 'loop' : box.plot.kind === 'response' ? (box.plot.quantity === 'phase' ? 'phase' : 'magnitude') : box.plot.kind));
+  const kinds = (list) => list.map((box) => (box.plot.role === 'loop' ? 'loop' : box.plot.kind === 'response' ? (box.plot.quantity === 'phase' ? 'phase' : 'magnitude') : box.plot.kind === 'data' ? 'sweep' : box.plot.kind));
   logLine(`updated ${updates.length} plot${updates.length === 1 ? '' : 's'}${updates.length ? ` (${kinds(updates.map((u) => u.box)).join(', ')})` : ''}${skipped.length ? `; left ${skipped.length} as ${skipped.length === 1 ? 'it was' : 'they were'} (${kinds(skipped).join(', ')}: its traces are no longer on the graph, or derive or sweep first)` : ''}`, skipped.length && !updates.length ? 'error' : undefined);
 }
 

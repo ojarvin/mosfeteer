@@ -26,7 +26,7 @@ import { GRID } from '../core/grid.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { relatednessOf } from '../core/design-related.js';
 import { linkArrow, linkCurve, linkDepths, linkGraph } from '../core/design-links.js';
-import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, layoutAtlasShaped, neighborTile, rectsIntersect, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing } from './atlas-layout.js';
+import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, IMAGE_LEVELS, LARGE_PX, MEDIUM_PX, SMALL_PX, floatClear, layoutAtlas, layoutAtlasShaped, neighborTile, rectsIntersect, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing } from './atlas-layout.js';
 import { DESK_ASPECT, arrangeAtlas } from './atlas-arrange.js';
 import { INDEX_CACHE, bakeTiles, cacheGet, cachePut, renderingKey, trimCache } from './atlas-cache.js';
 import { wheelIntent, lerpView } from './gestures.js';
@@ -120,7 +120,10 @@ const isSheet = (source) => source === 'symbols' || source === 'drawings';
 /** Live SVGs at most at once; the rest stay on their large images. */
 const MAX_VECTOR_TILES = 6;
 /** Large images decoded at once (each is up to ~6 MB of pixels). */
-const MAX_LARGE_BITMAPS = 24;
+/** The most images of each level above the small kept at once: past it,
+ *  those nearest the middle of the screen have theirs. A screen at rest
+ *  holds no more medium ones than this (each covers over 320 device px). */
+const MAX_BITMAPS = { medium: 128, large: 24 };
 const ZOOM_IN_PX_PER_UNIT = 3; // the editor's closest zoom: 120 px per grid cell
 /** Each design's own reveal: it fades and grows in this long, after a delay
  *  that ripples out from the middle of the view (REVEAL_STEP_MS a design,
@@ -483,7 +486,7 @@ async function rasterize(entry, level) {
     image.onerror = () => reject(new Error('could not draw the design'));
     image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
   });
-  const longest = level === 'small' ? SMALL_PX : LARGE_PX;
+  const longest = { small: SMALL_PX, medium: MEDIUM_PX, large: LARGE_PX }[level];
   const k = longest / Math.max(entry.box.w, entry.box.h);
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(entry.box.w * k));
@@ -509,10 +512,10 @@ async function bake(entry, level) {
 
 /** Load every cached small image, for at most `budget` ms. */
 async function warmSmallImages(generation, budget) {
-  // The open design's images are never cached: bake both now, so the
+  // The open design's images are never cached: bake them now, so the
   // flight back can show them.
   const current = state.tiles.map((tile) => state.entries.get(tile.id)).find((entry) => entry.current);
-  const baking = current ? ['small', 'large'].map(async (level) => {
+  const baking = current ? IMAGE_LEVELS.map(async (level) => {
     const key = bitmapKey(current, level);
     if (!state.bitmaps.has(key)) state.bitmaps.set(key, await bake(current, level));
   }) : [];
@@ -539,7 +542,7 @@ async function prepareStartupImages(generation, target) {
   await document.fonts.ready;
   const k = paneSize().w / target.w * (window.devicePixelRatio || 1);
   await bakeTiles(state.tiles.map((tile) => ({ tile, entry: state.entries.get(tile.id) })), {
-    levels: ({ tile }) => (tileDetail(Math.max(tile.w, tile.h) * k) === 'small' ? ['small'] : ['small', 'large']),
+    levels: ({ tile }) => imageLevels(tileDetail(Math.max(tile.w, tile.h) * k)),
     bake: ({ entry }, level) => bake(entry, level),
     keep: ({ entry }, level, bitmap) => state.bitmaps.set(bitmapKey(entry, level), bitmap),
     failed: ({ entry }, level) => state.failed.add(bitmapKey(entry, level)),
@@ -564,7 +567,7 @@ async function pump() {
         // An image that arrives once the desk shows fades in (see draw); the
         // open design is on it from the start, as the editor showed it.
         if (!entry.current && !rootEl.classList.contains('preparing')) state.arrived.set(key, performance.now());
-        if (level === 'large') evictLargeBitmaps(key);
+        if (level !== 'small') evictBitmaps(level, key);
         requestDraw();
       } catch {
         state?.failed.add(key);
@@ -575,14 +578,20 @@ async function pump() {
   }
 }
 
-/** Past MAX_LARGE_BITMAPS, drop the oldest large images the screen does
+/** The level a tile of `detail` is drawn from (a live one: the large). */
+const imageLevel = (detail) => (detail === 'vector' ? 'large' : detail);
+
+/** The images a tile of `detail` asks for: the small one, and its own. */
+const imageLevels = (detail) => [...new Set(['small', imageLevel(detail)])];
+
+/** Past MAX_BITMAPS, drop the oldest images of `level` the screen does
  *  not use, never `keep` or one it does. */
-function evictLargeBitmaps(keep) {
-  const large = [...state.bitmaps.keys()].filter((key) => key.endsWith('\nlarge'));
-  let excess = large.length - MAX_LARGE_BITMAPS;
-  for (const key of large) {
+function evictBitmaps(level, keep) {
+  const kept = [...state.bitmaps.keys()].filter((key) => key.endsWith(`\n${level}`));
+  let excess = kept.length - MAX_BITMAPS[level];
+  for (const key of kept) {
     if (excess <= 0) break;
-    if (key === keep || state.largeInUse?.has(key)) continue;
+    if (key === keep || state.inUse?.has(key)) continue;
     state.bitmaps.get(key)?.close?.();
     state.bitmaps.delete(key);
     excess -= 1;
@@ -763,9 +772,9 @@ function draw() {
     ctx.globalAlpha = alpha;
     if (found?.hits.length && document.activeElement === searchEl) drawHits(ctx, tile, entry, found.hits, palette);
     ctx.globalAlpha = (entry.current ? 1 : Math.min(1, reveal * 1.6)) * fade;
-    const level = detail === 'small' ? 'small' : 'large';
-    const bitmap = state.bitmaps.get(bitmapKey(entry, level)) ||
-      state.bitmaps.get(bitmapKey(entry, level === 'large' ? 'small' : 'large'));
+    const level = imageLevel(detail);
+    // Its own image, else the sharpest one there is.
+    const bitmap = [level, ...IMAGE_LEVELS.slice().reverse()].map((l) => state.bitmaps.get(bitmapKey(entry, l))).find(Boolean);
     if (bitmap && !flying && !(live.has(tile.id) && state.overlays.get(tile.id)?.dataset.ready)) {
       // Best filtering at rest; in motion the cheap one, which no one sees.
       ctx.imageSmoothingQuality = moving ? 'low' : 'high';
@@ -777,9 +786,9 @@ function draw() {
       ctx.drawImage(bitmap, rect.x, rect.y, rect.w, rect.h);
     }
     const distance = Math.hypot(tile.x + tile.w / 2 - center.x, tile.y + tile.h / 2 - center.y);
-    // Mid-animation only small images are fetched: decoding a large one
+    // Mid-animation only small images are fetched: decoding a larger one
     // would drop frames, and the view does not rest here anyway.
-    for (const need of level === 'large' && !moving ? ['small', 'large'] : ['small']) {
+    for (const need of moving ? ['small'] : imageLevels(detail)) {
       const key = bitmapKey(entry, need);
       wanted.push({ entry, level: need, key, distance });
     }
@@ -791,14 +800,15 @@ function draw() {
   drawLinks(ctx, palette, shown);
   if (state.flight) drawFlight(ctx, palette, w, h);
   drawZoomBox(ctx, palette);
-  // Every small image first (the whole desk becomes recognizable), then large.
-  wanted.sort((a, b) => (a.level === b.level ? a.distance - b.distance : a.level === 'small' ? -1 : 1));
-  // Only as many large images as are kept: the nearest the middle. Asking
+  // Every small image first (the whole desk becomes recognizable), then
+  // the rest, nearest the middle first.
+  wanted.sort((a, b) => ((a.level === 'small') === (b.level === 'small') ? a.distance - b.distance : a.level === 'small' ? -1 : 1));
+  // Only as many of a level as are kept: the nearest the middle. Asking
   // for more would have each new one evict another still on screen, which
   // is asked for again, round and round.
   // In motion none is asked for; those in use stay so.
-  if (!moving) state.largeInUse = new Set(wanted.filter((need) => need.level === 'large').slice(0, MAX_LARGE_BITMAPS).map((need) => need.key));
-  state.wanted = wanted.filter((need) => (need.level === 'small' || state.largeInUse?.has(need.key)) && !state.bitmaps.has(need.key));
+  if (!moving) state.inUse = new Set(['medium', 'large'].flatMap((level) => wanted.filter((need) => need.level === level).slice(0, MAX_BITMAPS[level]).map((need) => need.key)));
+  state.wanted = wanted.filter((need) => (need.level === 'small' || state.inUse?.has(need.key)) && !state.bitmaps.has(need.key));
   void pump();
   syncVectorOverlays(vector, moving);
 }
@@ -2050,7 +2060,7 @@ async function saveTags(entry, text) {
       if (revision) {
         await cachePut(renderingKey(entry.path, revision, DRAWING_CACHE), entry.svg);
         await cachePut(renderingKey(entry.path, revision, INDEX_CACHE), index);
-        for (const level of ['small', 'large']) {
+        for (const level of IMAGE_LEVELS) {
           const bitmap = state?.bitmaps.get(bitmapKey(entry, level));
           if (bitmap) state.bitmaps.set(`${entry.id}\n${revision}\n${theme()}\n${level}`, bitmap);
         }
@@ -2688,7 +2698,7 @@ function drawFlight(ctx, palette, w, h) {
     ctx.restore();
   }
   if (design) {
-    const bitmap = state.bitmaps.get(bitmapKey(entry, 'large')) || state.bitmaps.get(bitmapKey(entry, 'small'));
+    const bitmap = IMAGE_LEVELS.slice().reverse().map((level) => state.bitmaps.get(bitmapKey(entry, level))).find(Boolean);
     if (bitmap) {
       ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(bitmap, design.x, design.y, design.w, design.h);
@@ -3121,7 +3131,7 @@ async function openDesk(generation, source, animate, startup) {
 async function bakeOpenDesign(budget) {
   const entry = state.tiles.map((tile) => state.entries.get(tile.id)).find((candidate) => candidate?.current);
   if (!entry) return;
-  const jobs = ['small', 'large'].map(async (level) => {
+  const jobs = IMAGE_LEVELS.map(async (level) => {
     const key = bitmapKey(entry, level);
     if (state.bitmaps.has(key)) return;
     const bitmap = await bake(entry, level).catch(() => null);
