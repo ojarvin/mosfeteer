@@ -21,7 +21,7 @@ import { texToMathML } from '../core/render.js';
 import { MAX_DATA_POINTS, MAX_PLOT_EXTRA, normalizePlot } from '../core/model.js';
 import { COLOR_PALETTE } from '../core/style.js';
 import { ownTraceCount, plotSpec } from '../core/plot-spec.js';
-import { MAX_PLOT_CURSORS, cursorCurves, cursorNumber, cursorReadings } from '../core/plot-cursors.js';
+import { MAX_PLOT_CURSORS, cursorCurves, cursorNumber, cursorReadings, cursorValue } from '../core/plot-cursors.js';
 import { plainTex } from '../core/bode-figure.js';
 import { createPlotView } from './plot-view.js';
 import { editor } from './editor-state.js';
@@ -224,7 +224,6 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, 
     if (draft.cursors.length >= MAX_PLOT_CURSORS) return;
     if (!view.addCursor(kind)) logLine('no trace to put a point marker on', 'error');
   };
-  const number = (text) => { const v = Number(String(text).trim()); return String(text).trim() && Number.isFinite(v) ? v : null; };
   const setCursor = (i, next) => { draft.cursors = draft.cursors.map((c, k) => (k === i ? next : c)); show(); };
   function refreshCursors() {
     for (const button of addButtons) button.disabled = draft.cursors.length >= MAX_PLOT_CURSORS;
@@ -234,7 +233,7 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, 
     cursorList.replaceChildren(...draft.cursors.map((cursor, i) => {
       const axis = cursor.kind === 'horizontal' ? 'y' : 'x';
       const field = el('input', { type: 'text', class: 'data-plot-marker-value', value: cursorNumber(cursor[axis]), 'aria-label': `${MARKER_NAMES[cursor.kind]} marker ${axis}`, spellcheck: 'false',
-        onchange: (ev) => { const v = number(ev.target.value); if (v === null) { ev.target.setAttribute('aria-invalid', 'true'); return; } ev.target.removeAttribute('aria-invalid'); setCursor(i, { ...draft.cursors[i], [axis]: v }); refreshCursors(); } });
+        onchange: (ev) => { const v = cursorValue(ev.target.value); if (v === null) { ev.target.setAttribute('aria-invalid', 'true'); return; } ev.target.removeAttribute('aria-invalid'); setCursor(i, { ...draft.cursors[i], [axis]: v }); refreshCursors(); } });
       const trace = cursor.kind === 'point' ? el('select', { class: 'data-plot-marker-trace', 'aria-label': 'Point marker trace', onchange: (ev) => { setCursor(i, { ...draft.cursors[i], trace: Number(ev.target.value) }); refreshCursors(); } },
         curves.map((c) => el('option', { value: String(c.trace), text: plainTex(c.label) || `Trace ${c.trace + 1}`, selected: c.trace === cursor.trace }))) : null;
       const read = readings.get(i);

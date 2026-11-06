@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Circuit, normalizePlot } from '../src/core/model.js';
 import { plotSpec } from '../src/core/plot-spec.js';
-import { cursorLabel, cursorLayout, cursorReadings, curveCrossings, placeCursorLabels, remapCursorTraces } from '../src/core/plot-cursors.js';
+import { cursorLabel, cursorLayout, cursorReadings, cursorValue, curveCrossings, placeCursorLabels, remapCursorTraces } from '../src/core/plot-cursors.js';
 import { movePlotTrace, removePlotTrace, setPlotCursors } from '../src/core/data-plot.js';
 import { svgString } from '../src/core/render.js';
 
@@ -130,4 +130,13 @@ test('a marker\'s number placed a row or more out from its point has a leader fr
   assert.ok(Math.abs(Math.hypot(x1 - 100, y1 - 100) - 3) < 1e-9, 'starts clear of the dot');
   const b = second.box;
   assert.ok(x2 >= b.x && x2 <= b.x + b.w && y2 >= b.y && y2 <= b.y + b.h, 'ends on its box');
+});
+
+test('a typed marker place takes a number or a calculator expression', () => {
+  assert.equal(cursorValue('100'), 100);
+  assert.equal(cursorValue(' -3.5e-2 '), -0.035);
+  assert.equal(cursorValue('1/64'), 0.015625);
+  assert.equal(cursorValue('2.7k/2.24M'), 2700 / 2.24e6);
+  assert.equal(cursorValue('2pi*1k'), 2 * Math.PI * 1000);
+  for (const bad of ['', 'abc', '1/0', '1+']) assert.equal(cursorValue(bad), null, bad);
 });

@@ -140,7 +140,8 @@ columns separated by spaces (`src/core/csv-data.js`, `src/core/data-plot.js`,
   its x and y; **Vertical** (`v`) and **Horizontal** (`h`) lines read each
   trace's y, or x, where they cross it. Each is placed where the pointer
   is, drags on the plot (a point to the trace nearest the pointer), and
-  takes a typed x or y (a point its trace too). The numbers go small
+  takes a typed x or y (a point its trace too): a number or a calculator
+  expression (`1/64`, `2.7k/2.24M`). The numbers go small
   beside what they read, clear of one another; **Values** off leaves them
   out (`cursorValues: false`). The drawing's plot shows them as the
   editor does. A point names its trace by id (the plot's own traces from

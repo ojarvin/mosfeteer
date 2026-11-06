@@ -134,8 +134,8 @@ describe('data plot', { skip: browserSkip() }, () => {
     assert.deepEqual(kinds, ['Vertical', 'Point', 'Horizontal']);
     assert.equal(await h.evaluate(`document.querySelectorAll('.data-plot-dialog .plot-marker-line').length`), 2);
     assert.ok(await h.evaluate(`document.querySelectorAll('.data-plot-dialog .plot-marker-value').length`) >= 4);
-    // The vertical line at a typed x.
-    await h.evaluate(`(() => { const f = document.querySelectorAll('.data-plot-marker-value')[0]; f.value = '100'; f.dispatchEvent(new Event('change')); })()`);
+    // The vertical line at a typed x, an expression.
+    await h.evaluate(`(() => { const f = document.querySelectorAll('.data-plot-marker-value')[0]; f.value = '2.24M/22.4k'; f.dispatchEvent(new Event('change')); })()`);
     // The horizontal line dragged down: its y falls.
     const line = await h.evaluate(`(() => { const l = [...document.querySelectorAll('.data-plot-dialog .plot-marker-line')].find((l) => l.getAttribute('y1') === l.getAttribute('y2')); const r = document.querySelector('.data-plot-dialog .plot-view svg').getBoundingClientRect(); return { x: r.x + Number(l.getAttribute('x1')) + 30, y: r.y + Number(l.getAttribute('y1')) }; })()`);
     const yBefore = await h.evaluate(`document.querySelectorAll('.data-plot-marker-value')[2].value`);

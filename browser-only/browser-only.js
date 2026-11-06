@@ -39680,6 +39680,7 @@ __exports.remapCursorTraces = remapCursorTraces;
 __exports.cursorCurves = cursorCurves;
 __exports.curveAt = curveAt;
 __exports.curveCrossings = curveCrossings;
+__exports.cursorValue = cursorValue;
 __exports.cursorNumber = cursorNumber;
 __exports.cursorLabel = cursorLabel;
 __exports.nearestCurve = nearestCurve;
@@ -39687,6 +39688,7 @@ __exports.cursorReadings = cursorReadings;
 __exports.placeCursorLabels = placeCursorLabels;
 __exports.cursorLayout = cursorLayout;
 let fromU, toU; __bind(() => { ({ fromU, toU } = __require("src/core/plot-scale.js")); });
+let calculate; __bind(() => { ({ calculate } = __require("src/core/calculator.js")); });
 /**
  * Markers on a plot (`plot.cursors`, set in its settings): a point on a
  * trace, reading its x and y there; a vertical line at an x, reading each
@@ -39701,6 +39703,7 @@ let fromU, toU; __bind(() => { ({ fromU, toU } = __require("src/core/plot-scale.
  * `{ kind: 'vertical', x }`, `{ kind: 'horizontal', y }`, in the data's
  * own units.
  */
+
 
 
 
@@ -39779,6 +39782,17 @@ function curveCrossings(curve, v, max = 3) {
     if (!out.some((w) => Math.abs(w - u) <= 1e-12 * Math.max(1, Math.abs(u)))) out.push(u);
   }
   return out;
+}
+
+/** A typed marker place: a number or an expression the calculator takes
+ *  (`1/64`, `2.7k/2.24M`); null when it is neither or not finite. */
+function cursorValue(text) {
+  try {
+    const value = Number(calculate(String(text ?? '')).value);
+    return Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 /** A number as a marker shows it: four figures (`digits`). */
@@ -64747,7 +64761,7 @@ let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js
 let MAX_DATA_POINTS, MAX_PLOT_EXTRA, normalizePlot; __bind(() => { ({ MAX_DATA_POINTS, MAX_PLOT_EXTRA, normalizePlot } = __require("src/core/model.js")); });
 let COLOR_PALETTE; __bind(() => { ({ COLOR_PALETTE } = __require("src/core/style.js")); });
 let ownTraceCount, plotSpec; __bind(() => { ({ ownTraceCount, plotSpec } = __require("src/core/plot-spec.js")); });
-let MAX_PLOT_CURSORS, cursorCurves, cursorNumber, cursorReadings; __bind(() => { ({ MAX_PLOT_CURSORS, cursorCurves, cursorNumber, cursorReadings } = __require("src/core/plot-cursors.js")); });
+let MAX_PLOT_CURSORS, cursorCurves, cursorNumber, cursorReadings, cursorValue; __bind(() => { ({ MAX_PLOT_CURSORS, cursorCurves, cursorNumber, cursorReadings, cursorValue } = __require("src/core/plot-cursors.js")); });
 let plainTex; __bind(() => { ({ plainTex } = __require("src/core/bode-figure.js")); });
 let createPlotView; __bind(() => { ({ createPlotView } = __require("src/web/plot-view.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
@@ -64980,7 +64994,6 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, 
     if (draft.cursors.length >= MAX_PLOT_CURSORS) return;
     if (!view.addCursor(kind)) logLine('no trace to put a point marker on', 'error');
   };
-  const number = (text) => { const v = Number(String(text).trim()); return String(text).trim() && Number.isFinite(v) ? v : null; };
   const setCursor = (i, next) => { draft.cursors = draft.cursors.map((c, k) => (k === i ? next : c)); show(); };
   function refreshCursors() {
     for (const button of addButtons) button.disabled = draft.cursors.length >= MAX_PLOT_CURSORS;
@@ -64990,7 +65003,7 @@ function plotEditor(draft, { onRemove = null, onAxis = () => {}, onMove = null, 
     cursorList.replaceChildren(...draft.cursors.map((cursor, i) => {
       const axis = cursor.kind === 'horizontal' ? 'y' : 'x';
       const field = el('input', { type: 'text', class: 'data-plot-marker-value', value: cursorNumber(cursor[axis]), 'aria-label': `${MARKER_NAMES[cursor.kind]} marker ${axis}`, spellcheck: 'false',
-        onchange: (ev) => { const v = number(ev.target.value); if (v === null) { ev.target.setAttribute('aria-invalid', 'true'); return; } ev.target.removeAttribute('aria-invalid'); setCursor(i, { ...draft.cursors[i], [axis]: v }); refreshCursors(); } });
+        onchange: (ev) => { const v = cursorValue(ev.target.value); if (v === null) { ev.target.setAttribute('aria-invalid', 'true'); return; } ev.target.removeAttribute('aria-invalid'); setCursor(i, { ...draft.cursors[i], [axis]: v }); refreshCursors(); } });
       const trace = cursor.kind === 'point' ? el('select', { class: 'data-plot-marker-trace', 'aria-label': 'Point marker trace', onchange: (ev) => { setCursor(i, { ...draft.cursors[i], trace: Number(ev.target.value) }); refreshCursors(); } },
         curves.map((c) => el('option', { value: String(c.trace), text: plainTex(c.label) || `Trace ${c.trace + 1}`, selected: c.trace === cursor.trace }))) : null;
       const read = readings.get(i);

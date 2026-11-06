@@ -14,6 +14,7 @@
  */
 
 import { fromU, toU } from './plot-scale.js';
+import { calculate } from './calculator.js';
 
 export const MAX_PLOT_CURSORS = 8;
 export const CURSOR_KINDS = ['point', 'vertical', 'horizontal'];
@@ -90,6 +91,17 @@ export function curveCrossings(curve, v, max = 3) {
     if (!out.some((w) => Math.abs(w - u) <= 1e-12 * Math.max(1, Math.abs(u)))) out.push(u);
   }
   return out;
+}
+
+/** A typed marker place: a number or an expression the calculator takes
+ *  (`1/64`, `2.7k/2.24M`); null when it is neither or not finite. */
+export function cursorValue(text) {
+  try {
+    const value = Number(calculate(String(text ?? '')).value);
+    return Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 /** A number as a marker shows it: four figures (`digits`). */
