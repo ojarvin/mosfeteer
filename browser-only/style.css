@@ -998,6 +998,30 @@ button:disabled {
   display: none;
 }
 
+/* The sweep's editor (sweep-plot.js): in the Plots window it fills the
+   view; in a sweep plot's settings it sits over the plot editor. */
+.sweep-editor {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.sweep-progress {
+  width: 100%;
+}
+
+.sweep-progress[hidden] {
+  display: none;
+}
+
+.sweep-figure {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 :is(.time-plot, .sweep-plot) {
   flex: 1 1 auto;
   min-height: 8rem;
@@ -1020,7 +1044,7 @@ button:disabled {
   font-size: var(--text-sm);
 }
 
-:is(.analysis-dock, .plots-window) .net-pick {
+:is(.analysis-dock, .plots-window, .sweep-figure) .net-pick {
   display: flex;
   flex-direction: row;
   align-items: center;
@@ -6916,6 +6940,30 @@ details.analysis-options > * + * {
   overflow-y: auto;
 }
 
+/* A plot's settings (data-plot-ui.js openPlotSettings): a floating window,
+   its editor scrolling between the title bar and the actions. */
+.plot-settings-window {
+  /* Narrow enough to float beside the drawing (wider docks it). */
+  width: min(34rem, calc(100% - 16px));
+  height: min(46rem, calc(100% - 16px));
+  max-height: calc(100% - 16px);
+  min-width: 20rem;
+  min-height: 16rem;
+  overflow: hidden;
+}
+
+.plot-settings-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 12px 16px 4px;
+  overflow-y: auto;
+}
+
+.plot-settings-actions {
+  flex: none;
+  padding: 8px 16px 14px;
+}
+
 .data-plot-form,
 .data-plot-columns {
   display: flex;
@@ -8670,7 +8718,8 @@ body.chrome-away [data-editor-edge="right"] {
 }
 
 /* An inline row of fields -- the swing's, the locus's, the loop's, the time
-   view's, the signal band, the spectrum: words and small fields on one line,
+   view's, the sweep's (in a sweep plot's settings too), the signal band, the
+   spectrum: words and small fields on one line,
    wrapping as a sentence does. Every such field has one size. */
 .signal-flow-swing-controls,
 .signal-flow-band {
@@ -8681,7 +8730,7 @@ body.chrome-away [data-editor-edge="right"] {
   font-size: var(--text-sm);
 }
 
-:is(.analysis-dock, .plots-window) :is(.signal-flow-swing-controls, .signal-flow-band) label {
+:is(.analysis-dock, .plots-window, .sweep-figure) :is(.signal-flow-swing-controls, .signal-flow-band) label {
   display: inline-flex;
   flex-direction: row;
   align-items: center;
@@ -8690,7 +8739,7 @@ body.chrome-away [data-editor-edge="right"] {
   white-space: nowrap;
 }
 
-:is(.analysis-dock, .plots-window) :is(.signal-flow-swing-controls, .signal-flow-band) :is(input[type="text"], select, button) {
+:is(.analysis-dock, .plots-window, .sweep-figure) :is(.signal-flow-swing-controls, .signal-flow-band) :is(input[type="text"], select, button) {
   flex: none;
 }
 
@@ -8699,16 +8748,16 @@ body.chrome-away [data-editor-edge="right"] {
   font-size: var(--field-font);
 }
 
-:is(.analysis-dock, .plots-window) :is(.signal-flow-swing-controls, .signal-flow-band) input[type="text"] {
+:is(.analysis-dock, .plots-window, .sweep-figure) :is(.signal-flow-swing-controls, .signal-flow-band) input[type="text"] {
   width: 5rem;
 }
 
-:is(.analysis-dock, .plots-window) :is(.signal-flow-swing-controls, .signal-flow-band) select {
+:is(.analysis-dock, .plots-window, .sweep-figure) :is(.signal-flow-swing-controls, .signal-flow-band) select {
   width: auto;
   max-width: 11rem;
 }
 
-:is(.analysis-dock, .plots-window) :is(.signal-flow-swing-controls, .signal-flow-band) button {
+:is(.analysis-dock, .plots-window, .sweep-figure) :is(.signal-flow-swing-controls, .signal-flow-band) button {
   padding: 0 10px;
 }
 

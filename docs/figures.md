@@ -36,7 +36,10 @@ that identity that is selected, else the only one, else a new one
 (`chooseFigure`). An update keeps the figure's place, size and style and
 replaces what it shows: a plot its data and legend, a table its text (its
 top-left corner kept once the browser has measured it), a model its parts
-from the same top-left corner. Live figures follow the design themselves:
+from the same top-left corner. A plot is updated at the numbers now from its right-click **Update plot**
+too, or every plot by **Annotate… → Update all plots**
+([`signal-flow-analysis.md`](signal-flow-analysis.md)). Live figures
+follow the design themselves:
 a parts table is drawn from the parts, the timing diagram from the design's
 timing once annotated.
 
@@ -117,6 +120,14 @@ columns separated by spaces (`src/core/csv-data.js`, `src/core/data-plot.js`,
   list draws on top. The plot keeps the zoom shown. Place
   packs the new plot; Apply is one undo step. A double-click on the plot
   opens its settings.
+- **Plot settings** is a floating window over the drawing
+  (`openPlotSettings`; it docks as any window does), one at a time:
+  another plot's settings replace it. The drawing stays in reach while it
+  is open. It follows its plot through undo and redo, closes when the plot
+  goes (deleted, undone, another design), and Escape closes it (but from a
+  field). An analysis plot's **Update plot** there applies the edits, updates
+  the plot, and leaves the window open on it. The file's dialog of More →
+  Data plot… stays a dialog.
 - **Add file…** adds another file's traces to the plot, up to 8 in all,
   their legend entries under the others; the dialog shows the plot's own
   traces with them, to edit too. **Replace file…** replaces the traces,
@@ -160,7 +171,10 @@ columns separated by spaces (`src/core/csv-data.js`, `src/core/data-plot.js`,
   `--hz` and `--ratio` for a response's units);
   `annotation plotaxis`, `plotview`, and `plottrace` (`--color` a palette
   name, `--position M` a place in the list) edit it.
-- Annotating and Update plots never touch a data plot.
+- Annotating and Update plots never touch a data plot of a file. A sweep
+  plot (`plot.sweep`) is drawn again by its sweep, and its Plot settings
+  show the sweep's editor over the plot editor
+  ([`signal-flow-analysis.md`](signal-flow-analysis.md)).
 
 
 ## Exporting a plot's data

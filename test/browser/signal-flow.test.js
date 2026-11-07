@@ -256,12 +256,12 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
 
   test('the sweep steps a coefficient, simulating each point off the page\'s thread, and plots what each run measures', async () => {
     await openAnalysis('modulator');
-    await h.evaluate(`${h.module('editor-state.js')}.then((m) => { const c = m.editor.circuit; c.analysisValues.band = { bw: 0.01 }; c.analysisValues.coefficients = { ...c.analysisValues.coefficients, k_1: 1, k_2: 2 }; c.windows.sweep = { name: 'k_1', from: '0.5', to: '1.5', points: 5, amplitude: '-20', samples: 4096, measures: [] }; })`);
+    await h.evaluate(`${h.module('editor-state.js')}.then((m) => { const c = m.editor.circuit; c.analysisValues.band = { bw: 0.01 }; c.analysisValues.coefficients = { ...c.analysisValues.coefficients, k_1: 1, k_2: 2 }; c.windows.sweep = { name: 'k_1', from: '1/2', to: '3k/2k', points: 5, amplitude: '-20', samples: 4096, measures: [] }; })`);
     await derive();
     await tab('Sweep');
     await h.until(`!!document.querySelector('.plots-window .sweep-run') && !document.querySelector('.plots-window .signal-flow-sweep').hidden`);
     assert.equal(await h.evaluate(`document.querySelector('.plots-window .sweep-name').value`), 'k_1');
-    // Sweep runs it; the busy dots and Stop while it does.
+    // From and to take expressions (1/2, 3k/2k); Sweep runs it; the busy dots and Stop while it does.
     assert.equal(await h.evaluate(`(() => { document.querySelector('.plots-window .sweep-run').click(); return document.querySelector('.plots-window .sweep-run').textContent; })()`), 'Stop');
     await h.until(`!document.querySelector('.plots-window .sweep-run').dataset.running`, 30000);
     assert.match(await h.evaluate(`document.querySelector('.plots-window .sweep-status').textContent`), /5 points of k_1 from 0\.5 to 1\.5/);
@@ -312,6 +312,123 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     assert.notDeepEqual(after.traces[2].points, JSON.parse(before)[2].points);
     assert.deepEqual(after.traces.map((t) => t.color), JSON.parse(before).map((t) => t.color));
     assert.ok(after.legend.every((text) => text.startsWith('$')), JSON.stringify(after.legend));
+  });
+
+  // A plot's right-click menu, its item `label` chosen.
+  const plotMenu = async (find, label) => {
+    await h.evaluate(`Promise.all([${h.module('editor-state.js')}, ${h.module('canvas-view.js')}, ${h.module('context-menu.js')}]).then(([s, v, menu]) => {
+      const box = [...s.editor.circuit.labels.values()].find(${find});
+      const b = box.bbox();
+      const p = v.worldToClient(b.x + b.w / 2, b.y + 2);
+      menu.openContextMenuAt(p.x, p.y);
+    })`);
+    await h.until(`[...document.querySelectorAll('.component-context-menu:not([hidden]) button')].some((b) => b.textContent.startsWith(${JSON.stringify(label)}))`);
+    await h.evaluate(`[...document.querySelectorAll('.component-context-menu:not([hidden]) button')].find((b) => b.textContent.startsWith(${JSON.stringify(label)})).click()`);
+  };
+  const log = () => h.evaluate(`[...document.querySelectorAll('#log > *')].map((n) => n.textContent).slice(-2).join(' | ')`);
+
+  test('a sweep plot\'s settings are the Sweep view\'s editor on what it ran; Update plot runs it again with its progress, and Stop leaves it as it was', async () => {
+    await openAnalysis('modulator');
+    await h.evaluate(`${h.module('editor-state.js')}.then((m) => { const c = m.editor.circuit; c.analysisValues.band = { bw: 0.01 }; c.analysisValues.coefficients = { ...c.analysisValues.coefficients, k_1: 1, k_2: 2 }; c.windows.sweep = { name: 'k_1', from: '0.5', to: '1.5', points: 5, amplitude: '-20', samples: 4096, measures: [] }; })`);
+    await derive();
+    await tab('Sweep');
+    await h.until(`!!document.querySelector('.plots-window .sweep-run') && !document.querySelector('.plots-window .signal-flow-sweep').hidden`);
+    // The measures are offered before any sweep: the nets' peaks too.
+    assert.ok(await h.evaluate(`[...document.querySelectorAll('.plots-window .sweep-measures .net-pick')].some((p) => /peak/.test(p.textContent))`));
+    await h.evaluate(`document.querySelector('.plots-window .sweep-run').click()`);
+    assert.equal(await h.evaluate(`document.querySelector('.plots-window .sweep-progress').hidden`), false);
+    await h.until(`!document.querySelector('.plots-window .sweep-run').dataset.running`, 30000);
+    assert.equal(await h.evaluate(`document.querySelector('.plots-window .sweep-progress').hidden`), true);
+    await h.evaluate(`document.querySelector('.plots-window .sweep-annotate').click()`);
+    const find = '(l) => l.plot?.kind === \'data\' && l.plot.sweep';
+    const sweepBox = `${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].find(${find}))`;
+    await h.until(`${sweepBox}.then((b) => !!b)`);
+    // Its settings: the sweep's fields as it ran, over the plot's editor.
+    await plotMenu(find, 'Plot settings');
+    await h.until(`!!document.querySelector('.data-plot-dialog .sweep-figure')`);
+    const field = (label) => `document.querySelector('.data-plot-dialog .sweep-figure [aria-label=${JSON.stringify(label)}]')`;
+    assert.equal(await h.evaluate(`document.querySelector('.data-plot-dialog .sweep-name').value`), 'k_1');
+    assert.equal(await h.evaluate(`${field('Points')}.value`), '5');
+    assert.equal(await h.evaluate(`${field('Sine amplitude, dBFS')}.value`), '-20');
+    // Fewer points: Apply sweeps first, then applies.
+    await h.evaluate(`(() => { const f = ${field('Points')}; f.value = '3'; f.dispatchEvent(new Event('input', { bubbles: true })); f.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    assert.match(await h.evaluate(`document.querySelector('.data-plot-dialog .sweep-status').textContent`), /Apply sweeps first/);
+    await h.evaluate(`[...document.querySelectorAll('.data-plot-dialog button')].find((b) => b.textContent === 'Apply').click()`);
+    await h.until(`!document.querySelector('.data-plot-dialog')`, 60000);
+    const after = await h.evaluate(`${sweepBox}.then((b) => ({ points: b.plot.traces[0].points.length, run: b.plot.sweep.runs.at(-1).points, count: b.plot.sweep.count, traces: b.plot.traces.length, math: b.circuit.plotLegend(b).every((e) => e.math) }))`);
+    assert.deepEqual(after, { points: 3, run: 3, count: 1, traces: 1, math: true });
+    // The Sweep view's own settings stay.
+    assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.windows.sweep.points)`), 5);
+    // Update plot, long: its run window shows the progress; Stop leaves it as it was.
+    await h.evaluate(`${sweepBox}.then((b) => { b.plot.sweep.runs.at(-1).points = 201; b.plot.sweep.runs.at(-1).samples = 65536; })`);
+    const before = await h.evaluate(`${sweepBox}.then((b) => JSON.stringify(b.plot.traces))`);
+    await plotMenu(find, 'Update plot');
+    await h.until(`document.getElementById('run-window-title')?.textContent === 'Update plot'`);
+    await h.until(`/Point \\d+ of 201/.test(document.querySelector('.run-window-status').textContent)`);
+    await h.evaluate(`document.querySelector('.run-window-stop').click()`);
+    await h.until(`document.querySelector('.run-window-stop').textContent === 'Close'`, 30000);
+    assert.match(await h.evaluate(`document.querySelector('.run-window-status').textContent`), /Stopped/);
+    await h.until(`/left the sweep plot as it was: stopped/.test(${JSON.stringify('')} + [...document.querySelectorAll('#log > *')].map((n) => n.textContent).join(' '))`);
+    assert.equal(await h.evaluate(`${sweepBox}.then((b) => JSON.stringify(b.plot.traces))`), before);
+    await h.evaluate(`document.querySelector('.run-window-stop').click()`);
+    // Run through, at the coefficients now.
+    await h.evaluate(`${sweepBox}.then((b) => { b.plot.sweep.runs.at(-1).points = 3; b.plot.sweep.runs.at(-1).samples = 4096; })`);
+    await h.evaluate(`${h.module('editor-state.js')}.then((m) => { m.editor.circuit.analysisValues.coefficients.k_2 = 1.2; })`);
+    await plotMenu(find, 'Update plot');
+    await h.until(`document.querySelector('.run-window-stop')?.textContent === 'Close'`, 60000);
+    assert.match(await h.evaluate(`document.querySelector('.run-window-status').textContent`), /Updated the sweep plot/);
+    assert.match(await log(), /updated the sweep plot/);
+    assert.notEqual(await h.evaluate(`${sweepBox}.then((b) => JSON.stringify(b.plot.traces))`), before);
+    await h.evaluate(`document.querySelector('.run-window-stop').click()`);
+  });
+
+  test('Update plot on a graph before any Derive says to derive first, and leaves it', async () => {
+    await openAnalysis('modulator');
+    await derive();
+    await annotate('Graph');
+    const find = '(l) => l.plot?.kind === \'response\'';
+    await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some(${find}))`);
+    // The same drawing loaded again: nothing derived.
+    await h.evaluate(`${h.module('editor-state.js')}.then((m) => window.__load(m.editor.circuit.toJSON()))`);
+    await h.settle();
+    const before = await h.evaluate(`${h.module('editor-state.js')}.then((m) => JSON.stringify([...m.editor.circuit.labels.values()].find(${find}).plot))`);
+    await plotMenu(find, 'Update plot');
+    await h.until(`/derive the diagram first/.test(${JSON.stringify('')} + [...document.querySelectorAll('#log > *')].map((n) => n.textContent).join(' '))`);
+    assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => JSON.stringify([...m.editor.circuit.labels.values()].find(${find}).plot))`), before);
+    // Derived, it updates.
+    await derive();
+    await plotMenu(find, 'Update plot');
+    await h.until(`/updated the magnitude plot/.test([...document.querySelectorAll('#log > *')].map((n) => n.textContent).join(' '))`);
+    // From its settings: the edits applied, the plot updated, the window still open on it.
+    await plotMenu(find, 'Plot settings');
+    await h.until(`!!document.querySelector('.plot-settings-window .data-plot-update')`);
+    await h.evaluate(`[...document.querySelectorAll('.plot-settings-window .data-plot-curve input[type=checkbox]')][0].click()`);
+    await h.evaluate(`document.querySelector('.plot-settings-window .data-plot-update').click()`);
+    await h.until(`/updated the magnitude plot.*updated the magnitude plot/.test([...document.querySelectorAll('#log > *')].map((n) => n.textContent).join(' '))`);
+    await h.until(`!!document.querySelector('.plot-settings-window .data-plot-update:not([disabled])')`);
+    assert.equal(await h.evaluate(`document.querySelectorAll('.plot-settings-window').length`), 1);
+    assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].find(${find}).plot.traces[0].hidden === true)`), true);
+    assert.equal(await h.evaluate(`document.querySelector('.plot-settings-window .data-plot-curve input[type=checkbox]').checked`), false);
+    await h.evaluate(`[...document.querySelectorAll('.plot-settings-window button')].find((b) => b.textContent === 'Cancel').click()`);
+  });
+
+  test('a swing plot updates before any Derive: the swing needs none', async () => {
+    await openAnalysis('modulator');
+    await derive();
+    await tab('Swing');
+    await h.click('.plots-window .signal-flow-swing-run');
+    await h.until(`!!document.querySelector('.plots-window .signal-flow-swing .net-picker')`, 15000);
+    await h.evaluate(`[...document.querySelectorAll('.plots-window .signal-flow-swing button')].find((b) => b.textContent === 'Annotate').click()`);
+    const find = '(l) => l.plot?.kind === \'swing\'';
+    await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some(${find}))`);
+    // The same drawing loaded again: nothing derived, the swing's sources not yet listed.
+    await h.evaluate(`${h.module('editor-state.js')}.then((m) => window.__load(m.editor.circuit.toJSON()))`);
+    await h.settle();
+    // As on a page just opened: the Swing view never shown, its source list empty.
+    await h.evaluate(`document.querySelector('.signal-flow-swing-source').replaceChildren()`);
+    await plotMenu(find, 'Update plot');
+    await h.until(`/updated the swing plot|left the swing plot/.test([...document.querySelectorAll('#log > *')].map((n) => n.textContent).join(' '))`, 30000);
+    assert.match(await log(), /updated the swing plot/);
   });
 
   test('a coefficient typed as a ratio applies, again after a slider move, and is tabled as typed', async () => {

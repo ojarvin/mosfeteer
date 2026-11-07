@@ -189,7 +189,7 @@ describe('data plot', { skip: browserSkip() }, () => {
     await h.mouse('mouseReleased', p.x, p.y, { clickCount: 1 });
     await h.mouse('mousePressed', p.x, p.y, { clickCount: 2 });
     await h.mouse('mouseReleased', p.x, p.y, { clickCount: 2 });
-    await h.until(`!!document.querySelector('.data-plot-dialog[open]')`);
+    await h.until(`!!document.querySelector('.plot-settings-window')`);
     assert.equal(await h.evaluate(`!!document.querySelector('.label-inline-editor')`), false);
     await h.evaluate(`${button('.data-plot-dialog', 'Cancel')}.click()`);
     await h.until(`!document.querySelector('.data-plot-dialog')`);
@@ -209,7 +209,7 @@ describe('data plot', { skip: browserSkip() }, () => {
       };
     })()`);
     await h.evaluate(`${h.module('editor-state.js')}.then((s) => ${h.module('data-plot-ui.js')}.then((m) => m.openPlotSettings([...s.editor.circuit.labels.values()].find((l) => l.plot))))`);
-    await h.until(`!!document.querySelector('.data-plot-dialog[open]')`);
+    await h.until(`!!document.querySelector('.plot-settings-window')`);
     // The settings dialog is gone before the file's opens.
     assert.equal(await h.evaluate(`(${button('.data-plot-dialog', 'Add file')}.click(), document.querySelectorAll('.data-plot-dialog').length)`), 0);
     await h.until(`!!document.querySelector('.data-plot-dialog[open] .plot-view svg path') && ${button('.data-plot-dialog', 'Add to plot')}`);
@@ -227,7 +227,7 @@ describe('data plot', { skip: browserSkip() }, () => {
   test('Plot settings… moves a trace down the list, to draw over the others, its legend entry with it', async () => {
     const before = await plot();
     await h.evaluate(`${h.module('editor-state.js')}.then((s) => ${h.module('data-plot-ui.js')}.then((m) => m.openPlotSettings([...s.editor.circuit.labels.values()].find((l) => l.plot))))`);
-    await h.until(`!!document.querySelector('.data-plot-dialog[open] .data-plot-trace')`);
+    await h.until(`!!document.querySelector('.plot-settings-window .data-plot-trace')`);
     await h.evaluate(`document.querySelector('.data-plot-trace-move[aria-label^="Move"][aria-label$="down"]').click()`);
     await h.evaluate(`${button('.data-plot-dialog', 'Apply')}.click()`);
     await h.until(`!document.querySelector('.data-plot-dialog')`);
@@ -237,6 +237,38 @@ describe('data plot', { skip: browserSkip() }, () => {
     assert.deepEqual(after.legend, expected);
     await h.key('z', { ctrlKey: true });
     assert.deepEqual((await plot()).legend, before.legend);
+  });
+  test('Plot settings float over the drawing, one at a time: they follow their plot through undo and redo, close when it goes, and Escape closes them', async () => {
+    const open = () => h.evaluate(`${h.module('editor-state.js')}.then((s) => ${h.module('data-plot-ui.js')}.then((m) => m.openPlotSettings([...s.editor.circuit.labels.values()].find((l) => l.plot))))`);
+    await open();
+    await h.until(`!!document.querySelector('.plot-settings-window .data-plot-trace')`);
+    // A floating window, with a title bar to move it by; no modal dialog.
+    assert.equal(await h.evaluate(`document.querySelector('.plot-settings-window').classList.contains('floating-window') && !!document.querySelector('.plot-settings-window .floating-window-header')`), true);
+    assert.equal(await h.evaluate(`!!document.querySelector('dialog[open]')`), false);
+    await open();
+    assert.equal(await h.evaluate(`document.querySelectorAll('.plot-settings-window').length`), 1);
+    // An edit undone and redone gives the plot back as a new object: the window follows it.
+    const main = h.module('main.js');
+    await h.evaluate(`Promise.all([${main}, ${h.module('editor-state.js')}]).then(([m, s]) => { m.commit(() => { s.editor.circuit.addLabel({ text: 'note', x: 4000, y: 4000 }); }); m.undo(); m.redo(); m.render(); })`);
+    assert.equal(await h.evaluate(`!!document.querySelector('.plot-settings-window')`), true);
+    await h.evaluate(`(() => { const f = document.querySelector('.plot-settings-window [data-axis-label="x"]'); f.value = 'Followed'; f.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    await h.evaluate(`${button('.plot-settings-window', 'Apply')}.click()`);
+    await h.until(`!document.querySelector('.plot-settings-window')`);
+    assert.equal((await plot()).plot.x.label, 'Followed');
+    await h.key('z', { ctrlKey: true });
+    // Its plot deleted, it closes.
+    await open();
+    await h.until(`!!document.querySelector('.plot-settings-window')`);
+    const id = (await plot()).id;
+    await h.evaluate(`Promise.all([${main}, ${h.module('editor-state.js')}]).then(([m, s]) => { m.commit(() => { s.editor.circuit.removeLabel(${JSON.stringify(id)}); }); m.render(); })`);
+    await h.until(`!document.querySelector('.plot-settings-window')`);
+    assert.match(await h.evaluate(`document.getElementById('status-message').textContent`), /plot is gone/);
+    await h.evaluate(`${main}.then((m) => { m.undo(); m.render(); })`);
+    // Escape closes it.
+    await open();
+    await h.until(`!!document.querySelector('.plot-settings-window')`);
+    await h.evaluate(`document.querySelector('.plot-settings-window .data-plot-marker-add').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))`);
+    await h.until(`!document.querySelector('.plot-settings-window')`);
   });
 });
 

@@ -22,7 +22,7 @@ import { canonicalNetName } from '../core/model.js';
 import { setPartValue } from '../core/part-moves.js';
 import { createPlotView, linkPlots } from './plot-view.js';
 import { installPlotsWindow, offerPlots } from './plots-window.js';
-import { placeResponsePlot, registerAnalysisMode } from './signal-flow-ui.js';
+import { matchPlotTraces, placeResponsePlot, registerAnalysisMode, registerPlotUpdater } from './signal-flow-ui.js';
 import { valueRow } from './value-row.js';
 import { PER_DECADE } from './e-series.js';
 import { editor } from './editor-state.js';
@@ -635,6 +635,16 @@ function annotateGraph({ magnitude = true, phase = graphChoice.phase } = {}) {
   }
 }
 
+/** A switched-cap plot on the drawing at the capacitances now (Update
+ *  plot): its curves by name, or why not. */
+function scPlotUpdate(plot) {
+  if (!latest) return { error: 'derive the circuit first (Shift+S)' };
+  const matched = plot.kind === 'response' ? matchPlotTraces(plot, traces.map((trace) => ({ ...trace, label: trace.held ? heldLabel(trace) : liveLabel(trace) }))) : null;
+  if (!matched) return { error: 'its traces are no longer on the graph' };
+  const next = responsePlot(matched.map((trace) => ({ ...trace, value: numbered(trace.value), variable: 'z' })), 'z', { quantity: plot.quantity === 'phase' ? 'phase' : 'magnitude' });
+  return next ? { plot: next, shown: matched } : { error: 'its traces are no longer on the graph' };
+}
+
 // ----- the drawing -----------------------------------------------------------------------
 
 /** The equation on the drawing as the switched-cap table
@@ -706,6 +716,7 @@ export function installSwitchedCapUi() {
     ]),
   ]);
   // What this mode puts on the drawing, in the window's Annotate menu.
+  registerPlotUpdater('switched-cap', scPlotUpdate);
   registerAnnotations('switched-cap', () => [
     { label: 'Equations', identity: { kind: 'equations', source: 'switched-cap' }, available: !!latest?.result.ok, run: annotate },
     { label: 'kT/C noise table', identity: { kind: 'noise', source: 'switched-cap' }, available: !!calculatorNumbers()?.figures.ok, run: annotateNoise },

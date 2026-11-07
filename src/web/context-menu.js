@@ -29,6 +29,7 @@ import { shortPlacementLabel } from './toolbar.js';
 import { swapCandidates } from '../core/swap.js';
 import { appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename } from './side-panel.js';
 import { openPlotSettings } from './data-plot-ui.js';
+import { updatablePlot, updatePlot } from './signal-flow-ui.js';
 import { takesFileTraces } from '../core/data-plot.js';
 import { openPlotExport } from './plot-export-ui.js';
 import { busWidth, netNamesConnect } from '../core/bus.js';
@@ -809,6 +810,7 @@ function appendContextActions(menu, target) {
     const lines = selectedLines();
     if (target.value.kind === 'line' && lines.length > 1) appendContextItem(group, `Join ${lines.length} lines`, joinSelectedLines);
     if (takesFileTraces(target.value)) appendContextItem(group, 'Plot settings…', later(() => openPlotSettings(target.value)));
+    if (updatablePlot(target.value)) appendContextItem(group, 'Update plot', later(() => void updatePlot(target.value)));
     if (target.value.plot) appendContextItem(group, 'Export data…', later(() => openPlotExport(target.value)));
     if (target.value.plot) appendPlotColorsItem(group, target.value);
     appendBoxStackMenu(group, target.value);

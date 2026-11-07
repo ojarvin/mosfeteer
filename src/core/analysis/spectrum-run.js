@@ -24,6 +24,17 @@ export function simulatedSpectrum({ circuit, options, amplitude, segment }) {
   }
 }
 
+/** The signals a sweep's runs measure the peaks of (`{ key, name, role }`),
+ *  without running: `[]` when the diagram does not simulate. */
+export function simulationSignals({ circuit, options }) {
+  try {
+    const sim = prepareSimulation(circuit instanceof Circuit ? circuit : Circuit.fromJSON(circuit), options);
+    return sim.ok ? sim.signals.map(({ key, name, role }) => ({ key, name, role })) : [];
+  } catch {
+    return [];
+  }
+}
+
 /**
  * One point of a sweep: a run of `options` at `amplitude` dBFS, measured.
  * Returns `{ signals, fullScale, measures }`, `measures` by key -- `sndr`

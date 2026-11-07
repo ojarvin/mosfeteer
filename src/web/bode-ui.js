@@ -32,7 +32,7 @@ import { element as el } from './dom.js';
 import { editor } from './editor-state.js';
 import { markSettingsChanged, onDocumentShown, render } from './main.js';
 import { installPlotsWindow, offerPlots, plotsShown } from './plots-window.js';
-import { placeResponsePlot } from './signal-flow-ui.js';
+import { matchPlotTraces, placeResponsePlot, registerPlotUpdater } from './signal-flow-ui.js';
 import { registerAnnotations } from './annotate-menu.js';
 import { bodeGraphActions } from './bode-actions.js';
 import { differing, differingNames, heldName, holdKey, liveName, saveHolds, savedHolds, traceLegendRow } from './trace-hold.js';
@@ -556,6 +556,18 @@ function annotateGraph({ phase = graphChoice.phase, magnitude = true } = {}) {
 }
 
 
+/** A Bode plot on the drawing at the values now (Update plot): its curves
+ *  by name, each from its own exact response, or why not. */
+function bodePlotUpdate(plot) {
+  if (!latest) return { error: 'derive the circuit first (Shift+S)' };
+  if (plot.kind !== 'response') return { error: 'a sketch is drawn as it was' };
+  const matched = matchPlotTraces(plot, traces.map((trace) => ({ ...trace, label: trace.held ? heldLabel(trace) : liveLabel(trace) })));
+  const sketches = (matched || []).map((trace) => ({ trace, ...(sketchOf(trace) || {}) }));
+  if (!matched || sketches.some((entry) => !entry.sketch)) return { error: 'its traces are no longer on the graph' };
+  const next = responsePlotOf(sketches, plot.quantity === 'phase' ? 'phase' : 'magnitude');
+  return next ? { plot: next, shown: matched } : { error: 'its traces are no longer on the graph' };
+}
+
 // ----- Values, in the analysis window ------------------------------------------------------
 
 let valuesEl = null;
@@ -681,6 +693,7 @@ function clearBode() {
 /** The Values in the analysis window, and the circuit's view in the Plots
  *  window. */
 export function installBodeUi() {
+  registerPlotUpdater('small-signal', bodePlotUpdate);
   // The graph, in the analysis window's Annotate menu.
   registerAnnotations('circuit', () => [
     { label: 'Bode magnitude', identity: { kind: 'plot', source: 'small-signal', key: /^response::/ }, available: shownTraces().length > 0, run: () => annotateGraph({ phase: false }) },

@@ -35,10 +35,10 @@ describe('traces from a file on an analysis plot', { skip: browserSkip() }, () =
     await h.mouse('mouseReleased', p.x, p.y, { clickCount: 1 });
     await h.mouse('mousePressed', p.x, p.y, { clickCount: 2 });
     await h.mouse('mouseReleased', p.x, p.y, { clickCount: 2 });
-    await h.until(`!!document.querySelector('dialog[aria-label="Plot settings"][open]')`);
+    await h.until(`!!document.querySelector('.plot-settings-window')`);
     assert.equal(await h.evaluate(`!!document.querySelector('.label-inline-editor')`), false);
     // An analysis plot's axes are its own: none to edit.
-    assert.equal(await h.evaluate(`document.querySelectorAll('dialog[open] [data-axis-label]').length`), 0);
+    assert.equal(await h.evaluate(`document.querySelectorAll('.plot-settings-window [data-axis-label]').length`), 0);
   });
 
   test('Add file… reads a simulation in hertz and as a ratio onto the plot, over its curve, one undo step', async () => {
@@ -53,7 +53,7 @@ describe('traces from a file on an analysis plot', { skip: browserSkip() }, () =
         this.dispatchEvent(new Event('change'));
       };
     })()`);
-    await h.evaluate(`${button('dialog[aria-label="Plot settings"]', 'Add file')}.click()`);
+    await h.evaluate(`${button('.plot-settings-window', 'Add file')}.click()`);
     await h.until(`!!document.getElementById('data-plot-xunit')`);
     await h.evaluate(`(() => {
       for (const [id, value] of [['data-plot-xunit', 'Hz'], ['data-plot-yunit', 'ratio']]) {

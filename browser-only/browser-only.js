@@ -17863,6 +17863,7 @@ function withAliases(solved, system) {
 
 __modules["src/core/analysis/spectrum-run.js"] = function (__require, __exports) {
 __exports.simulatedSpectrum = simulatedSpectrum;
+__exports.simulationSignals = simulationSignals;
 __exports.simulatedMeasures = simulatedMeasures;
 __exports.sweepLabels = sweepLabels;
 __exports.sweepValues = sweepValues;
@@ -17892,6 +17893,17 @@ function simulatedSpectrum({ circuit, options, amplitude, segment }) {
     return { raw: outputSpectrum(run.samples, { segment, variance: 1 / 3 }), quantizers: run.quantizers, fullScale: sim.fullScale, frequency: sim.frequency };
   } catch (error) {
     return { error: error.message };
+  }
+}
+
+/** The signals a sweep's runs measure the peaks of (`{ key, name, role }`),
+ *  without running: `[]` when the diagram does not simulate. */
+function simulationSignals({ circuit, options }) {
+  try {
+    const sim = prepareSimulation(circuit instanceof Circuit ? circuit : Circuit.fromJSON(circuit), options);
+    return sim.ok ? sim.signals.map(({ key, name, role }) => ({ key, name, role })) : [];
+  } catch {
+    return [];
   }
 }
 
@@ -31366,7 +31378,7 @@ const MAX_SWEEP_RUNS = 8;
 
 /**
  * A data plot annotated from the signal-flow Sweep (sweep-plot.js): what
- * Update all plots runs again. `{ name, measures: [key], count, runs: [{
+ * Update plot runs again and its settings edit. `{ name, measures: [key], count, runs: [{
  * from, to, points, log, input, amplitude, frequency, samples, values? }] }`
  * -- the coefficient swept, the measures shown, how many of the plot's
  * traces are the sweep's (the first ones), and each sweep drawn, the held
@@ -52770,7 +52782,8 @@ let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); 
 
 
 /** mode -> [() => items]; an item is { label, identity: { kind, source,
- *  key? }, available, run }. */
+ *  key? }, available, run }; one of no identity (Update all plots) is no
+ *  figure, and comes after the figures. */
 const providers = new Map();
 let currentMode = () => 'circuit';
 
@@ -52787,7 +52800,8 @@ function setAnnotationMode(getMode) {
 
 /** The items the window's mode offers now. */
 function annotationItems(mode = currentMode()) {
-  return (providers.get(mode) || []).flatMap((provider) => provider());
+  const items = (providers.get(mode) || []).flatMap((provider) => provider());
+  return [...items.filter((item) => item.identity), ...items.filter((item) => !item.identity)];
 }
 
 /** Whether a figure of that identity is on the drawing. */
@@ -60260,7 +60274,7 @@ let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let markSettingsChanged, onDocumentShown, render; __bind(() => { ({ markSettingsChanged, onDocumentShown, render } = __require("src/web/main.js")); });
 let installPlotsWindow, offerPlots, plotsShown; __bind(() => { ({ installPlotsWindow, offerPlots, plotsShown } = __require("src/web/plots-window.js")); });
-let placeResponsePlot; __bind(() => { ({ placeResponsePlot } = __require("src/web/signal-flow-ui.js")); });
+let matchPlotTraces, placeResponsePlot, registerPlotUpdater; __bind(() => { ({ matchPlotTraces, placeResponsePlot, registerPlotUpdater } = __require("src/web/signal-flow-ui.js")); });
 let registerAnnotations; __bind(() => { ({ registerAnnotations } = __require("src/web/annotate-menu.js")); });
 let bodeGraphActions; __bind(() => { ({ bodeGraphActions } = __require("src/web/bode-actions.js")); });
 let differing, differingNames, heldName, holdKey, liveName, saveHolds, savedHolds, traceLegendRow; __bind(() => { ({ differing, differingNames, heldName, holdKey, liveName, saveHolds, savedHolds, traceLegendRow } = __require("src/web/trace-hold.js")); });
@@ -60819,6 +60833,18 @@ function annotateGraph({ phase = graphChoice.phase, magnitude = true } = {}) {
 }
 
 
+/** A Bode plot on the drawing at the values now (Update plot): its curves
+ *  by name, each from its own exact response, or why not. */
+function bodePlotUpdate(plot) {
+  if (!latest) return { error: 'derive the circuit first (Shift+S)' };
+  if (plot.kind !== 'response') return { error: 'a sketch is drawn as it was' };
+  const matched = matchPlotTraces(plot, traces.map((trace) => ({ ...trace, label: trace.held ? heldLabel(trace) : liveLabel(trace) })));
+  const sketches = (matched || []).map((trace) => ({ trace, ...(sketchOf(trace) || {}) }));
+  if (!matched || sketches.some((entry) => !entry.sketch)) return { error: 'its traces are no longer on the graph' };
+  const next = responsePlotOf(sketches, plot.quantity === 'phase' ? 'phase' : 'magnitude');
+  return next ? { plot: next, shown: matched } : { error: 'its traces are no longer on the graph' };
+}
+
 // ----- Values, in the analysis window ------------------------------------------------------
 
 let valuesEl = null;
@@ -60944,6 +60970,7 @@ function clearBode() {
 /** The Values in the analysis window, and the circuit's view in the Plots
  *  window. */
 function installBodeUi() {
+  registerPlotUpdater('small-signal', bodePlotUpdate);
   // The graph, in the analysis window's Annotate menu.
   registerAnnotations('circuit', () => [
     { label: 'Bode magnitude', identity: { kind: 'plot', source: 'small-signal', key: /^response::/ }, available: shownTraces().length > 0, run: () => annotateGraph({ phase: false }) },
@@ -62943,6 +62970,7 @@ let shortPlacementLabel; __bind(() => { ({ shortPlacementLabel } = __require("sr
 let swapCandidates; __bind(() => { ({ swapCandidates } = __require("src/core/swap.js")); });
 let appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename; __bind(() => { ({ appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename } = __require("src/web/side-panel.js")); });
 let openPlotSettings; __bind(() => { ({ openPlotSettings } = __require("src/web/data-plot-ui.js")); });
+let updatablePlot, updatePlot; __bind(() => { ({ updatablePlot, updatePlot } = __require("src/web/signal-flow-ui.js")); });
 let takesFileTraces; __bind(() => { ({ takesFileTraces } = __require("src/core/data-plot.js")); });
 let openPlotExport; __bind(() => { ({ openPlotExport } = __require("src/web/plot-export-ui.js")); });
 let busWidth, netNamesConnect; __bind(() => { ({ busWidth, netNamesConnect } = __require("src/core/bus.js")); });
@@ -62955,6 +62983,7 @@ let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); 
  * selection, style, switch, signal-flow, and small-signal submenus, and the
  * panel rows' renames it offers.
  */
+
 
 
 
@@ -63761,6 +63790,7 @@ function appendContextActions(menu, target) {
     const lines = selectedLines();
     if (target.value.kind === 'line' && lines.length > 1) appendContextItem(group, `Join ${lines.length} lines`, joinSelectedLines);
     if (takesFileTraces(target.value)) appendContextItem(group, 'Plot settings…', later(() => openPlotSettings(target.value)));
+    if (updatablePlot(target.value)) appendContextItem(group, 'Update plot', later(() => void updatePlot(target.value)));
     if (target.value.plot) appendContextItem(group, 'Export data…', later(() => openPlotExport(target.value)));
     if (target.value.plot) appendPlotColorsItem(group, target.value);
     appendBoxStackMenu(group, target.value);
@@ -64879,7 +64909,10 @@ let createPlotView; __bind(() => { ({ createPlotView } = __require("src/web/plot
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
-let alignLabelColumn, commit, render, setLabelSelection, setSelection; __bind(() => { ({ alignLabelColumn, commit, render, setLabelSelection, setSelection } = __require("src/web/main.js")); });
+let afterRender, alignLabelColumn, commit, onDocumentShown, render, setLabelSelection, setSelection; __bind(() => { ({ afterRender, alignLabelColumn, commit, onDocumentShown, render, setLabelSelection, setSelection } = __require("src/web/main.js")); });
+let PLACE, floatingWindow; __bind(() => { ({ PLACE, floatingWindow } = __require("src/web/floating-window.js")); });
+let sweepPlotEditor; __bind(() => { ({ sweepPlotEditor } = __require("src/web/sweep-plot.js")); });
+let updatablePlot, updatePlot; __bind(() => { ({ updatablePlot, updatePlot } = __require("src/web/signal-flow-ui.js")); });
 /**
  * Data plot (More menu): a text file's columns plotted on the drawing
  * (core/data-plot.js). A file is chosen, then a dialog shows how it reads --
@@ -64894,6 +64927,9 @@ let alignLabelColumn, commit, render, setLabelSelection, setSelection; __bind(()
  * dialog adds a file's traces to that plot (Add file…), the plot's own shown
  * with them, or replaces them (Replace file…).
  */
+
+
+
 
 
 
@@ -64957,8 +64993,8 @@ function openPalette(button, color, pick) {
     onclick: () => { palette.hidePopover(); pick(value); },
   })));
   palette.style.setProperty('--palette-columns', String(PALETTE_COLUMNS));
-  // Escape closes the palette, not the dialog under it.
-  const dialog = button.closest('dialog');
+  // Escape closes the palette, not the dialog or window under it.
+  const dialog = button.closest('dialog, .floating-window');
   const keepDialog = (ev) => { ev.preventDefault(); palette.hidePopover(); };
   palette.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') keepDialog(ev); });
   dialog.addEventListener('cancel', keepDialog);
@@ -65411,63 +65447,216 @@ function openDataPlotDialog(text, name, target = null, { mode = 'replace' } = {}
 
 /** The settings of the plot `box`: a data plot's, or an analysis plot's
  *  (the traces added to it from files, and its zoom). */
+// The plot settings window open: { box, close() }; one at a time.
+let settingsOpen = null;
+
+/**
+ * A plot's settings, in a floating window over the drawing (one at a
+ * time: another plot's replaces it): a sweep plot's sweep, then the plot
+ * editor, Add file… (and a data plot's Replace file…, an analysis plot's
+ * Update plot), Cancel, and Apply -- one undo step. The drawing stays in
+ * reach while it is open; the window closes when its plot goes (deleted,
+ * undone, another design), and follows the plot when undo or redo gives
+ * it back.
+ */
 function openPlotSettings(box) {
   if (!takesFileTraces(box)) return;
+  if (settingsOpen?.box === box) { settingsOpen.front(); return; }
+  settingsOpen?.close();
+  const id = box.id;
   const data = box.plot.kind === 'data';
   const draft = { x: { ...box.plot.x }, y: { ...box.plot.y }, traces: editedTraces(box.plot), curves: box.plot.kind === 'response' ? box.plot.traces.map((trace) => ({ label: trace.label, color: trace.color, on: !trace.hidden })) : null,
     cursors: [...(box.plot.cursors || [])] };
-  const dialog = el('dialog', { class: 'confirm-dialog data-plot-dialog', 'aria-label': 'Plot settings' });
   const plotEdit = plotEditor(draft, { base: data ? null : analysisBase(box.plot) });
-  const apply = () => {
+  // A sweep's own editor over the plot's: Sweep runs it again into the draft.
+  const sweep = box.plot.sweep ? sweepSettings(() => box, draft, plotEdit) : null;
+  const applyButton = el('button', { type: 'button', class: 'primary-action', text: 'Apply', onclick: () => apply() });
+  // The edits onto the plot, one undo step; the window closes but with `keepOpen`.
+  const apply = ({ keepOpen = false } = {}) => {
+    if (sweep?.running()) return;
+    // Changed sweep fields sweep first; Apply follows once it is done.
+    if (sweep?.editor.changed()) { sweep.applyAfter(apply); return; }
     const zoom = plotEdit.zoom();
     const old = editor.circuit.plotLegend(box).map((label) => label.bbox());
-    dialog.close();
+    const fresh = sweep?.fresh();
+    if (!keepOpen) close();
     commit(() => {
       if (draft.curves) {
         setPlotCurveColors(editor.circuit, box, draft.curves.map((curve) => curve.color));
         setPlotTracesShown(editor.circuit, box, draft.curves.map((curve) => curve.on));
       }
-      applyDraft(editor.circuit, box, draft);
-      applyOrder(editor.circuit, box, draft, ownLeft(draft));
+      if (fresh) sweep.write(editor.circuit);
+      else {
+        applyDraft(editor.circuit, box, draft);
+        applyOrder(editor.circuit, box, draft, ownLeft(draft));
+      }
       applyZoom(box, zoom);
       applyCursors(box, plotEdit);
     });
     // Renamed entries are measured again: the column keeps its left edge and top.
     const legend = editor.circuit.plotLegend(box);
     if (legend.length && old.length) alignLabelColumn(legend.map((label) => label.id), { left: Math.min(...old.map((r) => r.x)), top: Math.min(...old.map((r) => r.y)), gap: 0 });
-    logLine('updated the plot');
+    logLine(fresh ? 'swept the plot again' : 'updated the plot');
     render();
   };
-  // The close event comes a task later: a file's dialog opened from this
-  // one must not find it still there, or lose its focus to the canvas.
-  const closed = () => {
-    if (!dialog.isConnected) return;
-    plotEdit.dispose();
-    dialog.remove();
-    canvasEl.focus({ preventScroll: true });
-  };
-  const closeNow = () => { dialog.close(); closed(); };
   const full = draft.traces.length >= (data ? MAX_DATA_TRACES : MAX_PLOT_EXTRA);
-  dialog.append(
-    el('h2', { text: data ? (box.plot.file ? `Data plot from ${box.plot.file}` : 'Data plot') : 'Plot settings' }),
-    ...plotEdit.parts,
-    el('div', { class: 'dialog-actions' }, [
-      el('button', { type: 'button', class: 'data-plot-add', text: 'Add file…', title: 'Add traces from a file', disabled: full, onclick: () => { closeNow(); chooseDataFile(box, 'add'); } }),
-      ...(data ? [el('button', { type: 'button', class: 'data-plot-reread', text: 'Replace file…', title: 'Replace the traces with a file\'s, keeping the plot\'s place, axes, and zoom', onclick: () => { closeNow(); chooseDataFile(box); } })] : []),
-      el('span', { class: 'dialog-actions-gap' }),
-      el('button', { type: 'button', text: 'Cancel', onclick: () => dialog.close() }),
-      el('button', { type: 'button', class: 'primary-action', text: 'Apply', onclick: apply }),
+  // An analysis's plot draws again at the numbers now, these edits applied first.
+  // The window stays, showing the plot as updated (or as it was, the log
+  // saying why: derive first).
+  const update = !data && updatablePlot(box) ? el('button', { type: 'button', class: 'data-plot-update', text: 'Update plot', title: 'Apply, then draw the plot again at the numbers now', onclick: async (ev) => {
+    ev.currentTarget.disabled = true;
+    apply({ keepOpen: true });
+    await updatePlot(box);
+    const now = editor.circuit.labels.get(id);
+    if (!node.isConnected || !now?.plot) return;
+    // Drawn again from the plot now, where the window was put.
+    close();
+    openPlotSettings(now);
+  } }) : null;
+  const title = data ? (box.plot.sweep ? 'Sweep plot' : box.plot.file ? `Data plot from ${box.plot.file}` : 'Data plot') : 'Plot settings';
+  const node = el('section', { class: 'floating-window data-plot-dialog plot-settings-window', role: 'dialog', 'aria-label': 'Plot settings', 'aria-labelledby': 'plot-settings-title' }, [
+    el('header', { class: 'floating-window-header' }, [
+      el('h2', { id: 'plot-settings-title', class: 'floating-window-title', text: title }),
+      el('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the plot settings', title: 'Close (Escape)', text: '×' }),
     ]),
-  );
-  dialog.addEventListener('keydown', (event) => { event.stopPropagation(); plotEdit.key(event); });
-  dialog.addEventListener('close', closed, { once: true });
-  document.body.append(dialog);
-  dialog.showModal();
+    el('div', { class: 'plot-settings-body' }, [...(sweep ? [sweep.editor.el] : []), ...plotEdit.parts]),
+    el('div', { class: 'dialog-actions plot-settings-actions' }, [
+      el('button', { type: 'button', class: 'data-plot-add', text: 'Add file…', title: 'Add traces from a file', disabled: full, onclick: () => { close(); chooseDataFile(box, 'add'); } }),
+      ...(data && !box.plot.sweep ? [el('button', { type: 'button', class: 'data-plot-reread', text: 'Replace file…', title: 'Replace the traces with a file\'s, keeping the plot\'s place, axes, and zoom', onclick: () => { close(); chooseDataFile(box); } })] : []),
+      ...(update ? [update] : []),
+      el('span', { class: 'dialog-actions-gap' }),
+      el('button', { type: 'button', text: 'Cancel', onclick: () => close() }),
+      applyButton,
+    ]),
+  ]);
+  let chrome = null;
+  let stopWatching = () => {};
+  function close() {
+    if (!node.isConnected) return;
+    stopWatching();
+    sweep?.dispose();
+    plotEdit.dispose();
+    chrome?.dispose();
+    node.remove();
+    if (settingsOpen?.node === node) settingsOpen = null;
+    canvasEl.focus({ preventScroll: true });
+  }
+  // Keys typed in it are its own; Escape closes it, but from a field or the palette.
+  node.addEventListener('keydown', (event) => {
+    event.stopPropagation();
+    if (event.key === 'Escape' && !event.defaultPrevented && !['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName)) { event.preventDefault(); close(); return; }
+    plotEdit.key(event);
+  });
+  canvasEl.closest('.canvas-pane').append(node);
+  chrome = floatingWindow(node, { key: 'plot-settings', onClose: close, place: PLACE.topCenter, resizable: true });
+  chrome.place();
+  sweep?.bind(applyButton);
+  // Its plot gone (deleted, undone, another design), it goes; given back
+  // by undo or redo as a new object, it follows that one.
+  stopWatching = afterRender(() => {
+    const now = editor.circuit.labels.get(id);
+    if (!now?.plot) {
+      close();
+      logLine('closed the plot settings: the plot is gone');
+      return;
+    }
+    if (now !== box) {
+      box = now;
+      if (settingsOpen) settingsOpen.box = now;
+    }
+  });
+  settingsOpen = { box, node, close, front: () => chrome.place() };
   plotEdit.show({ keepZoom: false });
   if (box.plot.view) plotEdit.zoomTo(box.plot.view);
+  node.querySelector('input, select, button:not(.floating-window-close)')?.focus({ preventScroll: true });
+}
+
+/**
+ * A sweep plot's settings (`target()` the plot's box): the sweep's editor
+ * (sweep-plot.js) on what the plot ran, its traces in `draft` (the first of them, marked `sweep`)
+ * replaced as a sweep runs -- colored as they were, while as many -- and put
+ * back when one is stopped. Returns `{ editor, running(), fresh(),
+ * applyAfter(fn), bind(applyButton), write(circuit), dispose() }`: `fresh()` whether
+ * the draft's sweep traces are a new sweep's, `write` puts them on the plot
+ * (inside a commit), `applyAfter(fn)` sweeps, then calls `fn` once it is done.
+ */
+function sweepSettings(target, draft, plotEdit) {
+  const box = target();
+  const count = box.plot.sweep.count;
+  draft.traces.forEach((trace, i) => { if (i < count) trace.sweep = true; });
+  let original = draft.traces.filter((trace) => trace.sweep);
+  let colors = original.map((trace) => trace.color);
+  let yLabel = box.plot.y.label;
+  let fresh = false;
+  let then = null;
+  let applyButton = null;
+  let gone = false;
+  const put = (entries) => {
+    const before = draft.traces.filter((trace) => trace.sweep && !trace.removed).length;
+    draft.traces = [...entries, ...draft.traces.filter((trace) => !trace.sweep)];
+    // Point markers on a sweep's traces that are gone go too.
+    const after = draft.traces.filter((trace) => !trace.removed).length;
+    if (entries.length !== before) draft.cursors = draft.cursors.filter((c) => c.kind !== 'point' || c.trace < after);
+    plotEdit.refresh();
+    plotEdit.show();
+  };
+  const sweepEdit = sweepPlotEditor(box.plot, {
+    onPlot: (next, { partial = false } = {}) => {
+      if (gone) return;
+      if (!next) { put(original); fresh = false; return; }
+      const same = next.count === colors.length;
+      put(next.traces.map((trace, i) => ({ column: `sweep${i}`, label: trace.label, color: same ? colors[i] : trace.color, points: trace.points, removed: false, sweep: true })));
+      // The y axis names the unit its traces leave it, unless named by hand.
+      if (next.y && draft.y.label === yLabel) { draft.y.label = next.y.label; plotEdit.refresh(); }
+      if (!partial) {
+        fresh = true;
+        original = draft.traces.filter((trace) => trace.sweep);
+        colors = original.map((trace) => trace.color);
+        yLabel = draft.y.label;
+      }
+    },
+    onDone: (outcome) => {
+      if (gone) return;
+      if (applyButton) applyButton.disabled = false;
+      const fn = then;
+      then = null;
+      if (fn && !outcome.stopped && !outcome.error && !sweepEdit.changed()) fn();
+    },
+  });
+  return {
+    editor: sweepEdit,
+    running: () => sweepEdit.running(),
+    fresh: () => fresh,
+    bind(button) {
+      applyButton = button;
+      // While a sweep runs, Apply waits for it.
+      new MutationObserver(() => { button.disabled = sweepEdit.running(); }).observe(sweepEdit.el, { subtree: true, attributes: true, attributeFilter: ['data-running'] });
+    },
+    /** The dialog closed: a sweep running stops, unheard. */
+    dispose() {
+      gone = true;
+      sweepEdit.stop();
+    },
+    applyAfter(fn) {
+      then = fn;
+      sweepEdit.run();
+      if (!sweepEdit.running()) then = null;
+    },
+    write(circuit) {
+      const shown = draft.traces.filter((trace) => !trace.removed);
+      const own = shown.filter((trace) => trace.sweep);
+      const traces = [...own, ...shown.filter((trace) => !trace.sweep)].map(({ label, color, points }) => ({ label, color, points }));
+      const plotBox = target();
+      replaceDataPlotTraces(circuit, plotBox, { traces }, { math: own.length });
+      plotBox.plot = normalizePlot({ ...plotBox.plot, sweep: { ...sweepEdit.spec(), count: own.length } });
+      for (const axis of ['x', 'y']) setDataPlotAxis(plotBox, axis, { label: draft[axis].label, scale: draft[axis].scale });
+    },
+  };
 }
 
 function installDataPlotUi() {
+  // Another design: the plot settings of this one close.
+  onDocumentShown(() => settingsOpen?.close());
   document.getElementById('btn-data-plot')?.addEventListener('click', () => chooseDataFile());
 }
 
@@ -75457,6 +75646,7 @@ __exports.spliceIfOnWire = spliceIfOnWire;
 __exports.splicePreviewTarget = splicePreviewTarget;
 __exports.placePending = placePending;
 __exports.onDocumentShown = onDocumentShown;
+__exports.afterRender = afterRender;
 __exports.render = render;
 __exports.draftRoutePath = draftRoutePath;
 __exports.alignLabelColumn = alignLabelColumn;
@@ -78107,6 +78297,16 @@ function syncShownDocument() {
   for (const handler of documentShownHandlers) handler();
 }
 
+// What follows the drawing after each render: afterRender.
+const renderWatchers = new Set();
+
+/** Run `watcher()` after every render (a floating window that follows the
+ *  drawing: its plot undone or deleted). Returns a function that stops it. */
+function afterRender(watcher) {
+  renderWatchers.add(watcher);
+  return () => renderWatchers.delete(watcher);
+}
+
 function render() {
   syncShownDocument();
   syncDocumentSurface();
@@ -78148,6 +78348,7 @@ function render() {
   renderStatus();
   renderSaveState();
   updateInsertMenu();
+  for (const watcher of renderWatchers) watcher();
   if (window.__app) {
     window.__app.renders.push({ t: performance.now(), view: { ...view } });
     if (window.__app.renders.length > 500) window.__app.renders.shift();
@@ -86030,10 +86231,11 @@ let open = null;
  * Open the run window. `title` names the run ("Optimizer", "Rounding");
  * `plotAt({ start, best })` returns the plot's spec (plot-spec.js) for the numbers
  * given -- role 'start' or 'best' -- or null; `onStop` stops the run;
- * `onClose` is told when the window closes. Returns `{ say(text, error),
+ * `onClose` is told when the window closes; `legend` says what the plot
+ * shows (blank: nothing). Returns `{ say(text, error),
  * progress(fraction), best(values), done(text, error), isOpen() }`.
  */
-function openRunWindow({ title, plotAt, onStop, onClose = () => {} }) {
+function openRunWindow({ title, plotAt, onStop, onClose = () => {}, legend: legendText = 'Gray: where it started. Color: the best so far.' }) {
   open?.dispose();
   let finished = false;
   let startValues = null;
@@ -86042,7 +86244,7 @@ function openRunWindow({ title, plotAt, onStop, onClose = () => {} }) {
   // The plot takes whatever room the window has: resize it for a larger one.
   const plotView = createPlotView({ height: 220, fill: true });
   const plot = el('div', { class: 'run-window-plot' }, [plotView.el]);
-  const legend = el('p', { class: 'field-hint run-window-legend', text: 'Gray: where it started. Color: the best so far.' });
+  const legend = el('p', { class: 'field-hint run-window-legend', text: legendText });
   // The dots beside the title while the search runs.
   const busy = busyIndicator({ label: 'Running' });
   busy.set('run', true);
@@ -86078,7 +86280,7 @@ function openRunWindow({ title, plotAt, onStop, onClose = () => {} }) {
     const spec = plotAt({ start: startValues, best: values });
     plotView.set(spec);
     plot.hidden = !spec;
-    legend.hidden = !spec;
+    legend.hidden = !spec || !legendText;
   };
   return {
     start(values) { startValues = values; draw(null); },
@@ -90252,12 +90454,16 @@ __modules["src/web/signal-flow-ui.js"] = function (__require, __exports) {
 __exports.registerAnalysisMode = registerAnalysisMode;
 __exports.signalFlowSettingsRestored = signalFlowSettingsRestored;
 __exports.placeResponsePlot = placeResponsePlot;
+__exports.registerPlotUpdater = registerPlotUpdater;
+__exports.matchPlotTraces = matchPlotTraces;
+__exports.updatablePlot = updatablePlot;
+__exports.updatePlot = updatePlot;
 __exports.installSignalFlowUi = installSignalFlowUi;
 let MUTED_TRACE_COLOR, TRACE_COLORS, ditherSymbols, outputChoices, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients; __bind(() => { ({ MUTED_TRACE_COLOR, TRACE_COLORS, ditherSymbols, outputChoices, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
 let symbolText; __bind(() => { ({ symbolText } = __require("src/core/analysis/present.js")); });
 let linkMakesCycle, parseCoefficientLink, parseCoefficientNumber, parseCoefficientVectors, resolveCoefficients; __bind(() => { ({ linkMakesCycle, parseCoefficientLink, parseCoefficientNumber, parseCoefficientVectors, resolveCoefficients } = __require("src/core/analysis/coefficient-links.js")); });
 let PER_DECADE, indexE24, stepE24; __bind(() => { ({ PER_DECADE, indexE24, stepE24 } = __require("src/web/e-series.js")); });
-let locusSpec, responseSpec, stepSpec, swingSpec; __bind(() => { ({ locusSpec, responseSpec, stepSpec, swingSpec } = __require("src/core/plot-spec.js")); });
+let locusSpec, plotSpec, responseSpec, stepSpec, swingSpec; __bind(() => { ({ locusSpec, plotSpec, responseSpec, stepSpec, swingSpec } = __require("src/core/plot-spec.js")); });
 let createPlotView, linkPlots; __bind(() => { ({ createPlotView, linkPlots } = __require("src/web/plot-view.js")); });
 let arriving; __bind(() => { ({ arriving } = __require("src/web/motion.js")); });
 let installTimePlot, runTime, timeChanged, timePlotUpdate, timeSection; __bind(() => { ({ installTimePlot, runTime, timeChanged, timePlotUpdate, timeSection } = __require("src/web/time-plot.js")); });
@@ -90288,7 +90494,8 @@ let netPicker; __bind(() => { ({ netPicker } = __require("src/web/net-picker.js"
 let deriving; __bind(() => { ({ deriving } = __require("src/web/analysis-busy.js")); });
 let startWorker; __bind(() => { ({ startWorker } = __require("src/web/worker-thread.js")); });
 let differing, differingNames, heldName, heldNumber, holdButton, holdKey, liveName, saveHolds, savedHolds, traceLegendRow; __bind(() => { ({ differing, differingNames, heldName, heldNumber, holdButton, holdKey, liveName, saveHolds, savedHolds, traceLegendRow } = __require("src/web/trace-hold.js")); });
-let installSweepPlot, showSweep, sweepPlotUpdate, sweepSection; __bind(() => { ({ installSweepPlot, showSweep, sweepPlotUpdate, sweepSection } = __require("src/web/sweep-plot.js")); });
+let installSweepPlot, progressText, showSweep, sweepPlotPoints, sweepPlotProblem, sweepPlotUpdate, sweepSection; __bind(() => { ({ installSweepPlot, progressText, showSweep, sweepPlotPoints, sweepPlotProblem, sweepPlotUpdate, sweepSection } = __require("src/web/sweep-plot.js")); });
+let openRunWindow; __bind(() => { ({ openRunWindow } = __require("src/web/optimize-window.js")); });
 let simulatedSpectrum; __bind(() => { ({ simulatedSpectrum } = __require("src/core/analysis/spectrum-run.js")); });
 /**
  * The analysis window's signal-flow mode (core/analysis/signal-flow.js): for a
@@ -90308,6 +90515,7 @@ let simulatedSpectrum; __bind(() => { ({ simulatedSpectrum } = __require("src/co
  * drawing with its legend, Annotate equations the equations, and Annotate
  * coefficients the coefficients' numbers as a table.
  */
+
 
 
 
@@ -90887,8 +91095,13 @@ function runSwing() {
   return new Promise((resolve) => sweepSwing(resolve));
 }
 
+// Why the last swing has no values (its simulation's error), or null.
+let swingProblem = null;
+
 function sweepSwing(done) {
   const status = plots.querySelector('.signal-flow-swing-status');
+  // Before a Derive the source list is not filled yet: the swing needs none.
+  if (!plots.querySelector('.signal-flow-swing-source').value) fillSwingSources(signalFlowGraph(editor.circuit).sources);
   const numbers = resolved();
   const values = Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, numbers[name] ?? 1]));
   const sim = prepareSimulation(editor.circuit, {
@@ -90899,6 +91112,7 @@ function sweepSwing(done) {
     frequency: swingFrequency(),
   });
   const run = ++swingRun;
+  swingProblem = sim.ok ? null : sim.error;
   if (!sim.ok) {
     swing = null;
     status.textContent = sim.error;
@@ -91834,67 +92048,181 @@ function annotateCoefficients() {
   logLine(updated ? 'updated the coefficients table' : 'annotated the coefficients table');
 }
 
+/** The other analyses' plot updates, by their figures' source: each
+ *  `(plot) => { plot, shown } | { error }`, at the numbers now. */
+const plotUpdaters = new Map();
+
+/** `update(plot)`: a plot of analysis `source` at the numbers now --
+ *  `{ plot, shown }`, or `{ error }` (why not: "derive first"). */
+function registerPlotUpdater(source, update) {
+  plotUpdaters.set(source, update);
+}
+
 /**
- * Every plot on the drawing redrawn at the coefficients' numbers now, as
- * one edit: each graph and step plot from the traces of the same names
- * (a plot naming one no longer on the graph is left as it is), a loop
- * plot at its signal, a root locus over its coefficient and range, a swing
- * plot from a fresh sweep of the nets it shows, a sweep plot from its
- * sweeps run again (sweep-plot.js sweepPlotUpdate).
+ * A response plot's curves among `current` (traces named as the graph
+ * names them, `{ label, held?, ... }`): a held one by its key, the others by
+ * name (past its comma, a name is its numbers then, which may have moved).
+ * Each in the color it has on the plot; null when one is no longer there.
  */
-async function updatePlots() {
-  const circuit = editor.circuit;
-  // A data plot is its file's, never the analysis's; but a sweep's.
-  const boxes = [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.plot && (label.plot.kind !== 'data' || label.plot.sweep));
-  if (!boxes.length) { logLine('No plots on the drawing to update.'); return; }
-  if (flow().spectrum?.on) runSpectrum();
-  if (boxes.some((box) => box.plot.kind === 'swing')) {
-    logLine('Updating plots: sweeping the swing...');
-    await runSwing();
-  }
-  if (circuit !== editor.circuit) return;
-  // Each sweep plot's sweeps, one after another (each point a simulation).
-  const swept = new Map();
-  const sweeps = boxes.filter((box) => box.plot.kind === 'data');
-  for (const [i, box] of sweeps.entries()) {
-    logLine(`Updating plots: running sweep ${i + 1} of ${sweeps.length}...`);
-    const update = await sweepPlotUpdate(box.plot, () => circuit !== editor.circuit);
-    if (circuit !== editor.circuit) return;
-    if (update) swept.set(box, update);
-  }
-  const updates = [];
-  const skipped = [];
-  for (const box of boxes) {
-    const update = box.plot.kind === 'data' ? (swept.get(box) || null) : plotUpdate(box.plot);
-    if (update) updates.push({ box, ...update });
-    else skipped.push(box);
-  }
-  const written = [];
-  let table = null;
-  commit(() => {
-    // A plot from before the coefficients table had their numbers under
-    // its legend (lines of "name = value"; a trace's name never is one):
-    // they move to the table.
-    const hadValues = updates.some((update) => legendOf(update.box).some((label) => /\s=\s/.test(String(label.text))));
-    // Each keeps the limits it was annotated at.
-    for (const update of updates) {
-      if (update.traces) {
-        // A sweep plot keeps its axes too; its sweep's entries are TeX.
-        const entries = replaceDataPlotTraces(circuit, update.box, { traces: update.traces, ...(update.y ? { y: update.y } : {}) }, { math: update.box.plot.sweep.count });
-        if (entries.length) written.push({ ids: entries.map((label) => label.id), left: Math.min(...entries.map((l) => l.bbox().x)), top: Math.min(...entries.map((l) => l.bbox().y)) });
-        continue;
-      }
-      written.push(writePlot(update.box, update.box.plot.view ? { ...update.plot, view: update.box.plot.view } : update.plot, update.shown));
-    }
-    // The coefficients table, at the same numbers.
-    const rows = coefficientRows();
-    if (rows.length) table = writeMathFigure({ ...COEFFICIENTS, text: rows.join('\n'), create: hadValues });
+function matchPlotTraces(plot, current) {
+  const stored = (plot.traces || []).filter((trace) => !trace.background);
+  const base = (label) => String(label).split(',\\ ')[0];
+  const matched = stored.map((old) => {
+    const found = old.hold ? current.find((t) => t.held?.key === old.hold)
+      : current.find((t) => t.label === old.label) || current.find((t) => !t.held && base(t.label) === base(old.label));
+    return found ? { ...found, color: old.color } : null;
   });
+  return matched.length && matched.every(Boolean) ? matched : null;
+}
+
+/** Whether Update plot draws `label` again: an analysis's plot, or a
+ *  sweep's; never a data plot of a file. */
+function updatablePlot(label) {
+  return label?.kind === 'box' && !!label.plot && (label.plot.kind !== 'data' || !!label.plot.sweep);
+}
+
+/** A plot's update that needs no long simulation: `{ plot, shown }` or `{ error }`. */
+function quickUpdate(box) {
+  const source = box.figure?.source;
+  const other = source && source !== 'signal-flow' ? plotUpdaters.get(source) : null;
+  if (other) return other(box.plot);
+  if (!latest?.ok && ['response', 'step', 'locus'].includes(box.plot.kind)) return { error: 'derive the diagram first (Shift+S)' };
+  return plotUpdate(box.plot) || { error: box.plot.kind === 'swing' ? (swingProblem ? `the swing does not simulate: ${swingProblem}` : 'the swing gives no values') : box.plot.kind === 'wave' ? 'the diagram does not simulate' : 'its traces are no longer on the graph' };
+}
+
+/** The update running (`{ stop() }`), one at a time. */
+let updating = null;
+
+/** What Update all plots (and a plot's Update plot) calls each plot. */
+const plotKind = (box) => (box.plot.role === 'loop' ? 'loop' : box.plot.kind === 'response' ? (box.plot.quantity === 'phase' ? 'phase' : 'magnitude') : box.plot.kind === 'data' ? 'sweep' : box.plot.kind);
+
+/** Not a figure of its own: every plot on the drawing at the numbers now. */
+const updateAllItem = () => ({ label: 'Update all plots', identity: null, available: [...editor.circuit.labels.values()].some(updatablePlot), run: () => updatePlots() });
+
+/** One plot on the drawing at the numbers now (its right-click Update plot,
+ *  its settings'): a sweep's run again, with its progress. */
+function updatePlot(box) {
+  return updatePlots([box], { table: false });
+}
+
+/**
+ * The plots `boxes` (by default every one Update plot draws again) at the
+ * numbers now, as one edit, each keeping its place, size, colors, zoom,
+ * and the traces added from files: a graph or step plot from the traces of
+ * the same names, a loop plot at its signal, a root locus over its
+ * coefficient and range, a swing plot from a fresh sweep of the nets it
+ * shows, another analysis's plot by its updater (registerPlotUpdater), a
+ * sweep plot from its sweeps run again in turn (sweep-plot.js
+ * sweepPlotUpdate), their progress in a run window with Stop. A plot that
+ * cannot be drawn again is left as it was, the log saying why (derive
+ * first). With `table` the coefficients table follows too.
+ */
+async function updatePlots(boxes = null, { table = true } = {}) {
+  const circuit = editor.circuit;
+  boxes = (boxes || [...circuit.labels.values()]).filter(updatablePlot);
+  if (!boxes.length) { logLine('No plots on the drawing to update.'); return; }
+  if (updating) { logLine('Plots are updating; Stop that first.', 'error'); return; }
+  const job = { stopped: false, current: null, stop() { this.stopped = true; this.current?.stop(); } };
+  updating = job;
+  try {
+    if (flow().spectrum?.on) runSpectrum();
+    if (boxes.some((box) => box.plot.kind === 'swing')) {
+      logLine('Updating plots: sweeping the swing...');
+      await runSwing();
+    }
+    if (circuit !== editor.circuit) return;
+    const results = new Map();
+    const sweeps = boxes.filter((box) => box.plot.kind === 'data');
+    if (sweeps.length) await runPlotSweeps(sweeps, results, job, circuit);
+    if (circuit !== editor.circuit) return;
+    for (const box of boxes) if (!results.has(box)) results.set(box, quickUpdate(box));
+    writeUpdates(boxes, results, { table });
+  } finally {
+    if (updating === job) updating = null;
+  }
+}
+
+/** Each sweep plot of `sweeps` run again in turn, into `results` (by box:
+ *  `{ traces, y?, count }`, `{ error }`, or `{ stopped }`): the run window
+ *  shows each as its points come, the progress across all of them, and Stop. */
+async function runPlotSweeps(sweeps, results, job, circuit) {
+  const totals = sweeps.map((box) => (sweepPlotProblem(box.plot) ? 0 : sweepPlotPoints(box.plot)));
+  const all = totals.reduce((a, b) => a + b, 0);
+  let shown = null;
+  const win = openRunWindow({
+    title: sweeps.length > 1 ? 'Update plots' : 'Update plot',
+    legend: '',
+    plotAt: () => shown,
+    onStop: () => job.stop(),
+  });
+  let before = 0;
+  for (const [i, box] of sweeps.entries()) {
+    if (job.stopped) { results.set(box, { stopped: true }); continue; }
+    const head = sweeps.length > 1 ? `Plot ${i + 1} of ${sweeps.length}: ` : '';
+    win.say(`${head}${progressText(box.plot.sweep.runs, 0)}`);
+    shown = plotSpec(box.plot);
+    win.best(null);
+    const run = sweepPlotUpdate(box.plot, {
+      onPoint: (progress) => {
+        win.progress(all ? (before + progress.done) / all : 1);
+        if (progress.done < progress.total) win.say(`${head}${progressText(box.plot.sweep.runs, progress.done)}`);
+        if (progress.plot) { shown = plotSpec(progress.plot); win.best(null); }
+      },
+    });
+    job.current = run;
+    const outcome = await run.done;
+    job.current = null;
+    if (circuit !== editor.circuit) { win.done('The design changed: stopped.'); return; }
+    results.set(box, outcome);
+    before += totals[i];
+  }
+  const failed = sweeps.filter((box) => results.get(box)?.error);
+  const done = sweeps.filter((box) => results.get(box)?.traces).length;
+  win.done(job.stopped
+    ? `Stopped: ${done} of ${sweeps.length} sweep plot${sweeps.length === 1 ? '' : 's'} updated.`
+    : failed.length ? `Left ${failed.length === 1 ? 'one' : failed.length} as ${failed.length === 1 ? 'it was' : 'they were'}: ${results.get(failed[0]).error}.` : `Updated ${done === 1 ? 'the sweep plot' : `${done} sweep plots`}.`, !!failed.length && !done);
+}
+
+/** Write the plots' updates (`results`, by box) in one undo step, and say
+ *  in the log what was updated and what was left, and why. */
+function writeUpdates(boxes, results, { table }) {
+  const circuit = editor.circuit;
+  const updates = boxes.filter((box) => { const r = results.get(box); return r && (r.traces || r.plot); });
+  const skipped = boxes.filter((box) => !updates.includes(box));
+  const written = [];
+  let coefficients = null;
+  if (updates.length || table) {
+    commit(() => {
+      // A plot from before the coefficients table had their numbers under
+      // its legend (lines of "name = value"; a trace's name never is one):
+      // they move to the table.
+      const hadValues = updates.some((box) => legendOf(box).some((label) => /\s=\s/.test(String(label.text))));
+      // Each keeps the limits it was annotated at.
+      for (const box of updates) {
+        const update = results.get(box);
+        if (update.traces) {
+          // A sweep plot keeps its axes too; its sweep's entries are TeX.
+          const entries = replaceDataPlotTraces(circuit, box, { traces: update.traces, ...(update.y ? { y: update.y } : {}) }, { math: box.plot.sweep.count });
+          if (entries.length) written.push({ ids: entries.map((label) => label.id), left: Math.min(...entries.map((l) => l.bbox().x)), top: Math.min(...entries.map((l) => l.bbox().y)) });
+          continue;
+        }
+        written.push(writePlot(box, box.plot.view ? { ...update.plot, view: box.plot.view } : update.plot, update.shown));
+      }
+      // The coefficients table, at the same numbers.
+      const rows = table ? coefficientRows() : [];
+      if (rows.length) coefficients = writeMathFigure({ ...COEFFICIENTS, text: rows.join('\n'), create: hadValues });
+    });
+  }
   for (const item of written) alignLabelColumn(item.ids, { left: item.left, top: item.top, gap: 0 });
-  table?.settle();
+  coefficients?.settle();
   render();
-  const kinds = (list) => list.map((box) => (box.plot.role === 'loop' ? 'loop' : box.plot.kind === 'response' ? (box.plot.quantity === 'phase' ? 'phase' : 'magnitude') : box.plot.kind === 'data' ? 'sweep' : box.plot.kind));
-  logLine(`updated ${updates.length} plot${updates.length === 1 ? '' : 's'}${updates.length ? ` (${kinds(updates.map((u) => u.box)).join(', ')})` : ''}${skipped.length ? `; left ${skipped.length} as ${skipped.length === 1 ? 'it was' : 'they were'} (${kinds(skipped).join(', ')}: its traces are no longer on the graph, or derive or sweep first)` : ''}`, skipped.length && !updates.length ? 'error' : undefined);
+  const reasons = [...new Set(skipped.map((box) => (results.get(box)?.stopped ? 'stopped' : results.get(box)?.error || 'nothing to draw it from')))];
+  if (boxes.length === 1) {
+    logLine(updates.length ? `updated the ${plotKind(boxes[0])} plot` : `left the ${plotKind(boxes[0])} plot as it was: ${reasons[0]}`, updates.length ? undefined : 'error');
+    return;
+  }
+  const kinds = (list) => list.map(plotKind).join(', ');
+  logLine(`updated ${updates.length} plot${updates.length === 1 ? '' : 's'}${updates.length ? ` (${kinds(updates)})` : ''}${skipped.length ? `; left ${skipped.length} as ${skipped.length === 1 ? 'it was' : 'they were'} (${kinds(skipped)}: ${reasons.join('; ')})` : ''}`, skipped.length && !updates.length ? 'error' : undefined);
 }
 
 /** A plot's new data at the numbers now: `{ plot, shown }`, or null. */
@@ -92144,9 +92472,10 @@ function installSignalFlowUi() {
     { label: 'Equations', identity: { kind: 'equations', source: 'signal-flow' }, available: !!latest?.ok, run: annotate },
     { label: 'Graph', identity: { kind: 'plot', source: 'signal-flow' }, available: !!graphPlot(shownTraces()), run: annotateGraph },
     { label: 'Coefficients', identity: { kind: 'coefficients', source: 'signal-flow' }, available: tableSymbols().length > 0, run: annotateCoefficients },
-    // Not a figure of its own: every plot on the drawing at the numbers now.
-    { label: 'Update all plots', identity: null, available: [...editor.circuit.labels.values()].some((label) => label.plot), run: () => updatePlots() },
+    updateAllItem(),
   ]);
+  // Every analysis's plots, from whichever mode the window is in.
+  for (const other of ['circuit', 'switched-cap']) registerAnnotations(other, () => [updateAllItem()]);
   actions = [
     el('button', { type: 'button', class: 'primary-action signal-flow-derive', 'data-icon': 'check', text: 'Derive', title: 'Derive (Enter)', onclick: derive }),
   ];
@@ -94156,17 +94485,21 @@ function patchDrawing(svg, next) {
 };
 
 __modules["src/web/sweep-plot.js"] = function (__require, __exports) {
+__exports.progressText = progressText;
 __exports.sweepSection = sweepSection;
 __exports.sweep = sweep;
-__exports.sweepPlotUpdate = sweepPlotUpdate;
 __exports.showSweep = showSweep;
+__exports.sweepPlotProblem = sweepPlotProblem;
+__exports.sweepPlotUpdate = sweepPlotUpdate;
+__exports.sweepPlotEditor = sweepPlotEditor;
 __exports.installSweepPlot = installSweepPlot;
 let TRACE_COLORS, bandEdges, diagramSymbols, hasSignalFlow, signalFlowGraph; __bind(() => { ({ TRACE_COLORS, bandEdges, diagramSymbols, hasSignalFlow, signalFlowGraph } = __require("src/core/analysis/signal-flow.js")); });
-let simulatedMeasures, sweepLabels, sweepValues; __bind(() => { ({ simulatedMeasures, sweepLabels, sweepValues } = __require("src/core/analysis/spectrum-run.js")); });
+let simulatedMeasures, simulationSignals, sweepLabels, sweepValues; __bind(() => { ({ simulatedMeasures, simulationSignals, sweepLabels, sweepValues } = __require("src/core/analysis/spectrum-run.js")); });
 let swingTestFrequency; __bind(() => { ({ swingTestFrequency } = __require("src/core/analysis/optimize.js")); });
 let normalizePlot; __bind(() => { ({ normalizePlot } = __require("src/core/model.js")); });
 let placeDataPlot; __bind(() => { ({ placeDataPlot } = __require("src/core/data-plot.js")); });
 let plotSpec; __bind(() => { ({ plotSpec } = __require("src/core/plot-spec.js")); });
+let cursorValue; __bind(() => { ({ cursorValue } = __require("src/core/plot-cursors.js")); });
 let plainTex; __bind(() => { ({ plainTex } = __require("src/core/bode-figure.js")); });
 let plotsBusy; __bind(() => { ({ plotsBusy } = __require("src/web/plots-window.js")); });
 let afterPaint; __bind(() => { ({ afterPaint } = __require("src/web/busy-indicator.js")); });
@@ -94181,19 +94514,25 @@ let createPlotView; __bind(() => { ({ createPlotView } = __require("src/web/plot
  * The sweep: one coefficient stepped over a range, the diagram simulated
  * at each value (core/analysis/spectrum-run.js `simulatedMeasures`, in a
  * worker thread), and what each run measures plotted against it -- the
- * in-band SNDR and noise, the output tone, each net's peak. One view of the
- * Plots window (plots-window.js) beside the time plot. Its stimulus is set
- * here, as the time plot's: the source the sine drives, its amplitude and
+ * in-band SNDR and noise, the output tone, each net's peak. Its stimulus is
+ * set as the time plot's: the source the sine drives, its amplitude and
  * f/fs, and the samples a segment of its spectrum.
  *
- * It runs on Sweep only (each point is a full simulation). Hold keeps a
- * copy of the sweep shown, drawn with the next ones of the same
- * coefficient and named by what differs since (the window's, not saved).
- * Annotate puts the measures shown on the drawing as a data plot, with
- * what each sweep drawn ran at (`plot.sweep`), so Update all plots runs
- * them again (sweepPlotUpdate). What it sweeps, how, and what it shows
- * are saved with the design (`Circuit#windows.sweep`).
+ * The sweep's controls (`sweepEditor`) are one editor in two places: the
+ * Plots window's Sweep view (plots-window.js), on what the design saves
+ * for it (`Circuit#windows.sweep`), and the Plot settings of a sweep on the
+ * drawing (data-plot-ui.js), on what that plot ran (`plot.sweep`). Each
+ * runs on Sweep only (each point is a full simulation), with a progress bar
+ * and Stop.
+ *
+ * In the window, Hold keeps a copy of the sweep shown, drawn with the next
+ * ones of the same coefficient and named by what differs since (the
+ * window's, not saved). Annotate puts the measures shown on the drawing as
+ * a data plot, with what each sweep drawn ran at (`plot.sweep`), so the
+ * plot runs them again later (sweepPlotUpdate): the held ones at the
+ * coefficients they ran at, the last at the coefficients then.
  */
+
 
 
 
@@ -94216,47 +94555,289 @@ const SEGMENTS = [4096, 8192, 16384, 32768, 65536];
 const AVERAGES = 4;
 
 let api = null; // { flow(), links(), resolvedWith(values), visible() } from signal-flow-ui.js
-let parts = null;
-// { name, xs, from, to, log, points: [{ x, measures } | { x, overloaded } | { x, error }], signals, values, amplitude, stimulus }
-let result = null;
-let run = 0; // the sweep running; a newer one (or another design) stops it
-// Held sweeps, drawn with the live one: { result, values (the sliders then), amplitude }.
-let held = [];
-let worker = null;
 
-const state = () => editor.circuit.windows.sweep || { measures: [] };
-
-function save(change) {
-  editor.circuit.windows.sweep = { ...state(), ...change };
-  markSettingsChanged();
-}
-
-/** A number typed: 0.5, 1/8, 1e-3. */
+/** A number typed: 0.5, 1e-3, or an expression the calculator takes
+ *  (1/8, 2.7k/2.24M, 2^-6); NaN when blank or neither. */
 function typedNumber(text) {
   const t = String(text ?? '').trim();
-  const match = t.match(/^(-?\d*\.?\d+(?:e[-+]?\d+)?)\s*\/\s*(\d*\.?\d+)$/i);
-  return match ? Number(match[1]) / Number(match[2]) : t === '' ? NaN : Number(t);
+  return t === '' ? NaN : cursorValue(t) ?? NaN;
 }
 
 /** The coefficients a sweep can step: the diagram's, but a linked one
  *  (it follows another). */
 const sweepable = () => diagramSymbols(editor.circuit).filter((name) => !Object.hasOwn(api?.links() || {}, name));
 
+/** The sources a sine can drive: the diagram's, but quantizers and dither. */
+const realSources = () => signalFlowGraph(editor.circuit).sources.filter((s) => !s.quantizer && !s.dither);
+
 /** The measures every run gives, before the nets' peaks. */
 const MEASURES = [['sndr', 'SNDR in band', 'dB'], ['noise', 'Noise in band', 'dBFS'], ['tone', 'Output tone', 'dBFS']];
 
-/** The view's element: what it sweeps, its stimulus, Sweep, the plot, the
- *  measures, and Annotate. */
-function sweepSection() {
-  const plot = createPlotView({ fill: true, wheel: 'always', className: 'sweep-plot' });
-  const name = el('select', { class: 'sweep-name', 'aria-label': 'Coefficient to sweep', onchange: (ev) => save({ name: ev.target.value }) });
+/** The measures `settings` show: those picked, else the SNDR (with a band)
+ *  or the output tone. */
+function shownMeasures(settings) {
+  const saved = settings.measures || [];
+  if (settings.chosen || saved.length) return saved;
+  return [bandEdges(editor.circuit.analysisValues.band).length ? 'sndr' : 'tone'];
+}
+
+/** Every measure a sweep's runs give: the three, then the peaks of the
+ *  nets that swing (of `signals`). Each `[key, label, { name, unit }]`, the
+ *  label its name with its unit (TeX). */
+function measureList(signals) {
+  // The nets that swing: the states, the quantizers' inputs, the output (as the Swing view shows first).
+  const peaks = (signals || []).filter((s) => ['state', 'quantizer-input', 'output'].includes(s.role)).map((s) => [`peak:${s.key}`, `${s.name}\\text{ peak}`, 'dBFS']);
+  return [...MEASURES.map(([key, text, unit]) => [key, `\\text{${text}}`, unit]), ...peaks].map(([key, name, unit]) => [key, `${name}\\text{ (${unit})}`, { name, unit }]);
+}
+
+/**
+ * Sweep `live` as a data plot, with `held` (sweeps of its coefficient, each
+ * a result as `live` is): each of the measures `keys` a trace over the
+ * values. `signals` names the nets' peaks. Null while nothing has a value.
+ */
+function sweepPlotOf(live, held, keys, signals = live.signals) {
+  const runs = [...held.filter((h) => h.name === live.name), live];
+  if (!runs.some((run) => run.points.some((p) => p.measures))) return null;
+  const shown = new Set(keys);
+  const measures = measureList(signals || runs.find((run) => run.signals)?.signals).filter(([key]) => shown.has(key));
+  // Held sweeps first, each named by what differs from the live sweep
+  // (the numbers it ran at); the live one names its own numbers for those.
+  const same = runs.slice(0, -1);
+  const named = same.flatMap((h) => heldChanges(h, live));
+  const notes = [...same.map((h) => ({ of: h, notes: heldNotes(h, live), held: true })), { of: live, notes: liveNotes(live, named) }];
+  // A unit all the measures share goes on the axis (sweepLabels), as
+  // plain text: an axis takes no TeX but sub- and superscripts.
+  const { y, labels } = sweepLabels(measures.map(([, , m]) => m), notes);
+  const order = [...notes.keys()].slice(0, -1).map((n) => n + 1).concat(0);
+  const traces = notes.flatMap((run, r) => measures.map(([key], k) => ({
+    label: labels[r][k],
+    color: TRACE_COLORS[(shown.size * order[r] + k) % TRACE_COLORS.length],
+    points: run.of.points.filter((p) => Number.isFinite(p.measures?.[key])).map((p) => [p.x, p.measures[key]]),
+  }))).filter((trace) => trace.points.length > 1);
+  if (!traces.length) return null;
+  // The coefficient as an axis names it: a_r as a sub-scripted r.
+  return normalizePlot({ kind: 'data', x: { label: live.name.replace(/_([A-Za-z0-9]+)$/, '_{$1}'), scale: live.log ? 'log' : 'linear' }, y: { label: plainTex(y), scale: 'linear' }, traces });
+}
+
+const AMPLITUDE = '\0amplitude';
+
+/** What differs between a held sweep and the live one: coefficient names
+ *  (but the swept one), and AMPLITUDE for the input's. */
+function heldChanges(h, live) {
+  const now = live.values;
+  const names = Object.entries(h.values).filter(([name, value]) => name !== h.name && Math.abs(value - (now[name] ?? 1)) > 1e-12 * Math.max(1, Math.abs(value))).map(([name]) => name);
+  return h.amplitude !== live.amplitude ? [...names, AMPLITUDE] : names;
+}
+
+/** A held sweep's notes: the coefficients (but the swept one) and the
+ *  amplitude it ran at that differ from the live sweep's. */
+function heldNotes(h, live) {
+  return heldChanges(h, live).map((name) => (name === AMPLITUDE ? `${h.amplitude}\\ \\text{dBFS}` : `${name} = ${Number(h.values[name].toPrecision(4))}`));
+}
+
+/** The live sweep's notes: its numbers for `names`. */
+function liveNotes(live, names) {
+  const now = live.values;
+  return [...new Set(names)].map((name) => (name === AMPLITUDE ? `${live.amplitude}\\ \\text{dBFS}` : `${name} = ${Number((now[name] ?? 1).toPrecision(4))}`));
+}
+
+/** The source the sine drives: the one `settings` name, else the swing's,
+ *  else the first. */
+function inputOf(settings) {
+  const real = realSources();
+  return (real.find((s) => s.id === settings.input) || real.find((s) => s.id === api?.flow().swingInput) || real[0])?.id || '';
+}
+
+/** The input f/fs a blank field means: in the band. */
+const bandFrequency = () => swingTestFrequency({ frequency: '' }, editor.circuit.analysisValues.band);
+
+/**
+ * What `settings` (the editor's fields, as typed) sweep: `{ name, run }`,
+ * `run` as a plot keeps it (model.js sweepOf: `{ from, to, points, log,
+ * input, amplitude, frequency, samples }`, f/fs on a bin of a segment), or
+ * `{ error }`.
+ */
+function sweepOf(settings) {
+  const names = sweepable();
+  const name = names.includes(settings.name) ? settings.name : names[0];
+  if (!name) return { error: 'The diagram has no coefficient to sweep.' };
+  const now = api.resolvedWith({})[name] ?? 1;
+  const from = settings.from ? typedNumber(settings.from) : now ? now / 2 : 0;
+  const to = settings.to ? typedNumber(settings.to) : now ? now * 2 : 1;
+  const points = Math.max(2, Math.min(201, Math.round(Number(settings.points) || 11)));
+  const log = settings.scale === 'log';
+  if (!Number.isFinite(from) || !Number.isFinite(to) || from === to) return { error: 'From and to are two different numbers (or expressions: 1/64).' };
+  if (!sweepValues(from, to, points, log).length) return { error: 'A log sweep runs between two numbers of one sign, neither zero.' };
+  const amplitude = settings.amplitude ? typedNumber(settings.amplitude) : -6;
+  if (!Number.isFinite(amplitude)) return { error: 'The amplitude is a number of dBFS.' };
+  const samples = SEGMENTS.includes(settings.samples) ? settings.samples : 8192;
+  const typed = typedNumber(settings.frequency);
+  const f = Number.isFinite(typed) && settings.frequency ? typed : bandFrequency();
+  const frequency = f === 0 ? 0 : Math.max(1, Math.round(f * samples)) / samples;
+  return { name, run: { from, to, points, log, input: inputOf(settings), amplitude, frequency, samples } };
+}
+
+/** A kept run (`plot.sweep.runs[i]`) as the editor's fields. */
+function settingsOfRun(name, measures, run) {
+  const text = (n) => String(Number(n.toPrecision(6)));
+  return { name, from: text(run.from), to: text(run.to), points: run.points, ...(run.log ? { scale: 'log' } : {}), input: run.input, amplitude: text(run.amplitude), frequency: text(run.frequency), samples: run.samples, measures: [...measures], chosen: true };
+}
+
+/** What one run of a sweep simulates at `values`, driven by `run`'s sine. */
+function request(values, { input, amplitude, frequency, samples: segment }) {
+  const diagram = Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, values[name] ?? 1]));
+  return {
+    options: { values: diagram, sources: api.flow().sources, input, output: api.flow().output, frequency, samples: AVERAGES * segment, segment },
+    amplitude,
+    segment,
+    edges: bandEdges(editor.circuit.analysisValues.band),
+  };
+}
+
+/** The signals `settings`' sweep would measure the peaks of, worked out
+ *  without a run (kept while the design and the sine's source stay). */
+let signalsCache = { key: '', signals: [] };
+function signalsOf(settings) {
+  if (!api || !hasSignalFlow(editor.circuit)) return [];
+  const spec = sweepOf(settings);
+  if (spec.error) return [];
+  const key = `${editor.modelRevision}\n${spec.run.input}\n${api.flow().output}`;
+  if (signalsCache.key !== key) {
+    const { options } = request(api.resolvedWith({}), spec.run);
+    signalsCache = { key, signals: simulationSignals({ circuit: editor.circuit, options }) };
+  }
+  return signalsCache.signals;
+}
+
+/** How many points `runs` (kept runs) take in all. */
+const pointCount = (runs) => runs.reduce((n, run) => n + sweepValues(run.from, run.to, run.points, run.log).length, 0);
+
+/** How many points running a sweep plot (`plot.sweep`) again takes. */
+const sweepPlotPoints = (plot) => pointCount(plot.sweep.runs);
+
+/**
+ * Run sweeps of `name`, one after another: each of `runs` (`{ from, to,
+ * points, log, input, amplitude, frequency, samples, values? }`) at the
+ * coefficients now, `values` changed (a held one's). A point at a time, in
+ * one worker thread where one starts. `onPoint({ runs, done, total })` hears
+ * each point, `runs` the results so far. Returns `{ done: promise, stop() }`;
+ * the promise resolves to `{ runs, error?, stopped? }`, each result `{ name,
+ * xs, from, to, log, points: [{ x, measures } | { x, overloaded } | { x,
+ * error }], signals, values, amplitude, stimulus }`.
+ */
+function runSweeps(name, runs, { onPoint = () => {} } = {}) {
+  const circuit = editor.circuit.toJSON();
+  const total = pointCount(runs);
+  let thread = startWorker();
+  let stopped = false;
+  let waiting = null;
+  let asked = 0;
+  const stop = () => {
+    stopped = true;
+    thread?.terminate();
+    thread = null;
+    waiting?.(null);
+  };
+  const measure = (ask) => new Promise((resolve) => {
+    waiting = resolve;
+    if (!thread) { afterPaint(() => resolve(stopped ? null : simulatedMeasures(ask))); return; }
+    const index = ++asked;
+    thread.onmessage = ({ data }) => { if (data.type === 'measures' && data.index === index) resolve(data); };
+    thread.onerror = (ev) => { ev.preventDefault?.(); thread?.terminate(); thread = null; resolve(simulatedMeasures(ask)); };
+    thread.postMessage({ type: 'measures', id: 0, index, ...ask });
+  });
+  const done = (async () => {
+    const results = [];
+    let count = 0;
+    try {
+      for (const run of runs) {
+        const xs = sweepValues(run.from, run.to, run.points, run.log);
+        const { values: held, ...stimulus } = run;
+        const result = { name, xs, from: run.from, to: run.to, log: run.log, points: [], signals: null, values: { ...api.resolvedWith(held || {}) }, amplitude: run.amplitude, stimulus, ...(held ? { held } : {}) };
+        results.push(result);
+        for (const x of xs) {
+          if (stopped) return { runs: results, stopped: true };
+          const data = await measure({ circuit, ...request(api.resolvedWith({ ...(held || {}), [name]: x }), stimulus) });
+          if (stopped || !data) return { runs: results, stopped: true };
+          result.signals ||= data.signals || null;
+          result.points.push({ x, ...(data.measures ? { measures: data.measures } : data.overloaded ? { overloaded: true } : { error: data.error }) });
+          onPoint({ runs: results, done: ++count, total });
+          // A diagram that cannot run stops at its first point.
+          if (data.error && !data.signals) return { runs: results, error: data.error };
+        }
+      }
+      return { runs: results };
+    } finally {
+      thread?.terminate();
+      thread = null;
+    }
+  })();
+  return { done, stop };
+}
+
+/** A result's run as a plot keeps it (and a held one's coefficients). */
+const keptRun = (result) => ({ from: result.from, to: result.to, points: result.xs.length, log: result.log, ...result.stimulus, ...(result.held ? { values: result.held } : {}) });
+
+/** "Point 3 of 11 (27%)", or across sweeps "Sweep 2 of 3, point 3 of
+ *  11 (60%)": the point after the `done` of `runs` (kept runs). */
+function progressText(runs, done) {
+  const counts = runs.map((run) => sweepValues(run.from, run.to, run.points, run.log).length);
+  const total = counts.reduce((a, b) => a + b, 0);
+  let i = 0;
+  let left = done;
+  while (i < counts.length - 1 && left >= counts[i]) { left -= counts[i]; i++; }
+  const point = Math.min(left + 1, counts[i]);
+  return `${runs.length > 1 ? `Sweep ${i + 1} of ${runs.length}, point` : 'Point'} ${point} of ${counts[i]} (${Math.round((100 * done) / total)}%)…`;
+}
+
+/**
+ * Sweep `name` as drawn while `runs` (results) of the `scheduled` kept
+ * ones come: the last scheduled one the live sweep, named by its numbers
+ * (`run`'s amplitude, the coefficients now) even before it starts. Its
+ * own traces `{ traces, y, count }` for `measures`, or null while none has
+ * two values.
+ */
+function drawnSweep(name, run, runs, scheduled, measures) {
+  const live = runs.length === scheduled ? runs.at(-1) : { name, points: [], values: { ...api.resolvedWith({}) }, amplitude: run.amplitude, signals: null };
+  const next = sweepPlotOf(live, runs.slice(0, scheduled - 1), measures, runs.find((r) => r.signals)?.signals);
+  return next ? { traces: next.traces, y: next.y, count: next.traces.length } : null;
+}
+
+/** How a finished sweep reads in its status line. */
+function doneText({ runs, error, stopped }, total) {
+  if (stopped) return `Stopped after ${runs.reduce((n, r) => n + r.points.length, 0)} of ${total} points.`;
+  const failed = error || runs.flatMap((r) => r.points).find((p) => p.error)?.error;
+  if (failed) return failed;
+  const live = runs.at(-1);
+  const away = live.points.filter((p) => p.overloaded).length;
+  return `${live.xs.length} points of ${live.name} from ${Number(live.from.toPrecision(4))} to ${Number(live.to.toPrecision(4))}${runs.length > 1 ? `, and ${runs.length - 1} held sweep${runs.length > 2 ? 's' : ''} again` : ''}${away ? `; the loop ran away at ${away} of them` : ''}.`;
+}
+
+/**
+ * The sweep's controls: what it sweeps and its stimulus, `plot` (an element)
+ * under them, the measures to show, and the progress bar with the status
+ * and Sweep -- Stop while it runs -- beside `actions` (buttons).
+ *
+ * `settings()` gives the fields (as typed: `{ name, from, to, points,
+ * scale, input, amplitude, frequency, samples, measures, chosen }`) and
+ * `save(change)` keeps a change. `held()` gives the kept runs of sweeps run
+ * before this one, to run again first (`{ values, ...run }`); `signals()`
+ * the last run's signals, if any. `onProgress({ runs, done, total })` hears
+ * each point, `onDone(outcome)` the end (runSweeps), `onMeasures()` the
+ * measures picked changed.
+ *
+ * Returns `{ el, fill(), drawMeasures(), run(), stop(), reset(), running(),
+ * say(text, error) }`.
+ */
+function sweepEditor({ settings, save, plot = null, actions = [], held = () => [], signals = () => null, onStart = () => {}, onProgress = () => {}, onDone = () => {}, onMeasures = () => {}, busyKey = null }) {
+  const name = el('select', { class: 'sweep-name', 'aria-label': 'Coefficient to sweep', onchange: (ev) => { save({ name: ev.target.value }); fill(); } });
   const field = (key, label, placeholder, title) => {
     const input = el('input', { type: 'text', class: 'time-field', 'aria-label': label, placeholder, title });
     onFieldCommit(input, (text) => save({ [key]: text.trim() }));
     return input;
   };
-  const from = field('from', 'From', '', 'The first value');
-  const to = field('to', 'To', '', 'The last value');
+  const from = field('from', 'From', '', 'The first value: a number or an expression (1/64, 2.7k/2.24M)');
+  const to = field('to', 'To', '', 'The last value: a number or an expression (1/64, 2.7k/2.24M)');
   const points = field('points', 'Points', '11', 'How many values, from 2 to 201');
   const scale = el('select', { class: 'sweep-scale', 'aria-label': 'Spacing', onchange: (ev) => save({ scale: ev.target.value === 'log' ? 'log' : undefined }) },
     [['linear', 'Linear'], ['log', 'Log']].map(([value, text]) => el('option', { value, text })));
@@ -94265,13 +94846,11 @@ function sweepSection() {
   const frequency = field('frequency', 'Sine frequency, f/fs', '', 'Input f/fs (1/256, 0.004; 0 for DC); blank: in the band');
   const samples = el('select', { class: 'time-samples', 'aria-label': 'Samples per segment', title: 'Samples per FFT segment; each run is four segments', onchange: (ev) => save({ samples: Number(ev.target.value) }) },
     SEGMENTS.map((n) => el('option', { value: String(n), text: `${n}` })));
-  const go = el('button', { type: 'button', class: 'primary-action sweep-run', text: 'Sweep', onclick: () => (running() ? stop() : sweep()) });
+  const go = el('button', { type: 'button', class: 'primary-action sweep-run', text: 'Sweep', onclick: () => (running() ? stop() : run()) });
+  const bar = el('progress', { class: 'sweep-progress', max: '1', value: '0', hidden: true });
   const status = el('p', { class: 'field-hint sweep-status', 'aria-live': 'polite' });
   const measures = el('div', { class: 'time-nets sweep-measures' });
-  const annotateButton = el('button', { type: 'button', class: 'sweep-annotate', text: 'Annotate', title: 'Put the sweep on the drawing', disabled: true, onclick: () => annotate() });
-  const holdButton = el('button', { type: 'button', class: 'sweep-hold', text: 'Hold', title: 'Hold', disabled: true, onclick: () => holdSweep() });
-  const clearButton = el('button', { type: 'button', class: 'sweep-clear', text: 'Clear held', disabled: true, onclick: () => { held = []; draw(); } });
-  const node = el('div', { class: 'signal-flow-sweep', hidden: true }, [
+  const node = el('div', { class: 'sweep-editor' }, [
     el('div', { class: 'signal-flow-swing-controls time-controls' }, [
       el('label', { text: 'Sweep' }), name,
       el('label', { text: 'from' }), from, el('label', { text: 'to' }), to,
@@ -94284,249 +94863,193 @@ function sweepSection() {
       samples, el('label', { text: 'samples' }),
       go,
     ]),
-    plot.el,
+    ...(plot ? [plot] : []),
     measures,
-    el('div', { class: 'time-actions' }, [status, holdButton, clearButton, annotateButton]),
+    bar,
+    el('div', { class: 'time-actions' }, [status, ...actions]),
   ]);
-  parts = { el: node, plot, name, from, to, points, scale, input, amplitude, frequency, samples, go, status, measures, annotate: annotateButton, hold: holdButton, clear: clearButton };
+  let job = null;
+  const running = () => !!job;
+
+  function say(text, error = false) {
+    status.textContent = text;
+    status.classList.toggle('analysis-error', error);
+  }
+
+  /** The controls from the settings and the diagram. */
+  function fill() {
+    const now = settings();
+    const names = sweepable();
+    name.replaceChildren(...names.map((n) => el('option', { value: n, text: n })));
+    const chosen = names.includes(now.name) ? now.name : names[0];
+    if (chosen) name.value = chosen;
+    const value = chosen ? api.resolvedWith({})[chosen] ?? 1 : 1;
+    from.value = now.from || '';
+    to.value = now.to || '';
+    // Blank: half and twice the value now (0 and 1, when it is 0).
+    from.placeholder = String(Number((value ? value / 2 : 0).toPrecision(3)));
+    to.placeholder = String(Number((value ? value * 2 : 1).toPrecision(3)));
+    points.value = now.points ? String(now.points) : '';
+    scale.value = now.scale === 'log' ? 'log' : 'linear';
+    const real = realSources();
+    input.replaceChildren(...real.map((s) => el('option', { value: s.id, text: s.name })));
+    const source = inputOf(now);
+    if (source) input.value = source;
+    amplitude.value = now.amplitude || '';
+    frequency.value = now.frequency || '';
+    frequency.placeholder = String(Number(bandFrequency().toPrecision(3)));
+    samples.value = String(SEGMENTS.includes(now.samples) ? now.samples : 8192);
+    drawMeasures();
+  }
+
+  /** The measures, each to tick, in the colors the plot gives them. */
+  function drawMeasures() {
+    const now = settings();
+    const shown = new Set(shownMeasures(now));
+    const list = measureList(signals() || signalsOf(now));
+    const colors = new Map(list.filter(([key]) => shown.has(key)).map(([key], i) => [key, TRACE_COLORS[i % TRACE_COLORS.length]]));
+    measures.replaceChildren(netPicker(list.map(([key, label]) => ({ key, label, checked: shown.has(key), color: colors.get(key) })), (key, on) => {
+      const keys = new Set(shownMeasures(settings()));
+      if (on) keys.add(key);
+      else keys.delete(key);
+      save({ measures: list.map(([k]) => k).filter((k) => keys.has(k)), chosen: true });
+      drawMeasures();
+      onMeasures();
+    }));
+  }
+
+  function finish() {
+    job = null;
+    if (busyKey) plotsBusy.set(busyKey, false);
+    delete go.dataset.running;
+    go.textContent = 'Sweep';
+    bar.hidden = true;
+  }
+
+  function stop() {
+    job?.stop();
+  }
+
+  /** Sweep: the held runs again, then the one the fields set. */
+  function run() {
+    if (running() || !api || !hasSignalFlow(editor.circuit)) return;
+    fill();
+    const spec = sweepOf(settings());
+    if (spec.error) { say(spec.error, true); return; }
+    const runs = [...held(), spec.run];
+    const total = pointCount(runs);
+    const circuit = editor.circuit;
+    const told = { name: spec.name, run: spec.run, scheduled: runs.length };
+    if (busyKey) plotsBusy.set(busyKey, true);
+    go.dataset.running = '1';
+    go.textContent = 'Stop';
+    bar.hidden = false;
+    bar.value = 0;
+    say(progressText(runs, 0));
+    const started = runSweeps(spec.name, runs, {
+      onPoint: (progress) => {
+        bar.value = progress.done / progress.total;
+        if (progress.done < progress.total) say(progressText(runs, progress.done));
+        onProgress({ ...progress, ...told });
+      },
+    });
+    job = started;
+    onStart(told);
+    started.done.then((outcome) => {
+      if (job !== started) return;
+      finish();
+      if (circuit !== editor.circuit) return;
+      say(doneText(outcome, total), !outcome.stopped && !!(outcome.error || outcome.runs.flatMap((r) => r.points).some((p) => p.error)));
+      onDone({ ...outcome, ...told });
+    });
+  }
+
+  /** Stop a sweep unheard (another design is shown). */
+  function reset() {
+    if (job) {
+      const old = job;
+      job = null;
+      old.stop();
+      finish();
+    }
+    say('');
+  }
+
+  return { el: node, fill, drawMeasures, run, stop, reset, running, say };
+}
+
+// ----- the Plots window's Sweep view ------------------------------------------------------
+
+let view = null; // { editor, plot, annotate, hold, clear }
+// The last sweep run here (runSweeps's result), and those held to draw with it.
+let result = null;
+let held = [];
+
+const state = () => editor.circuit.windows.sweep || { measures: [] };
+
+function save(change) {
+  editor.circuit.windows.sweep = { ...state(), ...change };
+  markSettingsChanged();
+}
+
+/** The view's element: what it sweeps, its stimulus, Sweep, the plot, the
+ *  measures, and Hold, Clear held, and Annotate. */
+function sweepSection() {
+  const plot = createPlotView({ fill: true, wheel: 'always', className: 'sweep-plot' });
+  const annotateButton = el('button', { type: 'button', class: 'sweep-annotate', text: 'Annotate', title: 'Put the sweep on the drawing', disabled: true, onclick: () => annotate() });
+  const holdButton = el('button', { type: 'button', class: 'sweep-hold', text: 'Hold', title: 'Hold', disabled: true, onclick: () => holdSweep() });
+  const clearButton = el('button', { type: 'button', class: 'sweep-clear', text: 'Clear held', disabled: true, onclick: () => { held = []; draw(); } });
+  const controls = sweepEditor({
+    settings: state,
+    save,
+    plot: plot.el,
+    actions: [holdButton, clearButton, annotateButton],
+    signals: () => result?.signals || null,
+    busyKey: 'sweep',
+    onStart: ({ name, run }) => {
+      result = { name, xs: sweepValues(run.from, run.to, run.points, run.log), from: run.from, to: run.to, log: run.log, points: [], signals: null, values: { ...api.resolvedWith({}) }, amplitude: run.amplitude, stimulus: run };
+      draw();
+    },
+    onProgress: ({ runs }) => { result = runs.at(-1); draw(); },
+    onDone: ({ runs }) => { if (runs.length) result = runs.at(-1); draw(); },
+    onMeasures: () => draw(),
+  });
+  const node = el('div', { class: 'signal-flow-sweep', hidden: true }, [controls.el]);
+  view = { el: node, editor: controls, plot, annotate: annotateButton, hold: holdButton, clear: clearButton };
   return node;
 }
 
-const running = () => !!parts?.go.dataset.running;
-
-/** The controls from the design's settings and the diagram. */
-function fill() {
-  if (!parts) return;
-  const settings = state();
-  const names = sweepable();
-  parts.name.replaceChildren(...names.map((n) => el('option', { value: n, text: n })));
-  const chosen = names.includes(settings.name) ? settings.name : names[0];
-  if (chosen) parts.name.value = chosen;
-  const now = chosen ? api.resolvedWith({})[chosen] ?? 1 : 1;
-  parts.from.value = settings.from || '';
-  parts.to.value = settings.to || '';
-  // Blank: a decade either way of the value now (half and twice, when it is 0).
-  parts.from.placeholder = String(Number((now ? now / 2 : 0).toPrecision(3)));
-  parts.to.placeholder = String(Number((now ? now * 2 : 1).toPrecision(3)));
-  parts.points.value = settings.points ? String(settings.points) : '';
-  parts.scale.value = settings.scale === 'log' ? 'log' : 'linear';
-  const { sources } = signalFlowGraph(editor.circuit);
-  const real = sources.filter((s) => !s.quantizer && !s.dither);
-  parts.input.replaceChildren(...real.map((s) => el('option', { value: s.id, text: s.name })));
-  const source = real.find((s) => s.id === settings.input) || real.find((s) => s.id === api?.flow().swingInput) || real[0];
-  if (source) parts.input.value = source.id;
-  parts.amplitude.value = settings.amplitude || '';
-  parts.frequency.value = settings.frequency || '';
-  parts.frequency.placeholder = String(Number(swingTestFrequency({ frequency: '' }, editor.circuit.analysisValues.band).toPrecision(3)));
-  parts.samples.value = String(SEGMENTS.includes(settings.samples) ? settings.samples : 8192);
-}
-
-/** The measures to show: those picked, else the SNDR (with a band) or the
- *  output tone. */
-function shownMeasures() {
-  const saved = state().measures;
-  if (state().chosen || saved.length) return saved;
-  return [bandEdges(editor.circuit.analysisValues.band).length ? 'sndr' : 'tone'];
-}
-
-/** Every measure a sweep's runs give: the three, then the peaks of the
- *  nets that swing. Each `[key, label, { name, unit }]`, the label its
- *  name with its unit (TeX). */
-function measureList(of = result) {
-  // The nets that swing: the states, the quantizers' inputs, the output (as the Swing view shows first).
-  const peaks = (of?.signals || []).filter((s) => ['state', 'quantizer-input', 'output'].includes(s.role)).map((s) => [`peak:${s.key}`, `${s.name}\\text{ peak}`, 'dBFS']);
-  return [...MEASURES.map(([key, text, unit]) => [key, `\\text{${text}}`, unit]), ...peaks].map(([key, name, unit]) => [key, `${name}\\text{ (${unit})}`, { name, unit }]);
-}
-
 /** The sweep shown as a data plot. */
-const sweepPlot = () => sweepPlotOf(result, held, shownMeasures());
-
-/** Sweep `live` as a data plot, with those `held` of its coefficient: each
- *  of the measures `keys` a trace over the values. */
-function sweepPlotOf(live, held, keys) {
-  if (!live?.points.some((p) => p.measures)) return null;
-  const shown = new Set(keys);
-  const measures = measureList(live).filter(([key]) => shown.has(key));
-  // Held sweeps of the same coefficient first, each named by what differs
-  // from the sweep shown (the numbers it ran at).
-  const same = held.filter((h) => h.result.name === live.name);
-  // The live sweep names its own numbers for those its held ones name.
-  const named = same.flatMap((h) => heldChanges(h, live));
-  const runs = [...same.map((h) => ({ of: h.result, notes: heldNotes(h, live), held: true })), { of: live, notes: liveNotes(live, named) }];
-  // A unit all the measures share goes on the axis (sweepLabels), as
-  // plain text: an axis takes no TeX but sub- and superscripts.
-  const { y, labels } = sweepLabels(measures.map(([, , m]) => m), runs);
-  const order = [...runs.keys()].slice(0, -1).map((n) => n + 1).concat(0);
-  const traces = runs.flatMap((run, r) => measures.map(([key], k) => ({
-    label: labels[r][k],
-    color: TRACE_COLORS[(shown.size * order[r] + k) % TRACE_COLORS.length],
-    points: run.of.points.filter((p) => Number.isFinite(p.measures?.[key])).map((p) => [p.x, p.measures[key]]),
-  }))).filter((trace) => trace.points.length > 1);
-  if (!traces.length) return null;
-  // The coefficient as an axis names it: a_r as a sub-scripted r.
-  return normalizePlot({ kind: 'data', x: { label: live.name.replace(/_([A-Za-z0-9]+)$/, '_{$1}'), scale: live.log ? 'log' : 'linear' }, y: { label: plainTex(y), scale: 'linear' }, traces });
-}
-
-/** A held sweep's notes: the coefficients (but the swept one) and the
- *  amplitude it ran at that differ from the live sweep's. */
-function heldNotes(h, live) {
-  return heldChanges(h, live).map((name) => (name === AMPLITUDE ? `${h.amplitude}\\ \\text{dBFS}` : `${name} = ${Number(h.values[name].toPrecision(4))}`));
-}
-
-const AMPLITUDE = '\0amplitude';
-
-/** What differs between a held sweep and the live one: coefficient names
- *  (but the swept one), and AMPLITUDE for the input's. */
-function heldChanges(h, live) {
-  const now = live.values;
-  const names = Object.entries(h.values).filter(([name, value]) => name !== h.result.name && Math.abs(value - (now[name] ?? 1)) > 1e-12 * Math.max(1, Math.abs(value))).map(([name]) => name);
-  return h.amplitude !== live.amplitude ? [...names, AMPLITUDE] : names;
-}
-
-/** The live sweep's notes: its numbers for `names`. */
-function liveNotes(live, names) {
-  const now = live.values;
-  return [...new Set(names)].map((name) => (name === AMPLITUDE ? `${live.amplitude}\\ \\text{dBFS}` : `${name} = ${Number((now[name] ?? 1).toPrecision(4))}`));
-}
+const sweepPlot = () => (result ? sweepPlotOf(result, held, shownMeasures(state())) : null);
 
 /** Hold the sweep shown: a copy that stays as the sliders and the next sweep move. */
 function holdSweep() {
-  if (!result?.points.some((p) => p.measures) || running()) return;
-  held.push({ result, values: result.values, amplitude: result.amplitude });
+  if (!result?.points.some((p) => p.measures) || view.editor.running()) return;
+  held.push(result);
   draw();
 }
 
 function draw() {
-  if (!parts) return;
+  if (!view) return;
   const plot = sweepPlot();
-  parts.plot.set(plot ? plotSpec(plot) : null);
-  parts.annotate.disabled = !plot;
-  parts.hold.disabled = !plot || running();
-  parts.clear.disabled = !held.length;
-  const shown = new Set(shownMeasures());
-  const colors = new Map(measureList().filter(([key]) => shown.has(key)).map(([key], i) => [key, TRACE_COLORS[i % TRACE_COLORS.length]]));
-  parts.measures.replaceChildren(result ? netPicker(measureList().map(([key, label]) => ({ key, label, checked: shown.has(key), color: colors.get(key) })), (key, on) => {
-    const keys = new Set(shownMeasures());
-    if (on) keys.add(key);
-    else keys.delete(key);
-    save({ measures: measureList().map(([k]) => k).filter((k) => keys.has(k)), chosen: true });
-    draw();
-  }) : '');
+  view.plot.set(plot ? plotSpec(plot) : null);
+  view.annotate.disabled = !plot;
+  view.hold.disabled = !plot || view.editor.running();
+  view.clear.disabled = !held.length;
+  view.editor.drawMeasures();
 }
 
-function say(text, error = false) {
-  parts.status.textContent = text;
-  parts.status.classList.toggle('analysis-error', error);
-}
-
-/** The sine the settings drive the sweep with: `{ input, amplitude,
- *  frequency, samples }` (f/fs on a bin of a segment of `samples`). */
-function stimulusNow() {
-  const settings = state();
-  const samples = SEGMENTS.includes(settings.samples) ? settings.samples : 8192;
-  const typed = typedNumber(settings.frequency);
-  const f = Number.isFinite(typed) && settings.frequency ? typed : swingTestFrequency({ frequency: '' }, editor.circuit.analysisValues.band);
-  const frequency = f === 0 ? 0 : Math.max(1, Math.round(f * samples)) / samples;
-  return { input: parts.input.value, amplitude: settings.amplitude ? Number(settings.amplitude) : -6, frequency, samples };
-}
-
-/** What one run of a sweep simulates at `values`, driven by `stimulus`. */
-function request(values, stimulus) {
-  const { input, amplitude, frequency, samples: segment } = stimulus;
-  const diagram = Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, values[name] ?? 1]));
-  return {
-    options: { values: diagram, sources: api.flow().sources, input, output: api.flow().output, frequency, samples: AVERAGES * segment, segment },
-    amplitude,
-    segment,
-    edges: bandEdges(editor.circuit.analysisValues.band),
-  };
-}
-
-function stop() {
-  run++;
-  worker?.terminate();
-  worker = null;
-  finish();
-  say(result ? `Stopped after ${result.points.length} of ${result.xs.length} points.` : 'Stopped.');
-}
-
-function finish() {
-  plotsBusy.set('sweep', false);
-  delete parts.go.dataset.running;
-  parts.go.textContent = 'Sweep';
-  parts.hold.disabled = !sweepPlot();
-}
-
-/** Run the sweep: a run a value, in a worker thread where one starts,
- *  the plot drawn as the points come. */
+/** Run the sweep the view is set to (as its Sweep button does). */
 function sweep() {
-  if (!parts || !hasSignalFlow(editor.circuit)) return;
-  fill();
-  const settings = state();
-  const name = parts.name.value;
-  if (!name) { say('The diagram has no coefficient to sweep.', true); return; }
-  const now = api.resolvedWith({})[name] ?? 1;
-  const from = settings.from ? typedNumber(settings.from) : now ? now / 2 : 0;
-  const to = settings.to ? typedNumber(settings.to) : now ? now * 2 : 1;
-  const count = settings.points || 11;
-  const log = settings.scale === 'log';
-  if (!Number.isFinite(from) || !Number.isFinite(to) || from === to) { say('From and to are two different numbers.', true); return; }
-  const xs = sweepValues(from, to, count, log);
-  if (!xs.length) { say('A log sweep runs between two numbers of one sign, neither zero.', true); return; }
-  if (!Number.isFinite(Number(settings.amplitude || -6))) { say('The amplitude is a number of dBFS.', true); return; }
-  const id = ++run;
-  const circuit = editor.circuit.toJSON();
-  // The numbers it runs at, for its name beside held sweeps.
-  const stimulus = stimulusNow();
-  result = { name, xs, from, to, log, points: [], signals: null, values: { ...api.resolvedWith({}) }, amplitude: stimulus.amplitude, stimulus };
-  plotsBusy.set('sweep', true);
-  parts.go.dataset.running = '1';
-  parts.go.textContent = 'Stop';
-  say(`Point 1 of ${xs.length}…`);
-  draw();
-  worker?.terminate();
-  worker = startWorker();
-  const next = (index) => {
-    if (id !== run) return;
-    if (index >= xs.length) {
-      finish();
-      const away = result.points.filter((p) => p.overloaded).length;
-      const failed = result.points.find((p) => p.error);
-      say(failed ? failed.error : `${xs.length} points of ${name} from ${Number(from.toPrecision(4))} to ${Number(to.toPrecision(4))}${away ? `; the loop ran away at ${away} of them` : ''}.`, !!failed);
-      return;
-    }
-    const ask = { circuit, ...request(api.resolvedWith({ [name]: xs[index] }), stimulus) };
-    const take = (data) => {
-      if (id !== run) return;
-      result.signals ||= data.signals || null;
-      result.points.push({ x: xs[index], ...(data.measures ? { measures: data.measures } : data.overloaded ? { overloaded: true } : { error: data.error }) });
-      say(`Point ${index + 2 > xs.length ? xs.length : index + 2} of ${xs.length}…`);
-      draw();
-      // A diagram that cannot run stops at its first point.
-      if (data.error && !data.signals) { finish(); say(data.error, true); return; }
-      next(index + 1);
-    };
-    if (worker) {
-      worker.onmessage = ({ data }) => { if (data.type === 'measures' && data.id === id && data.index === index) take(data); };
-      worker.onerror = (ev) => { ev.preventDefault?.(); worker?.terminate(); worker = null; take(simulatedMeasures(ask)); };
-      worker.postMessage({ type: 'measures', id, index, ...ask });
-    } else afterPaint(() => { if (id === run) take(simulatedMeasures(ask)); });
-  };
-  next(0);
-}
-
-/** What Update all plots runs again of a sweep: its range and its sine,
- *  and for a held one the coefficients it ran at (model.js sweepOf). */
-function sweepRun(of, values) {
-  return { from: of.from, to: of.to, points: of.xs.length, log: of.log, ...of.stimulus, ...(values ? { values } : {}) };
+  view?.editor.run();
 }
 
 /** The sweep shown onto the drawing, as a data plot. */
 function annotate() {
   let plot = sweepPlot();
   if (!plot) return;
-  const same = held.filter((h) => h.result.name === result.name);
-  plot = normalizePlot({ ...plot, sweep: { name: result.name, measures: shownMeasures(), count: plot.traces.length, runs: [...same.map((h) => sweepRun(h.result, h.values)), sweepRun(result)] } });
+  const same = held.filter((h) => h.name === result.name);
+  plot = normalizePlot({ ...plot, sweep: { name: result.name, measures: shownMeasures(state()), count: plot.traces.length, runs: [...same.map((h) => ({ ...keptRun(h), values: h.values })), keptRun(result)] } });
   let placed = null;
   commit(() => { placed = placeDataPlot(editor.circuit, plot, { math: true }); });
   if (!placed) return;
@@ -94538,89 +95061,168 @@ function annotate() {
   render();
 }
 
-/** Each run of `asks` (simulatedMeasures requests) in turn, in a worker
- *  thread where one starts; the results in order, or null once `stale()`. */
-async function measureAll(asks, stale) {
-  let thread = startWorker();
-  const results = [];
-  try {
-    for (const [index, ask] of asks.entries()) {
-      if (stale()) return null;
-      const data = thread ? await new Promise((resolve) => {
-        thread.onmessage = ({ data: reply }) => { if (reply.type === 'measures' && reply.index === index) resolve(reply); };
-        thread.onerror = (ev) => { ev.preventDefault?.(); thread?.terminate(); thread = null; resolve(simulatedMeasures(ask)); };
-        thread.postMessage({ type: 'measures', id: 0, index, ...ask });
-      }) : await new Promise((resolve) => afterPaint(() => resolve(simulatedMeasures(ask))));
-      results.push(data);
-      // A diagram that cannot run stops at its first point.
-      if (data.error && !data.signals) return results;
-    }
-    return results;
-  } finally {
-    thread?.terminate();
-  }
+/** The view was shown: its controls, and the last sweep. */
+function showSweep() {
+  if (!view) return;
+  view.editor.fill();
+  draw();
+  if (!result && !view.editor.running()) view.editor.say('Pick a coefficient and its range, then Sweep: each point is a full simulation.');
+}
+
+// ----- a sweep on the drawing ---------------------------------------------------------------
+
+/** Why a sweep plot (`plot.sweep`) cannot run again now, or null. */
+function sweepPlotProblem(plot) {
+  const spec = plot?.sweep;
+  if (!spec) return 'it is no sweep';
+  if (!api || !hasSignalFlow(editor.circuit)) return 'the drawing has no signal-flow diagram';
+  if (!diagramSymbols(editor.circuit).includes(spec.name)) return `the diagram has no ${spec.name}`;
+  const sources = new Set(realSources().map((s) => s.id));
+  if (spec.runs.some((run) => !sources.has(run.input))) return 'the source its sine drove is gone';
+  if (spec.runs.some((run) => !sweepValues(run.from, run.to, run.points, run.log).length)) return 'its range is no longer a sweep';
+  return null;
+}
+
+/**
+ * Sweep `results` (runSweeps's, of a sweep plot's runs: the held ones,
+ * then the live one) as the plot's new traces: `{ traces, y?, count }` --
+ * the sweep's, colored as `plot`'s were where they are as many, then the
+ * plot's traces added since -- or `{ error }`. `measures` the measures to
+ * show (the plot's by default).
+ */
+function sweepTraces(plot, results, measures = plot.sweep.measures) {
+  const spec = plot.sweep;
+  const live = results.at(-1);
+  // Every measure it shows is there to show.
+  const keys = new Set(measureList(results.find((r) => r.signals)?.signals).map(([key]) => key));
+  if (measures.some((key) => !keys.has(key))) return { error: 'a net it showed the peak of is gone' };
+  const next = sweepPlotOf(live, results.slice(0, -1), measures);
+  if (!next) return { error: 'its sweep gives no values now' };
+  const same = measures.length === spec.measures.length && next.traces.length === spec.count;
+  const own = plot.traces.slice(0, spec.count);
+  const traces = [...next.traces.map((trace, i) => ({ ...trace, color: (same && own[i]?.color) || trace.color })), ...plot.traces.slice(spec.count)];
+  // A plot from before the unit went on the axis had "dB" there: it takes
+  // the axis its names now leave the unit to.
+  const y = plot.y?.label === 'dB' && next.y.label !== 'dB' ? { ...plot.y, label: next.y.label } : next.y.label !== plot.y?.label ? { ...plot.y, label: next.y.label } : null;
+  return { traces, count: next.traces.length, ...(y ? { y } : {}) };
 }
 
 /**
  * A sweep plot (`plot.sweep`) run again: each of its sweeps in turn, the
  * held ones at the coefficients they ran at, the live one at those now,
- * over the same range with the same sine. Resolves to `{ traces, y? }`:
- * the plot's new traces (the sweep's, colored as they were, then those
- * added since) and, for a plot whose y axis is the old "dB", its new one; or
- * null when the diagram no longer runs or no longer has what it plotted;
- * null too once `stale()`.
+ * over the same range with the same sine. `onPoint(progress)` hears each
+ * point (runSweeps's, with `plot`: the plot so far). Returns `{ done, stop()
+ * }`; `done` resolves to `{ traces, y?, count }` (sweepTraces), `{ error }`,
+ * or `{ stopped }`.
  */
-async function sweepPlotUpdate(plot, stale = () => false) {
-  const spec = plot?.sweep;
-  if (!spec || !api || !hasSignalFlow(editor.circuit)) return null;
-  if (!diagramSymbols(editor.circuit).includes(spec.name)) return null;
-  const circuit = editor.circuit.toJSON();
-  const sources = new Set(signalFlowGraph(editor.circuit).sources.filter((s) => !s.quantizer && !s.dither).map((s) => s.id));
-  const runs = [];
-  for (const run of spec.runs) {
-    if (!sources.has(run.input)) return null;
-    const xs = sweepValues(run.from, run.to, run.points, run.log);
-    if (!xs.length) return null;
-    const values = run.values ? { ...api.resolvedWith(run.values) } : { ...api.resolvedWith({}) };
-    const asks = xs.map((x) => ({ circuit, ...request(api.resolvedWith({ ...(run.values || {}), [spec.name]: x }), run) }));
-    const data = await measureAll(asks, stale);
-    if (!data) return null;
-    const points = data.map((d, i) => ({ x: xs[i], ...(d.measures ? { measures: d.measures } : d.overloaded ? { overloaded: true } : { error: d.error }) }));
-    runs.push({ name: spec.name, xs, from: run.from, to: run.to, log: run.log, points, signals: data.find((d) => d.signals)?.signals || null, values, amplitude: run.amplitude, stimulus: run });
-  }
-  const live = runs.at(-1);
-  // Every measure it showed is still there to show.
-  const keys = new Set(measureList(live).map(([key]) => key));
-  if (spec.measures.some((key) => !keys.has(key))) return null;
-  const next = sweepPlotOf(live, runs.slice(0, -1).map((r) => ({ result: r, values: r.values, amplitude: r.amplitude })), spec.measures);
-  if (!next || next.traces.length !== spec.count) return null;
-  const own = plot.traces.slice(0, spec.count);
-  const traces = [...next.traces.map((trace, i) => ({ ...trace, color: own[i]?.color || trace.color })), ...plot.traces.slice(spec.count)];
-  // A plot from before the unit went on the axis had "dB" there: it takes
-  // the axis its names now leave the unit to.
-  return { traces, ...(plot.y?.label === 'dB' && next.y.label !== 'dB' ? { y: { ...plot.y, label: next.y.label } } : {}) };
+function sweepPlotUpdate(plot, { onPoint = () => {} } = {}) {
+  const problem = sweepPlotProblem(plot);
+  if (problem) return { done: Promise.resolve({ error: problem }), stop: () => {} };
+  const spec = plot.sweep;
+  const job = runSweeps(spec.name, spec.runs, {
+    onPoint: (progress) => onPoint({ ...progress, plot: partialPlot(plot, progress.runs) }),
+  });
+  return {
+    stop: job.stop,
+    done: job.done.then((outcome) => {
+      if (outcome.stopped) return { stopped: true };
+      if (outcome.error) return { error: outcome.error };
+      const traces = sweepTraces(plot, outcome.runs);
+      return traces.error || traces.count === spec.count ? traces : { error: 'its sweep no longer gives every trace it drew' };
+    }),
+  };
 }
 
-/** The view was shown: its controls, and the last sweep. */
-function showSweep() {
-  fill();
-  draw();
-  if (!result && parts && !running()) say('Pick a coefficient and its range, then Sweep: each point is a full simulation.');
+/** A sweep plot as its runs so far draw it. */
+function partialPlot(plot, runs) {
+  const spec = plot.sweep;
+  const next = drawnSweep(spec.name, spec.runs.at(-1), runs, spec.runs.length, spec.measures);
+  const { view: _view, ...rest } = plot;
+  return next ? normalizePlot({ ...rest, traces: [...next.traces, ...plot.traces.slice(spec.count)], ...(next.y ? { y: { ...plot.y, label: next.y.label } } : {}) }) : null;
+}
+
+/** The fields but the measures: what a sweep runs. */
+const runFields = ({ measures: _measures, chosen: _chosen, ...rest }) => JSON.stringify(rest);
+
+/**
+ * The sweep of a plot on the drawing, in its Plot settings: the sweep's
+ * editor on what the plot ran, its held sweeps run again first as they
+ * were (another coefficient drops them). `onPlot(next, { partial })` hears
+ * the sweep's own traces as a sweep runs and once it is done (`{ traces,
+ * y, count }`, null while there are none), and `onPlot(null, { stopped })`
+ * a sweep stopped, the plot's own to show again. Returns `{ el, changed(),
+ * spec(), run(), stop(), running() }`: `changed()` whether the fields
+ * differ from what the traces shown ran, `spec()` the plot's `sweep` for
+ * them.
+ */
+function sweepPlotEditor(plot, { onPlot = () => {}, onDone = () => {} } = {}) {
+  const kept = plot.sweep;
+  let fields = settingsOfRun(kept.name, kept.measures, kept.runs.at(-1));
+  // What the traces shown ran: the plot's own until a sweep here.
+  let ran = { spec: kept, fields: JSON.stringify(fields) };
+  let lastRuns = null;
+  const heldRuns = () => (fields.name === kept.name ? kept.runs.slice(0, -1) : []);
+  const controls = sweepEditor({
+    settings: () => fields,
+    save: (change) => { fields = { ...fields, ...change }; hint(); },
+    held: heldRuns,
+    signals: () => lastRuns?.find((r) => r.signals)?.signals || null,
+    onProgress: ({ runs, name, run, scheduled }) => onPlot(drawnSweep(name, run, runs, scheduled, shownMeasures(fields)), { partial: true }),
+    onDone: (outcome) => {
+      const complete = !outcome.stopped && !outcome.error && outcome.runs.length === outcome.scheduled;
+      const next = complete ? drawnSweep(outcome.name, outcome.run, outcome.runs, outcome.scheduled, shownMeasures(fields)) : null;
+      if (next) {
+        lastRuns = outcome.runs;
+        ran = { spec: { name: outcome.name, measures: shownMeasures(fields), count: next.count, runs: outcome.runs.map(keptRun) }, fields: JSON.stringify(fields) };
+        onPlot(next, {});
+      } else onPlot(null, { stopped: true });
+      hint();
+      onDone(outcome);
+    },
+    onMeasures: () => {
+      // Measures the last sweep here measured show at once; others need a sweep.
+      if (lastRuns && runFields(fields) === runFields(JSON.parse(ran.fields))) {
+        const measures = shownMeasures(fields);
+        const next = drawnSweep(ran.spec.name, ran.spec.runs.at(-1), lastRuns, lastRuns.length, measures);
+        if (next) {
+          ran = { spec: { ...ran.spec, measures, count: next.count }, fields: JSON.stringify(fields) };
+          onPlot(next, {});
+        }
+      }
+      hint();
+    },
+  });
+  const note = el('p', { class: 'field-hint sweep-held-note' });
+  function hint() {
+    const count = heldRuns().length;
+    note.textContent = count ? `Sweep runs its ${count} held sweep${count > 1 ? 's' : ''} again first, each at the coefficients it ran at.` : '';
+    note.hidden = !count;
+    if (!controls?.running()) controls?.say(JSON.stringify(fields) === ran.fields ? 'Sweep runs it again at the coefficients now.' : 'Changed: Apply sweeps first.');
+  }
+  const node = el('fieldset', { class: 'data-plot-axis sweep-figure' }, [el('legend', { text: 'Sweep' }), controls.el, note]);
+  controls.fill();
+  hint();
+  return {
+    el: node,
+    changed: () => JSON.stringify(fields) !== ran.fields,
+    spec: () => ran.spec,
+    run: () => controls.run(),
+    stop: () => controls.stop(),
+    running: () => controls.running(),
+  };
 }
 
 /** `deps`: signal-flow-ui.js's `{ flow(), links(), resolvedWith(values), visible() }`. */
 function installSweepPlot(deps) {
   api = deps;
   onDocumentShown(() => {
-    run++;
-    worker?.terminate();
-    worker = null;
     result = null;
     held = [];
-    if (parts) { finish(); parts.plot.set(null); say(''); }
+    if (view) { view.editor.reset(); view.plot.set(null); }
   });
 }
 
+__exports.sweepPlotPoints = sweepPlotPoints;
 };
 
 __modules["src/web/switched-cap-ui.js"] = function (__require, __exports) {
@@ -94636,7 +95238,7 @@ let canonicalNetName; __bind(() => { ({ canonicalNetName } = __require("src/core
 let setPartValue; __bind(() => { ({ setPartValue } = __require("src/core/part-moves.js")); });
 let createPlotView, linkPlots; __bind(() => { ({ createPlotView, linkPlots } = __require("src/web/plot-view.js")); });
 let installPlotsWindow, offerPlots; __bind(() => { ({ installPlotsWindow, offerPlots } = __require("src/web/plots-window.js")); });
-let placeResponsePlot, registerAnalysisMode; __bind(() => { ({ placeResponsePlot, registerAnalysisMode } = __require("src/web/signal-flow-ui.js")); });
+let matchPlotTraces, placeResponsePlot, registerAnalysisMode, registerPlotUpdater; __bind(() => { ({ matchPlotTraces, placeResponsePlot, registerAnalysisMode, registerPlotUpdater } = __require("src/web/signal-flow-ui.js")); });
 let valueRow; __bind(() => { ({ valueRow } = __require("src/web/value-row.js")); });
 let PER_DECADE; __bind(() => { ({ PER_DECADE } = __require("src/web/e-series.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
@@ -95285,6 +95887,16 @@ function annotateGraph({ magnitude = true, phase = graphChoice.phase } = {}) {
   }
 }
 
+/** A switched-cap plot on the drawing at the capacitances now (Update
+ *  plot): its curves by name, or why not. */
+function scPlotUpdate(plot) {
+  if (!latest) return { error: 'derive the circuit first (Shift+S)' };
+  const matched = plot.kind === 'response' ? matchPlotTraces(plot, traces.map((trace) => ({ ...trace, label: trace.held ? heldLabel(trace) : liveLabel(trace) }))) : null;
+  if (!matched) return { error: 'its traces are no longer on the graph' };
+  const next = responsePlot(matched.map((trace) => ({ ...trace, value: numbered(trace.value), variable: 'z' })), 'z', { quantity: plot.quantity === 'phase' ? 'phase' : 'magnitude' });
+  return next ? { plot: next, shown: matched } : { error: 'its traces are no longer on the graph' };
+}
+
 // ----- the drawing -----------------------------------------------------------------------
 
 /** The equation on the drawing as the switched-cap table
@@ -95356,6 +95968,7 @@ function installSwitchedCapUi() {
     ]),
   ]);
   // What this mode puts on the drawing, in the window's Annotate menu.
+  registerPlotUpdater('switched-cap', scPlotUpdate);
   registerAnnotations('switched-cap', () => [
     { label: 'Equations', identity: { kind: 'equations', source: 'switched-cap' }, available: !!latest?.result.ok, run: annotate },
     { label: 'kT/C noise table', identity: { kind: 'noise', source: 'switched-cap' }, available: !!calculatorNumbers()?.figures.ok, run: annotateNoise },

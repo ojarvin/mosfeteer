@@ -27,7 +27,10 @@ import { createPlotView } from './plot-view.js';
 import { editor } from './editor-state.js';
 import { logLine } from './status-bar-ui.js';
 import { canvasEl } from './elements.js';
-import { alignLabelColumn, commit, render, setLabelSelection, setSelection } from './main.js';
+import { afterRender, alignLabelColumn, commit, onDocumentShown, render, setLabelSelection, setSelection } from './main.js';
+import { PLACE, floatingWindow } from './floating-window.js';
+import { sweepPlotEditor } from './sweep-plot.js';
+import { updatablePlot, updatePlot } from './signal-flow-ui.js';
 
 /** Past this a file is refused rather than read into the page. */
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
@@ -75,8 +78,8 @@ function openPalette(button, color, pick) {
     onclick: () => { palette.hidePopover(); pick(value); },
   })));
   palette.style.setProperty('--palette-columns', String(PALETTE_COLUMNS));
-  // Escape closes the palette, not the dialog under it.
-  const dialog = button.closest('dialog');
+  // Escape closes the palette, not the dialog or window under it.
+  const dialog = button.closest('dialog, .floating-window');
   const keepDialog = (ev) => { ev.preventDefault(); palette.hidePopover(); };
   palette.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') keepDialog(ev); });
   dialog.addEventListener('cancel', keepDialog);
@@ -529,62 +532,215 @@ export function openDataPlotDialog(text, name, target = null, { mode = 'replace'
 
 /** The settings of the plot `box`: a data plot's, or an analysis plot's
  *  (the traces added to it from files, and its zoom). */
+// The plot settings window open: { box, close() }; one at a time.
+let settingsOpen = null;
+
+/**
+ * A plot's settings, in a floating window over the drawing (one at a
+ * time: another plot's replaces it): a sweep plot's sweep, then the plot
+ * editor, Add file… (and a data plot's Replace file…, an analysis plot's
+ * Update plot), Cancel, and Apply -- one undo step. The drawing stays in
+ * reach while it is open; the window closes when its plot goes (deleted,
+ * undone, another design), and follows the plot when undo or redo gives
+ * it back.
+ */
 export function openPlotSettings(box) {
   if (!takesFileTraces(box)) return;
+  if (settingsOpen?.box === box) { settingsOpen.front(); return; }
+  settingsOpen?.close();
+  const id = box.id;
   const data = box.plot.kind === 'data';
   const draft = { x: { ...box.plot.x }, y: { ...box.plot.y }, traces: editedTraces(box.plot), curves: box.plot.kind === 'response' ? box.plot.traces.map((trace) => ({ label: trace.label, color: trace.color, on: !trace.hidden })) : null,
     cursors: [...(box.plot.cursors || [])] };
-  const dialog = el('dialog', { class: 'confirm-dialog data-plot-dialog', 'aria-label': 'Plot settings' });
   const plotEdit = plotEditor(draft, { base: data ? null : analysisBase(box.plot) });
-  const apply = () => {
+  // A sweep's own editor over the plot's: Sweep runs it again into the draft.
+  const sweep = box.plot.sweep ? sweepSettings(() => box, draft, plotEdit) : null;
+  const applyButton = el('button', { type: 'button', class: 'primary-action', text: 'Apply', onclick: () => apply() });
+  // The edits onto the plot, one undo step; the window closes but with `keepOpen`.
+  const apply = ({ keepOpen = false } = {}) => {
+    if (sweep?.running()) return;
+    // Changed sweep fields sweep first; Apply follows once it is done.
+    if (sweep?.editor.changed()) { sweep.applyAfter(apply); return; }
     const zoom = plotEdit.zoom();
     const old = editor.circuit.plotLegend(box).map((label) => label.bbox());
-    dialog.close();
+    const fresh = sweep?.fresh();
+    if (!keepOpen) close();
     commit(() => {
       if (draft.curves) {
         setPlotCurveColors(editor.circuit, box, draft.curves.map((curve) => curve.color));
         setPlotTracesShown(editor.circuit, box, draft.curves.map((curve) => curve.on));
       }
-      applyDraft(editor.circuit, box, draft);
-      applyOrder(editor.circuit, box, draft, ownLeft(draft));
+      if (fresh) sweep.write(editor.circuit);
+      else {
+        applyDraft(editor.circuit, box, draft);
+        applyOrder(editor.circuit, box, draft, ownLeft(draft));
+      }
       applyZoom(box, zoom);
       applyCursors(box, plotEdit);
     });
     // Renamed entries are measured again: the column keeps its left edge and top.
     const legend = editor.circuit.plotLegend(box);
     if (legend.length && old.length) alignLabelColumn(legend.map((label) => label.id), { left: Math.min(...old.map((r) => r.x)), top: Math.min(...old.map((r) => r.y)), gap: 0 });
-    logLine('updated the plot');
+    logLine(fresh ? 'swept the plot again' : 'updated the plot');
     render();
   };
-  // The close event comes a task later: a file's dialog opened from this
-  // one must not find it still there, or lose its focus to the canvas.
-  const closed = () => {
-    if (!dialog.isConnected) return;
-    plotEdit.dispose();
-    dialog.remove();
-    canvasEl.focus({ preventScroll: true });
-  };
-  const closeNow = () => { dialog.close(); closed(); };
   const full = draft.traces.length >= (data ? MAX_DATA_TRACES : MAX_PLOT_EXTRA);
-  dialog.append(
-    el('h2', { text: data ? (box.plot.file ? `Data plot from ${box.plot.file}` : 'Data plot') : 'Plot settings' }),
-    ...plotEdit.parts,
-    el('div', { class: 'dialog-actions' }, [
-      el('button', { type: 'button', class: 'data-plot-add', text: 'Add file…', title: 'Add traces from a file', disabled: full, onclick: () => { closeNow(); chooseDataFile(box, 'add'); } }),
-      ...(data ? [el('button', { type: 'button', class: 'data-plot-reread', text: 'Replace file…', title: 'Replace the traces with a file\'s, keeping the plot\'s place, axes, and zoom', onclick: () => { closeNow(); chooseDataFile(box); } })] : []),
-      el('span', { class: 'dialog-actions-gap' }),
-      el('button', { type: 'button', text: 'Cancel', onclick: () => dialog.close() }),
-      el('button', { type: 'button', class: 'primary-action', text: 'Apply', onclick: apply }),
+  // An analysis's plot draws again at the numbers now, these edits applied first.
+  // The window stays, showing the plot as updated (or as it was, the log
+  // saying why: derive first).
+  const update = !data && updatablePlot(box) ? el('button', { type: 'button', class: 'data-plot-update', text: 'Update plot', title: 'Apply, then draw the plot again at the numbers now', onclick: async (ev) => {
+    ev.currentTarget.disabled = true;
+    apply({ keepOpen: true });
+    await updatePlot(box);
+    const now = editor.circuit.labels.get(id);
+    if (!node.isConnected || !now?.plot) return;
+    // Drawn again from the plot now, where the window was put.
+    close();
+    openPlotSettings(now);
+  } }) : null;
+  const title = data ? (box.plot.sweep ? 'Sweep plot' : box.plot.file ? `Data plot from ${box.plot.file}` : 'Data plot') : 'Plot settings';
+  const node = el('section', { class: 'floating-window data-plot-dialog plot-settings-window', role: 'dialog', 'aria-label': 'Plot settings', 'aria-labelledby': 'plot-settings-title' }, [
+    el('header', { class: 'floating-window-header' }, [
+      el('h2', { id: 'plot-settings-title', class: 'floating-window-title', text: title }),
+      el('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the plot settings', title: 'Close (Escape)', text: '×' }),
     ]),
-  );
-  dialog.addEventListener('keydown', (event) => { event.stopPropagation(); plotEdit.key(event); });
-  dialog.addEventListener('close', closed, { once: true });
-  document.body.append(dialog);
-  dialog.showModal();
+    el('div', { class: 'plot-settings-body' }, [...(sweep ? [sweep.editor.el] : []), ...plotEdit.parts]),
+    el('div', { class: 'dialog-actions plot-settings-actions' }, [
+      el('button', { type: 'button', class: 'data-plot-add', text: 'Add file…', title: 'Add traces from a file', disabled: full, onclick: () => { close(); chooseDataFile(box, 'add'); } }),
+      ...(data && !box.plot.sweep ? [el('button', { type: 'button', class: 'data-plot-reread', text: 'Replace file…', title: 'Replace the traces with a file\'s, keeping the plot\'s place, axes, and zoom', onclick: () => { close(); chooseDataFile(box); } })] : []),
+      ...(update ? [update] : []),
+      el('span', { class: 'dialog-actions-gap' }),
+      el('button', { type: 'button', text: 'Cancel', onclick: () => close() }),
+      applyButton,
+    ]),
+  ]);
+  let chrome = null;
+  let stopWatching = () => {};
+  function close() {
+    if (!node.isConnected) return;
+    stopWatching();
+    sweep?.dispose();
+    plotEdit.dispose();
+    chrome?.dispose();
+    node.remove();
+    if (settingsOpen?.node === node) settingsOpen = null;
+    canvasEl.focus({ preventScroll: true });
+  }
+  // Keys typed in it are its own; Escape closes it, but from a field or the palette.
+  node.addEventListener('keydown', (event) => {
+    event.stopPropagation();
+    if (event.key === 'Escape' && !event.defaultPrevented && !['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName)) { event.preventDefault(); close(); return; }
+    plotEdit.key(event);
+  });
+  canvasEl.closest('.canvas-pane').append(node);
+  chrome = floatingWindow(node, { key: 'plot-settings', onClose: close, place: PLACE.topCenter, resizable: true });
+  chrome.place();
+  sweep?.bind(applyButton);
+  // Its plot gone (deleted, undone, another design), it goes; given back
+  // by undo or redo as a new object, it follows that one.
+  stopWatching = afterRender(() => {
+    const now = editor.circuit.labels.get(id);
+    if (!now?.plot) {
+      close();
+      logLine('closed the plot settings: the plot is gone');
+      return;
+    }
+    if (now !== box) {
+      box = now;
+      if (settingsOpen) settingsOpen.box = now;
+    }
+  });
+  settingsOpen = { box, node, close, front: () => chrome.place() };
   plotEdit.show({ keepZoom: false });
   if (box.plot.view) plotEdit.zoomTo(box.plot.view);
+  node.querySelector('input, select, button:not(.floating-window-close)')?.focus({ preventScroll: true });
+}
+
+/**
+ * A sweep plot's settings (`target()` the plot's box): the sweep's editor
+ * (sweep-plot.js) on what the plot ran, its traces in `draft` (the first of them, marked `sweep`)
+ * replaced as a sweep runs -- colored as they were, while as many -- and put
+ * back when one is stopped. Returns `{ editor, running(), fresh(),
+ * applyAfter(fn), bind(applyButton), write(circuit), dispose() }`: `fresh()` whether
+ * the draft's sweep traces are a new sweep's, `write` puts them on the plot
+ * (inside a commit), `applyAfter(fn)` sweeps, then calls `fn` once it is done.
+ */
+function sweepSettings(target, draft, plotEdit) {
+  const box = target();
+  const count = box.plot.sweep.count;
+  draft.traces.forEach((trace, i) => { if (i < count) trace.sweep = true; });
+  let original = draft.traces.filter((trace) => trace.sweep);
+  let colors = original.map((trace) => trace.color);
+  let yLabel = box.plot.y.label;
+  let fresh = false;
+  let then = null;
+  let applyButton = null;
+  let gone = false;
+  const put = (entries) => {
+    const before = draft.traces.filter((trace) => trace.sweep && !trace.removed).length;
+    draft.traces = [...entries, ...draft.traces.filter((trace) => !trace.sweep)];
+    // Point markers on a sweep's traces that are gone go too.
+    const after = draft.traces.filter((trace) => !trace.removed).length;
+    if (entries.length !== before) draft.cursors = draft.cursors.filter((c) => c.kind !== 'point' || c.trace < after);
+    plotEdit.refresh();
+    plotEdit.show();
+  };
+  const sweepEdit = sweepPlotEditor(box.plot, {
+    onPlot: (next, { partial = false } = {}) => {
+      if (gone) return;
+      if (!next) { put(original); fresh = false; return; }
+      const same = next.count === colors.length;
+      put(next.traces.map((trace, i) => ({ column: `sweep${i}`, label: trace.label, color: same ? colors[i] : trace.color, points: trace.points, removed: false, sweep: true })));
+      // The y axis names the unit its traces leave it, unless named by hand.
+      if (next.y && draft.y.label === yLabel) { draft.y.label = next.y.label; plotEdit.refresh(); }
+      if (!partial) {
+        fresh = true;
+        original = draft.traces.filter((trace) => trace.sweep);
+        colors = original.map((trace) => trace.color);
+        yLabel = draft.y.label;
+      }
+    },
+    onDone: (outcome) => {
+      if (gone) return;
+      if (applyButton) applyButton.disabled = false;
+      const fn = then;
+      then = null;
+      if (fn && !outcome.stopped && !outcome.error && !sweepEdit.changed()) fn();
+    },
+  });
+  return {
+    editor: sweepEdit,
+    running: () => sweepEdit.running(),
+    fresh: () => fresh,
+    bind(button) {
+      applyButton = button;
+      // While a sweep runs, Apply waits for it.
+      new MutationObserver(() => { button.disabled = sweepEdit.running(); }).observe(sweepEdit.el, { subtree: true, attributes: true, attributeFilter: ['data-running'] });
+    },
+    /** The dialog closed: a sweep running stops, unheard. */
+    dispose() {
+      gone = true;
+      sweepEdit.stop();
+    },
+    applyAfter(fn) {
+      then = fn;
+      sweepEdit.run();
+      if (!sweepEdit.running()) then = null;
+    },
+    write(circuit) {
+      const shown = draft.traces.filter((trace) => !trace.removed);
+      const own = shown.filter((trace) => trace.sweep);
+      const traces = [...own, ...shown.filter((trace) => !trace.sweep)].map(({ label, color, points }) => ({ label, color, points }));
+      const plotBox = target();
+      replaceDataPlotTraces(circuit, plotBox, { traces }, { math: own.length });
+      plotBox.plot = normalizePlot({ ...plotBox.plot, sweep: { ...sweepEdit.spec(), count: own.length } });
+      for (const axis of ['x', 'y']) setDataPlotAxis(plotBox, axis, { label: draft[axis].label, scale: draft[axis].scale });
+    },
+  };
 }
 
 export function installDataPlotUi() {
+  // Another design: the plot settings of this one close.
+  onDocumentShown(() => settingsOpen?.close());
   document.getElementById('btn-data-plot')?.addEventListener('click', () => chooseDataFile());
 }

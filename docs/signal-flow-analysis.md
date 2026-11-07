@@ -325,25 +325,39 @@ names its numbers now for the same names (`OUT/IN, a_r = 0.15`). The switched-ca
 the same way (`trace-hold.js`), each at its own Values.
 
 **Sweep** (`sweep-plot.js`): one coefficient (not a linked one) stepped
-from, to, in a number of points (2 to 201), linear or log, the diagram
+from, to, in a number of points (2 to 201), linear or log -- from, to, the
+amplitude, and f/fs each a number or a calculator expression (`1/64`,
+`2.7k/2.24M`) -- the diagram
 simulated at each value -- the sine into the source picked, at its
 amplitude (dBFS) and f/fs, its spectrum in segments of the samples picked
 (`spectrum-run.js` `simulatedMeasures`, in a worker thread, a point at a
-time: Stop stops it) -- and what each run measures plotted over the
-values: the band's SNDR and noise, the output tone, and the peaks of the
-integrators, the quantizers' inputs, and the output (dBFS). It runs on
-Sweep only; a point where the loop runs away has no values. Its settings
-and the measures shown are saved with the design
-(`Circuit#windows.sweep`); Hold keeps a copy of the sweep shown, drawn
-with later sweeps of the same coefficient and named by the coefficients
-and amplitude that differ since (the window's, not saved; Clear held
-drops them); Annotate puts the measures shown on the drawing as a data plot,
-with what each sweep on it ran at (`plot.sweep`: the coefficient, the
-measures, and per sweep its range, its sine, and for a held one its
-coefficients). A unit the measures shown share goes on the y axis, and a
-lone measure's name with it; the traces are then named by the measure,
-or by what their sweep ran at (`spectrum-run.js` `sweepLabels`). Update
-all plots gives a plot whose y axis is the old `dB` its new one.
+time) -- and what each run measures plotted over the values: the band's
+SNDR and noise, the output tone, and the peaks of the integrators, the
+quantizers' inputs, and the output (dBFS), each offered before any run
+(`simulationSignals`). It runs on Sweep only, a progress bar and "Point 3
+of 11" under it while it runs, Sweep turned to Stop; a point where the loop
+runs away has no values. Its settings and the measures shown are saved
+with the design (`Circuit#windows.sweep`); Hold keeps a copy of the sweep
+shown, drawn with later sweeps of the same coefficient and named by the
+coefficients and amplitude that differ since (the window's, not saved;
+Clear held drops them); Annotate puts the measures shown on the drawing as
+a data plot, with what each sweep on it ran at (`plot.sweep`: the
+coefficient, the measures, and per sweep its range, its sine, and for a
+held one its coefficients). A unit the measures shown share goes on the y
+axis, and a lone measure's name with it; the traces are then named by the
+measure, or by what their sweep ran at (`spectrum-run.js` `sweepLabels`).
+
+The sweep's controls are one editor (`sweepEditor`) in two places: the
+Sweep view, on `Circuit#windows.sweep`, and a sweep plot's **Plot
+settings…**, on that plot's `plot.sweep`, over the plot's own editor.
+There the fields read what the plot last ran; Sweep runs it again -- its
+held sweeps first, at the coefficients they ran at (another coefficient
+drops them), the live one at those now -- its traces filling the plot
+editor as the points come, colored as they were while as many. A field
+changed, Apply sweeps first and applies once the sweep is done; a measure
+the last sweep there measured shows at once. Cancel or Stop leaves the
+plot as it was. The plot and the Sweep view never change each other's
+settings.
 
 A new plot is drawn in black (`style.blackTraces`): its traces in its ink,
 told apart by dash (solid, dashed, dash-dot, dotted, then around again),
@@ -474,17 +488,28 @@ them all alike, each from its own corner; a plot below (or right of)
 another selected one moves on by its growth, so a column of plots keeps its
 spacing.
 
-**Annotate… → Update all plots** redraws every plot on the
-drawing at the coefficients' numbers now, in one undo step: a graph or step
-plot from the traces of the same names (one naming a trace no longer on the
-graph is left as it is), a loop plot at the signal it was broken at, a root
-locus over its coefficient and range (`plot.source`), a swing plot from a
-fresh sweep of the nets it shows, a sweep plot from its sweeps run again in
-turn (the held ones at their coefficients, the live one at those now, the
-same range and sine; the axes, zoom and traces added from files stay). The
-coefficients table, if there, is
-rewritten at the same numbers; a plot from before the table, with the
-numbers under its legend, has them moved to a new table.
+**Annotate… → Update all plots** (in every analysis mode) redraws every
+plot on the drawing at the numbers now, in one undo step; a plot's
+right-click **Update plot** (and the **Update plot** of an analysis plot's
+settings) redraws that one. A graph or step plot is drawn from the traces
+of the same names, a held one by its key; a loop plot at the signal it was
+broken at; a root locus over its coefficient and range (`plot.source`); a
+swing plot from a fresh sweep of the nets it shows (no Derive needed); a small-signal or
+switched-cap Bode plot from its analysis's traces at its Values
+(`registerPlotUpdater`, by the figure's source); a sweep plot from its
+sweeps run again in turn (the held ones at their coefficients, the live one
+at those now, the same range and sine; the axes, zoom and traces added from
+files stay; a y axis of the old `dB` takes its new name). Each keeps its
+colors and limits. Sweeps run in the run window (`optimize-window.js`): the
+plot as its points come, a progress bar across every sweep, "Plot 1 of 2:
+Sweep 2 of 3, point 3 of 11", and Stop, which leaves the sweep plots not
+yet done as they were; the plots done are written. A plot that cannot be
+drawn again is left as it is and the log says why: "derive the diagram
+first (Shift+S)" with nothing derived, its traces no longer on the graph,
+the coefficient or source a sweep ran gone. One update runs at a time.
+Update all plots rewrites the coefficients table, if there, at the same
+numbers; a plot from before the table, with the numbers under its legend,
+has them moved to a new table.
 
 Annotating a graph or a swing again updates the plot of that kind already
 on the drawing -- the selected one, else the only one -- keeping its place,

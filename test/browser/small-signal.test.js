@@ -411,6 +411,11 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     // The sliders follow the plots: wait for them, then for one the pointer
     // can reach (the log covers the window's foot).
     await h.until(`${sliders}.length > 0`, 10000);
+    // An error's log peeks open over the window's foot, and stays while the
+    // pointer rests on the footer: dismissed (as Escape or a click away does),
+    // the sliders are in reach.
+    await h.evaluate(`${h.module('status-bar-ui.js')}.then((m) => m.applyLogDrawerEvent({ type: 'dismiss' }))`);
+    await h.until(`document.getElementById('log-drawer').hidden`);
     const reach = `(() => { ${sliders}.at(-1).scrollIntoView({ block: 'center' }); for (const [i, input] of ${sliders}.entries()) { const r = input.getBoundingClientRect(); const x = r.x + r.width / 2, y = r.y + r.height / 2; if (document.elementFromPoint(x, y) === input) return { i, x, y }; } return null; })()`;
     let hit = null;
     try {
@@ -473,5 +478,36 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     await derive();
     await h.key('W', { shiftKey: true });
     await h.until(`/Voltage gain is zero/.test(document.querySelector('.bode-plots-empty')?.textContent || '') && !document.querySelector('.bode-plots-empty').hidden`);
+  });
+  test('a Bode plot on the drawing updates at the values now from its right-click Update plot, its colors kept; before a Derive it says to derive first', async () => {
+    await h.open('loaded');
+    if (await h.evaluate(`document.getElementById('analysis-dialog').hidden`)) await h.click('#btn-analysis');
+    await h.until(`!document.getElementById('analysis-dialog').hidden`);
+    await derive();
+    await h.until(`!!document.querySelector('.plots-window .bode-plots-graph svg path')`, 60000);
+    await annotate('Bode magnitude');
+    const find = '(l) => l.plot?.kind === \'response\' && l.figure?.source === \'small-signal\'';
+    const plot = `${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].find(${find})?.plot)`;
+    await h.until(`${plot}.then((p) => !!p)`);
+    const before = await h.evaluate(`${plot}.then((p) => JSON.stringify(p.traces))`);
+    // A recolored curve keeps its color through the update.
+    await h.evaluate(`${h.module('editor-state.js')}.then((m) => { const b = [...m.editor.circuit.labels.values()].find(${find}); b.plot.traces[0].color = '#7a3fd1'; })`);
+    await h.evaluate(`(() => { const f = document.querySelector('#analysis-values .bode-value[data-name="CL"] .signal-flow-coefficient-value'); f.value = '8'; f.dispatchEvent(new Event('input', { bubbles: true })); f.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    const update = () => h.evaluate(`Promise.all([${h.module('editor-state.js')}, ${h.module('canvas-view.js')}, ${h.module('context-menu.js')}]).then(([s, v, menu]) => {
+      const b = [...s.editor.circuit.labels.values()].find(${find}).bbox();
+      const p = v.worldToClient(b.x + b.w / 2, b.y + 2);
+      menu.openContextMenuAt(p.x, p.y);
+      [...document.querySelectorAll('.component-context-menu:not([hidden]) button')].find((x) => x.textContent.startsWith('Update plot')).click();
+    })`);
+    await update();
+    await h.until(`/updated the magnitude plot/.test(${JSON.stringify('')} + [...document.querySelectorAll('#log > *')].map((n) => n.textContent).join(' '))`);
+    const after = await h.evaluate(`${plot}.then((p) => p.traces)`);
+    assert.notEqual(JSON.stringify(after.map((t) => t.points)), JSON.stringify(JSON.parse(before).map((t) => t.points)));
+    assert.equal(after[0].color, '#7a3fd1');
+    // The same drawing loaded again: nothing derived.
+    await h.evaluate(`${h.module('editor-state.js')}.then((m) => window.__load(m.editor.circuit.toJSON()))`);
+    await h.settle();
+    await update();
+    await h.until(`/derive the circuit first/.test([...document.querySelectorAll('#log > *')].map((n) => n.textContent).join(' '))`);
   });
 });

@@ -1440,7 +1440,7 @@ const MAX_SWEEP_RUNS = 8;
 
 /**
  * A data plot annotated from the signal-flow Sweep (sweep-plot.js): what
- * Update all plots runs again. `{ name, measures: [key], count, runs: [{
+ * Update plot runs again and its settings edit. `{ name, measures: [key], count, runs: [{
  * from, to, points, log, input, amplitude, frequency, samples, values? }] }`
  * -- the coefficient swept, the measures shown, how many of the plot's
  * traces are the sweep's (the first ones), and each sweep drawn, the held

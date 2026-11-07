@@ -21,7 +21,7 @@ import { MUTED_TRACE_COLOR, TRACE_COLORS, ditherSymbols, outputChoices, analyzeS
 import { symbolText } from '../core/analysis/present.js';
 import { linkMakesCycle, parseCoefficientLink, parseCoefficientNumber, parseCoefficientVectors, resolveCoefficients } from '../core/analysis/coefficient-links.js';
 import { PER_DECADE, indexE24, stepE24 } from './e-series.js';
-import { locusSpec, responseSpec, stepSpec, swingSpec } from '../core/plot-spec.js';
+import { locusSpec, plotSpec, responseSpec, stepSpec, swingSpec } from '../core/plot-spec.js';
 import { createPlotView, linkPlots } from './plot-view.js';
 import { arriving } from './motion.js';
 import { installTimePlot, runTime, timeChanged, timePlotUpdate, timeSection } from './time-plot.js';
@@ -52,7 +52,8 @@ import { netPicker } from './net-picker.js';
 import { deriving } from './analysis-busy.js';
 import { startWorker } from './worker-thread.js';
 import { differing, differingNames, heldName, heldNumber, holdButton, holdKey, liveName, saveHolds, savedHolds, traceLegendRow } from './trace-hold.js';
-import { installSweepPlot, showSweep, sweepPlotUpdate, sweepSection } from './sweep-plot.js';
+import { installSweepPlot, progressText, showSweep, sweepPlotPoints, sweepPlotProblem, sweepPlotUpdate, sweepSection } from './sweep-plot.js';
+import { openRunWindow } from './optimize-window.js';
 import { simulatedSpectrum } from '../core/analysis/spectrum-run.js';
 
 // Devices the small-signal analysis models: a drawing with any opens in it.
@@ -595,8 +596,13 @@ function runSwing() {
   return new Promise((resolve) => sweepSwing(resolve));
 }
 
+// Why the last swing has no values (its simulation's error), or null.
+let swingProblem = null;
+
 function sweepSwing(done) {
   const status = plots.querySelector('.signal-flow-swing-status');
+  // Before a Derive the source list is not filled yet: the swing needs none.
+  if (!plots.querySelector('.signal-flow-swing-source').value) fillSwingSources(signalFlowGraph(editor.circuit).sources);
   const numbers = resolved();
   const values = Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, numbers[name] ?? 1]));
   const sim = prepareSimulation(editor.circuit, {
@@ -607,6 +613,7 @@ function sweepSwing(done) {
     frequency: swingFrequency(),
   });
   const run = ++swingRun;
+  swingProblem = sim.ok ? null : sim.error;
   if (!sim.ok) {
     swing = null;
     status.textContent = sim.error;
@@ -1542,67 +1549,181 @@ function annotateCoefficients() {
   logLine(updated ? 'updated the coefficients table' : 'annotated the coefficients table');
 }
 
+/** The other analyses' plot updates, by their figures' source: each
+ *  `(plot) => { plot, shown } | { error }`, at the numbers now. */
+const plotUpdaters = new Map();
+
+/** `update(plot)`: a plot of analysis `source` at the numbers now --
+ *  `{ plot, shown }`, or `{ error }` (why not: "derive first"). */
+export function registerPlotUpdater(source, update) {
+  plotUpdaters.set(source, update);
+}
+
 /**
- * Every plot on the drawing redrawn at the coefficients' numbers now, as
- * one edit: each graph and step plot from the traces of the same names
- * (a plot naming one no longer on the graph is left as it is), a loop
- * plot at its signal, a root locus over its coefficient and range, a swing
- * plot from a fresh sweep of the nets it shows, a sweep plot from its
- * sweeps run again (sweep-plot.js sweepPlotUpdate).
+ * A response plot's curves among `current` (traces named as the graph
+ * names them, `{ label, held?, ... }`): a held one by its key, the others by
+ * name (past its comma, a name is its numbers then, which may have moved).
+ * Each in the color it has on the plot; null when one is no longer there.
  */
-async function updatePlots() {
-  const circuit = editor.circuit;
-  // A data plot is its file's, never the analysis's; but a sweep's.
-  const boxes = [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.plot && (label.plot.kind !== 'data' || label.plot.sweep));
-  if (!boxes.length) { logLine('No plots on the drawing to update.'); return; }
-  if (flow().spectrum?.on) runSpectrum();
-  if (boxes.some((box) => box.plot.kind === 'swing')) {
-    logLine('Updating plots: sweeping the swing...');
-    await runSwing();
-  }
-  if (circuit !== editor.circuit) return;
-  // Each sweep plot's sweeps, one after another (each point a simulation).
-  const swept = new Map();
-  const sweeps = boxes.filter((box) => box.plot.kind === 'data');
-  for (const [i, box] of sweeps.entries()) {
-    logLine(`Updating plots: running sweep ${i + 1} of ${sweeps.length}...`);
-    const update = await sweepPlotUpdate(box.plot, () => circuit !== editor.circuit);
-    if (circuit !== editor.circuit) return;
-    if (update) swept.set(box, update);
-  }
-  const updates = [];
-  const skipped = [];
-  for (const box of boxes) {
-    const update = box.plot.kind === 'data' ? (swept.get(box) || null) : plotUpdate(box.plot);
-    if (update) updates.push({ box, ...update });
-    else skipped.push(box);
-  }
-  const written = [];
-  let table = null;
-  commit(() => {
-    // A plot from before the coefficients table had their numbers under
-    // its legend (lines of "name = value"; a trace's name never is one):
-    // they move to the table.
-    const hadValues = updates.some((update) => legendOf(update.box).some((label) => /\s=\s/.test(String(label.text))));
-    // Each keeps the limits it was annotated at.
-    for (const update of updates) {
-      if (update.traces) {
-        // A sweep plot keeps its axes too; its sweep's entries are TeX.
-        const entries = replaceDataPlotTraces(circuit, update.box, { traces: update.traces, ...(update.y ? { y: update.y } : {}) }, { math: update.box.plot.sweep.count });
-        if (entries.length) written.push({ ids: entries.map((label) => label.id), left: Math.min(...entries.map((l) => l.bbox().x)), top: Math.min(...entries.map((l) => l.bbox().y)) });
-        continue;
-      }
-      written.push(writePlot(update.box, update.box.plot.view ? { ...update.plot, view: update.box.plot.view } : update.plot, update.shown));
-    }
-    // The coefficients table, at the same numbers.
-    const rows = coefficientRows();
-    if (rows.length) table = writeMathFigure({ ...COEFFICIENTS, text: rows.join('\n'), create: hadValues });
+export function matchPlotTraces(plot, current) {
+  const stored = (plot.traces || []).filter((trace) => !trace.background);
+  const base = (label) => String(label).split(',\\ ')[0];
+  const matched = stored.map((old) => {
+    const found = old.hold ? current.find((t) => t.held?.key === old.hold)
+      : current.find((t) => t.label === old.label) || current.find((t) => !t.held && base(t.label) === base(old.label));
+    return found ? { ...found, color: old.color } : null;
   });
+  return matched.length && matched.every(Boolean) ? matched : null;
+}
+
+/** Whether Update plot draws `label` again: an analysis's plot, or a
+ *  sweep's; never a data plot of a file. */
+export function updatablePlot(label) {
+  return label?.kind === 'box' && !!label.plot && (label.plot.kind !== 'data' || !!label.plot.sweep);
+}
+
+/** A plot's update that needs no long simulation: `{ plot, shown }` or `{ error }`. */
+function quickUpdate(box) {
+  const source = box.figure?.source;
+  const other = source && source !== 'signal-flow' ? plotUpdaters.get(source) : null;
+  if (other) return other(box.plot);
+  if (!latest?.ok && ['response', 'step', 'locus'].includes(box.plot.kind)) return { error: 'derive the diagram first (Shift+S)' };
+  return plotUpdate(box.plot) || { error: box.plot.kind === 'swing' ? (swingProblem ? `the swing does not simulate: ${swingProblem}` : 'the swing gives no values') : box.plot.kind === 'wave' ? 'the diagram does not simulate' : 'its traces are no longer on the graph' };
+}
+
+/** The update running (`{ stop() }`), one at a time. */
+let updating = null;
+
+/** What Update all plots (and a plot's Update plot) calls each plot. */
+const plotKind = (box) => (box.plot.role === 'loop' ? 'loop' : box.plot.kind === 'response' ? (box.plot.quantity === 'phase' ? 'phase' : 'magnitude') : box.plot.kind === 'data' ? 'sweep' : box.plot.kind);
+
+/** Not a figure of its own: every plot on the drawing at the numbers now. */
+const updateAllItem = () => ({ label: 'Update all plots', identity: null, available: [...editor.circuit.labels.values()].some(updatablePlot), run: () => updatePlots() });
+
+/** One plot on the drawing at the numbers now (its right-click Update plot,
+ *  its settings'): a sweep's run again, with its progress. */
+export function updatePlot(box) {
+  return updatePlots([box], { table: false });
+}
+
+/**
+ * The plots `boxes` (by default every one Update plot draws again) at the
+ * numbers now, as one edit, each keeping its place, size, colors, zoom,
+ * and the traces added from files: a graph or step plot from the traces of
+ * the same names, a loop plot at its signal, a root locus over its
+ * coefficient and range, a swing plot from a fresh sweep of the nets it
+ * shows, another analysis's plot by its updater (registerPlotUpdater), a
+ * sweep plot from its sweeps run again in turn (sweep-plot.js
+ * sweepPlotUpdate), their progress in a run window with Stop. A plot that
+ * cannot be drawn again is left as it was, the log saying why (derive
+ * first). With `table` the coefficients table follows too.
+ */
+async function updatePlots(boxes = null, { table = true } = {}) {
+  const circuit = editor.circuit;
+  boxes = (boxes || [...circuit.labels.values()]).filter(updatablePlot);
+  if (!boxes.length) { logLine('No plots on the drawing to update.'); return; }
+  if (updating) { logLine('Plots are updating; Stop that first.', 'error'); return; }
+  const job = { stopped: false, current: null, stop() { this.stopped = true; this.current?.stop(); } };
+  updating = job;
+  try {
+    if (flow().spectrum?.on) runSpectrum();
+    if (boxes.some((box) => box.plot.kind === 'swing')) {
+      logLine('Updating plots: sweeping the swing...');
+      await runSwing();
+    }
+    if (circuit !== editor.circuit) return;
+    const results = new Map();
+    const sweeps = boxes.filter((box) => box.plot.kind === 'data');
+    if (sweeps.length) await runPlotSweeps(sweeps, results, job, circuit);
+    if (circuit !== editor.circuit) return;
+    for (const box of boxes) if (!results.has(box)) results.set(box, quickUpdate(box));
+    writeUpdates(boxes, results, { table });
+  } finally {
+    if (updating === job) updating = null;
+  }
+}
+
+/** Each sweep plot of `sweeps` run again in turn, into `results` (by box:
+ *  `{ traces, y?, count }`, `{ error }`, or `{ stopped }`): the run window
+ *  shows each as its points come, the progress across all of them, and Stop. */
+async function runPlotSweeps(sweeps, results, job, circuit) {
+  const totals = sweeps.map((box) => (sweepPlotProblem(box.plot) ? 0 : sweepPlotPoints(box.plot)));
+  const all = totals.reduce((a, b) => a + b, 0);
+  let shown = null;
+  const win = openRunWindow({
+    title: sweeps.length > 1 ? 'Update plots' : 'Update plot',
+    legend: '',
+    plotAt: () => shown,
+    onStop: () => job.stop(),
+  });
+  let before = 0;
+  for (const [i, box] of sweeps.entries()) {
+    if (job.stopped) { results.set(box, { stopped: true }); continue; }
+    const head = sweeps.length > 1 ? `Plot ${i + 1} of ${sweeps.length}: ` : '';
+    win.say(`${head}${progressText(box.plot.sweep.runs, 0)}`);
+    shown = plotSpec(box.plot);
+    win.best(null);
+    const run = sweepPlotUpdate(box.plot, {
+      onPoint: (progress) => {
+        win.progress(all ? (before + progress.done) / all : 1);
+        if (progress.done < progress.total) win.say(`${head}${progressText(box.plot.sweep.runs, progress.done)}`);
+        if (progress.plot) { shown = plotSpec(progress.plot); win.best(null); }
+      },
+    });
+    job.current = run;
+    const outcome = await run.done;
+    job.current = null;
+    if (circuit !== editor.circuit) { win.done('The design changed: stopped.'); return; }
+    results.set(box, outcome);
+    before += totals[i];
+  }
+  const failed = sweeps.filter((box) => results.get(box)?.error);
+  const done = sweeps.filter((box) => results.get(box)?.traces).length;
+  win.done(job.stopped
+    ? `Stopped: ${done} of ${sweeps.length} sweep plot${sweeps.length === 1 ? '' : 's'} updated.`
+    : failed.length ? `Left ${failed.length === 1 ? 'one' : failed.length} as ${failed.length === 1 ? 'it was' : 'they were'}: ${results.get(failed[0]).error}.` : `Updated ${done === 1 ? 'the sweep plot' : `${done} sweep plots`}.`, !!failed.length && !done);
+}
+
+/** Write the plots' updates (`results`, by box) in one undo step, and say
+ *  in the log what was updated and what was left, and why. */
+function writeUpdates(boxes, results, { table }) {
+  const circuit = editor.circuit;
+  const updates = boxes.filter((box) => { const r = results.get(box); return r && (r.traces || r.plot); });
+  const skipped = boxes.filter((box) => !updates.includes(box));
+  const written = [];
+  let coefficients = null;
+  if (updates.length || table) {
+    commit(() => {
+      // A plot from before the coefficients table had their numbers under
+      // its legend (lines of "name = value"; a trace's name never is one):
+      // they move to the table.
+      const hadValues = updates.some((box) => legendOf(box).some((label) => /\s=\s/.test(String(label.text))));
+      // Each keeps the limits it was annotated at.
+      for (const box of updates) {
+        const update = results.get(box);
+        if (update.traces) {
+          // A sweep plot keeps its axes too; its sweep's entries are TeX.
+          const entries = replaceDataPlotTraces(circuit, box, { traces: update.traces, ...(update.y ? { y: update.y } : {}) }, { math: box.plot.sweep.count });
+          if (entries.length) written.push({ ids: entries.map((label) => label.id), left: Math.min(...entries.map((l) => l.bbox().x)), top: Math.min(...entries.map((l) => l.bbox().y)) });
+          continue;
+        }
+        written.push(writePlot(box, box.plot.view ? { ...update.plot, view: box.plot.view } : update.plot, update.shown));
+      }
+      // The coefficients table, at the same numbers.
+      const rows = table ? coefficientRows() : [];
+      if (rows.length) coefficients = writeMathFigure({ ...COEFFICIENTS, text: rows.join('\n'), create: hadValues });
+    });
+  }
   for (const item of written) alignLabelColumn(item.ids, { left: item.left, top: item.top, gap: 0 });
-  table?.settle();
+  coefficients?.settle();
   render();
-  const kinds = (list) => list.map((box) => (box.plot.role === 'loop' ? 'loop' : box.plot.kind === 'response' ? (box.plot.quantity === 'phase' ? 'phase' : 'magnitude') : box.plot.kind === 'data' ? 'sweep' : box.plot.kind));
-  logLine(`updated ${updates.length} plot${updates.length === 1 ? '' : 's'}${updates.length ? ` (${kinds(updates.map((u) => u.box)).join(', ')})` : ''}${skipped.length ? `; left ${skipped.length} as ${skipped.length === 1 ? 'it was' : 'they were'} (${kinds(skipped).join(', ')}: its traces are no longer on the graph, or derive or sweep first)` : ''}`, skipped.length && !updates.length ? 'error' : undefined);
+  const reasons = [...new Set(skipped.map((box) => (results.get(box)?.stopped ? 'stopped' : results.get(box)?.error || 'nothing to draw it from')))];
+  if (boxes.length === 1) {
+    logLine(updates.length ? `updated the ${plotKind(boxes[0])} plot` : `left the ${plotKind(boxes[0])} plot as it was: ${reasons[0]}`, updates.length ? undefined : 'error');
+    return;
+  }
+  const kinds = (list) => list.map(plotKind).join(', ');
+  logLine(`updated ${updates.length} plot${updates.length === 1 ? '' : 's'}${updates.length ? ` (${kinds(updates)})` : ''}${skipped.length ? `; left ${skipped.length} as ${skipped.length === 1 ? 'it was' : 'they were'} (${kinds(skipped)}: ${reasons.join('; ')})` : ''}`, skipped.length && !updates.length ? 'error' : undefined);
 }
 
 /** A plot's new data at the numbers now: `{ plot, shown }`, or null. */
@@ -1852,9 +1973,10 @@ export function installSignalFlowUi() {
     { label: 'Equations', identity: { kind: 'equations', source: 'signal-flow' }, available: !!latest?.ok, run: annotate },
     { label: 'Graph', identity: { kind: 'plot', source: 'signal-flow' }, available: !!graphPlot(shownTraces()), run: annotateGraph },
     { label: 'Coefficients', identity: { kind: 'coefficients', source: 'signal-flow' }, available: tableSymbols().length > 0, run: annotateCoefficients },
-    // Not a figure of its own: every plot on the drawing at the numbers now.
-    { label: 'Update all plots', identity: null, available: [...editor.circuit.labels.values()].some((label) => label.plot), run: () => updatePlots() },
+    updateAllItem(),
   ]);
+  // Every analysis's plots, from whichever mode the window is in.
+  for (const other of ['circuit', 'switched-cap']) registerAnnotations(other, () => [updateAllItem()]);
   actions = [
     el('button', { type: 'button', class: 'primary-action signal-flow-derive', 'data-icon': 'check', text: 'Derive', title: 'Derive (Enter)', onclick: derive }),
   ];

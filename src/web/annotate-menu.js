@@ -12,7 +12,8 @@ import { appendContextItem, openMenuAt } from './context-menu.js';
 import { editor } from './editor-state.js';
 
 /** mode -> [() => items]; an item is { label, identity: { kind, source,
- *  key? }, available, run }. */
+ *  key? }, available, run }; one of no identity (Update all plots) is no
+ *  figure, and comes after the figures. */
 const providers = new Map();
 let currentMode = () => 'circuit';
 
@@ -29,7 +30,8 @@ export function setAnnotationMode(getMode) {
 
 /** The items the window's mode offers now. */
 export function annotationItems(mode = currentMode()) {
-  return (providers.get(mode) || []).flatMap((provider) => provider());
+  const items = (providers.get(mode) || []).flatMap((provider) => provider());
+  return [...items.filter((item) => item.identity), ...items.filter((item) => !item.identity)];
 }
 
 /** Whether a figure of that identity is on the drawing. */

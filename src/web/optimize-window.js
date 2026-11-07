@@ -22,10 +22,11 @@ let open = null;
  * Open the run window. `title` names the run ("Optimizer", "Rounding");
  * `plotAt({ start, best })` returns the plot's spec (plot-spec.js) for the numbers
  * given -- role 'start' or 'best' -- or null; `onStop` stops the run;
- * `onClose` is told when the window closes. Returns `{ say(text, error),
+ * `onClose` is told when the window closes; `legend` says what the plot
+ * shows (blank: nothing). Returns `{ say(text, error),
  * progress(fraction), best(values), done(text, error), isOpen() }`.
  */
-export function openRunWindow({ title, plotAt, onStop, onClose = () => {} }) {
+export function openRunWindow({ title, plotAt, onStop, onClose = () => {}, legend: legendText = 'Gray: where it started. Color: the best so far.' }) {
   open?.dispose();
   let finished = false;
   let startValues = null;
@@ -34,7 +35,7 @@ export function openRunWindow({ title, plotAt, onStop, onClose = () => {} }) {
   // The plot takes whatever room the window has: resize it for a larger one.
   const plotView = createPlotView({ height: 220, fill: true });
   const plot = el('div', { class: 'run-window-plot' }, [plotView.el]);
-  const legend = el('p', { class: 'field-hint run-window-legend', text: 'Gray: where it started. Color: the best so far.' });
+  const legend = el('p', { class: 'field-hint run-window-legend', text: legendText });
   // The dots beside the title while the search runs.
   const busy = busyIndicator({ label: 'Running' });
   busy.set('run', true);
@@ -70,7 +71,7 @@ export function openRunWindow({ title, plotAt, onStop, onClose = () => {} }) {
     const spec = plotAt({ start: startValues, best: values });
     plotView.set(spec);
     plot.hidden = !spec;
-    legend.hidden = !spec;
+    legend.hidden = !spec || !legendText;
   };
   return {
     start(values) { startValues = values; draw(null); },

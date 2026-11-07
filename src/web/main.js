@@ -2519,6 +2519,16 @@ function syncShownDocument() {
   for (const handler of documentShownHandlers) handler();
 }
 
+// What follows the drawing after each render: afterRender.
+const renderWatchers = new Set();
+
+/** Run `watcher()` after every render (a floating window that follows the
+ *  drawing: its plot undone or deleted). Returns a function that stops it. */
+export function afterRender(watcher) {
+  renderWatchers.add(watcher);
+  return () => renderWatchers.delete(watcher);
+}
+
 export function render() {
   syncShownDocument();
   syncDocumentSurface();
@@ -2560,6 +2570,7 @@ export function render() {
   renderStatus();
   renderSaveState();
   updateInsertMenu();
+  for (const watcher of renderWatchers) watcher();
   if (window.__app) {
     window.__app.renders.push({ t: performance.now(), view: { ...view } });
     if (window.__app.renders.length > 500) window.__app.renders.shift();
