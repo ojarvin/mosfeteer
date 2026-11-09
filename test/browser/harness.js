@@ -116,7 +116,7 @@ function freePort() {
 /** Start a server on `docs` ({ name: state }) and a browser on the editor;
  *  `folder` names the workspace folder (its name shows in the Atlas);
  *  `scale` is the display's device pixels per CSS pixel. */
-export async function start({ docs = {}, width = 1400, height = 900, folder = 'ws', scale = 1 } = {}) {
+export async function start({ docs = {}, width = 1400, height = 900, folder = 'ws', scale = 1, gpu = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'mosfeteer-browser-'));
   const workspace = join(root, folder);
   await mkdir(workspace, { recursive: true });
@@ -260,6 +260,8 @@ export async function start({ docs = {}, width = 1400, height = 900, folder = 'w
     // Motion reduced: animations and view transitions finish at once.
     await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
     await send('Page.addScriptToEvaluateOnNewDocument', { source: TIMER_GATE });
+    // WebGL even on a software renderer, which the app otherwise declines.
+    if (gpu) await send('Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('mosfeteer.gpu', 'on');` });
     await send('Page.navigate', { url: `http://127.0.0.1:${port}/` });
     await until(`typeof window.__circuit === 'function' && document.readyState === 'complete' && !document.getElementById('startup-cover')`, STARTUP_MS);
     await evaluate(`(() => { const a = document.getElementById('atlas'); if (a && !a.hidden) document.getElementById('atlas-close')?.click(); })()`);

@@ -22,6 +22,26 @@ At startup, a dark cover stays up while the drawings load, then fades as the
 Atlas zooms in from afar to fit the workspace. Later visits fly the open
 design back to the desk, as below. Reduced-motion preferences skip the startup animation.
 
+The desk is drawn with WebGL2 (`src/web/atlas-paint-gpu.js`, shapes and beams
+in `src/web/gpu.js`) or on a 2D canvas (`src/web/atlas-paint-2d.js`), behind
+the same drawing operations, so `draw` and its helpers have one path. The
+GPU's designs are mipmapped textures drawn from images three times their size
+on screen, sampled four times a pixel, at most 12 MB uploaded a frame; each
+smaller level keeps part of its strongest ink, so thin lines survive zooming out; the grid,
+shadows, glows, and beams are shaders; captions are small cached textures.
+A browser with no real GPU (software renderers included) keeps the 2D canvas,
+and a lost context falls back to it until the context returns.
+`localStorage['mosfeteer.gpu']` is `off` to stay on the 2D canvas, or `on` to
+accept a software renderer (`gpu: true` in the browser test harness).
+
+On the GPU the desk's transitions carry a few passing effects, each a curve in
+`atlas-layout.js`, all skipped with reduced motion and absent on the 2D canvas
+unless noted: the desk goes out of focus while a design is near the glass; a
+pick's beams grow out from it and send one pulse along themselves, lower levels
+a moment later; a light goes once right round the pick's rim; and a design's ink comes up from its middle as
+it is revealed (on the 2D canvas, a fade). Shadows, glows, and beams are
+dithered against banding. Nothing moves on a desk at rest.
+
 `Shift+Backspace` (or `:atlas`; `Shift+Esc` where the browser passes it
 on, which Chromium does not) steps back from the drawing to the whole
 workspace: every design at its real size on one continuous sheet of the
@@ -32,8 +52,7 @@ The screen is a pane of glass with the desk lying behind it (`drawFlight`).
 The editor is a design brought right up to the glass. Leaving it, the
 design flies back, away from the eye, on its page -- the editor's paper and
 grid, narrowing into the design's card as it goes -- and lands on its place
-on the desk picked, floating, with a small bounce and a ripple of light
-across the desk. Opening a design carries its card on up to the glass,
+on the desk picked, floating, with a small bounce. Opening a design carries its card on up to the glass,
 exactly where the editor shows it. The path is a straight line in space
 seen in perspective (`throughDepth` in `src/web/atlas-layout.js`), so a
 design shrinks quickly as it leaves the glass and grows quickly as it

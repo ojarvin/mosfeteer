@@ -62,6 +62,11 @@ test('a beam arches over the top, either way and straight up, the same at both e
     const width = (i) => Math.hypot(outline[i].x - outline[outline.length - 1 - i].x, outline[i].y - outline[outline.length - 1 - i].y);
     assert.ok(Math.abs(width(0) - 2) < 0.2 && Math.abs(width(8) - 2) < 0.2);
     assert.ok(Math.abs(width(4) - 20) < 0.2);
+    // The spine a shader draws: the center line, its normals, its half widths.
+    assert.equal(shape.spine.length, 9);
+    assert.deepEqual({ x: shape.spine[0].x, y: shape.spine[0].y }, from);
+    assert.ok(Math.abs(shape.spine[4].half - 10) < 0.01);
+    assert.ok(shape.spine.every((p) => Math.abs(Math.hypot(p.nx, p.ny) - 1) < 1e-9));
   }
   // One too short to draw is left out.
   assert.equal(beamShape({ x: 0, y: 0 }, { x: 10, y: 0 }, { narrow: 2, wide: 20 }), null);

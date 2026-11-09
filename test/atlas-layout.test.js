@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, MEDIUM_PX, SMALL_PX, carryDeskPlace, floatClear, layoutAtlas, neighborTile, rectsIntersect, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing, layoutAtlasShaped, extraShapeTries } from '../src/web/atlas-layout.js';
 import { GRID } from '../src/core/grid.js';
+import { BEAM_GROW_MS, BEAM_PULSE_MS, BEAM_STAGGER_MS, FOCUS_LEVELS, RIM_SWEEP_MS, beamGrowth, deskBlur, rimSweep } from '../src/web/atlas-layout.js';
 
 const items = [
   { id: 'a', w: 1200, h: 1800 },
@@ -281,4 +282,32 @@ test('a fresh packing holds the shape it is shown in, kinship notwithstanding', 
   // a large workspace tries fewer shapes.
   assert.deepEqual(layoutAtlasShaped(items, { aspect: 1, related }), shaped);
   assert.deepEqual([40, 80, 120, 200].map(extraShapeTries), [3, 3, 1, 0]);
+});
+
+test('the desk goes out of focus as a design nears the glass', () => {
+  assert.equal(deskBlur(0), 0);
+  assert.equal(deskBlur(1), FOCUS_LEVELS);
+  assert.ok(deskBlur(0.25) < deskBlur(0.75));
+  assert.equal(deskBlur(2), FOCUS_LEVELS);
+});
+
+test('a beam grows, sends one pulse along itself, and then holds still', () => {
+  assert.deepEqual(beamGrowth(0), { reach: 0, pulse: -1, moving: true });
+  assert.equal(beamGrowth(BEAM_GROW_MS).reach, 1);
+  const during = beamGrowth(BEAM_GROW_MS * 0.4 + BEAM_PULSE_MS / 2);
+  assert.ok(during.pulse > 0 && during.pulse < 1 && during.moving);
+  assert.deepEqual(beamGrowth(BEAM_GROW_MS * 0.4 + BEAM_PULSE_MS), { reach: 1, pulse: -1, moving: false });
+  // Further down the hierarchy it starts later.
+  assert.equal(beamGrowth(BEAM_STAGGER_MS, 2).reach, 0);
+});
+
+test('the light on a rim goes right round, at full strength the whole way, and is gone', () => {
+  for (const share of [0.25, 0.5, 0.75]) {
+    const { angle, strength } = rimSweep(RIM_SWEEP_MS * share);
+    assert.ok(Math.abs(strength - 1) < 1e-9);
+    assert.ok(Math.abs(angle - (-Math.PI / 2 + 2 * Math.PI * share)) < 1e-9);
+  }
+  assert.ok(Math.abs(rimSweep(RIM_SWEEP_MS * 0.9999).angle - 1.5 * Math.PI) < 0.01);
+  assert.equal(rimSweep(RIM_SWEEP_MS), null);
+  assert.equal(rimSweep(-1), null);
 });

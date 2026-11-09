@@ -66,9 +66,10 @@ export function netBeams(circuit, ids, sourceId, from) {
 /**
  * A beam's outline from `from` to `to`: a band arched over the top (above
  * both ends, whichever way it runs), `narrow` at either end and fanning out
- * to `wide` in its middle, the same both ways. Returns `{ outline, core }`,
- * an SVG path for the band and one for its center line, or null for a beam
- * too short to draw.
+ * to `wide` in its middle, the same both ways. Returns `{ outline, core,
+ * spine }`: an SVG path for the band, one for its center line, and the center
+ * line's points with their normals and half widths; or null for a beam too
+ * short to draw.
  */
 export function beamShape(from, to, { narrow, wide, steps = 32 }) {
   const dx = to.x - from.x;
@@ -100,6 +101,7 @@ export function beamShape(from, to, { narrow, wide, steps = 32 }) {
   const left = [];
   const right = [];
   const center = [];
+  const spine = [];
   for (let i = 0; i <= steps; i++) {
     const t = i / steps;
     const p = at(t);
@@ -109,8 +111,9 @@ export function beamShape(from, to, { narrow, wide, steps = 32 }) {
     left.push({ x: p.x - (d.y / len) * half, y: p.y + (d.x / len) * half });
     right.push({ x: p.x + (d.y / len) * half, y: p.y - (d.x / len) * half });
     center.push(p);
+    spine.push({ x: p.x, y: p.y, nx: d.y / len, ny: -d.x / len, half });
   }
   const f = (v) => String(Math.round(v * 10) / 10);
   const line = (points) => points.map((p, i) => `${i ? 'L' : 'M'} ${f(p.x)} ${f(p.y)}`).join(' ');
-  return { outline: `${line([...left, ...right.reverse()])} Z`, core: line(center) };
+  return { outline: `${line([...left, ...right.reverse()])} Z`, core: line(center), spine };
 }

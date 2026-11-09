@@ -132,7 +132,9 @@ VCM on it, a beam arched over the top runs from the cursor (snapped to the
 grid; a supply, ground, or VCM's own terminal) to each other physical net
 its name virtually connects it to, landing on the terminal of a supply,
 ground, or VCM there, else on that net's nearest wire (`src/core/net-beams.js`,
-`src/web/net-beams.js`). The beams show nothing during a drag or a
+`src/web/net-beams.js`). A shader draws them over the drawing (`src/web/gpu.js`,
+the one the Atlas's beams use), growing out from the cursor with one pulse of
+light, or, without a GPU, an SVG layer. The beams show nothing during a drag or a
 side-panel hover.
 
 The symmetry axis (`k`, or `:symmetry-axis [vertical|horizontal|off]`;

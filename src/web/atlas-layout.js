@@ -11,6 +11,7 @@
  * packed before keeps its designs where they were (`previous`).
  */
 
+import { easeOut } from './easing.js';
 import { GRID } from '../core/grid.js';
 
 /** Space between neighboring designs, and below each for its caption. */
@@ -405,4 +406,44 @@ export function carryDeskPlace(from, to, storage = globalThis.localStorage) {
       storage.setItem(key, JSON.stringify(slots));
     }
   } catch { /* the design is simply placed again */ }
+}
+
+// ----- the desk's passing effects (each a curve of elapsed time) ------------
+
+const unit = (t) => Math.max(0, Math.min(1, t));
+
+/** How out of focus the desk is (mipmap levels) with a design at `near`
+ *  (0 on the desk, 1 at the glass). */
+export const FOCUS_LEVELS = 2.5;
+export function deskBlur(near) {
+  const t = unit(near);
+  return FOCUS_LEVELS * t * t * (3 - 2 * t);
+}
+
+export const BEAM_GROW_MS = 180;
+export const BEAM_PULSE_MS = 620;
+export const BEAM_STAGGER_MS = 90;
+
+/** A beam `since` ms after it was asked for, `depth` down the hierarchy:
+ *  how far it has grown, where its one pulse is (negative: none), and
+ *  whether it is still moving. */
+export function beamGrowth(since, depth = 1) {
+  const t = since - (depth - 1) * BEAM_STAGGER_MS;
+  const pulseT = (t - BEAM_GROW_MS * 0.4) / BEAM_PULSE_MS;
+  return {
+    reach: easeOut(unit(t / BEAM_GROW_MS)),
+    pulse: pulseT >= 0 && pulseT < 1 ? pulseT * 1.3 - 0.15 : -1,
+    moving: pulseT < 1,
+  };
+}
+
+export const RIM_SWEEP_MS = 760;
+
+/** The light going once right round a picked card's rim, at a steady pace
+ *  from the top back to the top, `since` ms after the pick: its angle and
+ *  strength, or null once it has gone by. */
+export function rimSweep(since) {
+  const t = since / RIM_SWEEP_MS;
+  if (t < 0 || t >= 1) return null;
+  return { angle: -Math.PI / 2 + 2 * Math.PI * t, strength: Math.min(1, t / 0.1, (1 - t) / 0.1) };
 }

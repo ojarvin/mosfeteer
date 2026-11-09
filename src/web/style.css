@@ -5692,7 +5692,8 @@ button.off {
 .net-beam-core-mid { stop-opacity: 0.25; }
 .net-beam-core { fill: none; stroke-width: 1.2; stroke-linecap: round; }
 .net-beam-landing { fill: var(--accent); fill-opacity: 0.45; }
-html.dark .net-beams { mix-blend-mode: screen; }
+.net-beams-gpu { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+html.dark .net-beams, html.dark .net-beams-gpu { mix-blend-mode: screen; }
 html.dark .net-beam-end { stop-opacity: 0.55; }
 html.dark .net-beam-mid { stop-opacity: 0.26; }
 
@@ -6237,6 +6238,20 @@ html.dark .net-beam-mid { stop-opacity: 0.26; }
 
 .atlas-overlays {
   pointer-events: none;
+}
+
+.atlas-zoom-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* The editor's zoom box (main.js, drawRubber). */
+#atlas-zoom-box {
+  fill: var(--svg-faint);
+  stroke: var(--svg-faint);
 }
 
 .atlas-vector {
@@ -7589,6 +7604,7 @@ body.chrome-over .canvas svg {
 body.chrome-over .canvas .editor-overlay,
 body.chrome-over .canvas .snap-layer,
 body.chrome-over .canvas .net-beams,
+body.chrome-over .canvas .net-beams-gpu,
 body.chrome-over .canvas .gesture-overlay {
   visibility: hidden;
 }

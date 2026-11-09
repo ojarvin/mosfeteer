@@ -38061,9 +38061,10 @@ function netBeams(circuit, ids, sourceId, from) {
 /**
  * A beam's outline from `from` to `to`: a band arched over the top (above
  * both ends, whichever way it runs), `narrow` at either end and fanning out
- * to `wide` in its middle, the same both ways. Returns `{ outline, core }`,
- * an SVG path for the band and one for its center line, or null for a beam
- * too short to draw.
+ * to `wide` in its middle, the same both ways. Returns `{ outline, core,
+ * spine }`: an SVG path for the band, one for its center line, and the center
+ * line's points with their normals and half widths; or null for a beam too
+ * short to draw.
  */
 function beamShape(from, to, { narrow, wide, steps = 32 }) {
   const dx = to.x - from.x;
@@ -38095,6 +38096,7 @@ function beamShape(from, to, { narrow, wide, steps = 32 }) {
   const left = [];
   const right = [];
   const center = [];
+  const spine = [];
   for (let i = 0; i <= steps; i++) {
     const t = i / steps;
     const p = at(t);
@@ -38104,10 +38106,11 @@ function beamShape(from, to, { narrow, wide, steps = 32 }) {
     left.push({ x: p.x - (d.y / len) * half, y: p.y + (d.x / len) * half });
     right.push({ x: p.x + (d.y / len) * half, y: p.y - (d.x / len) * half });
     center.push(p);
+    spine.push({ x: p.x, y: p.y, nx: d.y / len, ny: -d.x / len, half });
   }
   const f = (v) => String(Math.round(v * 10) / 10);
   const line = (points) => points.map((p, i) => `${i ? 'L' : 'M'} ${f(p.x)} ${f(p.y)}`).join(' ');
-  return { outline: `${line([...left, ...right.reverse()])} Z`, core: line(center) };
+  return { outline: `${line([...left, ...right.reverse()])} Z`, core: line(center), spine };
 }
 
 };
@@ -54591,6 +54594,10 @@ __exports.layoutAtlasShaped = layoutAtlasShaped;
 __exports.throughDepth = throughDepth;
 __exports.viewShowing = viewShowing;
 __exports.carryDeskPlace = carryDeskPlace;
+__exports.deskBlur = deskBlur;
+__exports.beamGrowth = beamGrowth;
+__exports.rimSweep = rimSweep;
+let easeOut; __bind(() => { ({ easeOut } = __require("src/web/easing.js")); });
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 /**
  * Where the Atlas view puts each design, and how much detail a tile needs.
@@ -54604,6 +54611,7 @@ let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
  * continue the desk's. The same designs always pack the same way, and a desk
  * packed before keeps its designs where they were (`previous`).
  */
+
 
 
 
@@ -55001,6 +55009,46 @@ function carryDeskPlace(from, to, storage = globalThis.localStorage) {
   } catch { /* the design is simply placed again */ }
 }
 
+// ----- the desk's passing effects (each a curve of elapsed time) ------------
+
+const unit = (t) => Math.max(0, Math.min(1, t));
+
+/** How out of focus the desk is (mipmap levels) with a design at `near`
+ *  (0 on the desk, 1 at the glass). */
+const FOCUS_LEVELS = 2.5;
+function deskBlur(near) {
+  const t = unit(near);
+  return FOCUS_LEVELS * t * t * (3 - 2 * t);
+}
+
+const BEAM_GROW_MS = 180;
+const BEAM_PULSE_MS = 620;
+const BEAM_STAGGER_MS = 90;
+
+/** A beam `since` ms after it was asked for, `depth` down the hierarchy:
+ *  how far it has grown, where its one pulse is (negative: none), and
+ *  whether it is still moving. */
+function beamGrowth(since, depth = 1) {
+  const t = since - (depth - 1) * BEAM_STAGGER_MS;
+  const pulseT = (t - BEAM_GROW_MS * 0.4) / BEAM_PULSE_MS;
+  return {
+    reach: easeOut(unit(t / BEAM_GROW_MS)),
+    pulse: pulseT >= 0 && pulseT < 1 ? pulseT * 1.3 - 0.15 : -1,
+    moving: pulseT < 1,
+  };
+}
+
+const RIM_SWEEP_MS = 760;
+
+/** The light going once right round a picked card's rim, at a steady pace
+ *  from the top back to the top, `since` ms after the pick: its angle and
+ *  strength, or null once it has gone by. */
+function rimSweep(since) {
+  const t = since / RIM_SWEEP_MS;
+  if (t < 0 || t >= 1) return null;
+  return { angle: -Math.PI / 2 + 2 * Math.PI * t, strength: Math.min(1, t / 0.1, (1 - t) / 0.1) };
+}
+
 __exports.ATLAS_GAP = ATLAS_GAP;
 __exports.ATLAS_CAPTION = ATLAS_CAPTION;
 __exports.SMALL_PX = SMALL_PX;
@@ -55008,6 +55056,612 @@ __exports.MEDIUM_PX = MEDIUM_PX;
 __exports.LARGE_PX = LARGE_PX;
 __exports.IMAGE_LEVELS = IMAGE_LEVELS;
 __exports.DESK_KEY = DESK_KEY;
+__exports.FOCUS_LEVELS = FOCUS_LEVELS;
+__exports.BEAM_GROW_MS = BEAM_GROW_MS;
+__exports.BEAM_PULSE_MS = BEAM_PULSE_MS;
+__exports.BEAM_STAGGER_MS = BEAM_STAGGER_MS;
+__exports.RIM_SWEEP_MS = RIM_SWEEP_MS;
+};
+
+__modules["src/web/atlas-paint-2d.js"] = function (__require, __exports) {
+__exports.createCanvasDesk = createCanvasDesk;
+let textMeasure; __bind(() => { ({ textMeasure } = __require("src/web/gpu.js")); });
+/**
+ * The Atlas desk on a 2D canvas: the same drawing operations as the WebGL2
+ * painter (atlas-paint-gpu.js), for a browser without a usable GPU.
+ */
+
+
+
+const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+
+/** A CSS color at `alpha` (a hex color; anything else as it is). */
+function withAlpha(color, alpha) {
+  const hex = String(color).trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (!hex) return color;
+  const digits = hex[1].length === 3 ? [...hex[1]].map((c) => c + c).join('') : hex[1];
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(digits.slice(i, i + 2), 16));
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function createCanvasDesk(canvas) {
+  const ctx = canvas.getContext('2d');
+  const images = new Map();
+  const measured = textMeasure((weight, px) => `${weight} ${px}px ${FONT}`);
+  let pane = { w: 1, h: 1, dpr: 1 };
+
+  const roundRect = ({ x, y, w, h }, radius) => {
+    ctx.roundRect(x, y, w, h, radius);
+  };
+
+  return {
+    kind: '2d',
+    imageScale: 1,
+    maxLargeImages: 24,
+    begin({ w, h, dpr, paper, moving }) {
+      if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+        canvas.width = Math.round(w * dpr);
+        canvas.height = Math.round(h * dpr);
+      }
+      pane = { w, h, dpr, moving };
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = paper;
+      ctx.fillRect(0, 0, w, h);
+    },
+    end() { return false; },
+    ready(key, bitmap) {
+      if (!bitmap) return false;
+      images.set(key, bitmap);
+      return true;
+    },
+    rename() {},
+    sweep(bitmaps) {
+      if (images.size <= bitmaps.size) return;
+      for (const key of images.keys()) if (!bitmaps.has(key)) images.delete(key);
+    },
+    clearImages() { images.clear(); },
+
+    image(key, rect, alpha, { reveal = 1 } = {}) {
+      const bitmap = images.get(key);
+      if (!bitmap) return;
+      // Best filtering at rest; in motion the cheap one, which no one sees.
+      ctx.imageSmoothingQuality = pane.moving ? 'low' : 'high';
+      // What the GPU shows as ink coming up is a plain fade here.
+      ctx.globalAlpha = alpha * Math.min(1, reveal * 1.6);
+      ctx.drawImage(bitmap, rect.x, rect.y, rect.w, rect.h);
+      ctx.globalAlpha = 1;
+    },
+
+    grid({ x, y, k, spacing, color, alpha = 1, clip = null }) {
+      const { dpr, w, h } = pane;
+      // Whole device pixels: a line straddling two pixels would antialias
+      // into a fainter, wider one, and the grid would shimmer unevenly.
+      const width = Math.max(1, Math.round(k * dpr));
+      const offset = width % 2 ? 0.5 : 0;
+      const crisp = (value) => (Math.round(value * dpr) + offset) / dpr;
+      ctx.save();
+      if (clip) {
+        ctx.beginPath();
+        roundRect(clip, clip.radius);
+        ctx.clip();
+      }
+      // A line thinner than a pixel shows as a fainter one-pixel line, as
+      // the editor's one-unit grid does.
+      ctx.globalAlpha = alpha * Math.min(1, (k * dpr) / width);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width / dpr;
+      ctx.beginPath();
+      for (let gx = Math.ceil(x / spacing) * spacing; (gx - x) * k <= w; gx += spacing) {
+        const sx = crisp((gx - x) * k);
+        ctx.moveTo(sx, 0);
+        ctx.lineTo(sx, h);
+      }
+      for (let gy = Math.ceil(y / spacing) * spacing; (gy - y) * k <= h; gy += spacing) {
+        const sy = crisp((gy - y) * k);
+        ctx.moveTo(0, sy);
+        ctx.lineTo(w, sy);
+      }
+      ctx.stroke();
+      ctx.restore();
+    },
+
+    box({ rect, radius = 0, fill = null, fillAlpha = 1, stroke = null, strokeAlpha = 1, strokeWidth = 0, glow = null, glowAlpha = 1, glowBlur = 0, additive = false, sweep = null }) {
+      if (sweep) return;
+      ctx.save();
+      if (additive) ctx.globalCompositeOperation = 'lighter';
+      ctx.beginPath();
+      roundRect(rect, radius);
+      if (fill) {
+        ctx.globalAlpha = fillAlpha;
+        ctx.fillStyle = fill;
+        ctx.fill();
+      }
+      if (stroke) {
+        ctx.globalAlpha = strokeAlpha;
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = strokeWidth;
+        if (glow && glowBlur > 0) {
+          ctx.shadowColor = glow;
+          ctx.shadowBlur = glowBlur;
+          ctx.globalAlpha = strokeAlpha * glowAlpha;
+        }
+        ctx.stroke();
+      }
+      ctx.restore();
+    },
+
+    raised({ rect, radius, fill, alpha, blur, drop, color }) {
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = fill;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = blur;
+      ctx.shadowOffsetY = drop;
+      ctx.beginPath();
+      roundRect(rect, radius);
+      ctx.fill();
+      ctx.restore();
+    },
+
+    measure(text, weight, size) {
+      return measured(text, weight, size, (t, font) => {
+        ctx.font = font;
+        return ctx.measureText(t).width;
+      });
+    },
+
+    text({ text, weight, size, color, alpha = 1, x, y, baseline = 'top' }) {
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.font = `${weight} ${size}px ${FONT}`;
+      ctx.fillStyle = color;
+      ctx.textBaseline = baseline;
+      ctx.fillText(text, x, y);
+      ctx.restore();
+    },
+
+    pool({ cx, cy, r, rx, ry, color, stops, mid, alpha = 1, additive = false }) {
+      ctx.save();
+      if (additive) ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = alpha;
+      const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+      gradient.addColorStop(0, withAlpha(color, stops[0]));
+      gradient.addColorStop(mid, withAlpha(color, stops[1]));
+      gradient.addColorStop(1, withAlpha(color, stops[2]));
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    },
+
+    beam({ spine, from, to, color, alpha = 1, band, core, coreWidth, cut = null, additive = false }) {
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      if (additive) ctx.globalCompositeOperation = 'lighter';
+      if (cut) {
+        const far = 1e5;
+        const { at, along: direction } = cut;
+        const side = { x: -direction.y, y: direction.x };
+        ctx.beginPath();
+        ctx.moveTo(at.x + side.x * far, at.y + side.y * far);
+        ctx.lineTo(at.x - side.x * far, at.y - side.y * far);
+        ctx.lineTo(at.x - side.x * far - direction.x * far, at.y - side.y * far - direction.y * far);
+        ctx.lineTo(at.x + side.x * far - direction.x * far, at.y + side.y * far - direction.y * far);
+        ctx.closePath();
+        ctx.clip();
+      }
+      const ramp = ({ stops, mid }) => {
+        const gradient = ctx.createLinearGradient(from.x, from.y, to.x, to.y);
+        gradient.addColorStop(0, withAlpha(color, stops[0]));
+        gradient.addColorStop(mid, withAlpha(color, stops[1]));
+        gradient.addColorStop(1, withAlpha(color, stops[2]));
+        return gradient;
+      };
+      ctx.fillStyle = ramp(band);
+      ctx.beginPath();
+      spine.forEach((p, i) => ctx[i ? 'lineTo' : 'moveTo'](p.x + p.nx * p.half, p.y + p.ny * p.half));
+      for (let i = spine.length - 1; i >= 0; i--) ctx.lineTo(spine[i].x - spine[i].nx * spine[i].half, spine[i].y - spine[i].ny * spine[i].half);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = ramp(core);
+      ctx.lineWidth = coreWidth;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      spine.forEach((p, i) => ctx[i ? 'lineTo' : 'moveTo'](p.x, p.y));
+      ctx.stroke();
+      ctx.restore();
+    },
+  };
+}
+
+};
+
+__modules["src/web/atlas-paint-gpu.js"] = function (__require, __exports) {
+__exports.createGpuDesk = createGpuDesk;
+let DITHER, QUAD_VERTEX, ROUNDED_BOX, createQuad, createShapes, linkProgram, premultiplied, textMeasure; __bind(() => { ({ DITHER, QUAD_VERTEX, ROUNDED_BOX, createQuad, createShapes, linkProgram, premultiplied, textMeasure } = __require("src/web/gpu.js")); });
+/**
+ * The Atlas desk in WebGL2: the same drawing operations as the 2D painter
+ * (atlas-paint-2d.js). Each design is a mipmapped texture, which zooms
+ * smoothly at any scale; the grid, shadows, glows, and beams are shaders.
+ * Once uploaded, a design's bitmap is closed: the texture is its one copy.
+ */
+
+
+
+const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+/** Pixels of design images uploaded in one frame: the rest wait, so a burst
+ *  of arrivals costs no frames. */
+const UPLOAD_BYTES_PER_FRAME = 12 * 1024 * 1024;
+/** A finer mipmap level than the pixel calls for, its detail averaged over
+ *  the pixel by the four taps in the image shader: thin lines stay crisp. */
+const LOD_BIAS = -1;
+/** Each design is drawn from an image this many times its size on screen,
+ *  then scaled down. */
+const IMAGE_SCALE = 3;
+/** Large images kept: textures take no room in the page, and a desk at rest
+ *  can show many designs from them. */
+const MAX_LARGE_IMAGES = 72;
+/** How far each smaller mipmap level leans from the average of its four
+ *  pixels toward the darkest of them, so thin lines survive zooming out. */
+const INK_KEPT = 0.45;
+const MAX_CAPTIONS = 800;
+const TEXT_PAD = 2;
+
+const IMAGE_FRAGMENT = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_image;
+uniform float u_alpha, u_bias, u_blur, u_reveal, u_seed;
+out vec4 color;
+void main() {
+  vec4 ink;
+  if (u_blur > 0.0) {
+    // Out of focus: a coarser mipmap level, four taps around the pixel so
+    // its texels do not show.
+    vec2 reach = 0.75 * pow(2.0, u_blur) * max(abs(dFdx(v_uv)), abs(dFdy(v_uv)));
+    float bias = u_bias + u_blur;
+    ink = 0.25 * (texture(u_image, v_uv + reach * vec2(-1.0, -1.0), bias) + texture(u_image, v_uv + reach * vec2(1.0, -1.0), bias)
+      + texture(u_image, v_uv + reach * vec2(-1.0, 1.0), bias) + texture(u_image, v_uv + reach * vec2(1.0, 1.0), bias));
+  } else {
+    // Four taps across the pixel, on a rotated grid.
+    vec2 dx = dFdx(v_uv), dy = dFdy(v_uv);
+    ink = 0.25 * (texture(u_image, v_uv + 0.375 * dx + 0.125 * dy, u_bias) + texture(u_image, v_uv - 0.375 * dx - 0.125 * dy, u_bias)
+      + texture(u_image, v_uv + 0.125 * dx - 0.375 * dy, u_bias) + texture(u_image, v_uv - 0.125 * dx + 0.375 * dy, u_bias));
+  }
+  if (u_reveal < 1.0) {
+    // The ink comes up from the middle, along an uneven soft edge.
+    vec2 p = v_uv - 0.5;
+    float a = atan(p.y, p.x);
+    float r = length(p) * 1.41421356 + 0.05 * sin(a * 5.0 + u_seed) + 0.03 * sin(a * 9.0 - u_seed * 1.7);
+    float edge = u_reveal * 1.5 - 0.2;
+    ink *= 1.0 - smoothstep(edge - 0.18, edge, r);
+  }
+  color = ink * u_alpha;
+}`;
+
+// One rule per device pixel, the same one the 2D grid rounds its lines by,
+// so the two match to the pixel and it costs the same at any zoom.
+const GRID_FRAGMENT = `#version 300 es
+precision highp float;
+in vec2 v_p;
+uniform vec2 u_phase;
+uniform float u_height, u_spacing, u_width, u_px, u_clipRadius;
+uniform vec4 u_color, u_clip;
+out vec4 color;
+${ROUNDED_BOX}
+float line(float p, float phase) {
+  float n = floor((p - phase) / u_spacing + 0.5);
+  float first = floor(phase + n * u_spacing + 0.5) - floor(u_width * 0.5);
+  return step(first, p) * step(p, first + u_width - 1.0);
+}
+void main() {
+  vec2 pixel = vec2(floor(gl_FragCoord.x), floor(u_height - gl_FragCoord.y));
+  float on = max(line(pixel.x, u_phase.x), line(pixel.y, u_phase.y));
+  if (u_clip.z > 0.0) on *= clamp(0.5 - sdBox(v_p, u_clip, u_clipRadius) / u_px, 0.0, 1.0);
+  color = u_color * on;
+}`;
+
+const MIP_VERTEX = `#version 300 es
+layout(location = 0) in vec2 a_corner;
+out vec2 v_uv;
+void main() {
+  v_uv = a_corner;
+  gl_Position = vec4(a_corner * 2.0 - 1.0, 0.0, 1.0);
+}`;
+
+// One mipmap level from the one above it. An average alone thins a line by
+// half a level at a time, until it is gone; this keeps part of the strongest
+// ink, its color unchanged.
+const MIP_FRAGMENT = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_image;
+uniform float u_kept;
+out vec4 color;
+void main() {
+  vec2 t = 0.5 / vec2(textureSize(u_image, 0));
+  vec4 a = textureLod(u_image, v_uv + t * vec2(-1.0, -1.0), 0.0);
+  vec4 b = textureLod(u_image, v_uv + t * vec2(1.0, -1.0), 0.0);
+  vec4 c = textureLod(u_image, v_uv + t * vec2(-1.0, 1.0), 0.0);
+  vec4 d = textureLod(u_image, v_uv + t * vec2(1.0, 1.0), 0.0);
+  vec4 mean = 0.25 * (a + b + c + d);
+  float strongest = max(max(a.a, b.a), max(c.a, d.a));
+  color = mean.a > 0.0 ? mean * mix(mean.a, strongest, u_kept) / mean.a : mean;
+}`;
+
+const POOL_FRAGMENT = `#version 300 es
+precision highp float;
+in vec2 v_p;
+uniform vec2 u_center, u_radii;
+uniform vec3 u_stops;
+uniform vec3 u_color;
+uniform float u_radius, u_mid, u_alpha;
+out vec4 color;
+${DITHER}
+void main() {
+  vec2 p = v_p - u_center;
+  float t = clamp(length(p) / u_radius, 0.0, 1.0);
+  float a = t < u_mid ? mix(u_stops.x, u_stops.y, t / u_mid) : mix(u_stops.y, u_stops.z, (t - u_mid) / (1.0 - u_mid));
+  float inside = step(length(p / u_radii), 1.0);
+  a *= inside * u_alpha;
+  if (a > 0.002) a = max(0.0, a + dither());
+  color = vec4(u_color * a, a);
+}`;
+
+/** The painter over a live context; throws if its shaders will not build. */
+function createGpuDesk(canvas, gl) {
+  const shapes = createShapes(gl);
+  const image = linkProgram(gl, QUAD_VERTEX, IMAGE_FRAGMENT);
+  const grid = linkProgram(gl, QUAD_VERTEX, GRID_FRAGMENT);
+  const pool = linkProgram(gl, QUAD_VERTEX, POOL_FRAGMENT);
+  const mip = linkProgram(gl, MIP_VERTEX, MIP_FRAGMENT);
+  const mipQuad = createQuad(gl);
+  const mipTarget = gl.createFramebuffer();
+  gl.useProgram(mip.handle);
+  gl.uniform1i(mip.u.u_image, 0);
+  gl.uniform1f(mip.u.u_kept, INK_KEPT);
+  gl.useProgram(image.handle);
+  gl.uniform1i(image.u.u_image, 0);
+  gl.activeTexture(gl.TEXTURE0);
+  const textures = new Map();
+  const captions = new Map();
+  const scratch = document.createElement('canvas');
+  const scratchContext = scratch.getContext('2d', { willReadFrequently: true });
+  let pane = { w: 1, h: 1, dpr: 1 };
+  let spent = 0;
+  let waiting = false;
+
+  const textureOf = (mipmapped) => {
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, mipmapped ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return texture;
+  };
+
+  // The image program's last values, which most draws repeat.
+  const last = { alpha: null, bias: null, blur: null, reveal: null, seed: null };
+  const setImage = (name, location, value) => {
+    if (last[name] === value) return;
+    gl.uniform1f(location, value);
+    last[name] = value;
+  };
+
+  const drawTexture = (texture, x, y, w, h, alpha, bias, { blur = 0, reveal = 1, seed = 0 } = {}) => {
+    shapes.blend(false);
+    shapes.stretch(image, x, y, w, h);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    setImage('alpha', image.u.u_alpha, alpha);
+    setImage('bias', image.u.u_bias, bias);
+    setImage('blur', image.u.u_blur, blur);
+    setImage('reveal', image.u.u_reveal, reveal);
+    // The edge's shape only matters while it is coming up.
+    if (reveal < 1) setImage('seed', image.u.u_seed, seed);
+    shapes.paintQuad();
+  };
+
+  /** Fill in the texture's smaller levels from its largest. */
+  function buildMipmaps(width, height, levels) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, mipTarget);
+    gl.useProgram(mip.handle);
+    gl.bindVertexArray(mipQuad);
+    gl.disable(gl.BLEND);
+    let w = width;
+    let h = height;
+    for (let level = 1; level < levels; level++) {
+      w = Math.max(1, w >> 1);
+      h = Math.max(1, h >> 1);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_BASE_LEVEL, level - 1);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAX_LEVEL, level - 1);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, gl.getParameter(gl.TEXTURE_BINDING_2D), level);
+      gl.viewport(0, 0, w, h);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    }
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_BASE_LEVEL, 0);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAX_LEVEL, levels - 1);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, pane.width, pane.height);
+    shapes.invalidate();
+  }
+
+  const fontOf = (weight, px) => `${weight} ${px}px ${FONT}`;
+  const measured = textMeasure(fontOf);
+
+  /** One line of text as a texture, kept until it has gone unused the longest. */
+  function caption(text, weight, px, color, baseline, moving) {
+    const key = `${weight}|${color}|${baseline}|${text}`;
+    let entry = captions.get(key);
+    if (entry) {
+      captions.delete(key);
+      captions.set(key, entry);
+      if (entry.px === px || moving) return entry;
+    }
+    scratchContext.font = fontOf(weight, px);
+    const width = Math.ceil(scratchContext.measureText(text).width) + 2 * TEXT_PAD;
+    const height = Math.ceil(px * 1.5) + 2 * TEXT_PAD;
+    scratch.width = width;
+    scratch.height = height;
+    scratchContext.font = fontOf(weight, px);
+    scratchContext.fillStyle = color;
+    scratchContext.textBaseline = baseline;
+    scratchContext.fillText(text, TEXT_PAD, baseline === 'middle' ? height / 2 : TEXT_PAD);
+    if (!entry) {
+      entry = { texture: textureOf(false) };
+      captions.set(key, entry);
+      if (captions.size > MAX_CAPTIONS) {
+        const [oldest, old] = captions.entries().next().value;
+        gl.deleteTexture(old.texture);
+        captions.delete(oldest);
+      }
+    }
+    gl.bindTexture(gl.TEXTURE_2D, entry.texture);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, scratch);
+    Object.assign(entry, { px, width, height });
+    return entry;
+  }
+
+  return {
+    kind: 'gpu',
+    imageScale: IMAGE_SCALE,
+    maxLargeImages: MAX_LARGE_IMAGES,
+    begin({ w, h, dpr, paper }) {
+      const width = Math.round(w * dpr);
+      const height = Math.round(h * dpr);
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+      }
+      pane = { w, h, dpr, width, height };
+      spent = 0;
+      waiting = false;
+      shapes.frame(w, h, dpr);
+      gl.viewport(0, 0, width, height);
+      const [r, g, b] = premultiplied(paper);
+      gl.clearColor(r, g, b, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+    },
+    /** Whether images are still waiting for their turn to upload. */
+    end() { return waiting; },
+
+    /** Is this design image on the GPU, or can it go there this frame? */
+    ready(key, bitmap) {
+      if (textures.has(key)) return true;
+      if (!bitmap?.width) return false;
+      const bytes = bitmap.width * bitmap.height * 4;
+      if (spent && spent + bytes > UPLOAD_BYTES_PER_FRAME) {
+        waiting = true;
+        return false;
+      }
+      spent += bytes;
+      const texture = textureOf(true);
+      const levels = Math.floor(Math.log2(Math.max(bitmap.width, bitmap.height))) + 1;
+      gl.texStorage2D(gl.TEXTURE_2D, levels, gl.RGBA8, bitmap.width, bitmap.height);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, bitmap);
+      buildMipmaps(bitmap.width, bitmap.height, levels);
+      textures.set(key, texture);
+      bitmap.close();
+      return true;
+    },
+    /** The same image under a new key (a design just saved). */
+    rename(from, to) {
+      const texture = textures.get(from);
+      if (!texture) return;
+      textures.delete(from);
+      textures.set(to, texture);
+    },
+    /** Drop the textures of images the desk no longer holds. */
+    sweep(bitmaps) {
+      if (textures.size <= bitmaps.size) return;
+      for (const [key, texture] of textures) {
+        if (bitmaps.has(key)) continue;
+        gl.deleteTexture(texture);
+        textures.delete(key);
+      }
+    },
+    clearImages() {
+      for (const texture of textures.values()) gl.deleteTexture(texture);
+      textures.clear();
+    },
+
+    /** `blur`: mipmap levels out of focus; `reveal` (0 to 1): how far its
+     *  ink has come up; `seed`: the shape of that edge. */
+    image(key, rect, alpha, effects) {
+      const texture = textures.get(key);
+      if (texture) drawTexture(texture, rect.x, rect.y, rect.w, rect.h, alpha, LOD_BIAS, effects);
+    },
+
+    grid({ x, y, k, spacing, color, alpha = 1, clip = null }) {
+      const { dpr, w, h } = pane;
+      const width = Math.max(1, Math.round(k * dpr));
+      const u = grid.u;
+      shapes.blend(false);
+      shapes.stretch(grid, 0, 0, w, h);
+      gl.uniform2f(u.u_phase, (Math.ceil(x / spacing) * spacing - x) * k * dpr, (Math.ceil(y / spacing) * spacing - y) * k * dpr);
+      gl.uniform1f(u.u_height, pane.height);
+      gl.uniform1f(u.u_spacing, spacing * k * dpr);
+      gl.uniform1f(u.u_width, width);
+      gl.uniform1f(u.u_px, 1 / dpr);
+      gl.uniform4fv(u.u_color, premultiplied(color, alpha * Math.min(1, (k * dpr) / width)));
+      gl.uniform4f(u.u_clip, clip?.x ?? 0, clip?.y ?? 0, clip?.w ?? 0, clip?.h ?? 0);
+      gl.uniform1f(u.u_clipRadius, clip?.radius ?? 0);
+      shapes.paintQuad();
+    },
+
+    box: shapes.box,
+
+    /** A shadow, and the box that casts it over it. */
+    raised({ rect, radius, fill, alpha, blur, drop, color }) {
+      shapes.shadow({ rect, radius, blur, drop, color, alpha });
+      shapes.box({ rect, radius, fill, fillAlpha: alpha });
+    },
+
+    measure(text, weight, size) {
+      return measured(text, weight, size, (t, font) => {
+        scratchContext.font = font;
+        return scratchContext.measureText(t).width;
+      });
+    },
+
+    text({ text, weight, size, color, alpha = 1, x, y, baseline = 'top', moving = false }) {
+      if (!text) return;
+      const { dpr } = pane;
+      const px = size * dpr;
+      const entry = caption(text, weight, px, color, baseline, moving);
+      const ratio = px / entry.px;
+      const w = (entry.width * ratio) / dpr;
+      const h = (entry.height * ratio) / dpr;
+      const pad = (TEXT_PAD * ratio) / dpr;
+      const left = x - pad;
+      const top = baseline === 'middle' ? y - h / 2 : y - pad;
+      // At its own size each texel lands on one pixel.
+      const snap = (value) => (ratio === 1 ? Math.round(value * dpr) / dpr : value);
+      drawTexture(entry.texture, snap(left), snap(top), w, h, alpha, 0);
+    },
+
+    pool({ cx, cy, r, rx, ry, color, stops, mid, alpha = 1, additive = false }) {
+      const [red, green, blue] = premultiplied(color);
+      const u = pool.u;
+      shapes.blend(additive);
+      shapes.stretch(pool, cx - rx, cy - ry, 2 * rx, 2 * ry);
+      gl.uniform2f(u.u_center, cx, cy);
+      gl.uniform2f(u.u_radii, rx, ry);
+      gl.uniform1f(u.u_radius, r);
+      gl.uniform3fv(u.u_stops, stops);
+      gl.uniform1f(u.u_mid, mid);
+      gl.uniform3f(u.u_color, red, green, blue);
+      gl.uniform1f(u.u_alpha, alpha);
+      shapes.paintQuad();
+    },
+
+    beam: shapes.beam,
+  };
+}
+
 };
 
 __modules["src/web/atlas-sheet.js"] = function (__require, __exports) {
@@ -55129,7 +55783,7 @@ let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let relatednessOf; __bind(() => { ({ relatednessOf } = __require("src/core/design-related.js")); });
 let linkArrow, linkCurve, linkDepths, linkGraph; __bind(() => { ({ linkArrow, linkCurve, linkDepths, linkGraph } = __require("src/core/design-links.js")); });
-let ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, IMAGE_LEVELS, LARGE_PX, MEDIUM_PX, SMALL_PX, floatClear, layoutAtlas, layoutAtlasShaped, neighborTile, rectsIntersect, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, IMAGE_LEVELS, LARGE_PX, MEDIUM_PX, SMALL_PX, floatClear, layoutAtlas, layoutAtlasShaped, neighborTile, rectsIntersect, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing } = __require("src/web/atlas-layout.js")); });
+let ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, IMAGE_LEVELS, LARGE_PX, MEDIUM_PX, SMALL_PX, beamGrowth, deskBlur, floatClear, rimSweep, layoutAtlas, layoutAtlasShaped, neighborTile, rectsIntersect, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, IMAGE_LEVELS, LARGE_PX, MEDIUM_PX, SMALL_PX, beamGrowth, deskBlur, floatClear, rimSweep, layoutAtlas, layoutAtlasShaped, neighborTile, rectsIntersect, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing } = __require("src/web/atlas-layout.js")); });
 let DESK_ASPECT, arrangeAtlas; __bind(() => { ({ DESK_ASPECT, arrangeAtlas } = __require("src/web/atlas-arrange.js")); });
 let INDEX_CACHE, bakeTiles, cacheGet, cachePut, renderingKey, trimCache; __bind(() => { ({ INDEX_CACHE, bakeTiles, cacheGet, cachePut, renderingKey, trimCache } = __require("src/web/atlas-cache.js")); });
 let wheelIntent, lerpView; __bind(() => { ({ wheelIntent, lerpView } = __require("src/web/gestures.js")); });
@@ -55152,6 +55806,9 @@ let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion
 let showHelp; __bind(() => { ({ showHelp } = __require("src/web/help.js")); });
 let appendContextItem, openMenuAt; __bind(() => { ({ appendContextItem, openMenuAt } = __require("src/web/context-menu.js")); });
 let onAccentChange; __bind(() => { ({ onAccentChange } = __require("src/web/accent.js")); });
+let gpuContext; __bind(() => { ({ gpuContext } = __require("src/web/gpu.js")); });
+let createGpuDesk; __bind(() => { ({ createGpuDesk } = __require("src/web/atlas-paint-gpu.js")); });
+let createCanvasDesk; __bind(() => { ({ createCanvasDesk } = __require("src/web/atlas-paint-2d.js")); });
 /**
  * The Atlas view: every design in the workspace laid out at its real
  * size on one zoomable desk. It is a viewing mode, not a file picker -- no
@@ -55204,9 +55861,13 @@ let onAccentChange; __bind(() => { ({ onAccentChange } = __require("src/web/acce
 
 
 
+
+
+
 const rootEl = document.getElementById('atlas');
 const deskEl = document.getElementById('atlas-desk');
 const overlayEl = document.getElementById('atlas-overlays');
+const zoomBoxEl = document.getElementById('atlas-zoom-box');
 const titleEl = document.getElementById('atlas-title');
 const statusEl = document.getElementById('atlas-status');
 // The top bar's status rests on what the desk shows (how many designs, or
@@ -55274,7 +55935,7 @@ const MAX_VECTOR_TILES = 6;
 /** The most images of each level above the small kept at once: past it,
  *  those nearest the middle of the screen have theirs. A screen at rest
  *  holds no more medium ones than this (each covers over 320 device px). */
-const MAX_BITMAPS = { medium: 128, large: 24 };
+const MAX_BITMAPS = { medium: 128 };
 const ZOOM_IN_PX_PER_UNIT = 3; // the editor's closest zoom: 120 px per grid cell
 /** Each design's own reveal: it fades and grows in this long, after a delay
  *  that ripples out from the middle of the view (REVEAL_STEP_MS a design,
@@ -55326,7 +55987,7 @@ function atlasSnapshot() {
       return {
         id: tile.id, name: entry?.name, x: tile.x, y: tile.y, w: tile.w, h: tile.h, screen: worldToScreen(tile),
         current: !!entry?.current, selected: state.selected === tile.id || !!state.picked?.has(tile.id),
-        lift: liftOf(tile.id).lift, dim: liftOf(tile.id).dim,
+        lift: liftOf(tile.id).lift, dim: liftOf(tile.id).dim, image: state.shownImage?.get(tile.id) || null,
         float: { dx: liftOf(tile.id).dx || 0, dy: liftOf(tile.id).dy || 0 },
       };
     }),
@@ -55616,8 +56277,11 @@ async function loadWorkspace(generation) {
 
 // ----- baked images --------------------------------------------------------------
 
+// Read once a frame: a frame asks many times.
+let frameTheme = null;
+
 function theme() {
-  return document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+  return frameTheme || (document.documentElement.classList.contains('dark') ? 'dark' : 'light');
 }
 
 /** What the desk's colors are read for: the theme and the accent. */
@@ -55626,8 +56290,16 @@ function colorsKey() {
 }
 
 function bitmapKey(entry, level) {
-  return `${entry.id}\n${entry.revision ?? 'live'}\n${theme()}\n${level}`;
+  const shade = theme();
+  const keys = entry.bitmapKeys;
+  if (keys?.revision === entry.revision && keys.shade === shade) return keys[level];
+  const stem = `${entry.id}\n${entry.revision ?? 'live'}\n${shade}`;
+  entry.bitmapKeys = { revision: entry.revision, shade, small: `${stem}\nsmall`, medium: `${stem}\nmedium`, large: `${stem}\nlarge` };
+  return entry.bitmapKeys[level];
 }
+
+// Premultiplied, as the desk's shaders blend it.
+const BITMAP_OPTIONS = { premultiplyAlpha: 'premultiply' };
 
 async function rasterize(entry, level) {
   const svg = await withEmbeddedMathFont(theme() === 'dark' ? applyExportDarkTheme(entry.svg) : entry.svg);
@@ -55650,7 +56322,7 @@ async function rasterize(entry, level) {
 async function bake(entry, level) {
   const cacheKey = entry.revision && renderingKey(entry.path, entry.revision, `${theme()}-${level}-${IMAGE_CACHE}`);
   const blob = cacheKey && await cacheGet(cacheKey);
-  if (blob) return createImageBitmap(blob);
+  if (blob) return createImageBitmap(blob, BITMAP_OPTIONS);
   // Drawing an SVG into a bitmap blocks the page; let a zoom finish first.
   while (state?.animation) await new Promise((resolve) => setTimeout(resolve, 50));
   if (!state) throw new Error('closed');
@@ -55658,7 +56330,7 @@ async function bake(entry, level) {
   if (cacheKey) {
     canvas.toBlob((png) => { if (png) void cachePut(cacheKey, png); }, 'image/png');
   }
-  return createImageBitmap(canvas);
+  return createImageBitmap(canvas, BITMAP_OPTIONS);
 }
 
 /** Load every cached small image, for at most `budget` ms. */
@@ -55735,11 +56407,13 @@ const imageLevel = (detail) => (detail === 'vector' ? 'large' : detail);
 /** The images a tile of `detail` asks for: the small one, and its own. */
 const imageLevels = (detail) => [...new Set(['small', imageLevel(detail)])];
 
-/** Past MAX_BITMAPS, drop the oldest images of `level` the screen does
+const maxBitmaps = (level) => (level === 'large' ? painter().maxLargeImages : MAX_BITMAPS[level]);
+
+/** Past their limit, drop the oldest images of `level` the screen does
  *  not use, never `keep` or one it does. */
 function evictBitmaps(level, keep) {
   const kept = [...state.bitmaps.keys()].filter((key) => key.endsWith(`\n${level}`));
-  let excess = kept.length - MAX_BITMAPS[level];
+  let excess = kept.length - maxBitmaps(level);
   for (const key of kept) {
     if (excess <= 0) break;
     if (key === keep || state.inUse?.has(key)) continue;
@@ -55750,6 +56424,63 @@ function evictBitmaps(level, keep) {
 }
 
 // ----- painting --------------------------------------------------------------------
+
+// WebGL2 where there is a real GPU, else the 2D canvas. A lost context falls
+// back to the 2D canvas until it is restored.
+const canvasDesk = createCanvasDesk(deskEl);
+let gpuDesk = null;
+let gpuTried = false;
+
+function startGpuDesk() {
+  gpuTried = true;
+  const canvas = document.createElement('canvas');
+  canvas.className = 'atlas-desk';
+  canvas.id = 'atlas-desk-gpu';
+  canvas.setAttribute('aria-hidden', 'true');
+  const gl = gpuContext(canvas, { alpha: false });
+  if (!gl) return;
+  const build = () => {
+    gpuDesk = createGpuDesk(canvas, gl);
+    deskEl.hidden = true;
+    canvas.hidden = false;
+  };
+  try {
+    build();
+  } catch (error) {
+    console.warn('Atlas: drawing without the GPU', error);
+    gpuDesk = null;
+    return;
+  }
+  deskEl.after(canvas);
+  canvas.addEventListener('webglcontextlost', (ev) => {
+    ev.preventDefault();
+    gpuDesk = null;
+    deskEl.hidden = false;
+    canvas.hidden = true;
+    // Their pixels went with the textures: bake them again.
+    if (state) {
+      for (const bitmap of state.bitmaps.values()) bitmap.close?.();
+      state.bitmaps.clear();
+    }
+    requestDraw();
+  });
+  canvas.addEventListener('webglcontextrestored', () => {
+    try { build(); } catch { return; }
+    requestDraw();
+  });
+}
+
+function painter() {
+  if (!gpuTried) startGpuDesk();
+  return gpuDesk || canvasDesk;
+}
+
+/** Let go of every image the desk holds. */
+function releaseImages() {
+  for (const bitmap of state.bitmaps.values()) bitmap.close?.();
+  gpuDesk?.clearImages();
+  canvasDesk.clearImages();
+}
 
 let drawQueued = false;
 
@@ -55845,15 +56576,19 @@ function syncBackButton() {
 }
 
 function draw() {
-  syncBackButton();
-  syncHint();
+  frameTheme = null;
+  frameTheme = theme();
+  try {
+    drawDesk();
+  } finally {
+    frameTheme = null;
+  }
+}
+
+function drawDesk() {
   const { w, h } = paneSize();
   const dpr = window.devicePixelRatio || 1;
-  if (deskEl.width !== Math.round(w * dpr) || deskEl.height !== Math.round(h * dpr)) {
-    deskEl.width = Math.round(w * dpr);
-    deskEl.height = Math.round(h * dpr);
-  }
-  const ctx = deskEl.getContext('2d');
+  const paint = painter();
   // A theme change repaints everything: the palette, and the live SVGs.
   if (state.colorsKey !== colorsKey()) {
     state.colors = colors();
@@ -55862,11 +56597,16 @@ function draw() {
     state.overlays.clear();
   }
   const palette = state.colors;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.globalAlpha = 1;
-  ctx.fillStyle = palette.paper;
-  ctx.fillRect(0, 0, w, h);
-  drawGrid(ctx, palette, w, h);
+  const moving = !!state.animation || !!state.motion || performance.now() - (state.wheelAt || 0) < WHEEL_SETTLE_MS;
+  // The bars hold still while the view moves, unless the pick or hover changes.
+  const barsKey = `${state.selected}|${state.hover}|${state.picked ? [...state.picked].join() : ''}`;
+  if (!moving || barsKey !== state.barsKey) {
+    state.barsKey = barsKey;
+    syncBackButton();
+    syncHint();
+  }
+  paint.begin({ w, h, dpr, paper: palette.paper, moving });
+  drawGrid(paint, palette);
 
   const screen = { x: state.view.x, y: state.view.y, w: state.view.w, h: state.view.h };
   // Mid-rearrangement, designs glide; those joining fade in, those leaving out.
@@ -55886,12 +56626,12 @@ function draw() {
   const center = { x: state.view.x + state.view.w / 2, y: state.view.y + state.view.h / 2 };
   const placed = visible.map(({ tile, alpha }) => {
     const rect = worldToScreen(tile);
-    return { tile, alpha, rect, detail: tileDetail(Math.max(rect.w, rect.h) * dpr) };
+    const px = Math.max(rect.w, rect.h) * dpr;
+    return { tile, alpha, rect, detail: tileDetail(px), imageDetail: tileDetail(px * paint.imageScale) };
   });
   // The tiles that fill the screen are drawn live; their images would only
   // blur the vector lines through the transparent paper. Not while the view
   // animates, though: a live SVG changing size is redrawn whole every frame.
-  const moving = !!state.animation || !!state.motion || performance.now() - (state.wheelAt || 0) < WHEEL_SETTLE_MS;
   const vector = moving ? [] : placed.filter((item) => item.detail === 'vector')
     .sort((a, b) => b.rect.w * b.rect.h - a.rect.w * a.rect.h)
     .slice(0, MAX_VECTOR_TILES);
@@ -55900,7 +56640,7 @@ function draw() {
   // Lifted designs are drawn last, over the ones lying flat -- ordered by
   // where each is heading, so two trading places do not swap mid-way.
   placed.sort((a, b) => (liftOf(a.tile.id).target ?? 0) - (liftOf(b.tile.id).target ?? 0) || liftOf(a.tile.id).lift - liftOf(b.tile.id).lift);
-  for (const { tile, alpha, rect: flatRect, detail } of placed) {
+  for (const { tile, alpha, rect: flatRect, imageDetail } of placed) {
     // A design in flight is drawn over everything else (drawFlight); its
     // images are still asked for here.
     const flying = tile.id === state.flight?.id;
@@ -55913,44 +56653,49 @@ function draw() {
       x: placedRect.x + (placedRect.w * (1 - grow)) / 2, y: placedRect.y + (placedRect.h * (1 - grow)) / 2,
       w: placedRect.w * grow, h: placedRect.h * grow,
     } : placedRect;
-    if (lift > 0.004 && !flying) drawCard(ctx, tile, placedRect, lift, palette);
+    if (lift > 0.004 && !flying) drawCard(paint, tile, placedRect, lift, palette);
     const entry = state.entries.get(tile.id);
     const found = state.matches?.get(tile.id);
     // A search fades every design it does not find; what it finds in one is
     // marked under the drawing, like a highlighter, while the search box has
     // focus -- away from it, the marks step aside and the drawings read clean.
     const fade = (state.matches && !found ? 0.18 : 1) * alpha * (1 - DIMMED * dim);
-    ctx.globalAlpha = alpha;
-    if (found?.hits.length && document.activeElement === searchEl) drawHits(ctx, tile, entry, found.hits, palette);
-    ctx.globalAlpha = (entry.current ? 1 : Math.min(1, reveal * 1.6)) * fade;
-    const level = imageLevel(detail);
+    if (found?.hits.length && document.activeElement === searchEl) drawHits(paint, tile, entry, found.hits, palette, alpha);
+    let imageAlpha = fade;
+    const level = imageLevel(imageDetail);
     // Its own image, else the sharpest one there is.
-    const bitmap = [level, ...IMAGE_LEVELS.slice().reverse()].map((l) => state.bitmaps.get(bitmapKey(entry, l))).find(Boolean);
-    if (bitmap && !flying && !(live.has(tile.id) && state.overlays.get(tile.id)?.dataset.ready)) {
-      // Best filtering at rest; in motion the cheap one, which no one sees.
-      ctx.imageSmoothingQuality = moving ? 'low' : 'high';
+    let imageKey = bitmapKey(entry, level);
+    if (!paint.ready(imageKey, state.bitmaps.get(imageKey))) {
+      imageKey = null;
+      for (let i = IMAGE_LEVELS.length - 1; i >= 0 && !imageKey; i--) {
+        const key = bitmapKey(entry, IMAGE_LEVELS[i]);
+        if (paint.ready(key, state.bitmaps.get(key))) imageKey = key;
+      }
+    }
+    if (imageKey && !flying && !(live.has(tile.id) && state.overlays.get(tile.id)?.dataset.ready)) {
       // A design whose image has only just arrived fades in; it does not pop.
       const since = state.arrived.get(bitmapKey(entry, 'small'));
       const arriving = since === undefined ? 1 : Math.min(1, (performance.now() - since) / ARRIVE_MS);
       if (arriving < 1) requestDraw();
-      ctx.globalAlpha *= arriving;
-      ctx.drawImage(bitmap, rect.x, rect.y, rect.w, rect.h);
+      imageAlpha *= arriving;
+      // While a design flies at the glass, the desk behind it goes out of focus.
+      (state.shownImage ||= new Map()).set(tile.id, imageKey.split('\n').pop());
+      paint.image(imageKey, rect, imageAlpha, { reveal: entry.current ? 1 : reveal, seed: tile.x * 0.013 + tile.y * 0.007, blur: state.flight ? deskBlur(state.flight.depth) : 0 });
     }
     const distance = Math.hypot(tile.x + tile.w / 2 - center.x, tile.y + tile.h / 2 - center.y);
     // Mid-animation only small images are fetched: decoding a larger one
     // would drop frames, and the view does not rest here anyway.
-    for (const need of moving ? ['small'] : imageLevels(detail)) {
+    for (const need of moving ? ['small'] : imageLevels(imageDetail)) {
       const key = bitmapKey(entry, need);
-      wanted.push({ entry, level: need, key, distance });
+      // In motion only what is missing matters: nothing is being kept.
+      if (!moving || !state.bitmaps.has(key)) wanted.push({ entry, level: need, key, distance });
     }
-    ctx.globalAlpha = alpha * Math.min(1, reveal * 1.6) * (1 - DIMMED * dim);
-    if (!flying) drawCaption(ctx, tile, entry, placedRect, palette);
+    if (!flying) drawCaption(paint, tile, entry, placedRect, palette, alpha * Math.min(1, reveal * 1.6) * (1 - DIMMED * dim), moving);
   }
-  ctx.globalAlpha = 1;
-  drawRipple(ctx, palette);
-  drawLinks(ctx, palette, shown);
-  if (state.flight) drawFlight(ctx, palette, w, h);
-  drawZoomBox(ctx, palette);
+  drawLinks(paint, palette, shown);
+  if (state.flight) drawFlight(paint, palette, w, h);
+  paint.sweep(state.bitmaps);
+  if (paint.end()) requestDraw();
   // Every small image first (the whole desk becomes recognizable), then
   // the rest, nearest the middle first.
   wanted.sort((a, b) => ((a.level === 'small') === (b.level === 'small') ? a.distance - b.distance : a.level === 'small' ? -1 : 1));
@@ -55958,7 +56703,7 @@ function draw() {
   // for more would have each new one evict another still on screen, which
   // is asked for again, round and round.
   // In motion none is asked for; those in use stay so.
-  if (!moving) state.inUse = new Set(['medium', 'large'].flatMap((level) => wanted.filter((need) => need.level === level).slice(0, MAX_BITMAPS[level]).map((need) => need.key)));
+  if (!moving) state.inUse = new Set(['medium', 'large'].flatMap((level) => wanted.filter((need) => need.level === level).slice(0, maxBitmaps(level)).map((need) => need.key)));
   state.wanted = wanted.filter((need) => (need.level === 'small' || state.inUse?.has(need.key)) && !state.bitmaps.has(need.key));
   void pump();
   syncVectorOverlays(vector, moving);
@@ -56099,47 +56844,39 @@ const cardRadius = () => Math.max(3, Math.min(16, GRID * 0.6 * scale()));
  *  shadow that deepens and spreads as it rises; its rim a hairline in
  *  drawing units, so it stays fine however far out the desk is zoomed (the
  *  picked one's in the accent). */
-function drawCard(ctx, tile, rect, lift, palette) {
+function drawCard(paint, tile, rect, lift, palette) {
   const k = scale();
-  const { x, y, w, h } = cardFrame(rect);
+  const frame = cardFrame(rect);
   const radius = cardRadius();
   const picked = state.selected === tile.id || !!state.picked?.has(tile.id);
   // Solid from the height it rests at up: a lower card is nearer the desk
   // (a smaller shadow), never see-through.
   const solid = Math.min(1, lift / (liftOf(tile.id).solidAt ?? RELATED_LIFT));
-  ctx.save();
-  ctx.globalAlpha = solid;
   // Two shadows: a wide soft one far below, a tighter one close under it.
-  ctx.fillStyle = palette.card;
   // The pick also glows in the accent all round: it reads as the one
   // picked, above the designs lifted with it.
   const shadows = [[70 * lift, 34 * lift, 1, palette.shadow], [16 * lift, 6 * lift, 0.6, palette.shadow]];
   if (picked) shadows.push([22 * lift, 0, 1, palette.glow]);
   for (const [blur, drop, alpha, color] of shadows) {
-    ctx.shadowColor = color;
-    ctx.shadowBlur = blur;
-    ctx.shadowOffsetY = drop;
-    ctx.globalAlpha = solid * alpha;
-    ctx.beginPath();
-    ctx.roundRect(x, y, w, h, radius);
-    ctx.fill();
+    paint.raised({ rect: frame, radius, fill: palette.card, alpha: solid * alpha, blur, drop, color });
   }
-  ctx.shadowColor = 'transparent';
-  ctx.globalAlpha = solid;
-  ctx.fill();
+  paint.box({ rect: frame, radius, fill: palette.card, fillAlpha: solid });
+  // The pick's rim twice its kin's.
   if (picked) {
-    // Its rim twice its kin's.
-    ctx.globalAlpha = lift;
-    ctx.strokeStyle = palette.accent;
-    ctx.lineWidth = Math.max(1, Math.min(3, 6 * k));
-    ctx.stroke();
+    const strokeWidth = Math.max(1, Math.min(3, 6 * k));
+    paint.box({ rect: frame, radius, stroke: palette.accent, strokeAlpha: lift, strokeWidth });
+    // As it lifts, a light goes once round its rim.
+    state.rimAt ||= new Map();
+    if (!state.rimAt.has(tile.id)) state.rimAt.set(tile.id, performance.now());
+    const sweep = reducedMotion() ? null : rimSweep(performance.now() - state.rimAt.get(tile.id));
+    if (sweep) {
+      requestDraw();
+      paint.box({ rect: frame, radius, stroke: '#fff', strokeAlpha: solid * 0.85 * sweep.strength, strokeWidth, sweep: { angle: sweep.angle, width: 0.5 }, additive: theme() === 'dark' });
+    }
   } else {
-    ctx.globalAlpha = solid * 0.3;
-    ctx.strokeStyle = palette.dim;
-    ctx.lineWidth = Math.max(0.5, Math.min(1.5, 3 * k));
-    ctx.stroke();
+    state.rimAt?.delete(tile.id);
+    paint.box({ rect: frame, radius, stroke: palette.dim, strokeAlpha: solid * 0.3, strokeWidth: Math.max(0.5, Math.min(1.5, 3 * k)) });
   }
-  ctx.restore();
 }
 
 /** How far a design's reveal has come (1 at rest): designs nearer the
@@ -56178,9 +56915,15 @@ function syncLinksButton() {
 /** The desk's link graph, built again only when a design's links change
  *  (the open design's index is refreshed in place). */
 function deskLinks() {
-  const designs = [...state.entries.values()].map((entry) => ({ id: entry.id, name: entry.name, links: entry.index?.links || [] }));
+  // The serialized form is what decides, but only a changed design makes
+  // it worth building: a change replaces an entry's name, index, or links.
+  const entries = [...state.entries.values()];
+  const seen = state.links?.seen;
+  if (seen?.length === entries.length && entries.every((entry, i) => seen[i].index === entry.index && seen[i].name === entry.name && seen[i].links === entry.index?.links)) return state.links.graph;
+  const designs = entries.map((entry) => ({ id: entry.id, name: entry.name, links: entry.index?.links || [] }));
   const key = JSON.stringify(designs);
-  if (state.links?.key !== key) state.links = { key, graph: linkGraph(designs) };
+  const remembered = entries.map((entry) => ({ index: entry.index, name: entry.name, links: entry.index?.links }));
+  state.links = state.links?.key === key ? { ...state.links, seen: remembered } : { key, seen: remembered, graph: linkGraph(designs) };
   return state.links.graph;
 }
 
@@ -56196,11 +56939,19 @@ function deskLinks() {
  * drawings. Nothing is drawn with no design picked, nor while the desk is
  * in a transition (its names and picks are gone then too).
  */
-function drawLinks(ctx, palette, shown) {
+function drawLinks(paint, palette, shown) {
   state.beams = [];
-  if (state.source !== 'workspace' || state.quiet || !linksShown()) return;
   const focus = new Set([state.selected, ...(state.picked || [])].filter(Boolean));
-  if (!focus.size) return;
+  if (state.source !== 'workspace' || state.quiet || !linksShown() || !focus.size) {
+    state.beamsFor = null;
+    return;
+  }
+  // A new pick's beams grow out from it, once.
+  const beamsFor = [...focus].sort().join('\n');
+  if (state.beamsFor !== beamsFor) {
+    state.beamsFor = beamsFor;
+    state.beamsAt = performance.now();
+  }
   const edges = [
     ...deskLinks().edges.filter(({ from, to }) => focus.has(from) || focus.has(to)).map((edge) => ({ ...edge, depth: 1 })),
     ...hierarchyOf(focus).chain,
@@ -56215,10 +56966,6 @@ function drawLinks(ctx, palette, shown) {
     return { x: r.x - PAD, y: r.y - PAD, w: r.w + 2 * PAD, h: r.h + 2 * PAD };
   };
   const fadedOf = (from, to) => !!state.matches && !(state.matches.has(from) && state.matches.has(to));
-  ctx.save();
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  ctx.setLineDash([]);
   for (const { from, to, depth } of edges) {
     const a = tiles.get(from);
     const b = tiles.get(to);
@@ -56246,24 +56993,14 @@ function drawLinks(ctx, palette, shown) {
     // level's are fainter.
     const rising = depth === 1 ? Math.max(liftOf(from).lift, liftOf(to).lift)
       : (depth === 2 ? 0.55 : 0.32) * Math.min(1, liftOf(to).lift / LEVEL_LIFT[depth]);
-    ctx.globalAlpha = Math.min(a.alpha, b.alpha) * (fadedOf(from, to) ? 0.3 : 1) * rising;
+    const alpha = Math.min(a.alpha, b.alpha) * (fadedOf(from, to) ? 0.3 : 1) * rising;
     // It lands on the edge of the card the design is lifted on.
     const card = cardFrame(lifted(worldToScreen(b.tile), to));
     for (const start of starts) {
-      const end = drawBeam(ctx, start, card, palette);
+      const end = drawBeam(paint, start, card, palette, alpha, depth);
       if (end) state.beams.push({ from, to, depth, end, card });
     }
   }
-  ctx.restore();
-}
-
-/** A color as CSS with `alpha` (a hex color; anything else as it is). */
-function withAlpha(color, alpha) {
-  const hex = String(color).trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
-  if (!hex) return color;
-  const digits = hex[1].length === 3 ? [...hex[1]].map((c) => c + c).join('') : hex[1];
-  const [r, g, b] = [0, 2, 4].map((i) => parseInt(digits.slice(i, i + 2), 16));
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 /**
@@ -56275,7 +57012,7 @@ function withAlpha(color, alpha) {
  * Drawn additively on a dark desk, so where beams cross they brighten, as
  * light does. Returns where it lands (null when the part is inside).
  */
-function drawBeam(ctx, start, frame, palette) {
+function drawBeam(paint, start, frame, palette, alpha, depth) {
   const curve = linkCurve({ x: start.x, y: start.y }, frame, 0);
   if (!curve) return null;
   const k = scale();
@@ -56310,88 +57047,59 @@ function drawBeam(ctx, start, frame, palette) {
   while (first < steps - 4 && inside(bezier(first / steps))) first += 1;
   const points = [];
   for (let i = first; i <= steps; i++) points.push({ t: (i - first) / (steps - first), u: i / steps, ...bezier(i / steps) });
-  const left = [];
-  const right = [];
-  points.forEach((p) => {
+  const spine = points.map((p) => {
     const d = p.u === 1 ? direction : tangent(p.u);
     const len = Math.hypot(d.x, d.y) || 1;
-    const nx = -d.y / len;
-    const ny = d.x / len;
-    const half = (narrow + (wide - narrow) * p.t ** 1.6) / 2;
-    left.push({ x: p.x + nx * half, y: p.y + ny * half });
-    right.push({ x: p.x - nx * half, y: p.y - ny * half });
+    return { x: p.x, y: p.y, nx: -d.y / len, ny: d.x / len, half: (narrow + (wide - narrow) * p.t ** 1.6) / 2 };
   });
   const dark = theme() === 'dark';
-  const from = points[0];
-  ctx.save();
-  if (dark) ctx.globalCompositeOperation = 'lighter';
   // The spotlight: a soft pool of light over the part that links, its
   // center as faint as its edge is gone, so the symbol reads through it.
   if (box) {
-    const cx = box.x + box.w / 2;
-    const cy = box.y + box.h / 2;
     const r = Math.max(box.w, box.h) * 0.75 + 4;
-    const pool = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-    pool.addColorStop(0, withAlpha(palette.accent, dark ? 0.16 : 0.1));
-    pool.addColorStop(0.6, withAlpha(palette.accent, dark ? 0.1 : 0.06));
-    pool.addColorStop(1, withAlpha(palette.accent, 0));
-    ctx.fillStyle = pool;
-    ctx.beginPath();
-    ctx.ellipse(cx, cy, r * Math.max(0.6, box.w / Math.max(box.w, box.h)) + 4, r * Math.max(0.6, box.h / Math.max(box.w, box.h)) + 4, 0, 0, Math.PI * 2);
-    ctx.fill();
+    paint.pool({
+      cx: box.x + box.w / 2,
+      cy: box.y + box.h / 2,
+      r,
+      rx: r * Math.max(0.6, box.w / Math.max(box.w, box.h)) + 4,
+      ry: r * Math.max(0.6, box.h / Math.max(box.w, box.h)) + 4,
+      color: palette.accent,
+      stops: dark ? [0.16, 0.1, 0] : [0.1, 0.06, 0],
+      mid: 0.6,
+      alpha,
+      additive: dark,
+    });
   }
-  // Nothing of it crosses the card's edge: it ends there, cut clean.
-  ctx.beginPath();
-  const far = 1e5;
-  const along = { x: -direction.y, y: direction.x };
-  ctx.moveTo(p3.x + along.x * far, p3.y + along.y * far);
-  ctx.lineTo(p3.x - along.x * far, p3.y - along.y * far);
-  ctx.lineTo(p3.x - along.x * far - direction.x * far, p3.y - along.y * far - direction.y * far);
-  ctx.lineTo(p3.x + along.x * far - direction.x * far, p3.y + along.y * far - direction.y * far);
-  ctx.closePath();
-  ctx.clip();
-  const gradient = ctx.createLinearGradient(from.x, from.y, curve.end.x, curve.end.y);
-  gradient.addColorStop(0, withAlpha(palette.accent, dark ? 0.55 : 0.4));
-  gradient.addColorStop(0.55, withAlpha(palette.accent, dark ? 0.24 : 0.16));
-  // A little light left where it meets the design, so it lands there.
-  gradient.addColorStop(1, withAlpha(palette.accent, dark ? 0.12 : 0.08));
-  ctx.fillStyle = gradient;
-  ctx.beginPath();
-  ctx.moveTo(left[0].x, left[0].y);
-  for (const p of left.slice(1)) ctx.lineTo(p.x, p.y);
-  for (const p of right.reverse()) ctx.lineTo(p.x, p.y);
-  ctx.closePath();
-  ctx.fill();
-  // Its bright core, fading sooner.
-  const core = ctx.createLinearGradient(from.x, from.y, curve.end.x, curve.end.y);
-  core.addColorStop(0, withAlpha(palette.accent, 0.75));
-  core.addColorStop(0.6, withAlpha(palette.accent, 0.12));
-  core.addColorStop(1, withAlpha(palette.accent, 0));
-  ctx.strokeStyle = core;
-  ctx.lineWidth = Math.max(0.6, Math.min(1.4, 0.05 * GRID * k));
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.moveTo(from.x, from.y);
-  for (const p of points.slice(1)) ctx.lineTo(p.x, p.y);
-  ctx.stroke();
-  ctx.restore();
+  const growth = reducedMotion() ? { reach: 1, pulse: -1 } : beamGrowth(performance.now() - state.beamsAt, depth);
+  if (growth.moving) requestDraw();
+  // Its band keeps a little light where it meets the design, so it lands
+  // there; its bright core fades sooner. Nothing crosses the card's edge.
+  paint.beam({
+    spine,
+    from: points[0],
+    to: curve.end,
+    color: palette.accent,
+    alpha,
+    band: { stops: dark ? [0.55, 0.24, 0.12] : [0.4, 0.16, 0.08], mid: 0.55 },
+    core: { stops: [0.75, 0.12, 0], mid: 0.6 },
+    coreWidth: Math.max(0.6, Math.min(1.4, 0.05 * GRID * k)),
+    cut: { at: p3, along: direction },
+    additive: dark,
+    reach: growth.reach,
+    pulse: growth.pulse,
+  });
   return curve.end;
 }
 
 /** A search's hits in one design: a translucent mark under each. */
-function drawHits(ctx, tile, entry, hits, palette) {
+function drawHits(paint, tile, entry, hits, palette, alpha) {
   const dx = tile.x - entry.box.x;
   const dy = tile.y - entry.box.y;
-  ctx.save();
-  ctx.globalAlpha *= 0.28;
-  ctx.fillStyle = palette.accent;
   for (const hit of hits) {
     for (const b of hit.boxes) {
-      const rect = worldToScreen({ x: b.x + dx, y: b.y + dy, w: b.w, h: b.h });
-      ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+      paint.box({ rect: worldToScreen({ x: b.x + dx, y: b.y + dy, w: b.w, h: b.h }), fill: palette.accent, fillAlpha: alpha * 0.28 });
     }
   }
-  ctx.restore();
 }
 
 // ----- the workspace check --------------------------------------------------------
@@ -57213,7 +57921,10 @@ async function saveTags(entry, text) {
         await cachePut(renderingKey(entry.path, revision, INDEX_CACHE), index);
         for (const level of IMAGE_LEVELS) {
           const bitmap = state?.bitmaps.get(bitmapKey(entry, level));
-          if (bitmap) state.bitmaps.set(`${entry.id}\n${revision}\n${theme()}\n${level}`, bitmap);
+          if (!bitmap) continue;
+          const key = `${entry.id}\n${revision}\n${theme()}\n${level}`;
+          state.bitmaps.set(key, bitmap);
+          painter().rename(bitmapKey(entry, level), key);
         }
       }
       entry.revision = revision;
@@ -57270,59 +57981,29 @@ function focusSearch() {
 
 /** The editor's grid: one-unit lines every cell, fading out as the cells
  *  shrink to a few pixels instead of turning into a gray wash. */
-function drawGrid(ctx, palette, w, h, { x, y } = state.view, k = scale()) {
+function drawGrid(paint, palette, { x, y } = state.view, k = scale(), options = {}) {
   if (!editor.showGrid) return;
-  const spacing = GRID * k;
-  const alpha = Math.min(1, (spacing - 3) / 6);
-  if (alpha <= 0) return;
-  // Whole device pixels: a line straddling two pixels would antialias into
-  // a fainter, wider one, and the grid would shimmer unevenly.
-  const dpr = window.devicePixelRatio || 1;
-  const width = Math.max(1, Math.round(k * dpr));
-  const offset = width % 2 ? 0.5 : 0;
-  const crisp = (value) => (Math.round(value * dpr) + offset) / dpr;
-  ctx.save();
-  // A line thinner than a pixel shows as a fainter one-pixel line, as the
-  // editor's one-unit grid does.
-  ctx.globalAlpha *= alpha * Math.min(1, (k * dpr) / width);
-  ctx.strokeStyle = palette.grid;
-  ctx.lineWidth = width / dpr;
-  ctx.beginPath();
-  for (let gx = Math.ceil(x / GRID) * GRID; (gx - x) * k <= w; gx += GRID) {
-    const sx = crisp((gx - x) * k);
-    ctx.moveTo(sx, 0);
-    ctx.lineTo(sx, h);
-  }
-  for (let gy = Math.ceil(y / GRID) * GRID; (gy - y) * k <= h; gy += GRID) {
-    const sy = crisp((gy - y) * k);
-    ctx.moveTo(0, sy);
-    ctx.lineTo(w, sy);
-  }
-  ctx.stroke();
-  ctx.restore();
+  const fade = Math.min(1, (GRID * k - 3) / 6);
+  if (fade <= 0) return;
+  paint.grid({ x, y, k, spacing: GRID, color: palette.grid, ...options, alpha: (options.alpha ?? 1) * fade });
 }
 
-/** Right-drag: the editor's dashed zoom box. */
-function drawZoomBox(ctx, palette) {
-  const box = state.drag?.zoomBox;
-  if (!box?.to) return;
-  const x = Math.min(box.from.x, box.to.x);
-  const y = Math.min(box.from.y, box.to.y);
-  const w = Math.abs(box.to.x - box.from.x);
-  const h = Math.abs(box.to.y - box.from.y);
-  ctx.save();
-  ctx.fillStyle = palette.faint;
-  ctx.globalAlpha = 0.12;
-  ctx.fillRect(x, y, w, h);
-  ctx.globalAlpha = 1;
-  ctx.strokeStyle = palette.faint;
-  ctx.lineWidth = 1.4;
-  ctx.setLineDash([5, 4]);
-  ctx.strokeRect(x, y, w, h);
-  ctx.restore();
+/** Right-drag: the editor's dashed zoom box, a page element moved straight
+ *  from the pointer so it keeps up with it, with no repaint of the desk. */
+function syncZoomBox() {
+  const box = state?.drag?.zoomBox;
+  if (!box?.to) {
+    zoomBoxEl.setAttribute('display', 'none');
+    return;
+  }
+  zoomBoxEl.removeAttribute('display');
+  zoomBoxEl.setAttribute('x', Math.min(box.from.x, box.to.x));
+  zoomBoxEl.setAttribute('y', Math.min(box.from.y, box.to.y));
+  zoomBoxEl.setAttribute('width', Math.abs(box.to.x - box.from.x));
+  zoomBoxEl.setAttribute('height', Math.abs(box.to.y - box.from.y));
 }
 
-function drawCaption(ctx, tile, entry, rect, palette) {
+function drawCaption(paint, tile, entry, rect, palette, alpha, moving) {
   // In a transition the desk shows only the drawings (state.quiet).
   if (state.source === 'symbols' || state.quiet) return;
   const selected = state.selected === tile.id || !!state.picked?.has(tile.id);
@@ -57339,12 +58020,7 @@ function drawCaption(ctx, tile, entry, rect, palette) {
   // Frame and bracket take in the caption, so no line runs through it.
   const bottom = captioned ? rect.y + rect.h + size * 1.9 + inset * 0.6 : rect.y + rect.h + inset;
   if (hovered && !selected && liftOf(tile.id).lift < 0.01) {
-    ctx.save();
-    ctx.globalAlpha *= 0.3;
-    ctx.strokeStyle = palette.accent;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(rect.x - inset, rect.y - inset, rect.w + 2 * inset, bottom - rect.y + inset);
-    ctx.restore();
+    paint.box({ rect: { x: rect.x - inset, y: rect.y - inset, w: rect.w + 2 * inset, h: bottom - rect.y + inset }, stroke: palette.accent, strokeAlpha: alpha * 0.3, strokeWidth: 1 });
   }
   if (!captioned) return;
   let room = (tile.w + ATLAS_GAP * 0.8) * k;
@@ -57353,34 +58029,26 @@ function drawCaption(ctx, tile, entry, rect, palette) {
   // The open design -- where the editor returns to -- carries an Open badge before its
   // name, whichever design is picked or hovered.
   if (entry.current) {
-    ctx.font = `700 ${size * 0.8}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
     const pad = size * 0.4;
-    const w = ctx.measureText('OPEN').width + 2 * pad;
-    ctx.fillStyle = palette.accent;
-    ctx.beginPath();
-    ctx.roundRect(x, y - size * 0.1, w, size * 1.2, size * 0.3);
-    ctx.fill();
-    ctx.fillStyle = palette.paper;
-    ctx.textBaseline = 'middle';
-    ctx.fillText('OPEN', x + pad, y + size * 0.5);
+    const w = paint.measure('OPEN', 700, size * 0.8) + 2 * pad;
+    paint.box({ rect: { x, y: y - size * 0.1, w, h: size * 1.2 }, radius: size * 0.3, fill: palette.accent, fillAlpha: alpha });
+    paint.text({ text: 'OPEN', weight: 700, size: size * 0.8, color: palette.paper, alpha, x: x + pad, y: y + size * 0.5, baseline: 'middle', moving });
     x += w + size * 0.45;
     room -= w + size * 0.45;
   }
-  ctx.font = `${selected || entry.current ? 600 : 500} ${size}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
-  ctx.fillStyle = selected || hovered || entry.current ? palette.text : palette.dim;
-  ctx.textBaseline = 'top';
+  const weight = selected || entry.current ? 600 : 500;
   const tags = entry.index?.tags?.length ? `   ${entry.index.tags.map((tag) => `#${tag}`).join(' ')}` : '';
-  ctx.fillText(fitText(ctx, `${entry.name}${tags}`, room), x, y);
+  paint.text({ text: fitText(paint, `${entry.name}${tags}`, room, weight, size), weight, size, color: selected || hovered || entry.current ? palette.text : palette.dim, alpha, x, y, moving });
 }
 
 /** `text`, cut with an ellipsis to fit `width` pixels. */
-function fitText(ctx, text, width) {
-  if (ctx.measureText(text).width <= width) return text;
+function fitText(paint, text, width, weight, size) {
+  if (paint.measure(text, weight, size) <= width) return text;
   let low = 0;
   let high = text.length;
   while (low < high) {
     const mid = Math.ceil((low + high) / 2);
-    if (ctx.measureText(`${text.slice(0, mid)}…`).width <= width) low = mid;
+    if (paint.measure(`${text.slice(0, mid)}…`, weight, size) <= width) low = mid;
     else high = mid - 1;
   }
   return low ? `${text.slice(0, low)}…` : '';
@@ -57596,7 +58264,7 @@ function turnBack() {
 /** A flight up to the editor turned back has landed on the desk: the desk
  *  is as it was, its names and toolbars back. */
 function stayOnDesk() {
-  landFlight({ ripple: false });
+  landFlight();
   state.closing = false;
   state.opening = false;
   state.turnBack = false;
@@ -57665,14 +58333,13 @@ function focusTile(tile, { zoom = false } = {}) {
 // seen through it. Leaving the editor, the design flies back, away from the
 // eye, on its sheet of paper -- the whole editor page, which narrows into the
 // design's card as it goes -- and lands on its place on the desk, picked
-// (floating a little above it), with a ripple of light. Opening a design
+// (floating a little above it). Opening a design
 // carries its card on up to the glass, where the editor takes over. The desk
 // itself hardly moves: it sinks into shadow and draws back a little while a
 // design is near the eye (state.flight; throughDepth projects the path).
 
 /** How far the desk draws back while a design is at the glass. */
 const FLIGHT_PUSH = 0.1;
-const RIPPLE_MS = 650;
 /** The desk view left last in this page, per workspace: coming back from the
  *  editor, the design lands on the desk as it was left. */
 let lastDesk = null;
@@ -57773,7 +58440,7 @@ function flightRatio(flight) {
 const flightMs = (flight) => Math.round(Math.min(650, 400 + 60 * Math.log2(flightRatio(flight))));
 
 /** The design has landed: it lies picked on the desk, and the desk rings. */
-function landFlight({ ripple = true } = {}) {
+function landFlight() {
   const flight = state.flight;
   if (!flight) return;
   state.flight = null;
@@ -57782,7 +58449,6 @@ function landFlight({ ripple = true } = {}) {
     state.lifts ||= new Map();
     const lift = flight.from?.lift ?? 1;
     state.lifts.set(flight.id, { lift, dim: 0, dx: flight.from?.dx || 0, dy: flight.from?.dy || 0, target: lift });
-    if (ripple) state.ripple = { id: flight.id, at: performance.now() };
   }
   requestDraw();
 }
@@ -57793,17 +58459,13 @@ function landFlight({ ripple = true } = {}) {
  * card on the desk, its grid fading as it recedes -- casting a shadow that
  * spreads and softens the higher it is.
  */
-function drawFlight(ctx, palette, w, h) {
+function drawFlight(paint, palette, w, h) {
   const flight = state.flight;
   const near = Math.max(0, Math.min(1, flight.depth));
   const dark = theme() === 'dark';
   const tile = flight.id ? tileById(flight.id) : null;
   const entry = tile && state.entries.get(tile.id);
-  ctx.save();
-  ctx.fillStyle = dark ? '#000' : 'rgb(20, 24, 34)';
-  ctx.globalAlpha = (dark ? 0.62 : 0.32) * smoothstep(near);
-  ctx.fillRect(0, 0, w, h);
-  ctx.restore();
+  paint.box({ rect: { x: 0, y: 0, w, h }, fill: dark ? '#000' : 'rgb(20, 24, 34)', fillAlpha: (dark ? 0.62 : 0.32) * smoothstep(near) });
   const pane = { x: 0, y: 0, w, h };
   let design = null;
   let card;
@@ -57822,16 +58484,7 @@ function drawFlight(ctx, palette, w, h) {
   const sheet = throughDepth(card, pane, flight.depth, ratio);
   const radius = cardRadius() * (1 - near);
   const alpha = tile ? 1 : smoothstep(near * 1.4);
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  ctx.fillStyle = palette.card;
-  ctx.shadowColor = palette.shadow;
-  ctx.shadowBlur = 30 + 150 * near;
-  ctx.shadowOffsetY = 10 + 80 * near;
-  ctx.beginPath();
-  ctx.roundRect(sheet.x, sheet.y, sheet.w, sheet.h, radius);
-  ctx.fill();
-  ctx.shadowColor = 'transparent';
+  paint.raised({ rect: sheet, radius, fill: palette.card, alpha, blur: 30 + 150 * near, drop: 10 + 80 * near, color: palette.shadow });
   // The editor's grid rides on the sheet, fixed to the drawing.
   let grid = null;
   if (design) {
@@ -57841,94 +58494,17 @@ function drawFlight(ctx, palette, w, h) {
     const k = flight.grid.k * sheet.w / w;
     grid = { x: flight.grid.x - sheet.x / k, y: flight.grid.y - sheet.y / k, k };
   }
-  if (grid) {
-    ctx.save();
-    ctx.clip();
-    ctx.globalAlpha = alpha * smoothstep(near * 1.25);
-    drawGrid(ctx, palette, w, h, grid, grid.k);
-    ctx.restore();
-  }
+  if (grid) drawGrid(paint, palette, grid, grid.k, { alpha: alpha * smoothstep(near * 1.25), clip: { ...sheet, radius } });
   if (design) {
-    const bitmap = IMAGE_LEVELS.slice().reverse().map((level) => state.bitmaps.get(bitmapKey(entry, level))).find(Boolean);
-    if (bitmap) {
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(bitmap, design.x, design.y, design.w, design.h);
-    }
+    const key = IMAGE_LEVELS.slice().reverse().map((level) => bitmapKey(entry, level)).find((candidate) => paint.ready(candidate, state.bitmaps.get(candidate)));
+    if (key) paint.image(key, design, 1);
   }
   // In flight its edge catches the light, most of all midway.
   const glow = Math.sin(Math.PI * near) * (dark ? 0.55 : 0.35);
-  if (glow > 0.01) {
-    ctx.save();
-    if (dark) ctx.globalCompositeOperation = 'lighter';
-    ctx.globalAlpha = alpha * glow;
-    ctx.strokeStyle = palette.accent;
-    ctx.shadowColor = palette.accent;
-    ctx.shadowBlur = 24;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.roundRect(sheet.x, sheet.y, sheet.w, sheet.h, radius);
-    ctx.stroke();
-    ctx.restore();
-  }
+  if (glow > 0.01) paint.box({ rect: sheet, radius, stroke: palette.accent, strokeAlpha: alpha * glow, strokeWidth: 1.5, glow: palette.accent, glowBlur: 24, additive: dark });
   // The picked card's accent rim, there on the desk and gone at the glass.
-  ctx.globalAlpha = alpha * 0.9 * (1 - smoothstep(near * 2));
-  if (ctx.globalAlpha > 0.01) {
-    ctx.strokeStyle = palette.accent;
-    ctx.lineWidth = Math.max(0.5, Math.min(1.5, 3 * scale()));
-    ctx.beginPath();
-    ctx.roundRect(sheet.x, sheet.y, sheet.w, sheet.h, radius);
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-/** A landing's ripple: two rings of light run out across the desk from the
- *  card, lighting the grid as they pass. */
-function drawRipple(ctx, palette) {
-  const ripple = state.ripple;
-  if (!ripple) return;
-  const t = (performance.now() - ripple.at) / RIPPLE_MS;
-  const tile = tileById(ripple.id);
-  if (t >= 1 || !tile || reducedMotion()) {
-    state.ripple = null;
-    return;
-  }
-  requestDraw();
-  const card = cardFrame(lifted(worldToScreen(tile), tile.id));
-  const reach = 50 + 0.3 * Math.max(card.w, card.h);
-  const { w, h } = paneSize();
-  const dark = theme() === 'dark';
-  const ring = (grow) => {
-    const g = Math.max(0, grow);
-    ctx.roundRect(card.x - g, card.y - g, card.w + 2 * g, card.h + 2 * g, cardRadius() + g);
-  };
-  ctx.save();
-  if (dark) ctx.globalCompositeOperation = 'lighter';
-  for (const [delay, weight] of [[0, 1], [0.2, 0.55]]) {
-    const local = (t - delay) / (1 - delay);
-    if (local <= 0) continue;
-    const grow = reach * easeOut(local);
-    const fade = (1 - local) ** 2;
-    // The grid lit in a band behind the ring.
-    ctx.save();
-    ctx.beginPath();
-    ring(grow);
-    ring(grow - 36);
-    ctx.clip('evenodd');
-    ctx.globalAlpha = weight * fade * (dark ? 0.9 : 0.6);
-    drawGrid(ctx, { ...palette, grid: palette.accent }, w, h);
-    ctx.restore();
-    // The ring itself, glowing.
-    ctx.globalAlpha = weight * fade * 0.7;
-    ctx.strokeStyle = palette.accent;
-    ctx.lineWidth = 1 + 4 * (1 - local);
-    ctx.shadowColor = palette.accent;
-    ctx.shadowBlur = 16 * (1 - local);
-    ctx.beginPath();
-    ring(grow);
-    ctx.stroke();
-  }
-  ctx.restore();
+  const rim = alpha * 0.9 * (1 - smoothstep(near * 2));
+  if (rim > 0.01) paint.box({ rect: sheet, radius, stroke: palette.accent, strokeAlpha: rim, strokeWidth: Math.max(0.5, Math.min(1.5, 3 * scale())) });
 }
 
 // ----- entering and leaving ---------------------------------------------------------
@@ -57939,7 +58515,7 @@ function deskState(generation, source, startup = false) {
     bitmaps: new Map(), failed: new Set(), wanted: [], overlays: new Map(), baking: startup,
     selected: null, hover: null, drag: null, animation: null, colors: null, colorsKey: null, source,
     arranged: null, arrangeTimer: null, motion: null, layouts: new Map(),
-    arrived: new Map(), flight: null, ripple: null, opening: false,
+    arrived: new Map(), flight: null, opening: false,
   };
 }
 
@@ -57951,7 +58527,7 @@ async function reloadDesk({ quiet = false, pick = null } = {}) {
   if (!state || state.source !== 'workspace') return false;
   stopAnimation();
   clearTimeout(state.arrangeTimer);
-  for (const bitmap of state.bitmaps.values()) bitmap.close?.();
+  releaseImages();
   overlayEl.replaceChildren();
   const generation = (openAtlas.generation += 1);
   state = { ...deskState(generation, 'workspace'), view: state.view };
@@ -58355,11 +58931,12 @@ function finishClose({ animate = true } = {}) {
   rememberDesk();
   stopAnimation();
   clearTimeout(state.arrangeTimer);
-  for (const bitmap of state.bitmaps.values()) bitmap.close?.();
+  releaseImages();
   // The keys typed on the way go to the editor (an Enter would only open
   // what has just opened), once whatever follows the close has run.
   const keys = (state.queued || []).filter((init) => init.key !== 'Enter');
   state = null;
+  syncZoomBox();
   if (keys.length) setTimeout(() => { if (!state) replayKeys(canvasEl, keys); });
   // From here the editor takes the pointer, though the desk still shows,
   // and the top bar is the editor's again.
@@ -58663,7 +59240,7 @@ function onPointerMove(ev) {
     const to = { x: ev.clientX - box.left, y: ev.clientY - box.top };
     const { from } = drag.zoomBox;
     drag.zoomBox.to = Math.hypot(to.x - from.x, to.y - from.y) >= 4 ? to : null;
-    requestDraw();
+    syncZoomBox();
     return;
   }
   if (!drag) {
@@ -58703,6 +59280,7 @@ function onPointerUp(ev) {
   const drag = state.drag;
   if (drag?.zoomBox) {
     state.drag = null;
+    syncZoomBox();
     const { from, to } = drag.zoomBox;
     if (!to) {
       // A right click (no box dragged) on a design: its menu.
@@ -71027,6 +71605,438 @@ function pinJoinPoints(circuit, pins, carried = new Set()) {
   return [...points.values()];
 }
 
+};
+
+__modules["src/web/gpu.js"] = function (__require, __exports) {
+__exports.gpuContext = gpuContext;
+__exports.linkProgram = linkProgram;
+__exports.cssColor = cssColor;
+__exports.premultiplied = premultiplied;
+__exports.textMeasure = textMeasure;
+__exports.createQuad = createQuad;
+__exports.createShapes = createShapes;
+/**
+ * WebGL2 for the Atlas desk and the net beams: the context, and the shapes
+ * they share (rounded boxes, soft shadows, beams of light). All coordinates
+ * are CSS pixels from the canvas's top left; colors are premultiplied.
+ *
+ * A browser with no real GPU gets no context (`gpuContext` returns null) and
+ * the caller keeps its 2D drawing. `localStorage['mosfeteer.gpu']`: `off`
+ * never uses WebGL, `on` also accepts a software renderer.
+ */
+
+const SETTING_KEY = 'mosfeteer.gpu';
+const SOFTWARE = /swiftshader|llvmpipe|softpipe|software|basic render/i;
+
+function setting() {
+  try { return globalThis.localStorage?.getItem(SETTING_KEY) || ''; } catch { return ''; }
+}
+
+/** A WebGL2 context for `canvas`, or null. */
+function gpuContext(canvas, attributes = {}) {
+  const mode = setting();
+  if (mode === 'off') return null;
+  const gl = canvas.getContext('webgl2', {
+    antialias: false, depth: false, stencil: false, powerPreference: 'low-power',
+    failIfMajorPerformanceCaveat: mode !== 'on', ...attributes,
+  });
+  if (!gl) return null;
+  const info = gl.getExtension('WEBGL_debug_renderer_info');
+  const renderer = info ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : '';
+  if (mode !== 'on' && SOFTWARE.test(renderer)) {
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+    return null;
+  }
+  return gl;
+}
+
+function compile(gl, type, source) {
+  const shader = gl.createShader(type);
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS) && !gl.isContextLost()) throw new Error(gl.getShaderInfoLog(shader) || 'shader did not compile');
+  return shader;
+}
+
+/** A linked program, with its uniform locations as `.u.<name>`. */
+function linkProgram(gl, vertex, fragment) {
+  const handle = gl.createProgram();
+  gl.attachShader(handle, compile(gl, gl.VERTEX_SHADER, vertex));
+  gl.attachShader(handle, compile(gl, gl.FRAGMENT_SHADER, fragment));
+  gl.linkProgram(handle);
+  if (!gl.getProgramParameter(handle, gl.LINK_STATUS) && !gl.isContextLost()) throw new Error(gl.getProgramInfoLog(handle) || 'program did not link');
+  const u = {};
+  const count = gl.getProgramParameter(handle, gl.ACTIVE_UNIFORMS) || 0;
+  for (let i = 0; i < count; i++) {
+    const { name } = gl.getActiveUniform(handle, i);
+    u[name] = gl.getUniformLocation(handle, name);
+  }
+  return { handle, u };
+}
+
+const colorCache = new Map();
+let colorContext = null;
+
+/** Any CSS color as straight `[r, g, b, a]`, each 0 to 1. */
+function cssColor(value) {
+  let color = colorCache.get(value);
+  if (color) return color;
+  colorContext ||= Object.assign(document.createElement('canvas'), { width: 1, height: 1 }).getContext('2d', { willReadFrequently: true });
+  colorContext.clearRect(0, 0, 1, 1);
+  colorContext.fillStyle = '#000';
+  colorContext.fillStyle = value;
+  colorContext.fillRect(0, 0, 1, 1);
+  const [r, g, b, a] = colorContext.getImageData(0, 0, 1, 1).data;
+  color = [r / 255, g / 255, b / 255, a / 255];
+  colorCache.set(value, color);
+  return color;
+}
+
+/** `color` at `alpha`, premultiplied. */
+function premultiplied(color, alpha = 1) {
+  const [r, g, b, a] = cssColor(color);
+  const total = a * alpha;
+  return [r * total, g * total, b * total, total];
+}
+
+/** Text widths, remembered: measured once at one size and scaled, since
+ *  the desk asks for the same ones every frame. `read(text, font)` measures. */
+function textMeasure(fontOf) {
+  const REFERENCE = 100;
+  const widths = new Map();
+  return (text, weight, size, read) => {
+    const key = `${weight}|${text}`;
+    let width = widths.get(key);
+    if (width === undefined) {
+      if (widths.size > 20000) widths.clear();
+      width = read(text, fontOf(weight, REFERENCE));
+      widths.set(key, width);
+    }
+    return (width * size) / REFERENCE;
+  };
+}
+
+/** A unit rectangle stretched over `u_rect`; the fragment shaders get `v_p`
+ *  in CSS pixels and `v_uv` from 0 to 1. */
+const QUAD_VERTEX = `#version 300 es
+layout(location = 0) in vec2 a_corner;
+uniform vec4 u_rect;
+uniform vec2 u_pane;
+out vec2 v_p;
+out vec2 v_uv;
+void main() {
+  v_uv = a_corner;
+  v_p = u_rect.xy + a_corner * u_rect.zw;
+  vec2 clip = v_p / u_pane * 2.0 - 1.0;
+  gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
+}`;
+
+/** The signed distance to a rounded box `b` (x, y, w, h) of radius `r`. */
+const ROUNDED_BOX = `
+float sdBox(vec2 p, vec4 b, float r) {
+  vec2 q = abs(p - b.xy - b.zw * 0.5) - b.zw * 0.5 + r;
+  return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+}`;
+
+
+/** Under one 8-bit step of noise, which hides banding in soft gradients
+ *  (interleaved gradient noise). */
+const DITHER = `
+float dither() {
+  return (fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) - 0.5) / 255.0;
+}`;
+
+const BOX_FRAGMENT = `#version 300 es
+precision highp float;
+in vec2 v_p;
+uniform vec4 u_box, u_fill, u_stroke, u_glow;
+uniform float u_radius, u_width, u_sigma, u_px, u_sweep, u_sweepAt;
+out vec4 color;
+${ROUNDED_BOX}
+${DITHER}
+float erf(float x) {
+  float a = abs(x);
+  float t = 1.0 + (0.278393 + (0.230389 + 0.078108 * a * a) * a) * a;
+  t *= t;
+  return sign(x) * (1.0 - 1.0 / (t * t));
+}
+// How much of a pixel at distance d lies in the band |d| < w / 2.
+float band(float d, float w) {
+  return clamp((min(d + u_px * 0.5, w * 0.5) - max(d - u_px * 0.5, -w * 0.5)) / u_px, 0.0, 1.0);
+}
+void main() {
+  float d = sdBox(v_p, u_box, u_radius);
+  vec4 result = vec4(0.0);
+  if (u_sigma > 0.0) {
+    float s = 1.41421356 * u_sigma;
+    float light = 0.5 * (erf((d + u_width * 0.5) / s) - erf((d - u_width * 0.5) / s));
+    result = u_glow * max(0.0, light + (light > 0.002 ? dither() / max(u_glow.a, 0.01) : 0.0));
+  }
+  vec4 fill = u_fill * clamp(0.5 - d / u_px, 0.0, 1.0);
+  result = fill + result * (1.0 - fill.a);
+  if (u_width > 0.0) {
+    vec4 stroke = u_stroke * band(d, u_width);
+    if (u_sweep > 0.0) {
+      // Only near one angle round the box, measured as if it were square.
+      vec2 at = (v_p - u_box.xy - u_box.zw * 0.5) / (u_box.zw * 0.5);
+      float off = mod(atan(at.y, at.x) - u_sweepAt + 3.14159265, 6.2831853) - 3.14159265;
+      stroke *= exp(-(off * off) / (u_sweep * u_sweep));
+    }
+    result = stroke + result * (1.0 - stroke.a);
+  }
+  color = result;
+}`;
+
+// The Gaussian blur of a rounded box, in closed form along x and summed in
+// four steps along y (Evan Wallace, "Fast Rounded Rectangle Shadows").
+const SHADOW_FRAGMENT = `#version 300 es
+precision highp float;
+in vec2 v_p;
+uniform vec4 u_box, u_color;
+uniform float u_radius, u_sigma;
+out vec4 color;
+${DITHER}
+vec2 erf(vec2 x) {
+  vec2 s = sign(x), a = abs(x);
+  x = 1.0 + (0.278393 + (0.230389 + 0.078108 * (a * a)) * a) * a;
+  x *= x;
+  return s - s / (x * x);
+}
+float gaussian(float x, float sigma) {
+  return exp(-(x * x) / (2.0 * sigma * sigma)) / (2.5066282746 * sigma);
+}
+float shadowX(float x, float y, float sigma, float corner, vec2 half_) {
+  float delta = min(half_.y - corner - abs(y), 0.0);
+  float curved = half_.x - corner + sqrt(max(0.0, corner * corner - delta * delta));
+  vec2 integral = 0.5 + 0.5 * erf((x + vec2(-curved, curved)) * (0.70710678 / sigma));
+  return integral.y - integral.x;
+}
+void main() {
+  vec2 half_ = u_box.zw * 0.5;
+  vec2 point = v_p - u_box.xy - half_;
+  float corner = min(u_radius, min(half_.x, half_.y));
+  float low = point.y - half_.y, high = point.y + half_.y;
+  float start = clamp(-3.0 * u_sigma, low, high);
+  float end = clamp(3.0 * u_sigma, low, high);
+  float step = (end - start) / 4.0;
+  float y = start + step * 0.5;
+  float value = 0.0;
+  for (int i = 0; i < 4; i++) {
+    value += shadowX(point.x, point.y - y, u_sigma, corner, half_) * gaussian(y, u_sigma) * step;
+    y += step;
+  }
+  color = u_color * max(0.0, value + (value > 0.002 ? dither() / max(u_color.a, 0.01) : 0.0));
+}`;
+
+// A band along a spine, soft at its edges, its brightness a gradient along
+// the straight line u_from to u_to as a canvas gradient is, with a bright
+// core down its middle. Past the half plane at u_cut it is cut off.
+const BEAM_VERTEX = `#version 300 es
+layout(location = 0) in vec2 a_position;
+layout(location = 1) in vec2 a_across;
+layout(location = 2) in float a_along;
+uniform vec2 u_pane;
+out vec2 v_p;
+out vec2 v_across;
+out float v_along;
+void main() {
+  v_p = a_position;
+  v_across = a_across;
+  v_along = a_along;
+  vec2 clip = a_position / u_pane * 2.0 - 1.0;
+  gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
+}`;
+
+const BEAM_FRAGMENT = `#version 300 es
+precision highp float;
+in vec2 v_p;
+in vec2 v_across;
+in float v_along;
+uniform vec2 u_from, u_to, u_cutAt, u_cutAlong;
+uniform vec3 u_bandStops, u_coreStops;
+uniform vec3 u_color;
+uniform float u_bandMid, u_coreMid, u_coreWidth, u_alpha, u_px, u_additive, u_reach, u_pulse;
+out vec4 color;
+${DITHER}
+float ramp(float t, vec3 stops, float mid) {
+  return t < mid ? mix(stops.x, stops.y, t / mid) : mix(stops.y, stops.z, (t - mid) / (1.0 - mid));
+}
+void main() {
+  vec2 axis = u_to - u_from;
+  float t = clamp(dot(v_p - u_from, axis) / max(dot(axis, axis), 1e-6), 0.0, 1.0);
+  float d = v_across.x, half_ = v_across.y;
+  float inBand = clamp((half_ - abs(d)) / u_px + 0.5, 0.0, 1.0);
+  float w = u_coreWidth * 0.5;
+  float inCore = clamp((min(d + u_px * 0.5, w) - max(d - u_px * 0.5, -w)) / u_px, 0.0, 1.0);
+  float band = ramp(t, u_bandStops, u_bandMid) * inBand;
+  float core = ramp(t, u_coreStops, u_coreMid) * inCore;
+  float cut = dot(u_cutAlong, u_cutAlong) > 0.0 ? clamp(0.5 - dot(v_p - u_cutAt, u_cutAlong) / u_px, 0.0, 1.0) : 1.0;
+  float grown = u_reach >= 1.0 ? 1.0 : clamp((u_reach - v_along) / 0.05 + 0.5, 0.0, 1.0);
+  float pulse = 0.0;
+  if (u_pulse >= 0.0) {
+    float off = (v_along - u_pulse) / 0.08;
+    pulse = 0.45 * exp(-off * off) * inBand;
+  }
+  float light = min(1.0, band + core - (1.0 - u_additive) * band * core + pulse) * cut * grown * u_alpha;
+  if (light > 0.002) light = max(0.0, light + dither());
+  color = vec4(u_color * light, light);
+}`;
+
+function createQuad(gl) {
+  const array = gl.createVertexArray();
+  gl.bindVertexArray(array);
+  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  gl.bindVertexArray(null);
+  return array;
+}
+
+/** What both the desk and the net beams draw with. `pane` and `px` are set
+ *  per frame (`frame`). */
+function createShapes(gl) {
+  const quad = createQuad(gl);
+  const box = linkProgram(gl, QUAD_VERTEX, BOX_FRAGMENT);
+  const shadow = linkProgram(gl, QUAD_VERTEX, SHADOW_FRAGMENT);
+  const beam = linkProgram(gl, BEAM_VERTEX, BEAM_FRAGMENT);
+  const beamArray = gl.createVertexArray();
+  const beamBuffer = gl.createBuffer();
+  gl.bindVertexArray(beamArray);
+  gl.bindBuffer(gl.ARRAY_BUFFER, beamBuffer);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 20, 0);
+  gl.enableVertexAttribArray(1);
+  gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 20, 8);
+  gl.enableVertexAttribArray(2);
+  gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 20, 16);
+  gl.bindVertexArray(null);
+  let pane = { w: 1, h: 1 };
+  let px = 1;
+  // What is bound, so a run of alike draws does not set it again.
+  let usedProgram = null;
+  let boundArray = null;
+  let blendMode = null;
+  const paneOf = new Map();
+
+  const use = (program, array) => {
+    if (usedProgram !== program) {
+      gl.useProgram(program.handle);
+      usedProgram = program;
+    }
+    if (boundArray !== array) {
+      gl.bindVertexArray(array);
+      boundArray = array;
+    }
+    const seen = paneOf.get(program);
+    if (!seen || seen.w !== pane.w || seen.h !== pane.h) {
+      gl.uniform2f(program.u.u_pane, pane.w, pane.h);
+      paneOf.set(program, pane);
+    }
+  };
+  const blend = (additive) => {
+    if (blendMode === additive) return;
+    if (blendMode === null) gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, additive ? gl.ONE : gl.ONE_MINUS_SRC_ALPHA);
+    blendMode = additive;
+  };
+  const stretch = (program, x, y, w, h) => {
+    use(program, quad);
+    gl.uniform4f(program.u.u_rect, x, y, w, h);
+  };
+  const paintQuad = () => gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+  return {
+    frame(w, h, dpr) {
+      pane = { w, h };
+      px = 1 / dpr;
+    },
+    blend,
+    stretch,
+    paintQuad,
+    /** After GL state was changed behind these shapes' back. */
+    invalidate() {
+      usedProgram = null;
+      boundArray = null;
+      blendMode = null;
+    },
+    /** A rounded box: filled, stroked on its edge, the stroke blurred into a glow. */
+    box({ rect, radius = 0, fill = null, fillAlpha = 1, stroke = null, strokeAlpha = 1, strokeWidth = 0, glow = null, glowAlpha = 1, glowBlur = 0, additive = false, sweep = null }) {
+      const sigma = glow && glowBlur > 0 ? glowBlur / 2 : 0;
+      const margin = strokeWidth / 2 + 3 * sigma + 2 * px;
+      blend(additive);
+      stretch(box, rect.x - margin, rect.y - margin, rect.w + 2 * margin, rect.h + 2 * margin);
+      gl.uniform4f(box.u.u_box, rect.x, rect.y, rect.w, rect.h);
+      gl.uniform1f(box.u.u_radius, Math.min(radius, rect.w / 2, rect.h / 2));
+      gl.uniform1f(box.u.u_width, stroke ? strokeWidth : 0);
+      gl.uniform1f(box.u.u_sigma, sigma);
+      gl.uniform1f(box.u.u_px, px);
+      gl.uniform1f(box.u.u_sweep, sweep ? sweep.width : 0);
+      gl.uniform1f(box.u.u_sweepAt, sweep ? sweep.angle : 0);
+      gl.uniform4fv(box.u.u_fill, fill ? premultiplied(fill, fillAlpha) : [0, 0, 0, 0]);
+      gl.uniform4fv(box.u.u_stroke, stroke ? premultiplied(stroke, strokeAlpha) : [0, 0, 0, 0]);
+      gl.uniform4fv(box.u.u_glow, sigma ? premultiplied(glow, glowAlpha) : [0, 0, 0, 0]);
+      paintQuad();
+    },
+    /** The soft shadow a rounded box casts (a canvas's shadowBlur `blur`). */
+    shadow({ rect, radius = 0, blur, drop = 0, color, alpha = 1 }) {
+      const sigma = Math.max(0.01, blur / 2);
+      const margin = 3 * sigma + 1;
+      blend(false);
+      stretch(shadow, rect.x - margin, rect.y + drop - margin, rect.w + 2 * margin, rect.h + 2 * margin);
+      gl.uniform4f(shadow.u.u_box, rect.x, rect.y + drop, rect.w, rect.h);
+      gl.uniform1f(shadow.u.u_radius, radius);
+      gl.uniform1f(shadow.u.u_sigma, sigma);
+      gl.uniform4fv(shadow.u.u_color, premultiplied(color, alpha));
+      paintQuad();
+    },
+    /**
+     * A beam along `spine` ([{ x, y, nx, ny, half }]). `band` and `core` are
+     * `{ stops: [a0, a1, a2], mid }`, read along the line `from` to `to`;
+     * `cut` is `{ at, along }`, past which nothing is drawn. `reach` (0 to 1)
+     * is how far along it has grown, `pulse` where a pulse of light is on
+     * it (negative: none).
+     */
+    beam({ spine, from, to, color, alpha = 1, band, core, coreWidth, cut = null, additive = false, reach = 1, pulse = -1 }) {
+      const margin = coreWidth / 2 + 2 * px;
+      const vertices = new Float32Array(spine.length * 10);
+      const distances = [0];
+      for (let i = 1; i < spine.length; i++) distances.push(distances[i - 1] + Math.hypot(spine[i].x - spine[i - 1].x, spine[i].y - spine[i - 1].y));
+      const length = distances.at(-1) || 1;
+      spine.forEach((p, i) => {
+        const out = Math.max(p.half, coreWidth / 2) + margin;
+        const along = distances[i] / length;
+        vertices.set([p.x + p.nx * out, p.y + p.ny * out, out, p.half, along, p.x - p.nx * out, p.y - p.ny * out, -out, p.half, along], i * 10);
+      });
+      blend(additive);
+      use(beam, beamArray);
+      gl.bindBuffer(gl.ARRAY_BUFFER, beamBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
+      const [r, g, b] = cssColor(color);
+      const u = beam.u;
+      gl.uniform2f(u.u_from, from.x, from.y);
+      gl.uniform2f(u.u_to, to.x, to.y);
+      gl.uniform3f(u.u_color, r, g, b);
+      gl.uniform3fv(u.u_bandStops, band.stops);
+      gl.uniform1f(u.u_bandMid, band.mid);
+      gl.uniform3fv(u.u_coreStops, core.stops);
+      gl.uniform1f(u.u_coreMid, core.mid);
+      gl.uniform1f(u.u_coreWidth, coreWidth);
+      gl.uniform1f(u.u_alpha, alpha);
+      gl.uniform1f(u.u_px, px);
+      gl.uniform1f(u.u_additive, additive ? 1 : 0);
+      gl.uniform1f(u.u_reach, reach);
+      gl.uniform1f(u.u_pulse, pulse);
+      gl.uniform2f(u.u_cutAt, cut ? cut.at.x : 0, cut ? cut.at.y : 0);
+      gl.uniform2f(u.u_cutAlong, cut ? cut.along.x : 0, cut ? cut.along.y : 0);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, spine.length * 2);
+    },
+  };
+}
+
+__exports.QUAD_VERTEX = QUAD_VERTEX;
+__exports.ROUNDED_BOX = ROUNDED_BOX;
+__exports.DITHER = DITHER;
 };
 
 __modules["src/web/guides.js"] = function (__require, __exports) {
@@ -84226,18 +85236,25 @@ __exports.syncNetBeams = syncNetBeams;
 __exports.installNetBeams = installNetBeams;
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let beamShape, netBeams; __bind(() => { ({ beamShape, netBeams } = __require("src/core/net-beams.js")); });
-let netBeamsButton; __bind(() => { ({ netBeamsButton } = __require("src/web/elements.js")); });
+let canvasEl, netBeamsButton; __bind(() => { ({ canvasEl, netBeamsButton } = __require("src/web/elements.js")); });
+let createShapes, gpuContext; __bind(() => { ({ createShapes, gpuContext } = __require("src/web/gpu.js")); });
 let hintLine; __bind(() => { ({ hintLine } = __require("src/web/status-bar-ui.js")); });
 let worldPerPixel; __bind(() => { ({ worldPerPixel } = __require("src/web/align-tool.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let beamGrowth; __bind(() => { ({ beamGrowth } = __require("src/web/atlas-layout.js")); });
+let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion.js")); });
 /**
  * Net beams (Settings → Display → Net beams): while the pointer is over a
  * net, or a port, supply, ground, or VCM on it, a beam from the cursor
  * (snapped to the grid, as wires are drawn; a supply, ground, or VCM's own
  * terminal) to each other net its name connects it to
- * (src/core/net-beams.js). A browser preference, like the theme. The beams
- * have a layer of their own, written only when they change.
+ * (src/core/net-beams.js). A browser preference, like the theme. They are
+ * drawn by a shader (gpu.js) on a canvas over the drawing, or, without a GPU,
+ * in an SVG layer of their own; either only when they change.
  */
+
+
+
 
 
 
@@ -84250,6 +85267,8 @@ const SETTING_KEY = 'mosfeteer.netBeams';
 // A ground or supply net can have many names' worth of partners; past this
 // many the beams are a blur, and the nearest ones say enough.
 const MOST = 48;
+/** How many times quicker than the Atlas's beams these grow and pulse. */
+const GROWTH_SPEED = 2.5;
 
 let on = (() => {
   try { return globalThis.localStorage?.getItem(SETTING_KEY) === '1'; } catch { return false; }
@@ -84276,18 +85295,27 @@ function mountNetBeams(svgEl) {
   layerEl.setAttribute('pointer-events', 'none');
   svgEl.appendChild(layerEl);
   layerKey = '';
+  // A rebuilt canvas empties the pane; the beams' canvas stays on top of it.
+  if (gpu) canvasEl.appendChild(gpu.canvas);
 }
 
-function beamsSvg(from) {
+/** What to draw from the cursor: each beam's end and shape, in world units. */
+function currentBeams(from) {
   const target = editor.hoverTarget;
-  if (!on || !from || editor.drag || editor.hoverFromPanel || target?.kind !== 'net' || target.ids.length < 2) return '';
+  if (!on || !from || editor.drag || editor.hoverFromPanel || target?.kind !== 'net' || target.ids.length < 2) return null;
   const px = worldPerPixel();
   const size = { narrow: Math.max(2 * px, 0.08 * GRID), wide: Math.max(6 * px, 0.3 * GRID) };
-  const dot = Math.max(3 * px, 0.1 * GRID);
+  const beams = netBeams(editor.circuit, target.ids, target.source, from).slice(0, MOST)
+    .map(({ to }) => ({ to, shape: beamShape(from, to, size) }))
+    .filter(({ shape }) => shape);
+  return beams.length ? { from, beams, dot: Math.max(3 * px, 0.1 * GRID) } : null;
+}
+
+function beamsSvg(drawn) {
+  if (!drawn) return '';
+  const { from, beams, dot } = drawn;
   const f = (v) => String(Math.round(v * 10) / 10);
-  return netBeams(editor.circuit, target.ids, target.source, from).slice(0, MOST).map(({ to }, i) => {
-    const shape = beamShape(from, to, size);
-    if (!shape) return '';
+  return beams.map(({ to, shape }, i) => {
     const ends = `gradientUnits="userSpaceOnUse" x1="${f(from.x)}" y1="${f(from.y)}" x2="${f(to.x)}" y2="${f(to.y)}"`;
     return `<linearGradient id="net-beam-${i}" ${ends}><stop offset="0" class="net-beam-end"/><stop offset="0.5" class="net-beam-mid"/><stop offset="1" class="net-beam-end"/></linearGradient>`
       + `<linearGradient id="net-beam-core-${i}" ${ends}><stop offset="0" class="net-beam-core-end"/><stop offset="0.5" class="net-beam-core-mid"/><stop offset="1" class="net-beam-core-end"/></linearGradient>`
@@ -84297,10 +85325,115 @@ function beamsSvg(from) {
   }).join('');
 }
 
+// The same beams in a shader, on a canvas of their own over the drawing;
+// the context is only asked for once there is a beam to draw. Without one
+// the SVG layer draws them.
+let gpu = null;
+let gpuTried = false;
+
+function startGpu() {
+  gpuTried = true;
+  const canvas = document.createElement('canvas');
+  canvas.className = 'net-beams-gpu';
+  canvas.setAttribute('aria-hidden', 'true');
+  const gl = gpuContext(canvas);
+  if (!gl) return;
+  const build = () => {
+    gpu = { canvas, gl, shapes: createShapes(gl), key: '' };
+  };
+  try {
+    build();
+  } catch {
+    gpu = null;
+    return;
+  }
+  canvas.addEventListener('webglcontextlost', (ev) => {
+    ev.preventDefault();
+    gpu = null;
+    canvas.hidden = true;
+    syncNetBeams();
+  });
+  canvas.addEventListener('webglcontextrestored', () => {
+    try { build(); } catch { return; }
+    canvas.hidden = false;
+    syncNetBeams();
+  });
+  canvasEl.appendChild(canvas);
+}
+
+/** How far the beams have grown since the pointer reached this net. */
+function growthNow(drawn) {
+  const net = drawn ? editor.hoverTarget?.source : null;
+  if (net !== gpu.net) {
+    gpu.net = net;
+    gpu.netAt = performance.now();
+  }
+  return drawn && !reducedMotion() ? beamGrowth((performance.now() - gpu.netAt) * GROWTH_SPEED) : { reach: 1, pulse: -1, moving: false };
+}
+
+function drawGpu(drawn) {
+  const { canvas, gl, shapes } = gpu;
+  const growth = growthNow(drawn);
+  if (growth.moving && !gpu.frame) {
+    gpu.frame = requestAnimationFrame(() => {
+      if (gpu) gpu.frame = 0;
+      syncNetBeams();
+    });
+  }
+  const { x: vx, y: vy, w: vw } = editor.view;
+  const w = canvasEl.clientWidth;
+  const h = canvasEl.clientHeight;
+  const key = drawn ? JSON.stringify([vx, vy, vw, w, h, document.documentElement.className, drawn.from, drawn.beams.map(({ to }) => to), growth.reach, growth.pulse]) : '';
+  if (key === gpu.key) return;
+  gpu.key = key;
+  canvas.dataset.beams = String(drawn?.beams.length ?? 0);
+  const dpr = window.devicePixelRatio || 1;
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+  }
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.clearColor(0, 0, 0, 0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  if (!drawn) return;
+  shapes.frame(w, h, dpr);
+  const k = w / vw;
+  const screen = (p) => ({ x: (p.x - vx) * k, y: (p.y - vy) * k });
+  const color = getComputedStyle(canvasEl).getPropertyValue('--accent').trim() || '#0e7c7b';
+  const dark = document.documentElement.classList.contains('dark');
+  const end = dark ? 0.55 : 0.4;
+  const mid = dark ? 0.26 : 0.18;
+  const from = screen(drawn.from);
+  for (const { to, shape } of drawn.beams) {
+    const at = screen(to);
+    shapes.beam({
+      spine: shape.spine.map((p) => ({ ...screen(p), nx: p.nx, ny: p.ny, half: p.half * k })),
+      from,
+      to: at,
+      color,
+      band: { stops: [end, mid, end], mid: 0.5 },
+      core: { stops: [0.7, 0.25, 0.7], mid: 0.5 },
+      coreWidth: 1.2,
+      reach: growth.reach,
+      pulse: growth.pulse,
+    });
+    const r = drawn.dot * k;
+    // The landing shows once the beam has got there.
+    if (growth.reach > 0.95) shapes.box({ rect: { x: at.x - r, y: at.y - r, w: 2 * r, h: 2 * r }, radius: r, fill: color, fillAlpha: 0.45 });
+  }
+}
+
 /** Draw the beams from the cursor, or clear them. */
 function syncNetBeams() {
   if (!layerEl) return;
-  const svg = beamsSvg(editor.hoverTarget?.anchor || editor.cursor);
+  const drawn = currentBeams(editor.hoverTarget?.anchor || editor.cursor);
+  if (drawn && !gpuTried) startGpu();
+  if (gpu) {
+    drawGpu(drawn);
+    if (layerKey) layerEl.innerHTML = layerKey = '';
+    return;
+  }
+  const svg = beamsSvg(drawn);
   if (svg === layerKey) return;
   layerKey = svg;
   layerEl.innerHTML = svg;
