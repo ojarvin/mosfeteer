@@ -170,6 +170,19 @@ row's start beside the mark's own. Any row may be taller: **Taller** and
 **Shorter** (`--height ROW=4`) step it two cells at a time, its name staying
 centered.
 
+A signal row may be a **bus**: a letter or digit a slot (**Bus**, or `timing
+--bus D=aabc`), each value in its own stretch of a bar, top and bottom lines
+crossing in an X where the value changes (`timing.busWave`, in one box
+annotation as an analog curve). The editor has a field below the grid for each
+different value, what it stands for (`--word D:a=IDLE;D:b=$x_1$`); the same
+letter is the same word. A stretch shows its value's word, or the letter when
+there is none or it does not fit, and a value shortened anywhere is listed
+beside the row (`a = IDLE`, a `legend` label). A lead-in or lead-out alone
+shows no text. In a bus row a key that is a letter or digit sets the slot, so
+Arrow, Mark, Span and Break are by their buttons there, and each change of
+value is an edge they take. **Bus** again makes the row digital (its first
+value low, the others high).
+
 Rows need not be switch phases: **Signals** in the editor (or `timing
 --add CLK,EN`) adds rows of the diagram's own -- a clock, an enable, every
 row of a drawing with no switches at all -- low throughout to start with;

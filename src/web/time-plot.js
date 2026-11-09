@@ -23,7 +23,7 @@ import { TRACE_COLORS, diagramSymbols, hasSignalFlow, signalFlowGraph } from '..
 import { swingTestFrequency } from '../core/analysis/optimize.js';
 import { plotsBusy } from './plots-window.js';
 import { thinSeries } from '../core/plot-scale.js';
-import { element as el } from './dom.js';
+import { controlPair, element as el } from './dom.js';
 import { netPicker } from './net-picker.js';
 import { editor } from './editor-state.js';
 import { markSettingsChanged, onDocumentShown } from './main.js';
@@ -62,10 +62,10 @@ export function timeSection() {
   const annotateButton = el('button', { type: 'button', class: 'time-annotate', text: 'Annotate', title: 'Put the waveforms on the drawing', disabled: true, onclick: () => annotate() });
   const node = el('div', { class: 'signal-flow-time', hidden: true }, [
     el('div', { class: 'signal-flow-swing-controls time-controls' }, [
-      el('label', { text: 'Sine into' }), input,
-      el('label', { text: 'at' }), amplitude, el('label', { text: 'dBFS,' }),
-      frequency, el('label', { text: 'f/fs,' }),
-      samples, el('label', { text: 'samples' }),
+      controlPair('Sine into', input),
+      controlPair('Amplitude', amplitude, 'dBFS'),
+      controlPair('Frequency', frequency, 'f/fs'),
+      controlPair('Samples', samples),
     ]),
     plot.el,
     nets,

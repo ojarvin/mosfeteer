@@ -1024,7 +1024,7 @@ export function normalizeTimingSpec(spec) {
   const rows = spec.rows.slice(0, 64).flatMap((row) => {
     const timing = normalizeTiming(row);
     if (!timing || typeof row.source !== 'string' || !row.source.trim()) return [];
-    const { slot, gaps, lead, arrows, marks, spans, breaks, analog: curve, part: kind, item: index, ...own } = timing;
+    const { slot, gaps, lead, arrows, marks, spans, breaks, analog: curve, busWave: bar, part: kind, item: index, ...own } = timing;
     return [{ source: row.source.slice(0, 200), ...own }];
   });
   return { ...settings, rows };
@@ -1068,7 +1068,7 @@ function normalizeTiming(timing) {
   const breaks = list(timing.breaks, (value) => (Number.isInteger(value?.at) && value.at >= 0 && value.at <= 1024
     ? { at: value.at, ...(value.rows === true ? { rows: true } : {}) } : null));
   // A drawn arrow, mark, span or break (or a span's or an arrow's text) says which it is.
-  const part = ['arrow', 'mark', 'span', 'break', 'note', 'arrow-note'].includes(timing.part) && Number.isInteger(timing.item) && timing.item >= 0 ? timing.part : null;
+  const part = ['arrow', 'mark', 'span', 'break', 'note', 'arrow-note', 'legend'].includes(timing.part) && Number.isInteger(timing.item) && timing.item >= 0 ? timing.part : null;
   // An analog row: its values (-1..1) at the slots' starts, null where
   // unset, whether they hold through the slot; any row's height in cells
   // (even, from 2).
@@ -1085,9 +1085,26 @@ function normalizeTiming(timing) {
     ...(timing.analog.bipolar === true ? { bipolar: true } : {}),
     ...(pointList(timing.analog.thresholds).length ? { thresholds: pointList(timing.analog.thresholds) } : {}),
   } : null;
+  // A bus row: a letter or digit a slot, and the words those stand for.
+  const bus = typeof timing.bus === 'string' && /^[A-Za-z0-9]+$/.test(timing.bus) ? timing.bus.slice(0, 512) : '';
+  const words = bus && timing.words && typeof timing.words === 'object'
+    ? Object.fromEntries(Object.entries(timing.words).filter(([symbol, word]) => /^[A-Za-z0-9]$/.test(symbol) && typeof word === 'string' && word.trim()).map(([symbol, word]) => [symbol, word.trim().slice(0, 200)]))
+    : {};
+  // The drawn bar (timing-diagram.js): where its value changes and its
+  // texts, [center, text], from the box's left edge.
+  const numbers = (list) => (Array.isArray(list) ? list.slice(0, 1024).map(Number).filter(Number.isFinite) : []);
+  const busWave = timing.busWave && typeof timing.busWave === 'object' ? {
+    changes: numbers(timing.busWave.changes),
+    texts: (Array.isArray(timing.busWave.texts) ? timing.busWave.texts.slice(0, 1024) : [])
+      .filter((item) => Array.isArray(item) && Number.isFinite(Number(item[0])) && typeof item[1] === 'string')
+      .map(([x, text]) => [Number(x), text.slice(0, 200)]),
+  } : null;
   return {
     phase: timing.phase.slice(0, 200),
     ...(bits ? { bits } : {}),
+    ...(bus ? { bus } : {}),
+    ...(Object.keys(words).length ? { words } : {}),
+    ...(busWave ? { busWave } : {}),
     ...(values ? { values } : {}),
     ...(values && timing.hold === true ? { hold: true } : {}),
     ...(Number.isInteger(height) && height > 2 && height % 2 === 0 && height <= 16 ? { height } : {}),
@@ -2098,7 +2115,7 @@ export class LabelInstance {
   resizeBox(rect) {
     // A parts table is the size of what it lists; an analog wave the size
     // of its row.
-    if (this.kind !== 'box' || this.table || this.timing?.analog || this.timing?.part === 'break') return false;
+    if (this.kind !== 'box' || this.table || this.timing?.analog || this.timing?.busWave || this.timing?.part === 'break') return false;
     const next = { x0: snap(rect.x), y0: snap(rect.y), x1: snap(rect.x + rect.w), y1: snap(rect.y + rect.h) };
     if (next.x1 <= next.x0 || next.y1 <= next.y0) return false;
     const prev = {

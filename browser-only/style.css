@@ -1032,10 +1032,6 @@ button:disabled {
   grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
 }
 
-.sweep-run {
-  margin-left: auto;
-}
-
 /* The nets a plot shows (net-picker.js): columns that wrap, all in view. */
 .net-picker {
   display: grid;
@@ -2736,7 +2732,7 @@ html.dark.invert-pictures .light-picture {
   font-family: "Latin Modern Math", "Computer Modern", "CMU Serif", "STIX Two Math", "Cambria Math", "DejaVu Serif", serif;
   font-size: var(--text-xl);
   line-height: 1.35;
-  text-align: center;
+  text-align: left;
   overflow-wrap: anywhere;
 }
 
@@ -2859,7 +2855,7 @@ html.dark.invert-pictures .light-picture {
 .analysis-noise-table td {
   padding: 4px 8px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-  text-align: center;
+  text-align: left;
   vertical-align: middle;
 }
 
@@ -2879,7 +2875,7 @@ html.dark.invert-pictures .light-picture {
 }
 
 .analysis-noise-table math {
-  margin-inline: auto;
+  margin-inline: 0;
 }
 
 .analysis-noise-empty {
@@ -2887,7 +2883,7 @@ html.dark.invert-pictures .light-picture {
 }
 
 .analysis-equation-row {
-  padding: 7px 4px;
+  padding: 7px 0;
   border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
 }
 
@@ -2909,14 +2905,14 @@ html.dark.invert-pictures .light-picture {
 
 .analysis-equation-value {
   min-width: 0;
-  text-align: center;
+  text-align: left;
   overflow-x: auto;
   padding-block: 4px;
 }
 
 .analysis-equation-value math {
   width: max-content;
-  margin-inline: auto;
+  margin-inline: 0;
   padding-block: 4px;
 }
 
@@ -7194,7 +7190,7 @@ details.analysis-options > * + * {
 }
 
 .timing-grid-name {
-  text-align: right;
+  text-align: left;
   white-space: nowrap;
 }
 
@@ -7238,7 +7234,6 @@ details.analysis-options > * + * {
   grid-column: 1 / -1;
   color: var(--text-dim);
   font-size: var(--text-sm);
-  text-align: right;
 }
 
 /* A titled row of controls: the title in a column of its own, the
@@ -7247,7 +7242,7 @@ details.analysis-options > * + * {
   display: grid;
   grid-template-columns: 5.5rem minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
+  gap: 8px 12px;
   margin-top: 10px;
 }
 
@@ -7936,8 +7931,28 @@ body.chrome-away [data-editor-edge="right"] {
 .signal-flow-source {
   display: grid;
   align-items: center;
-  grid-template-columns: minmax(5.5rem, max-content) minmax(0, 1fr) auto;
-  column-gap: 12px;
+  grid-template-columns: minmax(calc(5.5rem + 12px), max-content) minmax(0, 1fr) auto;
+}
+
+/* The gaps belong to the name and the constant: an empty third column
+   leaves the select at the card's edge, as every other field. */
+.signal-flow-source > :first-child {
+  margin-right: 12px;
+}
+
+.signal-flow-source .signal-flow-constant {
+  margin-left: 8px;
+}
+
+/* One name column for all the sources, the longest setting its width. */
+.signal-flow-sources {
+  grid-template-columns: minmax(calc(5.5rem + 12px), max-content) minmax(0, 1fr) auto;
+  column-gap: 0;
+}
+
+.signal-flow-sources > .signal-flow-source {
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
 }
 
 .signal-flow-source select {
@@ -7959,9 +7974,9 @@ body.chrome-away [data-editor-edge="right"] {
 /* "Loop gain at" stays on one line beside its select. */
 :is(.analysis-dock, .plots-window) .analysis-loop-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: 5.5rem minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   white-space: nowrap;
 }
 
@@ -8478,12 +8493,11 @@ body.chrome-away [data-editor-edge="right"] {
 .signal-flow-entry-actions {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
   gap: 6px;
 }
 
 .signal-flow-entry-actions {
-  padding: 4px;
+  padding: 4px 0 0;
 }
 
 .signal-flow-graph-actions button,
@@ -8721,44 +8735,69 @@ body.chrome-away [data-editor-edge="right"] {
    view's, the sweep's (in a sweep plot's settings too), the signal band, the
    spectrum: words and small fields on one line,
    wrapping as a sentence does. Every such field has one size. */
+/* All the plots' names in view, however many: tight, and wrapping when narrow. */
+.signal-flow-view {
+  flex-wrap: wrap;
+}
+
+.signal-flow-view > button {
+  padding-inline: 6px;
+}
+
+/* A settings grid: as many columns as fit, each setting its name in the
+   names' column (as wide as the analysis fields'), then its control. */
 .signal-flow-swing-controls,
 .signal-flow-band {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
   align-items: center;
-  gap: 4px 6px;
+  gap: 6px 16px;
   font-size: var(--text-sm);
 }
 
-:is(.analysis-dock, .plots-window, .sweep-figure) :is(.signal-flow-swing-controls, .signal-flow-band) label {
-  display: inline-flex;
-  flex-direction: row;
+.control-wide {
+  grid-column: 1 / -1;
+}
+
+.control-pair {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr);
   align-items: center;
-  gap: 5px;
+  column-gap: 12px;
+  min-width: 0;
+}
+
+:is(.analysis-dock, .plots-window, .sweep-figure) .control-pair > label {
+  display: block;
   color: var(--text-dim);
   white-space: nowrap;
 }
 
-:is(.analysis-dock, .plots-window, .sweep-figure) :is(.signal-flow-swing-controls, .signal-flow-band) :is(input[type="text"], select, button) {
+.control-value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.control-unit {
   flex: none;
+  width: 3em;
+  color: var(--text-dim);
 }
 
-:is(.signal-flow-swing-controls, .signal-flow-band) button {
+:is(.analysis-dock, .plots-window, .sweep-figure) .control-value :is(input[type="text"], select) {
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
+  max-width: none;
+}
+
+:is(.analysis-dock, .plots-window, .sweep-figure) .control-value button {
   height: var(--field-h);
-  font-size: var(--field-font);
-}
-
-:is(.analysis-dock, .plots-window, .sweep-figure) :is(.signal-flow-swing-controls, .signal-flow-band) input[type="text"] {
-  width: 5rem;
-}
-
-:is(.analysis-dock, .plots-window, .sweep-figure) :is(.signal-flow-swing-controls, .signal-flow-band) select {
-  width: auto;
-  max-width: 11rem;
-}
-
-:is(.analysis-dock, .plots-window, .sweep-figure) :is(.signal-flow-swing-controls, .signal-flow-band) button {
+  min-height: 0;
   padding: 0 10px;
+  font-size: var(--field-font);
 }
 
 
@@ -8803,6 +8842,8 @@ body.chrome-away [data-editor-edge="right"] {
 
 .signal-flow-guide-math.display math {
   display: block math;
+  width: max-content;
+  margin-inline: 0;
   text-align: left;
   font-size: 1.15em;
 }
@@ -8984,6 +9025,8 @@ body.chrome-away [data-editor-edge="right"] {
 
 .sc-math.display math {
   display: block;
+  width: max-content;
+  margin-inline: 0;
 }
 
 /* The noise tables: a contributor's names left, its values right. */
@@ -9052,7 +9095,7 @@ body.chrome-away [data-editor-edge="right"] {
 }
 
 .timing-pairs-matrix th[scope="row"] {
-  text-align: right;
+  text-align: left;
 }
 
 .timing-pairs-matrix td {
@@ -9358,6 +9401,50 @@ html.dark[data-accent] {
   border-style: dashed;
 }
 
+/* A bus slot: its value's letter, a bar with a line top and bottom. */
+.timing-cell.bus {
+  border-radius: 0;
+  border-left-color: transparent;
+  border-right-color: transparent;
+  font-size: var(--text-xs);
+}
+
+.timing-cell.bus.changes {
+  border-left-color: color-mix(in srgb, var(--text-dim) 45%, transparent);
+}
+
+/* A bus row's values, under the section's own columns: the rows' names
+   one column, their fields a grid the same in every row. */
+.timing-words-body {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: start;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.timing-words-name {
+  line-height: var(--control-h);
+}
+
+.timing-words-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr));
+  gap: 6px 10px;
+}
+
+.timing-words-row label {
+  display: grid;
+  grid-template-columns: 1ch minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+
+.timing-words-row input {
+  width: 100%;
+  min-width: 0;
+}
+
 /* The plate parasitics' H(z): a nested fraction, set large enough to read. */
 .sc-stray-table td .sc-math.display {
   font-size: 1.25em;
@@ -9391,11 +9478,6 @@ html.dark[data-accent] {
   font-variant-numeric: tabular-nums;
 }
 
-/* Every column of a truth table is centered, the first one too. */
-.logic-table thead th:first-child {
-  text-align: center;
-}
-
 .logic-table .logic-first-out {
   border-left: 1px solid var(--border);
 }
@@ -9414,12 +9496,15 @@ html.dark[data-accent] {
    gates, and an equation per output with its box to draw it. */
 .synthesis-cell {
   min-width: 2.2em;
+  /* Its text under the column's heading, the hover outline around it. */
+  margin-left: -6px;
   padding: 0 6px;
   border: 1px solid transparent;
   border-radius: var(--radius-xs);
   background: none;
   font: inherit;
   font-variant-numeric: tabular-nums;
+  text-align: left;
   cursor: pointer;
 }
 

@@ -49,6 +49,10 @@ menu, or their keys. Docked (the button, or a drag to the pane's right
 edge), a window becomes a section of the side panel that its title bar
 folds and its top edge resizes; dragging the title bar out floats it
 again. No window covers the tool rail itself (the paper below it is free).
+A window's settings stand in columns, left-aligned: a name column of 5.5rem,
+the controls after it at one left edge, a settings grid (`controlPair`,
+`dom.js`) in as many such columns as fit. Equations and table text start at
+the left; only columns of numbers are right-aligned.
 While a window works, busy dots sit right after its title
 (`src/web/busy-indicator.js`): the Plots window's while it simulates (the
 spectrum, in a worker thread, `worker-thread.js`; the swing; the time view), the analysis window's while it

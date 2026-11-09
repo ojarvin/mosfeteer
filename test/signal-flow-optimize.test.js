@@ -831,3 +831,36 @@ test('a sweep plot puts the unit its measures share on the y axis, and one measu
   assert.deepEqual(sweepLabels([sndr, noise], [{ notes: [] }]),
     { y: 'dB', labels: [['\\text{SNDR in band}\\text{ (dB)}', '\\text{Noise in band}\\text{ (dBFS)}']] });
 });
+
+test('over a simulated spectrum a quantizer\'s noise curve adds the dither\'s noise', async () => {
+  const { analyzeSignalFlow, responsePlot } = await import('../src/core/analysis/signal-flow.js');
+  const { dbfsOffset, dbfsSpectrum, outputSpectrum } = await import('../src/core/analysis/spectrum.js');
+  const integrator = '"tf([0 1], [1 -1])"';
+  const circuit = diagram(['add input U --at -1600 0', 'add signal_sum S1 --at -1200 0', `add tf_z H1 --at -800 0 --value ${integrator}`, 'add signal_sum S3 --at -400 0', `add tf_z H2 --at 0 0 --value ${integrator}`,
+    'add signal_sum S4 --at 400 0', 'add quantizer QZ1 --at 800 0 --value 9', 'add output V --at 1200 0', 'add gain K1 --at -800 400 --rot 180 --value 1', 'add gain K2 --at 0 400 --rot 180 --value 2',
+    'add dither DTH1 --at 0 -480 --value "rect 1"', 'add gain KD --at 400 -320 --rot 90 --value 0.25',
+    'connect U.p S1.w', 'connect S1.e H1.in', 'connect H1.out S3.w', 'connect S3.e H2.in', 'connect H2.out S4.w', 'connect S4.e QZ1.in', 'connect QZ1.out V.p', 'connect K1.out S1.s', 'connect K2.out S3.s',
+    'connect V.p K1.in', 'connect V.p K2.in', 'connect DTH1.out KD.in', 'connect KD.out S4.n'], [['S1', 's'], ['S3', 's']]);
+  const sim = prepareSimulation(circuit, { sources: {}, input: 'U', output: 'name:V', frequency: 1 / 256, samples: 65536, segment: 4096 });
+  assert.equal(sim.ok, true, sim.error);
+  // +-FS of 8, uniform.
+  assert.deepEqual(sim.dithers, [{ id: 'DTH1', variance: 64 / 3 }]);
+  const run = sim.run(-12, { record: true });
+  const raw = outputSpectrum(run.samples, { segment: 4096, variance: 1 / 3 });
+  const [q] = run.quantizers;
+  const solved = analyzeSignalFlow(circuit, { output: 'name:V', sources: { QZ1: 'input', DTH1: 'input' }, values: {}, quantizerGains: { QZ1: q.gain } });
+  assert.equal(solved.ok, true, solved.error);
+  const entry = (id) => solved.entries.find((candidate) => candidate.input === id).value;
+  const noise = dbfsOffset(raw, sim.fullScale, { noise: true });
+  const level = (variance) => noise + 10 * Math.log10(variance * 3);
+  const plot = (addedNoise) => responsePlot([{ label: 'N', color: '#3b74e0', value: entry('QZ1'), variable: 'z', noise: true, addedNoise }], 'z', { dbfs: { offset: () => level(q.errorVariance) } });
+  const around = (points) => {
+    const near = points.filter((p) => Math.abs(p.f - 0.25) < 0.02);
+    return 10 * Math.log10(near.reduce((sum, p) => sum + 10 ** (p.db / 10), 0) / near.length);
+  };
+  const floor = around(dbfsSpectrum(raw, sim.fullScale));
+  const with_ = around(plot([{ value: entry('DTH1'), offset: level(sim.dithers[0].variance) }]).traces[0].points);
+  const without = around(plot([]).traces[0].points);
+  assert.ok(Math.abs(floor - with_) < 1, `simulated ${floor} against ${with_} with the dither`);
+  assert.ok(floor - without > 3, `simulated ${floor} against ${without} without it`);
+});

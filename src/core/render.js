@@ -735,6 +735,7 @@ function shapeAnnotationSvg(label, opacity = '') {
   if (label.kind === 'box' && label.plot) return plotAnnotationSvg(label, opacity);
   if (label.kind === 'box' && label.table) return partsTableSvg(label, opacity);
   if (label.kind === 'box' && label.timing?.analog) return analogWaveSvg(label, opacity);
+  if (label.kind === 'box' && label.timing?.busWave) return busWaveSvg(label, opacity);
   if (label.kind === 'box' && label.timing?.part === 'break') return timingBreakSvg(label, opacity);
   if (label.kind === 'box' && label.image) {
     // A pasted picture, whole and undistorted in its box.
@@ -944,6 +945,37 @@ function analogWaveSvg(label, opacity = '') {
   // Fewer than two values set: nothing to join yet.
   if (trace.length >= 2) parts.push(`<path d="${d(trace)}" fill="none" ${curve}/>`);
   return `<g class="timing-analog"${opacity}>${parts.join('')}</g>`;
+}
+
+/** How far a bus row's X reaches either side of its change of value. */
+const BUS_X_REACH = GRID / 4;
+
+/**
+ * A timing diagram's bus row (timing-diagram.js): a bar, its top and
+ * bottom lines crossing in an X at each change of value, each value's text
+ * in the middle of its stretch.
+ */
+function busWaveSvg(label, opacity = '') {
+  const { changes, texts } = label.timing.busWave;
+  const x0 = Math.min(label.anchor.x, label.end.x);
+  const width = Math.abs(label.end.x - label.anchor.x);
+  const top = Math.min(label.anchor.y, label.end.y);
+  const bottom = Math.max(label.anchor.y, label.end.y);
+  // Two lines: each runs along one side and crosses to the other at a change.
+  const line = (start) => {
+    let y = start;
+    let d = `M ${fmt(x0)} ${fmt(y)}`;
+    for (const x of changes) {
+      const next = y === top ? bottom : top;
+      d += ` L ${fmt(x0 + x - BUS_X_REACH)} ${fmt(y)} L ${fmt(x0 + x + BUS_X_REACH)} ${fmt(next)}`;
+      y = next;
+    }
+    return `${d} L ${fmt(x0 + width)} ${fmt(y)}`;
+  };
+  const stroke = styleAttrs({ ...label.style, lineStyle: 'solid' }, 'annotation').replace(/stroke-linejoin="[^"]*"/, 'stroke-linejoin="round"');
+  const baseline = (top + bottom) / 2 + 0.35 * labelFontSize(label.style?.width);
+  const words = texts.map(([x, text]) => labelTextEl(x0 + x, baseline, parseLabelRuns(texToLabelMarkup(text)), 'middle', 'label', label.style?.color || '#111', label.style?.width || 'normal', { bold: false, italic: false }));
+  return `<g class="timing-bus"${opacity}><path d="${line(top)} ${line(bottom)}" fill="none" ${stroke}/>${words.join('')}</g>`;
 }
 
 /**

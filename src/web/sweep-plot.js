@@ -32,7 +32,7 @@ import { plainTex } from '../core/bode-figure.js';
 import { plotsBusy } from './plots-window.js';
 import { afterPaint } from './busy-indicator.js';
 import { startWorker } from './worker-thread.js';
-import { element as el, onFieldCommit } from './dom.js';
+import { controlPair, element as el, onFieldCommit } from './dom.js';
 import { netPicker } from './net-picker.js';
 import { editor } from './editor-state.js';
 import { alignLabelColumn, commit, markSettingsChanged, onDocumentShown, render, setLabelSelection, setSelection } from './main.js';
@@ -340,16 +340,16 @@ function sweepEditor({ settings, save, plot = null, actions = [], held = () => [
   const measures = el('div', { class: 'time-nets sweep-measures' });
   const node = el('div', { class: 'sweep-editor' }, [
     el('div', { class: 'signal-flow-swing-controls time-controls' }, [
-      el('label', { text: 'Sweep' }), name,
-      el('label', { text: 'from' }), from, el('label', { text: 'to' }), to,
-      el('label', { text: 'in' }), points, el('label', { text: 'points,' }), scale,
-    ]),
-    el('div', { class: 'signal-flow-swing-controls time-controls' }, [
-      el('label', { text: 'Sine into' }), input,
-      el('label', { text: 'at' }), amplitude, el('label', { text: 'dBFS,' }),
-      frequency, el('label', { text: 'f/fs,' }),
-      samples, el('label', { text: 'samples' }),
-      go,
+      controlPair('Sweep', name),
+      controlPair('Scale', scale),
+      controlPair('From', from),
+      controlPair('To', to),
+      controlPair('Points', points),
+      controlPair('Sine into', input),
+      controlPair('Amplitude', amplitude, 'dBFS'),
+      controlPair('Frequency', frequency, 'f/fs'),
+      controlPair('Samples', samples),
+      controlPair('', go),
     ]),
     ...(plot ? [plot] : []),
     measures,

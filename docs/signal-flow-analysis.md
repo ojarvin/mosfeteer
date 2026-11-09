@@ -452,6 +452,15 @@ source starts as **Zero** among the sources (it is noise, not a signal);
 set it to Input for its own transfer function. The dither setting of
 designs from before dither sources (`flow.dither`) is no longer read.
 
+Over a simulated spectrum, a quantizer's noise curve (its NTF at the gain
+and error variance the run measured) adds each dither source's noise as
+power: that source's transfer function to the output, at the same gains,
+at the variance of its numbers (A^2/3 `rect`, A^2/6 `tri`, A^2 `bin`,
+A^2/2 `tern`). With several quantizers each curve adds it. A held curve
+keeps what it added. A tone source is a line in the spectrum and adds
+nothing. A dither source the linear model cannot take as an input (one
+multiplied by another signal) adds nothing.
+
 A **tone source** (`tone`, value `0.01 0.37`: its amplitude A in full
 scale and its f/fs, any from 0; 0 holds A, an offset) is a sine made a
 whole number of cycles in the window (in the spectrum, in each segment, so

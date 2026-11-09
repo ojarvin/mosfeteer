@@ -1605,6 +1605,18 @@ export function bandSqnr(ntf, levels, band) {
  *  moved into the spectrum's dBFS (a noise level, or a tone's level). */
 /** `detail`, a [low, high] frequency range on the plot's axis (a zoomed
  *  view), samples each curve densely there too. */
+/** Levels in dB added as powers. */
+const powerSumDb = (db, others) => 10 * Math.log10(others.reduce((sum, level) => sum + 10 ** (level / 10), 10 ** (db / 10)));
+
+/** A curve's dB at `f`, between its points in log frequency. */
+function curveDbAt(points, f) {
+  let hi = points.findIndex((point) => point.f >= f);
+  if (hi < 0) return points.at(-1).db;
+  if (hi === 0 || points[hi].f === f) return points[hi].db;
+  const [a, b] = [points[hi - 1], points[hi]];
+  return a.db + ((b.db - a.db) * Math.log(f / a.f)) / Math.log(b.f / a.f);
+}
+
 export function responsePlot(traces, variable, { sAxis = 'omega', band = null, quantity = 'magnitude', background = [], dbfs = null, detail = null } = {}) {
   const withVariable = traces.map((trace) => ({ ...trace, variable: trace.variable || variable }));
   const axis = plotAxis(withVariable, sAxis);
@@ -1638,13 +1650,20 @@ export function responsePlot(traces, variable, { sAxis = 'omega', band = null, q
       // Behind the curves: a simulated output's spectrum, on f/fs.
       ...(quantity !== 'phase' && curveAxis === 'normalized' ? background : []).map((trace) => ({ ...trace, background: true, points: trace.points.filter((p) => p.f <= 0.5) })),
       ...curves.map(({ trace, curve }) => {
-        const offset = dbfs && quantity !== 'phase' && curveAxis === 'normalized' ? dbfs.offset(trace) : 0;
+        const inDbfs = dbfs && quantity !== 'phase' && curveAxis === 'normalized';
+        const offset = inDbfs ? dbfs.offset(trace) : 0;
+        // Noise of other sources, added to this one's as powers.
+        const added = inDbfs ? (trace.addedNoise || []).flatMap(({ value, offset: level }) => {
+          const other = responseCurve(value, trace.variable, { sAxis: axis, at: bandPoints(trace.variable) });
+          return other?.points.length ? [{ points: other.points, level }] : [];
+        }) : [];
+        const dbAt = (f, db) => (added.length ? powerSumDb(db + offset, added.map(({ points, level }) => curveDbAt(points, f) + level)) : db + offset);
         return {
           label: trace.label,
           color: trace.color,
           ...(trace.start ? { start: true } : {}),
           ...(trace.held?.key ? { hold: trace.held.key } : {}),
-          points: curve.points.map(({ f, db, phase }) => ({ f, db: quantity === 'phase' ? phase : db + offset })),
+          points: curve.points.map(({ f, db, phase }) => ({ f, db: quantity === 'phase' ? phase : dbAt(f, db) })),
         };
       }),
     ],

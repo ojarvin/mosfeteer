@@ -10,7 +10,7 @@ import { prepareSimulation } from './simulate.js';
 import { inBand, outputSpectrum } from './spectrum.js';
 
 /** One run of `options` (prepareSimulation's) at `amplitude` dBFS, and its
- *  output's spectrum in segments of `segment`: `{ raw, quantizers,
+ *  output's spectrum in segments of `segment`: `{ raw, quantizers, dithers,
  *  fullScale, frequency }`, or `{ error }`, or `{ overloaded }`. */
 export function simulatedSpectrum({ circuit, options, amplitude, segment }) {
   try {
@@ -18,7 +18,7 @@ export function simulatedSpectrum({ circuit, options, amplitude, segment }) {
     if (!sim.ok) return { error: sim.error };
     const run = sim.run(amplitude, { record: true });
     if (run.overloaded || !run.samples) return { overloaded: !!run.overloaded, fullScale: sim.fullScale, frequency: sim.frequency };
-    return { raw: outputSpectrum(run.samples, { segment, variance: 1 / 3 }), quantizers: run.quantizers, fullScale: sim.fullScale, frequency: sim.frequency };
+    return { raw: outputSpectrum(run.samples, { segment, variance: 1 / 3 }), quantizers: run.quantizers, dithers: sim.dithers, fullScale: sim.fullScale, frequency: sim.frequency };
   } catch (error) {
     return { error: error.message };
   }

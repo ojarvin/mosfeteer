@@ -80,7 +80,7 @@ describe('logic synthesis', { skip: browserSkip() }, () => {
     assert.equal(await h.evaluate(`document.getElementById('synthesis-outputs').value`), 'Y T<1:0>');
     assert.deepEqual(await h.evaluate(`[...document.querySelectorAll('.synthesis-table thead th')].map((th) => th.textContent.replace(/\\s/g, ''))`), ['A', 'B', 'Y', 'T[1]', 'T[0]']);
     // Every heading centered over its column, the first too.
-    assert.deepEqual(await h.evaluate(`[...new Set([...document.querySelectorAll('.synthesis-table thead th')].map((th) => getComputedStyle(th).textAlign))]`), ['center']);
+    assert.deepEqual(await h.evaluate(`[...new Set([...document.querySelectorAll('.synthesis-table thead th')].map((th) => getComputedStyle(th).textAlign))]`), ['left']);
     await setField('synthesis-outputs', 'Y');
     await h.until(`document.querySelectorAll('.synthesis-cell').length === 4`);
   });

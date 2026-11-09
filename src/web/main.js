@@ -1305,7 +1305,7 @@ export function annotationGeometryAt(world) {
       if (near({ x: x0, y: y0 }, { x: x1, y: y0 }) || near({ x: x1, y: y0 }, { x: x1, y: y1 }) ||
           near({ x: x1, y: y1 }, { x: x0, y: y1 }) || near({ x: x0, y: y1 }, { x: x0, y: y0 })) return label;
       // A plot or a parts table is a picture: anywhere on it picks it.
-      if ((label.plot || label.table || label.timing?.analog) && world.x >= x0 && world.x <= x1 && world.y >= y0 && world.y <= y1) return label;
+      if ((label.plot || label.table || label.timing?.analog || label.timing?.busWave) && world.x >= x0 && world.x <= x1 && world.y >= y0 && world.y <= y1) return label;
     }
   }
   return null;
@@ -3092,7 +3092,7 @@ export function renderCanvas(modelKey) {
       return component?.type === 'chopper'
         || (component?.type === 'block' && component.transform.rotation % 360 === 0 && !component.transform.mirrorX && !component.transform.mirrorY);
     }),
-    resizeBoxes: alignTool ? [] : [...selLabels].filter((id) => circuit.labels.get(id)?.kind === 'box' && !circuit.labels.get(id).table && !circuit.labels.get(id).timing?.analog),
+    resizeBoxes: alignTool ? [] : [...selLabels].filter((id) => circuit.labels.get(id)?.kind === 'box' && !circuit.labels.get(id).table && !circuit.labels.get(id).timing?.analog && !circuit.labels.get(id).timing?.busWave),
     hoverAnnotation: drag || alignTool ? null : hoverAnnotationId,
     selectedVertices: (() => {
       const picked = vertexSelection();

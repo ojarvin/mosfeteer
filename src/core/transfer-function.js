@@ -108,6 +108,11 @@ function sourceNumber(word, usage) {
 
 const sourceText = (value) => (typeof value === 'string' ? value : Number(value.toPrecision(12)));
 
+/** The variance of the numbers a dither source of amplitude `a` draws. */
+export function ditherVariance(shape, a) {
+  return a * a * ({ rect: 1 / 3, tri: 1 / 6, bin: 1, tern: 1 / 2 }[shape] ?? 0);
+}
+
 /** A dither source's value as stored: `rect 1`, `tri a_d`. */
 export const ditherValueText = ({ shape, amplitude }) => `${shape} ${sourceText(amplitude)}`;
 

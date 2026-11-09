@@ -7,11 +7,11 @@
 import { describe, before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { start, sleep, browserSkip } from './harness.js';
-import { amplifier, chain, modulator } from './fixtures.js';
+import { amplifier, chain, ditheredModulator, modulator } from './fixtures.js';
 
 describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
   let h;
-  before(async () => { h = await start({ docs: { modulator: modulator(), chain: chain(), amplifier: amplifier() }, width: 1500, height: 950 }); });
+  before(async () => { h = await start({ docs: { modulator: modulator(), dithered: ditheredModulator(), chain: chain(), amplifier: amplifier() }, width: 1500, height: 950 }); });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
   const shown = (selector) => h.evaluate(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); return !!el && !el.hidden && !!el.offsetParent; })()`);
@@ -108,6 +108,14 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     const sizes = await h.evaluate(`[...document.querySelectorAll('.plots-window .signal-flow-swing-controls :is(input[type=text], select)')].filter((e) => e.offsetParent).map((e) => Math.round(e.getBoundingClientRect().height))`);
     assert.ok(sizes.length >= 3);
     assert.deepEqual([...new Set(sizes)], [24]);
+  });
+
+  test('the plots\' settings stand in columns: every name at one left edge per column, every unit field one width', async () => {
+    await tab('Time');
+    const shape = await h.evaluate(`(() => { const shown = [...document.querySelectorAll('.plots-window .signal-flow-swing-controls .control-pair')].filter((e) => e.offsetParent); return { lefts: [...new Set(shown.map((e) => Math.round(e.querySelector('label').getBoundingClientRect().left)))], controls: [...new Set(shown.map((e) => Math.round(e.querySelector('.control-value').getBoundingClientRect().left)))], widths: [...new Set(shown.filter((e) => e.querySelector('.control-unit')).map((e) => Math.round(e.querySelector('input').getBoundingClientRect().width)))] }; })()`);
+    assert.ok(shape.lefts.length <= 2, JSON.stringify(shape));
+    assert.equal(shape.controls.length, shape.lefts.length, JSON.stringify(shape));
+    assert.equal(shape.widths.length, 1, JSON.stringify(shape));
   });
 
   test('closed, the plots stay closed on the next Derive; Shift+W brings them back', async () => {
@@ -456,6 +464,24 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     const table = `${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].find((l) => l.figure?.kind === 'coefficients')?.text || '')`;
     await h.until(`${table}.then((t) => /^k_\\{?1\\}? & 7\\/32$/m.test(t))`);
     assert.match(await h.evaluate(table), /^k_\{?2\}? & 7\/32$/m, 'a link to it is written the same');
+  });
+
+  test('over the simulated spectrum the noise curve includes the dither', async () => {
+    await openAnalysis('dithered');
+    await derive();
+    await tab('Magnitude');
+    await h.until(`!!document.querySelector('.plots-window .signal-flow-spectrum-toggle input')`);
+    await h.evaluate(`(() => { const a = document.querySelector('.plots-window .signal-flow-spectrum input[aria-label="Sine amplitude, dBFS"]'); a.value = '-12'; a.dispatchEvent(new Event('change', { bubbles: true })); const c = document.querySelector('.plots-window .signal-flow-spectrum-toggle input'); if (!c.checked) c.click(); })()`);
+    await h.until(`/curves at QZ1 gain/.test(document.querySelector('.plots-window .signal-flow-spectrum-status')?.textContent || '')`, 20000);
+    await annotate('Graph');
+    const plot = `${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].find((l) => l.plot?.kind === 'response')?.plot)`;
+    await h.until(`${plot}.then((p) => !!p?.traces.some((t) => t.background))`);
+    const traces = await h.evaluate(`${plot}.then((p) => p.traces.map((t) => ({ label: t.label, background: !!t.background, points: t.points.filter((q) => Math.abs(q.f - 0.25) < 0.02).map((q) => q.db) })))`);
+    const level = (points) => 10 * Math.log10(points.reduce((sum, db) => sum + 10 ** (db / 10), 0) / points.length);
+    const floor = level(traces.find((t) => t.background).points);
+    const noise = traces.find((t) => !t.background && /Q/.test(t.label));
+    assert.ok(noise, JSON.stringify(traces.map((t) => t.label)));
+    assert.ok(Math.abs(level(noise.points) - floor) < 2.5, `the curve ${level(noise.points)} against the floor ${floor}`);
   });
 
   test('a zoomed graph annotates at its zoom, and the plot keeps those limits when updated', async () => {

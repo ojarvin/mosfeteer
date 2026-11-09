@@ -45,7 +45,7 @@ function beaten() {
 
 describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () => {
   let h;
-  before(async () => { h = await start({ docs: { clocked: clockAndQ(), phased: twoPhases(), undrawn: undrawn(), noted: clockAndQ(), beaten: beaten(), repeated: clockAndQ(), ramped: clockAndQ(), broken: clockAndQ(), long: longSequence(), sparse: clockAndQ(), leadless: clockAndQ() }, width: 1500, height: 950 }); });
+  before(async () => { h = await start({ docs: { clocked: clockAndQ(), phased: twoPhases(), undrawn: undrawn(), noted: clockAndQ(), beaten: beaten(), repeated: clockAndQ(), ramped: clockAndQ(), bused: clockAndQ(), broken: clockAndQ(), long: longSequence(), sparse: clockAndQ(), leadless: clockAndQ() }, width: 1500, height: 950 }); });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
   const parts = () => h.evaluate(`window.__circuit().labels.filter((l) => l.timing?.part).map((l) => ({ part: l.timing.part, text: l.text, item: l.timing.item, curve: !!l.curve }))`);
@@ -246,6 +246,36 @@ describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () =
     await h.until(clk('0101'));
     assert.equal(await bits('Q'), '0011');
     await h.key('K', { shiftKey: true });
+  });
+
+  test('Bus turns a signal into a bus row: keys set its values, a field per value names them', async () => {
+    await h.open('bused');
+    if (!(await h.evaluate(`!!document.querySelector('.timing-dialog .timing-grid')`))) await h.key('K', { shiftKey: true });
+    await h.until(`document.querySelectorAll('.timing-grid-line')[1]?.querySelectorAll('.timing-cell:not(.new)').length === 4`);
+    const q = (test) => specIs(`(t) => { const row = t.rows.find((r) => r.phase === 'Q'); return !!row && (${test})(row); }`);
+    await gridKey('ArrowDown');
+    await h.evaluate(`[...document.querySelectorAll('.timing-dialog button')].find((b) => b.textContent === 'Bus').click()`);
+    await h.until(q(`(row) => row.bus === 'aabb'`));
+    // Letters set the slots, the note keys among them.
+    await gridKey('a');
+    await gridKey('s');
+    await gridKey('c');
+    await h.until(q(`(row) => row.bus === 'ascb'`));
+    assert.equal((await spec()).spans?.length ?? 0, 0, 's is a value in a bus row');
+    await h.until(`document.querySelectorAll('.timing-words input').length === 4`);
+    assert.deepEqual(await h.evaluate(`[...document.querySelectorAll('.timing-words input')].map((i) => i.placeholder)`), ['a', 's', 'c', 'b']);
+    assert.equal(await h.evaluate(`document.querySelector('.timing-words-body').getBoundingClientRect().left === document.querySelector('.timing-signal-controls input').closest('.timing-section').querySelector(':scope > :nth-child(2)').getBoundingClientRect().left`), true, 'the values start in the sections\' control column');
+    assert.equal(await h.evaluate(`!!(document.querySelector('.timing-keys').compareDocumentPosition(document.querySelector('.timing-words')) & Node.DOCUMENT_POSITION_FOLLOWING)`), true, 'the values come after the keyboard help');
+    // A word, typed in the field; the field keeps the focus through the redraw.
+    await h.evaluate(`(() => { const input = document.querySelector('.timing-words input'); input.focus(); input.value = 'IDLE'; input.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await h.until(q(`(row) => row.words?.a === 'IDLE'`));
+    assert.equal(await h.evaluate(`document.activeElement === document.querySelector('.timing-words input')`), true);
+    // Bus again: digital, the first value low.
+    await h.evaluate(`[...document.querySelectorAll('.timing-dialog button')].find((b) => b.textContent === 'Bus').click()`);
+    await h.until(q(`(row) => !row.bus && row.bits === '0111'`));
+    await h.until(`document.querySelector('.timing-words').hidden`);
+    await h.click('.timing-dialog .floating-window-close');
+    await h.until(`!document.querySelector('.timing-dialog .timing-grid') || document.querySelector('.timing-dialog').hidden`);
   });
 
   test('typing .N makes a signal analog; F2 edits a value, Hold and Taller change the row, m marks a threshold', async () => {

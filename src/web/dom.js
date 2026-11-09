@@ -69,3 +69,13 @@ export function setHidden(el, hidden) {
 export function setClassName(el, name) {
   if (el && el.className !== name) el.className = name;
 }
+
+/** One named setting in a settings grid (.signal-flow-swing-controls): its
+ *  name in the names' column, then its control and, as text, its unit. An
+ *  empty name lines a button up under the controls. */
+export function controlPair(name, ...controls) {
+  return element('div', { class: 'control-pair' }, [
+    element('label', { text: name }),
+    element('div', { class: 'control-value' }, controls.map((control) => (typeof control === 'string' ? element('span', { class: 'control-unit', text: control }) : control))),
+  ]);
+}

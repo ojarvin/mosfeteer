@@ -47,7 +47,7 @@ import { optimizeSection, renderOptimize, resetOptimize } from './optimize-ui.js
 import { swingTestFrequency } from '../core/analysis/optimize.js';
 import { fractionText } from '../core/analysis/rounding.js';
 import { normalizeBand } from '../core/analysis/optimize-setup.js';
-import { element as el, mathSpan, onFieldCommit } from './dom.js';
+import { controlPair, element as el, mathSpan, onFieldCommit } from './dom.js';
 import { netPicker } from './net-picker.js';
 import { deriving } from './analysis-busy.js';
 import { startWorker } from './worker-thread.js';
@@ -320,11 +320,11 @@ function locusSection() {
   return el('div', { class: 'signal-flow-locus', hidden: true }, [
     el('p', { class: 'field-hint signal-flow-locus-empty', text: 'Derive first. The locus follows a result\'s poles as one coefficient sweeps.' }),
     el('div', { class: 'signal-flow-swing-controls' }, [
-      el('label', { text: 'Poles of' }), el('select', { class: 'signal-flow-locus-entry', 'aria-label': 'Result' }),
-      el('label', { text: 'as' }), el('select', { class: 'signal-flow-locus-name', 'aria-label': 'Coefficient to sweep', onchange: () => fillLocusRange() }),
-      el('label', { text: 'from' }), el('input', { type: 'text', class: 'signal-flow-locus-range signal-flow-locus-from', 'aria-label': 'Sweep from' }),
-      el('label', { text: 'to' }), el('input', { type: 'text', class: 'signal-flow-locus-range signal-flow-locus-to', 'aria-label': 'Sweep to' }),
-      el('button', { type: 'button', text: 'Sweep', onclick: () => runLocus() }),
+      controlPair('Poles of', el('select', { class: 'signal-flow-locus-entry', 'aria-label': 'Result' })),
+      controlPair('Coefficient', el('select', { class: 'signal-flow-locus-name', 'aria-label': 'Coefficient to sweep', onchange: () => fillLocusRange() })),
+      controlPair('From', el('input', { type: 'text', class: 'signal-flow-locus-range signal-flow-locus-from', 'aria-label': 'Sweep from' })),
+      controlPair('To', el('input', { type: 'text', class: 'signal-flow-locus-range signal-flow-locus-to', 'aria-label': 'Sweep to' })),
+      controlPair('', el('button', { type: 'button', text: 'Sweep', onclick: () => runLocus() })),
     ]),
     el('p', { class: 'field-hint signal-flow-locus-status', 'aria-live': 'polite' }),
     el('div', { class: 'signal-flow-locus-plot' }),
@@ -445,8 +445,7 @@ let loop = null; // { key, result }
 function loopSection() {
   return el('div', { class: 'signal-flow-loop', hidden: true }, [
     el('div', { class: 'signal-flow-swing-controls' }, [
-      el('label', { text: 'Break the loop at' }),
-      el('select', { class: 'signal-flow-loop-signal', 'aria-label': 'Signal to break the loop at', onchange: (ev) => { flow().loopAt = ev.target.value; markSettingsChanged(); loop = null; renderLoop(); } }),
+      controlPair('Break at', el('select', { class: 'signal-flow-loop-signal', 'aria-label': 'Signal to break the loop at', onchange: (ev) => { flow().loopAt = ev.target.value; markSettingsChanged(); loop = null; renderLoop(); } })),
     ]),
     el('p', { class: 'field-hint', text: 'T is minus what returns for 1 injected at the break, all sources at zero. A quantizer\'s NTF is then 1/(1 + T).' }),
     el('div', { class: 'signal-flow-loop-body' }),
@@ -550,9 +549,9 @@ function swingSection() {
   return el('div', { class: 'signal-flow-swing', hidden: true }, [
     el('p', { class: 'field-hint', text: 'Simulates a sine into one source at the coefficients above, rounding at each quantizer (Schreier\'s levels, full scale N - 1), and plots each net\'s peak as the amplitude sweeps to overload.' }),
     el('div', { class: 'signal-flow-swing-controls' }, [
-      el('label', { text: 'Sine into' }), source,
-      el('label', { text: 'at f/fs' }), frequency,
-      el('button', { type: 'button', class: 'signal-flow-swing-run', text: 'Simulate', onclick: () => runSwing() }),
+      controlPair('Sine into', source),
+      controlPair('Frequency', frequency, 'f/fs'),
+      controlPair('', el('button', { type: 'button', class: 'signal-flow-swing-run', text: 'Simulate', onclick: () => runSwing() })),
     ]),
     el('p', { class: 'field-hint signal-flow-swing-status', 'aria-live': 'polite' }),
     el('div', { class: 'signal-flow-swing-plot' }),
@@ -934,6 +933,16 @@ const dbfsOffsetOf = (trace) => {
   return dbfsOffset(spectrum.raw, spectrum.fullScale, { noise: trace.noise, amplitude: spectrum.amplitude }) + error;
 };
 
+// A dither source's noise reaches the output by its own transfer function:
+// over a spectrum, a quantizer's noise curve adds it, each term numbers
+// already at the sliders and the gains measured.
+const ditherNoise = (trace) => (trace.noise && measuredValue(trace) && spectrum.dither?.length
+  ? spectrum.dither.map(({ value, variance }) => ({
+    value: numeric(value, trace.variable),
+    offset: dbfsOffset(spectrum.raw, spectrum.fullScale, { noise: true }) + 10 * Math.log10(variance * 3),
+  }))
+  : []);
+
 const graphPlot = (list, view = graphView(), detail = null) => {
   const shown = view === 'magnitude' && spectrumShown();
   // Held spectra behind the live one, while it is shown.
@@ -944,7 +953,7 @@ const graphPlot = (list, view = graphView(), detail = null) => {
   // A held trace is numbers already, and keeps the offset it was held at.
   const numbered = list.map((trace) => (trace.held
     ? { ...trace, label: heldLabel(trace) }
-    : { ...trace, value: numeric(measuredValue(trace) ?? trace.value, trace.variable) }));
+    : { ...trace, value: numeric(measuredValue(trace) ?? trace.value, trace.variable), addedNoise: ditherNoise(trace) }));
   if (view === 'step') return stepPlot(numbered);
   const dbfs = shown ? { offset: (trace) => (trace.held && Number.isFinite(trace.held.offset) ? trace.held.offset : dbfsOffsetOf(trace)) } : null;
   return responsePlot(numbered, 's', { sAxis: sAxisSetting(), band: editor.circuit.analysisValues.band, quantity: view, background, dbfs, detail });
@@ -991,7 +1000,7 @@ function holdTrace(trace) {
   const record = { key: holdKey(), of: trace.id, base: trace.label, color: nextTraceColor(), values, ...(offset !== undefined ? { offset } : {}) };
   holdsChanged([...holds(), record]);
   // Over a spectrum, at the gains it measured, as the live curve is drawn.
-  traces.push(heldFrom(record, trace, measuredValue(trace) ?? trace.value));
+  traces.push({ ...heldFrom(record, trace, measuredValue(trace) ?? trace.value), addedNoise: ditherNoise(trace) });
   renderGraph();
 }
 
@@ -1075,9 +1084,10 @@ function spectrumControls() {
   return el('fieldset', { class: 'analysis-approximations signal-flow-spectrum' }, [
     el('legend', { text: 'Simulation' }),
     el('div', { class: 'signal-flow-band' }, [
-      el('label', { class: 'signal-flow-spectrum-toggle' }, [check, el('span', { text: 'Output spectrum' })]),
-      el('label', { text: 'Input' }), amplitude, el('label', { text: 'dBFS at f/fs' }), frequency,
-      el('label', { text: 'Samples' }), samples,
+      el('label', { class: 'signal-flow-spectrum-toggle control-wide' }, [check, el('span', { text: 'Output spectrum' })]),
+      controlPair('Amplitude', amplitude, 'dBFS'),
+      controlPair('Frequency', frequency, 'f/fs'),
+      controlPair('Samples', samples),
     ]),
     el('p', { class: 'field-hint signal-flow-spectrum-status', text: spectrumStatus() }),
   ]);
@@ -1167,6 +1177,24 @@ function spectrumRequest() {
   };
 }
 
+/** Each dither source's transfer function to the output at the gains a
+ *  run measured, and the variance of its numbers: `[{ value, variance }]`.
+ *  None when the linear model cannot take it as an input. */
+function ditherResponses(request, { quantizers = [], dithers = [] }) {
+  if (!quantizers.length || !dithers.length) return [];
+  const solved = analyzeSignalFlow(editor.circuit, {
+    output: flow().output,
+    sources: { ...flow().sources, ...Object.fromEntries(dithers.map((source) => [source.id, 'input'])) },
+    values: request.numbers,
+    quantizerGains: Object.fromEntries(quantizers.map((q) => [q.refdes, Number(q.gain.toPrecision(6))])),
+  });
+  if (!solved.ok) return [];
+  return dithers.flatMap(({ id, variance }) => {
+    const value = solved.entries.find((entry) => entry.input === id)?.value;
+    return value && variance > 0 ? [{ value, variance }] : [];
+  });
+}
+
 /** A run's spectrum on the graph, behind the curves solved again at each
  *  quantizer's measured gain. */
 function showSpectrum(request, result) {
@@ -1178,7 +1206,7 @@ function showSpectrum(request, result) {
     const linear = quantizers.length
       ? analyzeSignalFlow(editor.circuit, { output: flow().output, sources: flow().sources, values: request.numbers, quantizerGains: Object.fromEntries(quantizers.map((q) => [q.refdes, Number(q.gain.toPrecision(6))])) })
       : null;
-    spectrum = { raw, points: plotSpectrum({ ...raw, points: dbfsSpectrum(raw, result.fullScale) }, result.frequency), frequency: result.frequency, amplitude: request.amplitude, fullScale: result.fullScale, quantizers, linear };
+    spectrum = { raw, points: plotSpectrum({ ...raw, points: dbfsSpectrum(raw, result.fullScale) }, result.frequency), frequency: result.frequency, amplitude: request.amplitude, fullScale: result.fullScale, quantizers, linear, dither: ditherResponses(request, result) };
   }
   // Its legend row comes or goes with it; else the plot alone is redrawn.
   if (graphView() === 'magnitude' && !!plots.querySelector('.signal-flow-legend-spectrum') !== spectrumShown()) renderGraph();
@@ -1241,8 +1269,8 @@ function bandControls() {
     return input;
   };
   const row = el('div', { class: 'signal-flow-band' }, [
-    el('label', { text: 'Signal band: f0' }), field('f0', 'Band center, f/fs', 'The band\'s center as f/fs; 0 for a baseband signal'),
-    el('label', { text: 'bw' }), field('bw', 'Bandwidth, f/fs', 'The bandwidth as f/fs (1/128, 0.004); empty for no band lines'),
+    controlPair('Band center', field('f0', 'Band center, f/fs', 'The band\'s center as f/fs; 0 for a baseband signal'), 'f/fs'),
+    controlPair('Bandwidth', field('bw', 'Bandwidth, f/fs', 'The bandwidth as f/fs (1/128, 0.004); empty for no band lines'), 'f/fs'),
   ]);
   return row;
 }

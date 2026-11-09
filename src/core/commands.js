@@ -100,6 +100,8 @@ const FLAG_ARITY = {
   height: 1,
   hold: 1,
   linear: 1,
+  bus: 1,
+  word: 1,
   beats: 0,
   gaps: 1,
   lead: 1,
@@ -616,6 +618,7 @@ export function commandHelp() {
     '                                   or without one a beat per switch phase: what works shown, the rest dimmed',
     '  timing [ROW=WAVE ...] [--add NAME,...] [--rm NAME,...] [--slot N] [--lead on|off] [--beats] [--gaps auto|none|A:B,...] [--fall|--rise ROW=N,...] [--order A,B,...] [--place]',
     '                                  rows are the switch phases plus signals of the diagram\'s own (--add CLK; --rm removes one); a diagram needs no switches',
+    '                                   --bus ROW=aabc,... makes a signal a bus row, a letter or digit per slot; --word ROW:a=IDLE;ROW:b=$x_1$ says what a value stands for',
     '                                 - set the design\'s timing and draw it (or redraw it in place), a wave per switch phase; WAVE is',
     '                                   one character per slot: 1 high, 0 low. PHASE is its name (φ1,',
     '                                   $\\varphi_1$), row number, or ~PHASE for its complement. Unset rows keep their wave,',
@@ -1386,13 +1389,27 @@ function dispatch(circuit, cmd, pos, flags, io) {
       heights[item.slice(0, at)] = item.slice(at + 1);
     }
     const hold = Object.fromEntries([...list('hold').map((name) => [name, true]), ...list('linear').map((name) => [name, false])]);
+    // --bus ROW=aabc,...: a bus row's slots; --word ROW:a=TEXT;...: what a value stands for.
+    for (const item of list('bus')) {
+      const at = item.lastIndexOf('=');
+      if (at <= 0) throw new Error(`--bus takes ROW=VALUES (a letter or digit per slot), not "${item}"`);
+      bits[item.slice(0, at)] = { bus: item.slice(at + 1) };
+    }
+    const words = {};
+    for (const item of flags.word ? String(flags.word[0]).split(';').map((text) => text.trim()).filter(Boolean) : []) {
+      const equals = item.indexOf('=');
+      const colon = item.lastIndexOf(':', equals);
+      if (equals <= 0 || colon <= 0 || equals - colon !== 2) throw new Error(`--word takes ROW:VALUE=TEXT, parted by ;, not "${item}"`);
+      const row = item.slice(0, colon);
+      words[row] = { ...(words[row] || {}), [item[colon + 1]]: item.slice(equals + 1).trim() };
+    }
     // --lead on|off: the waves' lead-in and lead-out (their repeat past both ends).
     const leadText = flags.lead ? String(flags.lead[0]).trim() : null;
     if (leadText !== null && !['on', 'off'].includes(leadText)) throw new Error(`--lead takes on or off, not "${leadText}"`);
     const lead = leadText === null ? null : leadText === 'on';
-    const rows = addTimingDiagram(circuit, { bits, fromBeats: !!flags.beats, slot, gaps, lead, shifts, order, place: !!flags.place, add: signalsAdded, remove: signalsRemoved, ...notes, need, heights, hold });
+    const rows = addTimingDiagram(circuit, { bits, fromBeats: !!flags.beats, slot, gaps, lead, shifts, order, place: !!flags.place, add: signalsAdded, remove: signalsRemoved, ...notes, need, heights, hold, words });
     if (!rows.length) return result('removed the timing diagram: it had no rows left', [], true);
-    const wave = (row) => (row.values ? `${row.values.map((v) => v ?? '_').join(',')}${row.hold ? ' (held)' : ''}` : row.from === 'complement' ? '(inverted)' : row.bits || '(low)');
+    const wave = (row) => (row.bus ? row.bus : row.values ? `${row.values.map((v) => v ?? '_').join(',')}${row.hold ? ' (held)' : ''}` : row.from === 'complement' ? '(inverted)' : row.bits || '(low)');
     const moved = (row) => [row.shift.fall ? ` fall ${row.shift.fall > 0 ? '+' : ''}${row.shift.fall}` : '', row.shift.rise ? ` rise ${row.shift.rise > 0 ? '+' : ''}${row.shift.rise}` : ''].join('');
     const drawn = existingTimingDiagram(circuit);
     const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;

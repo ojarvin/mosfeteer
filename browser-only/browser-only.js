@@ -16663,6 +16663,18 @@ function bandSqnr(ntf, levels, band) {
  *  moved into the spectrum's dBFS (a noise level, or a tone's level). */
 /** `detail`, a [low, high] frequency range on the plot's axis (a zoomed
  *  view), samples each curve densely there too. */
+/** Levels in dB added as powers. */
+const powerSumDb = (db, others) => 10 * Math.log10(others.reduce((sum, level) => sum + 10 ** (level / 10), 10 ** (db / 10)));
+
+/** A curve's dB at `f`, between its points in log frequency. */
+function curveDbAt(points, f) {
+  let hi = points.findIndex((point) => point.f >= f);
+  if (hi < 0) return points.at(-1).db;
+  if (hi === 0 || points[hi].f === f) return points[hi].db;
+  const [a, b] = [points[hi - 1], points[hi]];
+  return a.db + ((b.db - a.db) * Math.log(f / a.f)) / Math.log(b.f / a.f);
+}
+
 function responsePlot(traces, variable, { sAxis = 'omega', band = null, quantity = 'magnitude', background = [], dbfs = null, detail = null } = {}) {
   const withVariable = traces.map((trace) => ({ ...trace, variable: trace.variable || variable }));
   const axis = plotAxis(withVariable, sAxis);
@@ -16696,13 +16708,20 @@ function responsePlot(traces, variable, { sAxis = 'omega', band = null, quantity
       // Behind the curves: a simulated output's spectrum, on f/fs.
       ...(quantity !== 'phase' && curveAxis === 'normalized' ? background : []).map((trace) => ({ ...trace, background: true, points: trace.points.filter((p) => p.f <= 0.5) })),
       ...curves.map(({ trace, curve }) => {
-        const offset = dbfs && quantity !== 'phase' && curveAxis === 'normalized' ? dbfs.offset(trace) : 0;
+        const inDbfs = dbfs && quantity !== 'phase' && curveAxis === 'normalized';
+        const offset = inDbfs ? dbfs.offset(trace) : 0;
+        // Noise of other sources, added to this one's as powers.
+        const added = inDbfs ? (trace.addedNoise || []).flatMap(({ value, offset: level }) => {
+          const other = responseCurve(value, trace.variable, { sAxis: axis, at: bandPoints(trace.variable) });
+          return other?.points.length ? [{ points: other.points, level }] : [];
+        }) : [];
+        const dbAt = (f, db) => (added.length ? powerSumDb(db + offset, added.map(({ points, level }) => curveDbAt(points, f) + level)) : db + offset);
         return {
           label: trace.label,
           color: trace.color,
           ...(trace.start ? { start: true } : {}),
           ...(trace.held?.key ? { hold: trace.held.key } : {}),
-          points: curve.points.map(({ f, db, phase }) => ({ f, db: quantity === 'phase' ? phase : db + offset })),
+          points: curve.points.map(({ f, db, phase }) => ({ f, db: quantity === 'phase' ? phase : dbAt(f, db) })),
         };
       }),
     ],
@@ -16866,7 +16885,7 @@ let blockTransferFunction, coefficientValue, delayTermsOf, denseCoefficients, ha
 let expm; __bind(() => { ({ expm } = __require("src/core/analysis/sampling.js")); });
 let aliasedFrequency; __bind(() => { ({ aliasedFrequency } = __require("src/core/analysis/spectrum.js")); });
 let evaluateExpression; __bind(() => { ({ evaluateExpression } = __require("src/core/analysis/bode.js")); });
-let TRANSFER_FUNCTION_TYPES, isBlockIn, parseDither, parseGain, parseLevels, parseTone; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, isBlockIn, parseDither, parseGain, parseLevels, parseTone } = __require("src/core/transfer-function.js")); });
+let TRANSFER_FUNCTION_TYPES, ditherVariance, isBlockIn, parseDither, parseGain, parseLevels, parseTone; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, ditherVariance, isBlockIn, parseDither, parseGain, parseLevels, parseTone } = __require("src/core/transfer-function.js")); });
 let analyzedCircuit, canonicalNetName; __bind(() => { ({ analyzedCircuit, canonicalNetName } = __require("src/core/model.js")); });
 let seededRandom; __bind(() => { ({ seededRandom } = __require("src/core/analysis/cmaes.js")); });
 let rationalMultiply; __bind(() => { ({ rationalMultiply } = __require("src/core/analysis/rational.js")); });
@@ -17546,7 +17565,12 @@ function prepareSimulation(circuit, options = {}) {
     return { peaks: Array.from(peaks), tone, overloaded: false, quantizers: quantizerFits, ...(recorded ? { samples: recorded } : {}), ...(magnitudes ? { magnitudes } : {}), ...wavesOut() };
   };
 
-  return { ok: true, fullScale, frequency, period: T, signals: signalList, run };
+  // The random sources: what each adds to the output's noise floor.
+  const dithers = sources.flatMap((source) => {
+    const set = sourceValue.get(source.key)?.dither;
+    return set && set.shape !== 'sine' ? [{ id: source.id, variance: ditherVariance(set.shape, set.amplitude * fullScale) }] : [];
+  });
+  return { ok: true, fullScale, frequency, period: T, signals: signalList, dithers, run };
 }
 
 /** The amplitudes a sweep runs, in dBFS: coarse far below full scale, a
@@ -17882,7 +17906,7 @@ let inBand, outputSpectrum; __bind(() => { ({ inBand, outputSpectrum } = __requi
 
 
 /** One run of `options` (prepareSimulation's) at `amplitude` dBFS, and its
- *  output's spectrum in segments of `segment`: `{ raw, quantizers,
+ *  output's spectrum in segments of `segment`: `{ raw, quantizers, dithers,
  *  fullScale, frequency }`, or `{ error }`, or `{ overloaded }`. */
 function simulatedSpectrum({ circuit, options, amplitude, segment }) {
   try {
@@ -17890,7 +17914,7 @@ function simulatedSpectrum({ circuit, options, amplitude, segment }) {
     if (!sim.ok) return { error: sim.error };
     const run = sim.run(amplitude, { record: true });
     if (run.overloaded || !run.samples) return { overloaded: !!run.overloaded, fullScale: sim.fullScale, frequency: sim.frequency };
-    return { raw: outputSpectrum(run.samples, { segment, variance: 1 / 3 }), quantizers: run.quantizers, fullScale: sim.fullScale, frequency: sim.frequency };
+    return { raw: outputSpectrum(run.samples, { segment, variance: 1 / 3 }), quantizers: run.quantizers, dithers: sim.dithers, fullScale: sim.fullScale, frequency: sim.frequency };
   } catch (error) {
     return { error: error.message };
   }
@@ -23468,6 +23492,8 @@ const FLAG_ARITY = {
   height: 1,
   hold: 1,
   linear: 1,
+  bus: 1,
+  word: 1,
   beats: 0,
   gaps: 1,
   lead: 1,
@@ -23984,6 +24010,7 @@ function commandHelp() {
     '                                   or without one a beat per switch phase: what works shown, the rest dimmed',
     '  timing [ROW=WAVE ...] [--add NAME,...] [--rm NAME,...] [--slot N] [--lead on|off] [--beats] [--gaps auto|none|A:B,...] [--fall|--rise ROW=N,...] [--order A,B,...] [--place]',
     '                                  rows are the switch phases plus signals of the diagram\'s own (--add CLK; --rm removes one); a diagram needs no switches',
+    '                                   --bus ROW=aabc,... makes a signal a bus row, a letter or digit per slot; --word ROW:a=IDLE;ROW:b=$x_1$ says what a value stands for',
     '                                 - set the design\'s timing and draw it (or redraw it in place), a wave per switch phase; WAVE is',
     '                                   one character per slot: 1 high, 0 low. PHASE is its name (φ1,',
     '                                   $\\varphi_1$), row number, or ~PHASE for its complement. Unset rows keep their wave,',
@@ -24754,13 +24781,27 @@ function dispatch(circuit, cmd, pos, flags, io) {
       heights[item.slice(0, at)] = item.slice(at + 1);
     }
     const hold = Object.fromEntries([...list('hold').map((name) => [name, true]), ...list('linear').map((name) => [name, false])]);
+    // --bus ROW=aabc,...: a bus row's slots; --word ROW:a=TEXT;...: what a value stands for.
+    for (const item of list('bus')) {
+      const at = item.lastIndexOf('=');
+      if (at <= 0) throw new Error(`--bus takes ROW=VALUES (a letter or digit per slot), not "${item}"`);
+      bits[item.slice(0, at)] = { bus: item.slice(at + 1) };
+    }
+    const words = {};
+    for (const item of flags.word ? String(flags.word[0]).split(';').map((text) => text.trim()).filter(Boolean) : []) {
+      const equals = item.indexOf('=');
+      const colon = item.lastIndexOf(':', equals);
+      if (equals <= 0 || colon <= 0 || equals - colon !== 2) throw new Error(`--word takes ROW:VALUE=TEXT, parted by ;, not "${item}"`);
+      const row = item.slice(0, colon);
+      words[row] = { ...(words[row] || {}), [item[colon + 1]]: item.slice(equals + 1).trim() };
+    }
     // --lead on|off: the waves' lead-in and lead-out (their repeat past both ends).
     const leadText = flags.lead ? String(flags.lead[0]).trim() : null;
     if (leadText !== null && !['on', 'off'].includes(leadText)) throw new Error(`--lead takes on or off, not "${leadText}"`);
     const lead = leadText === null ? null : leadText === 'on';
-    const rows = addTimingDiagram(circuit, { bits, fromBeats: !!flags.beats, slot, gaps, lead, shifts, order, place: !!flags.place, add: signalsAdded, remove: signalsRemoved, ...notes, need, heights, hold });
+    const rows = addTimingDiagram(circuit, { bits, fromBeats: !!flags.beats, slot, gaps, lead, shifts, order, place: !!flags.place, add: signalsAdded, remove: signalsRemoved, ...notes, need, heights, hold, words });
     if (!rows.length) return result('removed the timing diagram: it had no rows left', [], true);
-    const wave = (row) => (row.values ? `${row.values.map((v) => v ?? '_').join(',')}${row.hold ? ' (held)' : ''}` : row.from === 'complement' ? '(inverted)' : row.bits || '(low)');
+    const wave = (row) => (row.bus ? row.bus : row.values ? `${row.values.map((v) => v ?? '_').join(',')}${row.hold ? ' (held)' : ''}` : row.from === 'complement' ? '(inverted)' : row.bits || '(low)');
     const moved = (row) => [row.shift.fall ? ` fall ${row.shift.fall > 0 ? '+' : ''}${row.shift.fall}` : '', row.shift.rise ? ` rise ${row.shift.rise > 0 ? '+' : ''}${row.shift.rise}` : ''].join('');
     const drawn = existingTimingDiagram(circuit);
     const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -30962,7 +31003,7 @@ function normalizeTimingSpec(spec) {
   const rows = spec.rows.slice(0, 64).flatMap((row) => {
     const timing = normalizeTiming(row);
     if (!timing || typeof row.source !== 'string' || !row.source.trim()) return [];
-    const { slot, gaps, lead, arrows, marks, spans, breaks, analog: curve, part: kind, item: index, ...own } = timing;
+    const { slot, gaps, lead, arrows, marks, spans, breaks, analog: curve, busWave: bar, part: kind, item: index, ...own } = timing;
     return [{ source: row.source.slice(0, 200), ...own }];
   });
   return { ...settings, rows };
@@ -31006,7 +31047,7 @@ function normalizeTiming(timing) {
   const breaks = list(timing.breaks, (value) => (Number.isInteger(value?.at) && value.at >= 0 && value.at <= 1024
     ? { at: value.at, ...(value.rows === true ? { rows: true } : {}) } : null));
   // A drawn arrow, mark, span or break (or a span's or an arrow's text) says which it is.
-  const part = ['arrow', 'mark', 'span', 'break', 'note', 'arrow-note'].includes(timing.part) && Number.isInteger(timing.item) && timing.item >= 0 ? timing.part : null;
+  const part = ['arrow', 'mark', 'span', 'break', 'note', 'arrow-note', 'legend'].includes(timing.part) && Number.isInteger(timing.item) && timing.item >= 0 ? timing.part : null;
   // An analog row: its values (-1..1) at the slots' starts, null where
   // unset, whether they hold through the slot; any row's height in cells
   // (even, from 2).
@@ -31023,9 +31064,26 @@ function normalizeTiming(timing) {
     ...(timing.analog.bipolar === true ? { bipolar: true } : {}),
     ...(pointList(timing.analog.thresholds).length ? { thresholds: pointList(timing.analog.thresholds) } : {}),
   } : null;
+  // A bus row: a letter or digit a slot, and the words those stand for.
+  const bus = typeof timing.bus === 'string' && /^[A-Za-z0-9]+$/.test(timing.bus) ? timing.bus.slice(0, 512) : '';
+  const words = bus && timing.words && typeof timing.words === 'object'
+    ? Object.fromEntries(Object.entries(timing.words).filter(([symbol, word]) => /^[A-Za-z0-9]$/.test(symbol) && typeof word === 'string' && word.trim()).map(([symbol, word]) => [symbol, word.trim().slice(0, 200)]))
+    : {};
+  // The drawn bar (timing-diagram.js): where its value changes and its
+  // texts, [center, text], from the box's left edge.
+  const numbers = (list) => (Array.isArray(list) ? list.slice(0, 1024).map(Number).filter(Number.isFinite) : []);
+  const busWave = timing.busWave && typeof timing.busWave === 'object' ? {
+    changes: numbers(timing.busWave.changes),
+    texts: (Array.isArray(timing.busWave.texts) ? timing.busWave.texts.slice(0, 1024) : [])
+      .filter((item) => Array.isArray(item) && Number.isFinite(Number(item[0])) && typeof item[1] === 'string')
+      .map(([x, text]) => [Number(x), text.slice(0, 200)]),
+  } : null;
   return {
     phase: timing.phase.slice(0, 200),
     ...(bits ? { bits } : {}),
+    ...(bus ? { bus } : {}),
+    ...(Object.keys(words).length ? { words } : {}),
+    ...(busWave ? { busWave } : {}),
     ...(values ? { values } : {}),
     ...(values && timing.hold === true ? { hold: true } : {}),
     ...(Number.isInteger(height) && height > 2 && height % 2 === 0 && height <= 16 ? { height } : {}),
@@ -32036,7 +32094,7 @@ class LabelInstance {
   resizeBox(rect) {
     // A parts table is the size of what it lists; an analog wave the size
     // of its row.
-    if (this.kind !== 'box' || this.table || this.timing?.analog || this.timing?.part === 'break') return false;
+    if (this.kind !== 'box' || this.table || this.timing?.analog || this.timing?.busWave || this.timing?.part === 'break') return false;
     const next = { x0: snap(rect.x), y0: snap(rect.y), x1: snap(rect.x + rect.w), y1: snap(rect.y + rect.h) };
     if (next.x1 <= next.x0 || next.y1 <= next.y0) return false;
     const prev = {
@@ -41544,6 +41602,7 @@ function shapeAnnotationSvg(label, opacity = '') {
   if (label.kind === 'box' && label.plot) return plotAnnotationSvg(label, opacity);
   if (label.kind === 'box' && label.table) return partsTableSvg(label, opacity);
   if (label.kind === 'box' && label.timing?.analog) return analogWaveSvg(label, opacity);
+  if (label.kind === 'box' && label.timing?.busWave) return busWaveSvg(label, opacity);
   if (label.kind === 'box' && label.timing?.part === 'break') return timingBreakSvg(label, opacity);
   if (label.kind === 'box' && label.image) {
     // A pasted picture, whole and undistorted in its box.
@@ -41753,6 +41812,37 @@ function analogWaveSvg(label, opacity = '') {
   // Fewer than two values set: nothing to join yet.
   if (trace.length >= 2) parts.push(`<path d="${d(trace)}" fill="none" ${curve}/>`);
   return `<g class="timing-analog"${opacity}>${parts.join('')}</g>`;
+}
+
+/** How far a bus row's X reaches either side of its change of value. */
+const BUS_X_REACH = GRID / 4;
+
+/**
+ * A timing diagram's bus row (timing-diagram.js): a bar, its top and
+ * bottom lines crossing in an X at each change of value, each value's text
+ * in the middle of its stretch.
+ */
+function busWaveSvg(label, opacity = '') {
+  const { changes, texts } = label.timing.busWave;
+  const x0 = Math.min(label.anchor.x, label.end.x);
+  const width = Math.abs(label.end.x - label.anchor.x);
+  const top = Math.min(label.anchor.y, label.end.y);
+  const bottom = Math.max(label.anchor.y, label.end.y);
+  // Two lines: each runs along one side and crosses to the other at a change.
+  const line = (start) => {
+    let y = start;
+    let d = `M ${fmt(x0)} ${fmt(y)}`;
+    for (const x of changes) {
+      const next = y === top ? bottom : top;
+      d += ` L ${fmt(x0 + x - BUS_X_REACH)} ${fmt(y)} L ${fmt(x0 + x + BUS_X_REACH)} ${fmt(next)}`;
+      y = next;
+    }
+    return `${d} L ${fmt(x0 + width)} ${fmt(y)}`;
+  };
+  const stroke = styleAttrs({ ...label.style, lineStyle: 'solid' }, 'annotation').replace(/stroke-linejoin="[^"]*"/, 'stroke-linejoin="round"');
+  const baseline = (top + bottom) / 2 + 0.35 * labelFontSize(label.style?.width);
+  const words = texts.map(([x, text]) => labelTextEl(x0 + x, baseline, parseLabelRuns(texToLabelMarkup(text)), 'middle', 'label', label.style?.color || '#111', label.style?.width || 'normal', { bold: false, italic: false }));
+  return `<g class="timing-bus"${opacity}><path d="${line(top)} ${line(bottom)}" fill="none" ${stroke}/>${words.join('')}</g>`;
 }
 
 /**
@@ -47475,6 +47565,7 @@ __modules["src/core/timing-diagram.js"] = function (__require, __exports) {
 __exports.parseTimingBits = parseTimingBits;
 __exports.rowHeight = rowHeight;
 __exports.parseTimingValue = parseTimingValue;
+__exports.parseTimingBus = parseTimingBus;
 __exports.parseTimingWave = parseTimingWave;
 __exports.beatTimingBits = beatTimingBits;
 __exports.timingPhases = timingPhases;
@@ -47483,6 +47574,8 @@ __exports.timingColumns = timingColumns;
 __exports.timingRowGeometry = timingRowGeometry;
 __exports.timingRowEdges = timingRowEdges;
 __exports.analogRowGeometry = analogRowGeometry;
+__exports.busRowGeometry = busRowGeometry;
+__exports.busRowText = busRowText;
 __exports.timingStates = timingStates;
 __exports.timingBeatStates = timingBeatStates;
 __exports.timingBeatBands = timingBeatBands;
@@ -47505,7 +47598,7 @@ let coreBounds; __bind(() => { ({ coreBounds } = __require("src/core/figures.js"
  * Timing diagram: one clock waveform per switch phase, and signal rows of
  * the diagram's own (`timing.signal`), drawn under the drawing as
  * annotations. The contract (waves as slots, lead-in, non-overlap gaps,
- * analog rows, breaks, arrows, marks, spans) is docs/beats.md.
+ * analog and bus rows, breaks, arrows, marks, spans) is docs/beats.md.
  *
  * A row's wave is, first to last: the one given for it; the one it had in
  * the diagram already; for a complement, its phase inverted, gaps
@@ -47566,11 +47659,22 @@ function parseTimingValue(text) {
 /** An analog slot left unset: null, or as typed `_` or nothing between commas. */
 const unsetValue = (item) => item === null || item === undefined || String(item).trim() === '' || String(item).trim() === '_';
 
+/** A bus row's slots as typed: a letter or digit each (`aabc`, `a,a,b,c`). */
+function parseTimingBus(text) {
+  const wave = String(text ?? '').replace(/[\s,]+/g, '');
+  const bad = wave.match(/[^A-Za-z0-9]/);
+  if (bad) throw new Error(`a bus row is one letter or digit per slot, not "${bad[0]}"`);
+  if (!wave) throw new Error('a bus row needs a value per slot');
+  return wave;
+}
+
 /** A row's wave as given: digital bits (`0101`), or analog values -- a list,
  *  or text with commas, a `_`, or a value that is not 0 or 1 (`0,.5,1`,
- *  `.3`) -- each slot's value or unset (null: `0,,,1`, `0 _ _ 1`).
- *  Returns { bits } or { values }. */
+ *  `.3`) -- each slot's value or unset (null: `0,,,1`, `0 _ _ 1`), or a
+ *  bus ({ bus: 'aabc', words: { a: 'IDLE' } }).
+ *  Returns { bits }, { values }, or { bus, words }. */
 function parseTimingWave(wave) {
+  if (wave && typeof wave === 'object' && !Array.isArray(wave)) return { bus: parseTimingBus(wave.bus), ...(wave.words ? { words: wave.words } : {}) };
   const values = (items) => ({ values: items.map((item) => (unsetValue(item) ? null : parseTimingValue(item))) });
   if (Array.isArray(wave)) return values(wave);
   const text = String(wave ?? '').trim();
@@ -47754,6 +47858,61 @@ function analogRowGeometry(values, columns, { hold = false } = {}) {
   }
   const points = starts.map((x, slot) => ({ at: slot, x, v: valueAt(slot) }));
   return { trace: trace.length >= 2 ? trace : [], points, width: end };
+}
+
+/**
+ * A bus row's stretches of one value, from the waves' left edge: `runs`
+ * [{ symbol, x0, x1, lead }] (`lead`: only a lead-in or lead-out, which
+ * repeat the last and first slot), `edges` [{ at, x }] where the value
+ * changes (`at` the slot boundary, as timingColumns), and the width. A
+ * short wave holds its last value.
+ */
+function busRowGeometry(wave, columns) {
+  const starts = slotStarts(columns);
+  const width = columns.reduce((sum, column) => sum + column.w, 0);
+  const count = starts.length - 1;
+  const value = (slot) => wave[Math.min(slot, wave.length - 1)];
+  const pieces = Array.from({ length: count }, (_, slot) => ({ symbol: value(slot), x0: starts[slot], x1: starts[slot + 1], at: slot, lead: false }));
+  if (starts[0] > 0) pieces.unshift({ symbol: value(count - 1), x0: 0, x1: starts[0], at: -1, lead: true });
+  if (starts[count] < width) pieces.push({ symbol: value(0), x0: starts[count], x1: width, at: count, lead: true });
+  const runs = [];
+  for (const piece of pieces) {
+    const last = runs.at(-1);
+    if (last?.symbol === piece.symbol) Object.assign(last, { x1: piece.x1, lead: last.lead && piece.lead });
+    else runs.push({ ...piece });
+  }
+  return { runs, edges: runs.slice(1).map(({ at, x0 }) => ({ at, x: x0 })), width };
+}
+
+/** Kept clear of a bus row's texts at each end of their stretch. */
+const BUS_TEXT_MARGIN = GRID / 2;
+
+/**
+ * What a bus row writes: `texts` [[center, text]] -- each stretch's word
+ * if it fits there (`textWidth(word)`, its width), else the value's own
+ * letter -- and `legend`, the words shown only by their letter, as one
+ * label's text (`a = IDLE, b = $x_1$`), or null. A lead-in or lead-out
+ * alone says nothing: it repeats what the row shows anyway.
+ */
+function busRowText(runs, words, textWidth) {
+  const shortened = new Map();
+  const texts = runs.filter((run) => !run.lead).map((run) => {
+    const word = words[run.symbol];
+    const center = (run.x0 + run.x1) / 2;
+    if (!word) return [center, run.symbol];
+    if (textWidth(word) <= run.x1 - run.x0 - BUS_TEXT_MARGIN) return [center, word];
+    if (word !== run.symbol) shortened.set(run.symbol, word);
+    return [center, run.symbol];
+  });
+  return { texts, legend: busLegend([...shortened]) };
+}
+
+/** The legend of a bus row's shortened words, in one line: TeX if any is. */
+function busLegend(entries) {
+  if (!entries.length) return null;
+  if (!entries.some(([, word]) => isTexSource(word))) return entries.map(([symbol, word]) => `${symbol} = ${word}`).join(', ');
+  const tex = (word) => (isTexSource(word) ? word.replace(/^\$+|\$+$/g, '').trim() : `\\text{${word}}`);
+  return `$${entries.map(([symbol, word]) => `${symbol} = ${tex(word)}`).join(',\\ ')}$`;
 }
 
 /** Whether an analog row reaches below zero: drawn about a middle zero line. */
@@ -47977,7 +48136,10 @@ function existingTimingDiagram(circuit, { drawing = false } = {}) {
   const values = new Map();
   const holds = new Set();
   const heights = new Map();
+  const buses = new Map();
+  const words = new Map();
   for (const row of spec.rows) {
+    if (row.bus) { buses.set(row.phase, row.bus); words.set(row.phase, row.words || {}); }
     if (typeof row.bits === 'string') bits.set(row.phase, row.bits);
     if (row.shift) shifts.set(row.phase, normalizeEdgeShift(row.shift));
     if (Array.isArray(row.values)) values.set(row.phase, row.values);
@@ -47986,7 +48148,7 @@ function existingTimingDiagram(circuit, { drawing = false } = {}) {
   }
   return {
     ids: drawn?.ids || [], drawn: !!drawn, x: drawn?.x, y: drawn?.y, missing: drawn?.missing || [],
-    bits, shifts, values, holds, heights,
+    bits, shifts, values, holds, heights, buses, words,
     order: spec.rows.map((row) => row.phase),
     signals: spec.rows.filter((row) => row.signal).map((row) => ({ key: row.phase, source: row.source })),
     slot: spec.slot, gaps: spec.gaps === false ? 'none' : spec.gaps ?? 'auto', lead: spec.lead !== false,
@@ -48009,8 +48171,11 @@ function drawnTimingDiagram(circuit) {
   const values = new Map();
   const holds = new Set();
   const heights = new Map();
+  const buses = new Map();
+  const words = new Map();
   for (const label of parts) {
     if (label.timing.part || label.kind !== 'label') continue;
+    if (label.timing.bus) { buses.set(label.timing.phase, label.timing.bus); words.set(label.timing.phase, label.timing.words || {}); }
     if (typeof label.timing.bits === 'string') bits.set(label.timing.phase, label.timing.bits);
     if (label.timing.shift) shifts.set(label.timing.phase, normalizeEdgeShift(label.timing.shift));
     if (Array.isArray(label.timing.values)) values.set(label.timing.phase, label.timing.values);
@@ -48037,7 +48202,7 @@ function drawnTimingDiagram(circuit) {
   const drawn = new Set(parts.filter((label) => label.timing.part).map((label) => `${owner[label.timing.part] || label.timing.part}:${label.timing.item}`));
   const missing = Object.entries({ arrow: arrows, mark: marks, span: spans, break: breaks })
     .flatMap(([kind, list]) => list.flatMap((_, index) => (drawn.has(`${kind}:${index}`) ? [] : [{ kind, index }])));
-  return { ids: parts.map((label) => label.id), drawn: true, bits, shifts, values, holds, heights, order, signals, x, y, slot: first.timing.slot, gaps: first.timing.gaps === false ? 'none' : first.timing.gaps ?? 'auto', lead: first.timing.lead !== false, arrows, marks, spans, breaks, missing };
+  return { ids: parts.map((label) => label.id), drawn: true, bits, shifts, values, holds, heights, buses, words, order, signals, x, y, slot: first.timing.slot, gaps: first.timing.gaps === false ? 'none' : first.timing.gaps ?? 'auto', lead: first.timing.lead !== false, arrows, marks, spans, breaks, missing };
 }
 
 /** `phases` in `order` (phase keys) where it names them; the rest after, in
@@ -48054,8 +48219,8 @@ function arranged(phases, order) {
 function timingPairs(rows, setting = 'auto') {
   if (setting === 'none' || setting === false) return [];
   if (Array.isArray(setting)) {
-    // An analog row has no edges to keep apart.
-    const index = (key) => rows.findIndex((row) => samePhase(row.key, key) && !row.values);
+    // An analog or bus row has no edges to keep apart.
+    const index = (key) => rows.findIndex((row) => samePhase(row.key, key) && !row.values && !row.bus);
     return setting.map(([a, b]) => [index(a), index(b)]).filter(([a, b]) => a >= 0 && b >= 0 && a !== b).map(([a, b]) => [Math.min(a, b), Math.max(a, b)]);
   }
   // A complement follows its phase; a signal of the diagram's own is kept
@@ -48065,9 +48230,9 @@ function timingPairs(rows, setting = 'auto') {
 }
 
 /** Every row's wave as the diagram would draw it now (see the header):
- *  [{ key, source, bits, values, hold, height, from, complementOf, signal }]
- *  (an analog row's `values`, its `bits` all low, one per value, so it
- *  counts its slots as the others do), `from` one of
+ *  [{ key, source, bits, values, hold, bus, words, height, from, complementOf, signal }]
+ *  (an analog row's `values` or a bus row's `bus`, its `bits` all low, one
+ *  per value, so it counts its slots as the others do), `from` one of
  *  'typed', 'diagram', 'complement' (drawn as row `complementOf` inverted),
  *  'beats', or 'low' (bits empty); `signal` marks the diagram's own signals.
  *  `phases` defaults to timingPhases; `drawing` reads the drawn diagram. */
@@ -48076,13 +48241,16 @@ function timingRowSources(circuit, { fromBeats = false, typed = new Map(), order
   const phases = arranged(given || timingPhases(circuit, { drawing }), order || drawnBefore?.order);
   const before = fromBeats ? null : drawnBefore;
   const analog = (values) => ({ bits: '0'.repeat(values.length), values });
+  const bus = (wave, words) => ({ bits: '0'.repeat(wave.length), bus: wave, words: words ?? {} });
   return phases.map(({ key, source, signal }) => {
     const height = drawnBefore?.heights.get(key);
     const own = { ...(signal ? { signal: true } : {}), ...(height ? { height } : {}) };
     if (typed.has(key)) {
       const wave = typed.get(key);
+      if (wave.bus) return { key, source, ...bus(wave.bus, wave.words ?? drawnBefore?.words.get(key)), from: 'typed', ...own };
       return { key, source, ...(wave.values ? analog(wave.values) : { bits: wave.bits ?? wave }), ...(wave.values && (wave.hold ?? drawnBefore?.holds.has(key)) ? { hold: true } : {}), from: 'typed', ...own };
     }
+    if (before?.buses.has(key)) return { key, source, ...bus(before.buses.get(key), before.words.get(key)), from: 'diagram', ...own };
     if (before?.values.has(key)) return { key, source, ...analog(before.values.get(key)), ...(before.holds.has(key) ? { hold: true } : {}), from: 'diagram', ...own };
     if (before?.bits.has(key)) return { key, source, bits: before.bits.get(key), from: 'diagram', ...own };
     const base = isComplementPhase(key) ? phases.findIndex((other) => samePhase(other.key, complementKey(key))) : -1;
@@ -48302,17 +48470,17 @@ function addTimingDiagram(circuit, options = {}) {
 }
 
 /** A row's own part of its name label's `timing`, as the design keeps it. */
-function rowTiming({ key, bits, values, hold, height, from, signal }, shift) {
+function rowTiming({ key, bits, values, hold, bus, words, height, from, signal }, shift) {
   return {
     phase: key,
-    ...(values ? { values, ...(hold ? { hold: true } : {}) } : from === 'complement' || from === 'low' ? {} : { bits }),
+    ...(bus ? { bus, words } : values ? { values, ...(hold ? { hold: true } : {}) } : from === 'complement' || from === 'low' ? {} : { bits }),
     ...(height ? { height } : {}),
     ...(shift.fall || shift.rise ? { shift } : {}),
     ...(signal ? { signal: true } : {}),
   };
 }
 
-function timingDiagram(circuit, { bits: given = {}, fromBeats = false, slot = null, gaps = null, lead = null, shifts: givenShifts = {}, order = null, place = false, add = [], remove = [], arrows = null, marks = null, spans = null, breaks = null, need = [], heights: givenHeights = {}, hold: givenHold = {} } = {}, draw = true) {
+function timingDiagram(circuit, { bits: given = {}, fromBeats = false, slot = null, gaps = null, lead = null, shifts: givenShifts = {}, order = null, place = false, add = [], remove = [], arrows = null, marks = null, spans = null, breaks = null, need = [], heights: givenHeights = {}, hold: givenHold = {}, words: givenWords = {} } = {}, draw = true) {
   const current = timingPhases(circuit);
   for (const name of add) {
     if (!String(name).trim()) throw new Error('a signal needs a name');
@@ -48339,7 +48507,17 @@ function timingDiagram(circuit, { bits: given = {}, fromBeats = false, slot = nu
     const phase = named(name);
     const wave = parseTimingWave(text);
     if (wave.values && !phase.signal) throw new Error(`${plainTexText(phase.source)} is a switch phase: its row is digital (1 and 0); an analog row is a signal of the diagram's own (timing --add)`);
+    if (wave.bus && !phase.signal) throw new Error(`${plainTexText(phase.source)} is a switch phase: its row is digital (1 and 0); a bus row is a signal of the diagram's own (timing --add)`);
     typed.set(phase.key, wave);
+  }
+  // A bus row's words, added to those it has (an empty one is taken away).
+  for (const [name, entries] of Object.entries(givenWords)) {
+    const phase = named(name);
+    const known = existingTimingDiagram(circuit);
+    const wave = typed.get(phase.key);
+    const bus = wave?.bus ?? known?.buses.get(phase.key);
+    if (!bus) throw new Error(`${plainTexText(phase.source)} is not a bus row: only a bus row has words (timing --bus)`);
+    typed.set(phase.key, { bus, words: { ...(wave?.words ?? known?.words.get(phase.key)), ...entries } });
   }
   // Holding analog values through their slots, or joining them straight.
   for (const [name, on] of Object.entries(givenHold)) {
@@ -48377,7 +48555,8 @@ function timingDiagram(circuit, { bits: given = {}, fromBeats = false, slot = nu
   // marks and spans placed on them.
   const geometry = rowLayout(rows);
   const analog = rows.map((row) => (row.values ? analogRowGeometry(row.values, columns, { hold: row.hold }) : null));
-  const edges = rows.map((row, r) => (analog[r] ? [] : timingRowEdges(levels[r], columns, 0, 0, drawnShift[r], geometry.heights[r])));
+  const bars = rows.map((row) => (row.bus ? busRowGeometry(row.bus, columns) : null));
+  const edges = rows.map((row, r) => (bars[r] ? bars[r].edges : analog[r] ? [] : timingRowEdges(levels[r], columns, 0, 0, drawnShift[r], geometry.heights[r])));
   // An analog row's every slot start is a point to attach to.
   const edgeOf = (ref) => {
     const r = rows.findIndex((row) => samePhase(row.key, ref.row));
@@ -48451,6 +48630,14 @@ function timingDiagram(circuit, { bits: given = {}, fromBeats = false, slot = nu
   // drawing's width, as high as the drawing leaves room for it, else below.
   const waves = columns.reduce((sum, c) => sum + c.w, 0);
   const column = Math.max(...labels.map((label) => label.bbox().w));
+  // A bus row's texts, and the legend beside it of those too long to show.
+  const widthOf = (text) => new LabelInstance(circuit, { text, math: isTexSource(text), align: 'center', x: 0, y: 0 }).textWidth();
+  const busText = rows.map((row, r) => (bars[r] ? busRowText(bars[r].runs, row.words, widthOf) : null));
+  const legends = rows.flatMap((row, r) => (busText[r]?.legend ? [{ row: r, label: circuit.addLabel({
+    text: busText[r].legend, math: isTexSource(busText[r].legend), align: 'left', x: 0, y: 0,
+    timing: { phase: row.key, part: 'legend', item: 0, ...settings },
+  }) }] : []));
+  const legendRoom = legends.length ? GRID + Math.max(...legends.map(({ label }) => label.bbox().w)) : 0;
   const height = layout.height;
   let waveX;
   let top;
@@ -48459,15 +48646,23 @@ function timingDiagram(circuit, { bits: given = {}, fromBeats = false, slot = nu
     top = drawnBefore.y;
   } else {
     waveX = snap(drawn.x + drawn.w / 2 - waves / 2);
-    top = timingSpot(circuit, { x: waveX - LABEL_GAP - column, w: column + LABEL_GAP + waves, h: height }, drawn);
+    top = timingSpot(circuit, { x: waveX - LABEL_GAP - column, w: column + LABEL_GAP + waves + legendRoom, h: height }, drawn);
   }
+  for (const { row, label } of legends) label.moveTo(ceilGrid(waveX + waves + GRID + label.bbox().w / 2), top + geometry.tops[row] + geometry.heights[row] / 2);
   labels.forEach((label, row) => label.moveTo(waveX - LABEL_GAP - label.bbox().w / 2, top + geometry.tops[row] + geometry.heights[row] / 2));
   drawNotes(circuit, notes, layout, { x: waveX, y: top }, settings);
   const drawnRows = labels.map((label, row) => {
-    const { key, bits, values, hold, from, signal } = rows[row];
+    const { key, bits, values, hold, bus, from, signal } = rows[row];
     const rowTop = top + geometry.tops[row];
     let line;
-    if (analog[row]) {
+    if (bars[row]) {
+      // A bar in a box of its own, as an analog curve: its X's and texts need not be on the grid.
+      line = circuit.addAnnotation('box', {
+        x: waveX, y: rowTop, end: { x: waveX + bars[row].width, y: rowTop + geometry.heights[row] },
+        style: { lineStyle: 'solid' },
+        timing: { phase: key, busWave: { changes: bars[row].edges.map((edge) => edge.x), texts: busText[row].texts }, ...settings },
+      }).id;
+    } else if (analog[row]) {
       // The curve in a box of its own: the box on the grid, the curve not.
       const box = analog[row];
       const thresholds = layout.thresholds.filter((mark) => mark.row === row).map(({ x, v }) => [x, v]);
@@ -48480,7 +48675,7 @@ function timingDiagram(circuit, { bits: given = {}, fromBeats = false, slot = nu
       const points = timingRowGeometry(levels[row], columns, waveX, rowTop, drawnShift[row], geometry.heights[row]);
       line = circuit.addAnnotation('line', { points, timing: { phase: key, ...settings } }).id;
     }
-    return { phase: key, bits, ...(values ? { values, ...(hold ? { hold: true } : {}) } : {}), from, shift: own(key), label: label.id, line, lines: [line], ...(signal ? { signal: true } : {}) };
+    return { phase: key, bits, ...(bus ? { bus } : {}), ...(values ? { values, ...(hold ? { hold: true } : {}) } : {}), from, shift: own(key), label: label.id, line, lines: [line], ...(signal ? { signal: true } : {}) };
   });
   // Breaks over the waves, drawn above them.
   for (const { index, x0, x1, y0, y1, row } of cuts) {
@@ -48897,6 +49092,7 @@ __exports.isTransferFunction = isTransferFunction;
 __exports.isCoefficientBlock = isCoefficientBlock;
 __exports.parseDither = parseDither;
 __exports.parseTone = parseTone;
+__exports.ditherVariance = ditherVariance;
 __exports.sourceNames = sourceNames;
 __exports.parseLevels = parseLevels;
 __exports.isSignalBlock = isSignalBlock;
@@ -49020,6 +49216,11 @@ function sourceNumber(word, usage) {
 }
 
 const sourceText = (value) => (typeof value === 'string' ? value : Number(value.toPrecision(12)));
+
+/** The variance of the numbers a dither source of amplitude `a` draws. */
+function ditherVariance(shape, a) {
+  return a * a * ({ rect: 1 / 3, tri: 1 / 6, bin: 1, tern: 1 / 2 }[shape] ?? 0);
+}
 
 /** A dither source's value as stored: `rect 1`, `tri a_d`. */
 const ditherValueText = ({ shape, amplitude }) => `${shape} ${sourceText(amplitude)}`;
@@ -59259,9 +59460,12 @@ function openTimingDialog() {
       // An analog row's values, as text (0.35); a digital row's 1s and 0s.
       analog: !!row.values,
       hold: !!row.hold,
+      // A bus row's letter per slot and the words those stand for.
+      bus: !!row.bus,
+      words: { ...(row.words || {}) },
       height: row.height || 2,
       // An analog slot left unset is ''.
-      wave: row.values ? row.values.map((value) => (value === null ? '' : String(value))) : row.from === 'complement' ? [] : [...row.bits].map((level) => (level === '1' ? '1' : '0')),
+      wave: row.bus ? [...row.bus] : row.values ? row.values.map((value) => (value === null ? '' : String(value))) : row.from === 'complement' ? [] : [...row.bits].map((level) => (level === '1' ? '1' : '0')),
       shift: drawn?.shifts.get(row.key) || { fall: 0, rise: 0 },
     })));
     state.slot = drawn?.slot || DEFAULT_SLOT_CELLS;
@@ -59320,6 +59524,7 @@ function openTimingDialog() {
     if (r < 0) return `${plainMarkup(ref.row)} ${ref.at + 1}`;
     if (rows[r].analog) return `${plainMarkup(rows[r].source)} ${at(rows[r], ref.at) || '·'} @${ref.at + 1}`;
     const [a, b] = levelAround(rows[r], ref.at);
+    if (rows[r].bus) return `${plainMarkup(rows[r].source)} ${a === b ? '·' : `${a}→${b}`} @${ref.at + 1}`;
     return `${plainMarkup(rows[r].source)} ${a === b ? '·' : b === '1' ? '↑' : '↓'}${ref.at + 1}`;
   };
 
@@ -59334,7 +59539,7 @@ function openTimingDialog() {
     const hold = {};
     const heights = {};
     for (const row of rows) {
-      if (!row.follows) bits[row.key] = row.analog ? row.wave.map((value) => (value === '' ? null : Number(value))) : row.wave.join('');
+      if (!row.follows) bits[row.key] = row.bus ? { bus: row.wave.join(''), words: row.words } : row.analog ? row.wave.map((value) => (value === '' ? null : Number(value))) : row.wave.join('');
       if (row.analog) hold[row.key] = row.hold;
       heights[row.key] = row.height || 2;
     }
@@ -59415,8 +59620,8 @@ function openTimingDialog() {
   // a row cannot overlap itself.
   const renderPairs = () => {
     pairsBox.replaceChildren();
-    // An analog row has no edges to keep apart.
-    const own = rows.filter((row) => row.baseKey === undefined && !row.analog);
+    // An analog or bus row has no edges to keep apart.
+    const own = rows.filter((row) => row.baseKey === undefined && !row.analog && !row.bus);
     const active = activePairs();
     const head = element('div', { class: 'timing-dialog-options' });
     const body = element('div', { class: 'timing-pairs-body' }, [head]);
@@ -59466,7 +59671,9 @@ function openTimingDialog() {
         const here = state.cursor.row === r && state.cursor.slot === slot;
         // An analog slot shows its value as a fill from the bottom (or,
         // below zero, down from the middle) and as a number.
-        const cell = row.analog
+        const cell = row.bus
+          ? element('span', { class: `timing-cell bus${slot > 0 && level !== shown(row, slot - 1) ? ' changes' : ''}${here ? ' cursor' : ''}`, role: 'gridcell', title: row.words[level] || level, text: level })
+          : row.analog
           ? element('span', {
             class: `timing-cell analog${level === '' ? ' unset' : ''}${Number(level) < 0 ? ' negative' : ''}${here ? ' cursor' : ''}`, role: 'gridcell', title: level === '' ? 'not set' : level,
             style: `--v: ${Math.abs(Number(level))}`,
@@ -59477,8 +59684,8 @@ function openTimingDialog() {
           event.preventDefault();
           state.cursor = { row: r, slot };
           grid.focus();
-          // A click flips a digital slot; an analog one it picks.
-          if (row.analog) renderGrid();
+          // A click flips a digital slot; an analog or bus one it picks.
+          if (row.analog || row.bus) renderGrid();
           else setCell(level === '1' ? '0' : '1');
         });
         edgeHandle(cell, r, slot);
@@ -59515,13 +59722,52 @@ function openTimingDialog() {
     const cursorRow = rows[state.cursor.row];
     analogButton.disabled = !cursorRow?.signal;
     analogButton.setAttribute('aria-pressed', String(!!cursorRow?.analog));
+    busButton.disabled = !cursorRow?.signal;
+    busButton.setAttribute('aria-pressed', String(!!cursorRow?.bus));
     leadButton.setAttribute('aria-pressed', String(state.lead));
     holdButton.disabled = !cursorRow?.analog;
     holdButton.setAttribute('aria-pressed', String(!!cursorRow?.hold));
     tallerButton.disabled = !cursorRow || (cursorRow.height || 2) >= MAX_ROW_CELLS;
     shorterButton.disabled = !cursorRow || (cursorRow.height || 2) <= 2;
-    for (const button of edgeButtons) button.disabled = !cursorRow || !!cursorRow.analog;
+    for (const button of edgeButtons) button.disabled = !cursorRow || !!cursorRow.analog || !!cursorRow.bus;
+    renderWords();
   };
+
+  // Each bus row's values, a field per letter for what it stands for. The
+  // fields stay in place while the letters do, so typing in one survives a
+  // redraw and Tab reaches the next.
+  const wordsBox = element('div', { class: 'timing-section timing-words' });
+  let wordsShown = null;
+  function renderWords() {
+    const buses = rows.filter((row) => row.bus).map((row) => ({ row, symbols: [...new Set(row.wave)] }));
+    wordsBox.hidden = !buses.length;
+    const shape = JSON.stringify(buses.map(({ row, symbols }) => [row.key, symbols]));
+    if (shape === wordsShown) {
+      for (const input of wordsBox.querySelectorAll('input')) if (input !== document.activeElement) input.value = input.wordOf.row.words[input.wordOf.symbol] || '';
+      return;
+    }
+    wordsShown = shape;
+    wordsBox.replaceChildren(element('span', { class: 'timing-pairs-title', text: 'Bus values' }), element('div', { class: 'timing-words-body' }, buses.flatMap(({ row, symbols }) => [
+      nameText(element('span', { class: 'timing-words-name' }), row.source),
+      element('div', { class: 'timing-words-row' }, symbols.map((symbol) => {
+        const input = element('input', { type: 'text', value: row.words[symbol] || '', placeholder: symbol, spellcheck: 'false', 'aria-label': `${plainMarkup(row.source)} value ${symbol}` });
+        input.wordOf = { row, symbol };
+        input.addEventListener('change', () => {
+          const word = input.value.trim();
+          if (word) row.words[symbol] = word;
+          else delete row.words[symbol];
+          redraw();
+        });
+        input.addEventListener('keydown', (event) => {
+          if (event.key !== 'Enter') return;
+          event.preventDefault();
+          input.blur();
+          grid.focus();
+        });
+        return element('label', {}, [element('span', { text: symbol }), input]);
+      })),
+    ])));
+  }
 
   // An edge between two slots, where the row changes level: a click puts
   // the cursor on it (without flipping the slot), or ends the arrow or span
@@ -59694,7 +59940,7 @@ function openTimingDialog() {
     if (!row) return;
     // A value between the levels makes a signal analog; a switch phase
     // stays 1 or 0, as its switches are.
-    if (!['0', '1'].includes(level) && !row.analog) {
+    if (!['0', '1'].includes(level) && !row.analog && !row.bus) {
       if (!row.signal) {
         status.textContent = `${plainMarkup(row.source)} is a switch phase: its slots are 1 or 0 (an analog row is a signal you add)`;
         return;
@@ -59767,7 +60013,7 @@ function openTimingDialog() {
   // Move the cursor row's falling or rising edges a cell earlier (-1) or later.
   const shiftEdge = (edge, by) => {
     const row = rows[state.cursor.row];
-    if (!row || row.analog) return;
+    if (!row || row.analog || row.bus) return;
     row.shift = { ...row.shift, [edge]: Math.max(-MAX_EDGE_SHIFT, Math.min(MAX_EDGE_SHIFT, row.shift[edge] + by)) };
     change();
   };
@@ -59841,13 +60087,19 @@ function openTimingDialog() {
     if (state.entry !== null && onEntryKey(event)) return;
     if ((event.key === '.' || event.key === '-' || event.key === 'F2') && !event.ctrlKey && !event.metaKey && !event.altKey) {
       const current = rows[state.cursor.row];
-      if (!current) return;
+      if (!current || current.bus) return;
       event.preventDefault();
       state.entry = event.key === 'F2' ? (current.analog && state.cursor.slot < length() ? at(current, state.cursor.slot) : '') : event.key;
       renderGrid();
       return;
     }
     const { row, slot } = state.cursor;
+    // In a bus row a letter or digit is that slot's value.
+    if (rows[row]?.bus && /^[A-Za-z0-9]$/.test(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      setCell(event.key, { advance: true });
+      return;
+    }
     const move = { ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [-1, 0], ArrowDown: [1, 0] }[event.key];
     if (move && event.altKey && move[0]) {
       moveRow(move[0]);
@@ -59859,7 +60111,7 @@ function openTimingDialog() {
       renderGrid();
     } else if (['0', '1', 'h', 'H', 'l', 'L'].includes(event.key)) {
       setCell({ h: '1', H: '1', l: '0', L: '0' }[event.key] || event.key, { advance: true });
-    } else if (event.key === ' ' && !rows[row]?.analog) {
+    } else if (event.key === ' ' && !rows[row]?.analog && !rows[row]?.bus) {
       setCell(shown(rows[row], Math.min(slot, length() - 1)) === '1' ? '0' : '1');
     } else if (['[', ']', '{', '}'].includes(event.key)) {
       shiftEdge(event.key === '[' || event.key === ']' ? 'fall' : 'rise', event.key === '[' || event.key === '{' ? -1 : 1);
@@ -59872,8 +60124,9 @@ function openTimingDialog() {
     } else if (event.key === 'Delete' && event.shiftKey) {
       removeSlot();
     } else if (event.key === 'Delete' || event.key === 'Backspace') {
-      // Clears the cell: an analog value unset, a slot low.
-      if (slot < length()) setCell(rows[row]?.analog ? '' : '0');
+      // Clears the cell: an analog value unset, a slot low, a bus slot the
+      // value before it.
+      if (slot < length()) setCell(rows[row]?.bus ? (slot > 0 ? at(rows[row], slot - 1) : 'a') : rows[row]?.analog ? '' : '0');
     } else return;
     event.preventDefault();
   });
@@ -59942,6 +60195,7 @@ function openTimingDialog() {
     const row = rows[state.cursor.row];
     if (!row?.signal) return;
     settle();
+    if (row.bus) busToDigital(row);
     // Back to digital: each value rounds to the nearer level, one unset low.
     if (row.analog) {
       row.analog = false;
@@ -59951,6 +60205,25 @@ function openTimingDialog() {
     change();
   };
   const analogButton = button('Analog', 'Analog values (.N, F2)', toggleAnalog);
+  // A bus row back to digital: its first value low, the others high.
+  const busToDigital = (row) => {
+    row.bus = false;
+    row.wave = row.wave.map((value) => (value === row.wave[0] ? '0' : '1'));
+  };
+  // A signal to a bus row: its levels become the values a and b.
+  const toggleBus = () => {
+    const row = rows[state.cursor.row];
+    if (!row?.signal) return;
+    detach(row);
+    settle();
+    if (row.bus) busToDigital(row);
+    else {
+      row.wave = row.wave.map((value) => ((row.analog ? value !== '' && Number(value) >= 0.5 : value === '1') ? 'b' : 'a'));
+      Object.assign(row, { bus: true, analog: false, hold: false, words: row.words || {}, shift: { fall: 0, rise: 0 } });
+    }
+    change();
+  };
+  const busButton = button('Bus', 'Bus values (a, b, c ...)', toggleBus);
   // The lead-in and lead-out: the waves repeated a little past both ends.
   const leadButton = button('Lead-in', 'Lead-in and lead-out', () => {
     state.lead = !state.lead;
@@ -59999,7 +60272,7 @@ function openTimingDialog() {
       grid,
       element('details', { class: 'timing-keys' }, [
         element('summary', { text: 'Keyboard' }),
-        element('p', { text: 'Arrows move the cursor; 1 and 0 set a slot and step on; Space flips it. + repeats the slot at the cursor in all rows (a state held one slot longer), Shift+Delete removes it, * repeats the whole sequence. Delete clears the cell: an analog value unset, a slot low. Ctrl+Z undoes. In a signal\'s row . or - begins an analog value (.35, -.5) and the next key sets it; F2 edits the slot\'s value, and erased leaves it unset: the line runs straight across unset slots. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. The edge at the cursor is the one at the left of its slot: a begins an arrow there and a again at another edge ends it, s does the same for a span, m marks it (or unmarks it); Esc cancels. b breaks the cursor\'s slot through all rows, again through each row, again not at all.' }),
+        element('p', { text: 'Arrows move the cursor; 1 and 0 set a slot and step on; Space flips it. + repeats the slot at the cursor in all rows (a state held one slot longer), Shift+Delete removes it, * repeats the whole sequence. Delete clears the cell: an analog value unset, a slot low. Ctrl+Z undoes. In a bus row a letter or digit sets the slot\'s value. In a signal\'s row . or - begins an analog value (.35, -.5) and the next key sets it; F2 edits the slot\'s value, and erased leaves it unset: the line runs straight across unset slots. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. The edge at the cursor is the one at the left of its slot: a begins an arrow there and a again at another edge ends it, s does the same for a span, m marks it (or unmarks it); Esc cancels. b breaks the cursor\'s slot through all rows, again through each row, again not at all.' }),
       ]),
       section('Slots', [
         segmented('Slots', [
@@ -60027,8 +60300,10 @@ function openTimingDialog() {
         ]),
         segmented('Row height', [tallerButton, shorterButton]),
         segmented('Analog', [analogButton, holdButton]),
+        busButton,
       ]),
       section('Signals', [element('div', { class: 'timing-signal-field' }, [signalInput, addButton]), removeRow], 'timing-signal-controls'),
+      wordsBox,
       pairsBox,
       notesBox,
       status,
@@ -67640,6 +67915,7 @@ __exports.setAttr = setAttr;
 __exports.setText = setText;
 __exports.setHidden = setHidden;
 __exports.setClassName = setClassName;
+__exports.controlPair = controlPair;
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
 
 
@@ -67711,6 +67987,16 @@ function setHidden(el, hidden) {
 
 function setClassName(el, name) {
   if (el && el.className !== name) el.className = name;
+}
+
+/** One named setting in a settings grid (.signal-flow-swing-controls): its
+ *  name in the names' column, then its control and, as text, its unit. An
+ *  empty name lines a button up under the controls. */
+function controlPair(name, ...controls) {
+  return element('div', { class: 'control-pair' }, [
+    element('label', { text: name }),
+    element('div', { class: 'control-value' }, controls.map((control) => (typeof control === 'string' ? element('span', { class: 'control-unit', text: control }) : control))),
+  ]);
 }
 
 };
@@ -77083,7 +77369,7 @@ function annotationGeometryAt(world) {
       if (near({ x: x0, y: y0 }, { x: x1, y: y0 }) || near({ x: x1, y: y0 }, { x: x1, y: y1 }) ||
           near({ x: x1, y: y1 }, { x: x0, y: y1 }) || near({ x: x0, y: y1 }, { x: x0, y: y0 })) return label;
       // A plot or a parts table is a picture: anywhere on it picks it.
-      if ((label.plot || label.table || label.timing?.analog) && world.x >= x0 && world.x <= x1 && world.y >= y0 && world.y <= y1) return label;
+      if ((label.plot || label.table || label.timing?.analog || label.timing?.busWave) && world.x >= x0 && world.x <= x1 && world.y >= y0 && world.y <= y1) return label;
     }
   }
   return null;
@@ -78870,7 +79156,7 @@ function renderCanvas(modelKey) {
       return component?.type === 'chopper'
         || (component?.type === 'block' && component.transform.rotation % 360 === 0 && !component.transform.mirrorX && !component.transform.mirrorY);
     }),
-    resizeBoxes: alignTool ? [] : [...selLabels].filter((id) => circuit.labels.get(id)?.kind === 'box' && !circuit.labels.get(id).table && !circuit.labels.get(id).timing?.analog),
+    resizeBoxes: alignTool ? [] : [...selLabels].filter((id) => circuit.labels.get(id)?.kind === 'box' && !circuit.labels.get(id).table && !circuit.labels.get(id).timing?.analog && !circuit.labels.get(id).timing?.busWave),
     hoverAnnotation: drag || alignTool ? null : hoverAnnotationId,
     selectedVertices: (() => {
       const picked = vertexSelection();
@@ -90489,7 +90775,7 @@ let optimizeSection, renderOptimize, resetOptimize; __bind(() => { ({ optimizeSe
 let swingTestFrequency; __bind(() => { ({ swingTestFrequency } = __require("src/core/analysis/optimize.js")); });
 let fractionText; __bind(() => { ({ fractionText } = __require("src/core/analysis/rounding.js")); });
 let normalizeBand; __bind(() => { ({ normalizeBand } = __require("src/core/analysis/optimize-setup.js")); });
-let el, mathSpan, onFieldCommit; __bind(() => { ({ element: el, mathSpan, onFieldCommit } = __require("src/web/dom.js")); });
+let controlPair, el, mathSpan, onFieldCommit; __bind(() => { ({ controlPair, element: el, mathSpan, onFieldCommit } = __require("src/web/dom.js")); });
 let netPicker; __bind(() => { ({ netPicker } = __require("src/web/net-picker.js")); });
 let deriving; __bind(() => { ({ deriving } = __require("src/web/analysis-busy.js")); });
 let startWorker; __bind(() => { ({ startWorker } = __require("src/web/worker-thread.js")); });
@@ -90819,11 +91105,11 @@ function locusSection() {
   return el('div', { class: 'signal-flow-locus', hidden: true }, [
     el('p', { class: 'field-hint signal-flow-locus-empty', text: 'Derive first. The locus follows a result\'s poles as one coefficient sweeps.' }),
     el('div', { class: 'signal-flow-swing-controls' }, [
-      el('label', { text: 'Poles of' }), el('select', { class: 'signal-flow-locus-entry', 'aria-label': 'Result' }),
-      el('label', { text: 'as' }), el('select', { class: 'signal-flow-locus-name', 'aria-label': 'Coefficient to sweep', onchange: () => fillLocusRange() }),
-      el('label', { text: 'from' }), el('input', { type: 'text', class: 'signal-flow-locus-range signal-flow-locus-from', 'aria-label': 'Sweep from' }),
-      el('label', { text: 'to' }), el('input', { type: 'text', class: 'signal-flow-locus-range signal-flow-locus-to', 'aria-label': 'Sweep to' }),
-      el('button', { type: 'button', text: 'Sweep', onclick: () => runLocus() }),
+      controlPair('Poles of', el('select', { class: 'signal-flow-locus-entry', 'aria-label': 'Result' })),
+      controlPair('Coefficient', el('select', { class: 'signal-flow-locus-name', 'aria-label': 'Coefficient to sweep', onchange: () => fillLocusRange() })),
+      controlPair('From', el('input', { type: 'text', class: 'signal-flow-locus-range signal-flow-locus-from', 'aria-label': 'Sweep from' })),
+      controlPair('To', el('input', { type: 'text', class: 'signal-flow-locus-range signal-flow-locus-to', 'aria-label': 'Sweep to' })),
+      controlPair('', el('button', { type: 'button', text: 'Sweep', onclick: () => runLocus() })),
     ]),
     el('p', { class: 'field-hint signal-flow-locus-status', 'aria-live': 'polite' }),
     el('div', { class: 'signal-flow-locus-plot' }),
@@ -90944,8 +91230,7 @@ let loop = null; // { key, result }
 function loopSection() {
   return el('div', { class: 'signal-flow-loop', hidden: true }, [
     el('div', { class: 'signal-flow-swing-controls' }, [
-      el('label', { text: 'Break the loop at' }),
-      el('select', { class: 'signal-flow-loop-signal', 'aria-label': 'Signal to break the loop at', onchange: (ev) => { flow().loopAt = ev.target.value; markSettingsChanged(); loop = null; renderLoop(); } }),
+      controlPair('Break at', el('select', { class: 'signal-flow-loop-signal', 'aria-label': 'Signal to break the loop at', onchange: (ev) => { flow().loopAt = ev.target.value; markSettingsChanged(); loop = null; renderLoop(); } })),
     ]),
     el('p', { class: 'field-hint', text: 'T is minus what returns for 1 injected at the break, all sources at zero. A quantizer\'s NTF is then 1/(1 + T).' }),
     el('div', { class: 'signal-flow-loop-body' }),
@@ -91049,9 +91334,9 @@ function swingSection() {
   return el('div', { class: 'signal-flow-swing', hidden: true }, [
     el('p', { class: 'field-hint', text: 'Simulates a sine into one source at the coefficients above, rounding at each quantizer (Schreier\'s levels, full scale N - 1), and plots each net\'s peak as the amplitude sweeps to overload.' }),
     el('div', { class: 'signal-flow-swing-controls' }, [
-      el('label', { text: 'Sine into' }), source,
-      el('label', { text: 'at f/fs' }), frequency,
-      el('button', { type: 'button', class: 'signal-flow-swing-run', text: 'Simulate', onclick: () => runSwing() }),
+      controlPair('Sine into', source),
+      controlPair('Frequency', frequency, 'f/fs'),
+      controlPair('', el('button', { type: 'button', class: 'signal-flow-swing-run', text: 'Simulate', onclick: () => runSwing() })),
     ]),
     el('p', { class: 'field-hint signal-flow-swing-status', 'aria-live': 'polite' }),
     el('div', { class: 'signal-flow-swing-plot' }),
@@ -91433,6 +91718,16 @@ const dbfsOffsetOf = (trace) => {
   return dbfsOffset(spectrum.raw, spectrum.fullScale, { noise: trace.noise, amplitude: spectrum.amplitude }) + error;
 };
 
+// A dither source's noise reaches the output by its own transfer function:
+// over a spectrum, a quantizer's noise curve adds it, each term numbers
+// already at the sliders and the gains measured.
+const ditherNoise = (trace) => (trace.noise && measuredValue(trace) && spectrum.dither?.length
+  ? spectrum.dither.map(({ value, variance }) => ({
+    value: numeric(value, trace.variable),
+    offset: dbfsOffset(spectrum.raw, spectrum.fullScale, { noise: true }) + 10 * Math.log10(variance * 3),
+  }))
+  : []);
+
 const graphPlot = (list, view = graphView(), detail = null) => {
   const shown = view === 'magnitude' && spectrumShown();
   // Held spectra behind the live one, while it is shown.
@@ -91443,7 +91738,7 @@ const graphPlot = (list, view = graphView(), detail = null) => {
   // A held trace is numbers already, and keeps the offset it was held at.
   const numbered = list.map((trace) => (trace.held
     ? { ...trace, label: heldLabel(trace) }
-    : { ...trace, value: numeric(measuredValue(trace) ?? trace.value, trace.variable) }));
+    : { ...trace, value: numeric(measuredValue(trace) ?? trace.value, trace.variable), addedNoise: ditherNoise(trace) }));
   if (view === 'step') return stepPlot(numbered);
   const dbfs = shown ? { offset: (trace) => (trace.held && Number.isFinite(trace.held.offset) ? trace.held.offset : dbfsOffsetOf(trace)) } : null;
   return responsePlot(numbered, 's', { sAxis: sAxisSetting(), band: editor.circuit.analysisValues.band, quantity: view, background, dbfs, detail });
@@ -91490,7 +91785,7 @@ function holdTrace(trace) {
   const record = { key: holdKey(), of: trace.id, base: trace.label, color: nextTraceColor(), values, ...(offset !== undefined ? { offset } : {}) };
   holdsChanged([...holds(), record]);
   // Over a spectrum, at the gains it measured, as the live curve is drawn.
-  traces.push(heldFrom(record, trace, measuredValue(trace) ?? trace.value));
+  traces.push({ ...heldFrom(record, trace, measuredValue(trace) ?? trace.value), addedNoise: ditherNoise(trace) });
   renderGraph();
 }
 
@@ -91574,9 +91869,10 @@ function spectrumControls() {
   return el('fieldset', { class: 'analysis-approximations signal-flow-spectrum' }, [
     el('legend', { text: 'Simulation' }),
     el('div', { class: 'signal-flow-band' }, [
-      el('label', { class: 'signal-flow-spectrum-toggle' }, [check, el('span', { text: 'Output spectrum' })]),
-      el('label', { text: 'Input' }), amplitude, el('label', { text: 'dBFS at f/fs' }), frequency,
-      el('label', { text: 'Samples' }), samples,
+      el('label', { class: 'signal-flow-spectrum-toggle control-wide' }, [check, el('span', { text: 'Output spectrum' })]),
+      controlPair('Amplitude', amplitude, 'dBFS'),
+      controlPair('Frequency', frequency, 'f/fs'),
+      controlPair('Samples', samples),
     ]),
     el('p', { class: 'field-hint signal-flow-spectrum-status', text: spectrumStatus() }),
   ]);
@@ -91666,6 +91962,24 @@ function spectrumRequest() {
   };
 }
 
+/** Each dither source's transfer function to the output at the gains a
+ *  run measured, and the variance of its numbers: `[{ value, variance }]`.
+ *  None when the linear model cannot take it as an input. */
+function ditherResponses(request, { quantizers = [], dithers = [] }) {
+  if (!quantizers.length || !dithers.length) return [];
+  const solved = analyzeSignalFlow(editor.circuit, {
+    output: flow().output,
+    sources: { ...flow().sources, ...Object.fromEntries(dithers.map((source) => [source.id, 'input'])) },
+    values: request.numbers,
+    quantizerGains: Object.fromEntries(quantizers.map((q) => [q.refdes, Number(q.gain.toPrecision(6))])),
+  });
+  if (!solved.ok) return [];
+  return dithers.flatMap(({ id, variance }) => {
+    const value = solved.entries.find((entry) => entry.input === id)?.value;
+    return value && variance > 0 ? [{ value, variance }] : [];
+  });
+}
+
 /** A run's spectrum on the graph, behind the curves solved again at each
  *  quantizer's measured gain. */
 function showSpectrum(request, result) {
@@ -91677,7 +91991,7 @@ function showSpectrum(request, result) {
     const linear = quantizers.length
       ? analyzeSignalFlow(editor.circuit, { output: flow().output, sources: flow().sources, values: request.numbers, quantizerGains: Object.fromEntries(quantizers.map((q) => [q.refdes, Number(q.gain.toPrecision(6))])) })
       : null;
-    spectrum = { raw, points: plotSpectrum({ ...raw, points: dbfsSpectrum(raw, result.fullScale) }, result.frequency), frequency: result.frequency, amplitude: request.amplitude, fullScale: result.fullScale, quantizers, linear };
+    spectrum = { raw, points: plotSpectrum({ ...raw, points: dbfsSpectrum(raw, result.fullScale) }, result.frequency), frequency: result.frequency, amplitude: request.amplitude, fullScale: result.fullScale, quantizers, linear, dither: ditherResponses(request, result) };
   }
   // Its legend row comes or goes with it; else the plot alone is redrawn.
   if (graphView() === 'magnitude' && !!plots.querySelector('.signal-flow-legend-spectrum') !== spectrumShown()) renderGraph();
@@ -91740,8 +92054,8 @@ function bandControls() {
     return input;
   };
   const row = el('div', { class: 'signal-flow-band' }, [
-    el('label', { text: 'Signal band: f0' }), field('f0', 'Band center, f/fs', 'The band\'s center as f/fs; 0 for a baseband signal'),
-    el('label', { text: 'bw' }), field('bw', 'Bandwidth, f/fs', 'The bandwidth as f/fs (1/128, 0.004); empty for no band lines'),
+    controlPair('Band center', field('f0', 'Band center, f/fs', 'The band\'s center as f/fs; 0 for a baseband signal'), 'f/fs'),
+    controlPair('Bandwidth', field('bw', 'Bandwidth, f/fs', 'The bandwidth as f/fs (1/128, 0.004); empty for no band lines'), 'f/fs'),
   ]);
   return row;
 }
@@ -94504,7 +94818,7 @@ let plainTex; __bind(() => { ({ plainTex } = __require("src/core/bode-figure.js"
 let plotsBusy; __bind(() => { ({ plotsBusy } = __require("src/web/plots-window.js")); });
 let afterPaint; __bind(() => { ({ afterPaint } = __require("src/web/busy-indicator.js")); });
 let startWorker; __bind(() => { ({ startWorker } = __require("src/web/worker-thread.js")); });
-let el, onFieldCommit; __bind(() => { ({ element: el, onFieldCommit } = __require("src/web/dom.js")); });
+let controlPair, el, onFieldCommit; __bind(() => { ({ controlPair, element: el, onFieldCommit } = __require("src/web/dom.js")); });
 let netPicker; __bind(() => { ({ netPicker } = __require("src/web/net-picker.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let alignLabelColumn, commit, markSettingsChanged, onDocumentShown, render, setLabelSelection, setSelection; __bind(() => { ({ alignLabelColumn, commit, markSettingsChanged, onDocumentShown, render, setLabelSelection, setSelection } = __require("src/web/main.js")); });
@@ -94852,16 +95166,16 @@ function sweepEditor({ settings, save, plot = null, actions = [], held = () => [
   const measures = el('div', { class: 'time-nets sweep-measures' });
   const node = el('div', { class: 'sweep-editor' }, [
     el('div', { class: 'signal-flow-swing-controls time-controls' }, [
-      el('label', { text: 'Sweep' }), name,
-      el('label', { text: 'from' }), from, el('label', { text: 'to' }), to,
-      el('label', { text: 'in' }), points, el('label', { text: 'points,' }), scale,
-    ]),
-    el('div', { class: 'signal-flow-swing-controls time-controls' }, [
-      el('label', { text: 'Sine into' }), input,
-      el('label', { text: 'at' }), amplitude, el('label', { text: 'dBFS,' }),
-      frequency, el('label', { text: 'f/fs,' }),
-      samples, el('label', { text: 'samples' }),
-      go,
+      controlPair('Sweep', name),
+      controlPair('Scale', scale),
+      controlPair('From', from),
+      controlPair('To', to),
+      controlPair('Points', points),
+      controlPair('Sine into', input),
+      controlPair('Amplitude', amplitude, 'dBFS'),
+      controlPair('Frequency', frequency, 'f/fs'),
+      controlPair('Samples', samples),
+      controlPair('', go),
     ]),
     ...(plot ? [plot] : []),
     measures,
@@ -96277,7 +96591,7 @@ let TRACE_COLORS, diagramSymbols, hasSignalFlow, signalFlowGraph; __bind(() => {
 let swingTestFrequency; __bind(() => { ({ swingTestFrequency } = __require("src/core/analysis/optimize.js")); });
 let plotsBusy; __bind(() => { ({ plotsBusy } = __require("src/web/plots-window.js")); });
 let thinSeries; __bind(() => { ({ thinSeries } = __require("src/core/plot-scale.js")); });
-let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
+let controlPair, el; __bind(() => { ({ controlPair, element: el } = __require("src/web/dom.js")); });
 let netPicker; __bind(() => { ({ netPicker } = __require("src/web/net-picker.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let markSettingsChanged, onDocumentShown; __bind(() => { ({ markSettingsChanged, onDocumentShown } = __require("src/web/main.js")); });
@@ -96346,10 +96660,10 @@ function timeSection() {
   const annotateButton = el('button', { type: 'button', class: 'time-annotate', text: 'Annotate', title: 'Put the waveforms on the drawing', disabled: true, onclick: () => annotate() });
   const node = el('div', { class: 'signal-flow-time', hidden: true }, [
     el('div', { class: 'signal-flow-swing-controls time-controls' }, [
-      el('label', { text: 'Sine into' }), input,
-      el('label', { text: 'at' }), amplitude, el('label', { text: 'dBFS,' }),
-      frequency, el('label', { text: 'f/fs,' }),
-      samples, el('label', { text: 'samples' }),
+      controlPair('Sine into', input),
+      controlPair('Amplitude', amplitude, 'dBFS'),
+      controlPair('Frequency', frequency, 'f/fs'),
+      controlPair('Samples', samples),
     ]),
     plot.el,
     nets,

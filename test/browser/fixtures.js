@@ -24,6 +24,19 @@ export function modulator() {
   ], [['S1', 's'], ['S3', 's']]);
 }
 
+/** A second-order delta-sigma loop of nine levels, dither of about four
+ *  times the quantization error's power into its quantizer's sum. */
+export function ditheredModulator() {
+  return build([
+    'add input U --at -1600 0', 'add signal_sum S1 --at -1200 0', 'add tf_z H1 --at -800 0 --value "tf([0 1], [1 -1])"',
+    'add signal_sum S3 --at -400 0', 'add tf_z H2 --at 0 0 --value "tf([0 1], [1 -1])"', 'add signal_sum S4 --at 400 0', 'add quantizer QZ1 --at 800 0 --value 9',
+    'add output V --at 1200 0', 'add gain K1 --at -800 400 --rot 180 --value 1', 'add gain K2 --at 0 400 --rot 180 --value 2',
+    'add dither DTH1 --at 0 -480 --value "rect 1"', 'add gain KD --at 400 -320 --rot 90 --value 0.25',
+    'connect U.p S1.w', 'connect S1.e H1.in', 'connect H1.out S3.w', 'connect S3.e H2.in', 'connect H2.out S4.w', 'connect S4.e QZ1.in', 'connect QZ1.out V.p',
+    'connect K1.out S1.s', 'connect K2.out S3.s', 'connect V.p K1.in', 'connect V.p K2.in', 'connect DTH1.out KD.in', 'connect KD.out S4.n',
+  ], [['S1', 's'], ['S3', 's']]);
+}
+
 /** A feed-forward chain: no loop, no quantizer. */
 export function chain() {
   return build([

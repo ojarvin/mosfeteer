@@ -28,7 +28,7 @@ import { blockTransferFunction, coefficientValue, delayTermsOf, denseCoefficient
 import { expm } from './sampling.js';
 import { aliasedFrequency } from './spectrum.js';
 import { evaluateExpression } from './bode.js';
-import { TRANSFER_FUNCTION_TYPES, isBlockIn, parseDither, parseGain, parseLevels, parseTone } from '../transfer-function.js';
+import { TRANSFER_FUNCTION_TYPES, ditherVariance, isBlockIn, parseDither, parseGain, parseLevels, parseTone } from '../transfer-function.js';
 import { analyzedCircuit, canonicalNetName } from '../model.js';
 import { seededRandom } from './cmaes.js';
 import { rationalMultiply } from './rational.js';
@@ -674,7 +674,12 @@ export function prepareSimulation(circuit, options = {}) {
     return { peaks: Array.from(peaks), tone, overloaded: false, quantizers: quantizerFits, ...(recorded ? { samples: recorded } : {}), ...(magnitudes ? { magnitudes } : {}), ...wavesOut() };
   };
 
-  return { ok: true, fullScale, frequency, period: T, signals: signalList, run };
+  // The random sources: what each adds to the output's noise floor.
+  const dithers = sources.flatMap((source) => {
+    const set = sourceValue.get(source.key)?.dither;
+    return set && set.shape !== 'sine' ? [{ id: source.id, variance: ditherVariance(set.shape, set.amplitude * fullScale) }] : [];
+  });
+  return { ok: true, fullScale, frequency, period: T, signals: signalList, dithers, run };
 }
 
 /** The amplitudes a sweep runs, in dBFS: coarse far below full scale, a
