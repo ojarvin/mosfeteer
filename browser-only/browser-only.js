@@ -56449,6 +56449,8 @@ flat in vec4 v_color;
 flat in float v_fade;
 flat in float v_hit;
 uniform vec4 u_rect;
+// A circle to draw within (x, y, radius; radius 0: none): the loupe.
+uniform vec3 u_clipCircle;
 uniform vec2 u_device;
 uniform vec3 u_under, u_light;
 uniform float u_soft, u_fade, u_reveal, u_seed;
@@ -56516,6 +56518,7 @@ void main() {
     if ((edges & 4) != 0) d = max(d, e2); else if (e2 > 0.0) cut = true;
   }
   float cover = cut ? 0.0 : clamp(0.5 - d / u_soft, 0.0, 1.0) * v_fade;
+  if (u_clipCircle.z > 0.0) cover *= clamp(0.5 - (length(v_p - u_clipCircle.xy) - u_clipCircle.z) / u_soft, 0.0, 1.0);
   if (cover <= 0.0) discard;
   float shown = revealed((v_p - u_rect.xy) / u_rect.zw, u_reveal, u_seed);
   // Faded, it is mixed toward what lies under it, and stays opaque: where
@@ -56572,6 +56575,7 @@ flat in float v_grow;
 flat in float v_hit;
 uniform sampler2D u_glyphs;
 uniform vec4 u_rect;
+uniform vec3 u_clipCircle;
 uniform vec3 u_under, u_light;
 uniform float u_soft, u_fade, u_reveal, u_seed;
 ${LIGHT}
@@ -56583,6 +56587,7 @@ void main() {
   // Found, the text is a touch heavier, in the light's color.
   float d = (${(1 - CUTOFF).toFixed(4)} - field) * ${RADIUS.toFixed(1)} * v_scale - v_grow - hit * 0.35 * u_soft;
   float cover = clamp(0.5 - d / u_soft, 0.0, 1.0);
+  if (u_clipCircle.z > 0.0) cover *= clamp(0.5 - (length(v_p - u_clipCircle.xy) - u_clipCircle.z) / u_soft, 0.0, 1.0);
   if (cover <= 0.0) discard;
   float shown = revealed((v_p - u_rect.xy) / u_rect.zw, u_reveal, u_seed);
   vec4 c = v_color * (cover * shown);
@@ -56889,7 +56894,7 @@ function createGpuDesk(canvas, gl) {
 
   /** Draw a design's shapes, faded by `fade` toward `under` ([r, g, b]),
    *  revealed so far, then its text; lit as `lit` says (`ink`). */
-  const drawInk = (entry, box, rect, { fade, under, blur, reveal, seed, lit }) => {
+  const drawInk = (entry, box, rect, { fade, under, blur, reveal, seed, lit, clip }) => {
     const k = rect.w / box.w;
     const px = 1 / pane.dpr;
     if (lit.search > 0 && lit.hits) sendHits(lit.hits);
@@ -56909,6 +56914,7 @@ function createGpuDesk(canvas, gl) {
     gl.uniform1f(u.u_reveal, reveal);
     gl.uniform1f(u.u_seed, seed);
     setLight(u, lit);
+    gl.uniform3f(u.u_clipCircle, clip?.x ?? 0, clip?.y ?? 0, clip?.r ?? 0);
     if (entry.count) gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, entry.count);
     if (entry.glyphCount) {
       sendGlyphs();
@@ -56923,6 +56929,7 @@ function createGpuDesk(canvas, gl) {
       gl.uniform1f(g.u_fade, fade);
       gl.uniform3fv(g.u_under, under);
       setLight(g, lit);
+      gl.uniform3f(g.u_clipCircle, clip?.x ?? 0, clip?.y ?? 0, clip?.r ?? 0);
       gl.uniform1f(g.u_reveal, reveal);
       gl.uniform1f(g.u_seed, seed);
       gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, entry.glyphCount);
@@ -57071,12 +57078,13 @@ function createGpuDesk(canvas, gl) {
      *  default), opaque. Effects as for `image`: `blur` softens its edges by
      *  that many octaves. A search lights what it found: `hits` a byte a tag
      *  (atlas-ink.js), `search` how strongly (0 to 1), in `light`
-     *  ([r, g, b]); the rest recedes. */
-    ink(key, box, rect, alpha, { blur = 0, reveal = 1, seed = 0, under = null, search = 0, hits = null, light = null } = {}) {
+     *  ([r, g, b]); the rest recedes. `clip`: { x, y, r }, a circle (CSS
+     *  pixels) it is drawn within, its edge smoothed. */
+    ink(key, box, rect, alpha, { blur = 0, reveal = 1, seed = 0, under = null, search = 0, hits = null, light = null, clip = null } = {}) {
       const entry = inks.get(key);
       if (!(entry?.count || entry?.glyphCount) || !(box?.w > 0) || alpha <= 0) return;
       const lit = { search: hits ? search : 0, hits, light: light || [0.3, 0.6, 1] };
-      drawInk(entry, box, rect, { fade: 1 - Math.min(1, alpha), under: under || pane.under, blur, reveal, seed, lit });
+      drawInk(entry, box, rect, { fade: 1 - Math.min(1, alpha), under: under || pane.under, blur, reveal, seed, lit, clip });
     },
 
     /** `blur`: mipmap levels out of focus; `reveal` (0 to 1): how far its
@@ -57828,6 +57836,8 @@ function atlasSnapshot() {
     reads: inkStamp,
     // A click's ring running out through the grid: where it started.
     ripple: state.ripple ? { x: state.ripple.x, y: state.ripple.y } : null,
+    // M held: the loupe is shown.
+    loupe: !!state.loupe,
     baking: !!state.baking || !!state.wanted?.length,
     accent: state.colors?.accent || null,
     tiles: state.tiles.map((tile) => {
@@ -58737,6 +58747,7 @@ function drawDesk() {
   }
   drawLinks(paint, palette, shown);
   if (state.flight) drawFlight(paint, palette, w, h);
+  else if (state.loupe && paint.vector) drawLoupe(paint, palette);
   paint.sweep(state.bitmaps);
   // The ink of designs no longer on the desk (or read again) goes.
   if (paint.vector) paint.sweepInk(new Set([...state.entries.values()].map((entry) => entry.ink?.key).filter(Boolean)));
@@ -58979,6 +58990,36 @@ function litBy(ink, found, palette, searchLight) {
     Object.assign(lit, { hits, search: searchLight });
   }
   return lit;
+}
+
+/** The loupe: its radius (CSS pixels), and how much nearer it shows the desk. */
+const LOUPE_RADIUS = 150;
+const LOUPE_ZOOM = 3;
+
+/** The desk under the pointer, LOUPE_ZOOM times nearer, in a circle over it:
+ *  its designs drawn again larger, as sharp as ever. */
+function drawLoupe(paint, palette) {
+  const box = rootEl.getBoundingClientRect();
+  const pane = paneSize();
+  const at = state.pointer ? { x: state.pointer.x - box.left, y: state.pointer.y - box.top } : { x: pane.w / 2, y: pane.h / 2 };
+  const k = scale() * LOUPE_ZOOM;
+  // The point under the pointer stays where it is; the rest spreads out from it.
+  const world = { x: state.view.x + at.x / scale(), y: state.view.y + at.y / scale() };
+  const view = { x: world.x - at.x / k, y: world.y - at.y / k };
+  const r = LOUPE_RADIUS;
+  const lens = { x: at.x - r, y: at.y - r, w: 2 * r, h: 2 * r };
+  paint.raised({ rect: lens, radius: r, fill: palette.paper, alpha: 1, blur: 28, drop: 10, color: palette.shadow });
+  drawGrid(paint, palette, view, k, { clip: { ...lens, radius: r } });
+  const reach = { x: world.x - r / k, y: world.y - r / k, w: (2 * r) / k, h: (2 * r) / k };
+  for (const tile of state.tiles) {
+    if (!rectsIntersect(reach, tile)) continue;
+    const entry = state.entries.get(tile.id);
+    const ink = inkOf(entry, true);
+    if (!paint.inkReady(ink.key, () => inkMesh(entry))) continue;
+    const rect = { x: (tile.x - view.x) * k, y: (tile.y - view.y) * k, w: tile.w * k, h: tile.h * k };
+    paint.ink(ink.key, entry.box, rect, 1, { clip: { x: at.x, y: at.y, r } });
+  }
+  paint.box({ rect: lens, radius: r, stroke: palette.dim, strokeAlpha: 0.6, strokeWidth: 1.5 });
 }
 
 /** What lies under a design on the desk, [r, g, b]: its card as solid as
@@ -61265,6 +61306,15 @@ function onAtlasKey(ev) {
     return;
   }
   const key = ev.key;
+  // M held: a loupe under the pointer (on the GPU).
+  if ((key === 'm' || key === 'M') && !ev.ctrlKey && !ev.metaKey && !ev.altKey && !ev.target.closest?.('input, textarea, [contenteditable="true"]')) {
+    ev.preventDefault();
+    if (!state.loupe && painter().vector) {
+      state.loupe = true;
+      requestDraw();
+    }
+    return;
+  }
   const arrows = { ArrowLeft: { x: -1, y: 0 }, ArrowRight: { x: 1, y: 0 }, ArrowUp: { x: 0, y: -1 }, ArrowDown: { x: 0, y: 1 } };
   const selected = state.selected && tileById(state.selected);
   // Esc also lets go of a passing message, whatever else it does.
@@ -61369,6 +61419,8 @@ function pinchOf(pointers) {
 
 function onPointerMove(ev) {
   if (!state) return;
+  state.pointer = { x: ev.clientX, y: ev.clientY };
+  if (state.loupe) requestDraw();
   state.pointers?.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
   const drag = state.drag;
   if (drag?.zoomBox) {
@@ -61491,6 +61543,14 @@ function installAtlas() {
   rootEl.addEventListener('wheel', onWheel, { passive: false });
   rootEl.addEventListener('pointerdown', onPointerDown);
   rootEl.addEventListener('pointermove', onPointerMove);
+  // M let go (or the window left): the loupe goes.
+  const dropLoupe = (ev) => {
+    if (!state?.loupe || (ev.type === 'keyup' && ev.key !== 'm' && ev.key !== 'M')) return;
+    state.loupe = false;
+    requestDraw();
+  };
+  window.addEventListener('keyup', dropLoupe);
+  window.addEventListener('blur', dropLoupe);
   rootEl.addEventListener('pointerup', onPointerUp);
   rootEl.addEventListener('pointercancel', onPointerUp);
   rootEl.addEventListener('dblclick', onDoubleClick);
@@ -101673,6 +101733,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['#', 'edit the picked design\'s tags'],
     ['z', 'zoom to the picked design'],
     ['f', 'fit all designs'],
+    ['m (held)', 'a loupe under the pointer, three times nearer (with hardware acceleration)'],
     ['l', 'show or hide the links between designs'],
     ['Shift+L', 'list all designs: ↑/↓ steps through them, Enter opens one, F2 or a double-click renames, # edits tags'],
     ['Shift+T', 'arrange the desk by kinship, the same every time'],

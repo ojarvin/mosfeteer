@@ -128,6 +128,24 @@ describe('the Atlas desk on the GPU', { skip: browserSkip() }, () => {
     await stillDesk(h);
   });
 
+  test('M held shows a loupe under the pointer, drawing the desk nearer; let go, it goes', async () => {
+    await h.key('Escape');
+    await stillDesk(h);
+    const t = (await snapshot(h)).tiles.find((x) => x.name === 'top').screen;
+    const p = { x: Math.round(t.x + t.w / 2), y: Math.round(t.y + t.h / 2) };
+    await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
+    const before = await pixels(h, { x: p.x - 140, y: p.y - 140, w: 280, h: 280 });
+    await h.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'm', code: 'KeyM', text: 'm', windowsVirtualKeyCode: 77 });
+    await h.until(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot().loupe)`);
+    await h.settle();
+    const held = await pixels(h, { x: p.x - 140, y: p.y - 140, w: 280, h: 280 });
+    await h.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'm', code: 'KeyM', windowsVirtualKeyCode: 77 });
+    await h.until(`${h.module('atlas.js')}.then((m) => !m.atlasSnapshot().loupe)`);
+    // Three times nearer, the lines inside it are thicker: more of it is ink.
+    assert.ok(held.ink > before.ink * 1.5, `${JSON.stringify(before)} ${JSON.stringify(held)}`);
+    await stillDesk(h);
+  });
+
   test('a lost context falls back to the 2D canvas, and a restored one returns', async () => {
     const rect = await tileRect(h, 'amp');
     await h.evaluate(`window.__lost = document.getElementById('atlas-desk-gpu').getContext('webgl2').getExtension('WEBGL_lose_context'); window.__lost.loseContext()`);
@@ -320,6 +338,15 @@ describe('the desk\'s effects, drawn directly', { skip: browserSkip() }, () => {
     assert.deepEqual(r.plain.map((v) => v < 10), [true, true], JSON.stringify(r));
     assert.ok(r.found[0] < 30, `found: blue ink, no red: ${JSON.stringify(r)}`);
     assert.ok(r.found[1] > 120, `the rest recedes toward the paper: ${JSON.stringify(r)}`);
+  });
+
+  test('a design drawn within a circle (the loupe) shows only inside it, its edge smoothed', async () => {
+    const svg = drawing(200, 200, '<rect x="0" y="0" width="200" height="200" fill="#000"/>');
+    const r = await scene(`const ink = (await ${h.module('atlas-ink.js')}).svgInk(${JSON.stringify(svg)});
+      begin(); desk.inkReady('c', () => ink); desk.ink('c', ink.box, { x: 0, y: 0, w: 200, h: 200 }, 1, { clip: { x: 100, y: 100, r: 50 } });
+      return [at(100, 100), at(100, 149), at(100, 152), at(10, 10)];`);
+    assert.ok(r[0] < 10 && r[1] < 120, `inside: ${r}`);
+    assert.ok(r[2] > 245 && r[3] > 245, `outside: ${r}`);
   });
 
   test('a corner is mitered to its point, and a fill has no seams', async () => {

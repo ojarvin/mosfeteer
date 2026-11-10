@@ -275,6 +275,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['#', 'edit the picked design\'s tags'],
     ['z', 'zoom to the picked design'],
     ['f', 'fit all designs'],
+    ['m (held)', 'a loupe under the pointer, three times nearer (with hardware acceleration)'],
     ['l', 'show or hide the links between designs'],
     ['Shift+L', 'list all designs: ↑/↓ steps through them, Enter opens one, F2 or a double-click renames, # edits tags'],
     ['Shift+T', 'arrange the desk by kinship, the same every time'],

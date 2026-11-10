@@ -179,6 +179,8 @@ export function atlasSnapshot() {
     reads: inkStamp,
     // A click's ring running out through the grid: where it started.
     ripple: state.ripple ? { x: state.ripple.x, y: state.ripple.y } : null,
+    // M held: the loupe is shown.
+    loupe: !!state.loupe,
     baking: !!state.baking || !!state.wanted?.length,
     accent: state.colors?.accent || null,
     tiles: state.tiles.map((tile) => {
@@ -1088,6 +1090,7 @@ function drawDesk() {
   }
   drawLinks(paint, palette, shown);
   if (state.flight) drawFlight(paint, palette, w, h);
+  else if (state.loupe && paint.vector) drawLoupe(paint, palette);
   paint.sweep(state.bitmaps);
   // The ink of designs no longer on the desk (or read again) goes.
   if (paint.vector) paint.sweepInk(new Set([...state.entries.values()].map((entry) => entry.ink?.key).filter(Boolean)));
@@ -1330,6 +1333,36 @@ function litBy(ink, found, palette, searchLight) {
     Object.assign(lit, { hits, search: searchLight });
   }
   return lit;
+}
+
+/** The loupe: its radius (CSS pixels), and how much nearer it shows the desk. */
+const LOUPE_RADIUS = 150;
+const LOUPE_ZOOM = 3;
+
+/** The desk under the pointer, LOUPE_ZOOM times nearer, in a circle over it:
+ *  its designs drawn again larger, as sharp as ever. */
+function drawLoupe(paint, palette) {
+  const box = rootEl.getBoundingClientRect();
+  const pane = paneSize();
+  const at = state.pointer ? { x: state.pointer.x - box.left, y: state.pointer.y - box.top } : { x: pane.w / 2, y: pane.h / 2 };
+  const k = scale() * LOUPE_ZOOM;
+  // The point under the pointer stays where it is; the rest spreads out from it.
+  const world = { x: state.view.x + at.x / scale(), y: state.view.y + at.y / scale() };
+  const view = { x: world.x - at.x / k, y: world.y - at.y / k };
+  const r = LOUPE_RADIUS;
+  const lens = { x: at.x - r, y: at.y - r, w: 2 * r, h: 2 * r };
+  paint.raised({ rect: lens, radius: r, fill: palette.paper, alpha: 1, blur: 28, drop: 10, color: palette.shadow });
+  drawGrid(paint, palette, view, k, { clip: { ...lens, radius: r } });
+  const reach = { x: world.x - r / k, y: world.y - r / k, w: (2 * r) / k, h: (2 * r) / k };
+  for (const tile of state.tiles) {
+    if (!rectsIntersect(reach, tile)) continue;
+    const entry = state.entries.get(tile.id);
+    const ink = inkOf(entry, true);
+    if (!paint.inkReady(ink.key, () => inkMesh(entry))) continue;
+    const rect = { x: (tile.x - view.x) * k, y: (tile.y - view.y) * k, w: tile.w * k, h: tile.h * k };
+    paint.ink(ink.key, entry.box, rect, 1, { clip: { x: at.x, y: at.y, r } });
+  }
+  paint.box({ rect: lens, radius: r, stroke: palette.dim, strokeAlpha: 0.6, strokeWidth: 1.5 });
 }
 
 /** What lies under a design on the desk, [r, g, b]: its card as solid as
@@ -3616,6 +3649,15 @@ export function onAtlasKey(ev) {
     return;
   }
   const key = ev.key;
+  // M held: a loupe under the pointer (on the GPU).
+  if ((key === 'm' || key === 'M') && !ev.ctrlKey && !ev.metaKey && !ev.altKey && !ev.target.closest?.('input, textarea, [contenteditable="true"]')) {
+    ev.preventDefault();
+    if (!state.loupe && painter().vector) {
+      state.loupe = true;
+      requestDraw();
+    }
+    return;
+  }
   const arrows = { ArrowLeft: { x: -1, y: 0 }, ArrowRight: { x: 1, y: 0 }, ArrowUp: { x: 0, y: -1 }, ArrowDown: { x: 0, y: 1 } };
   const selected = state.selected && tileById(state.selected);
   // Esc also lets go of a passing message, whatever else it does.
@@ -3720,6 +3762,8 @@ function pinchOf(pointers) {
 
 function onPointerMove(ev) {
   if (!state) return;
+  state.pointer = { x: ev.clientX, y: ev.clientY };
+  if (state.loupe) requestDraw();
   state.pointers?.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
   const drag = state.drag;
   if (drag?.zoomBox) {
@@ -3842,6 +3886,14 @@ export function installAtlas() {
   rootEl.addEventListener('wheel', onWheel, { passive: false });
   rootEl.addEventListener('pointerdown', onPointerDown);
   rootEl.addEventListener('pointermove', onPointerMove);
+  // M let go (or the window left): the loupe goes.
+  const dropLoupe = (ev) => {
+    if (!state?.loupe || (ev.type === 'keyup' && ev.key !== 'm' && ev.key !== 'M')) return;
+    state.loupe = false;
+    requestDraw();
+  };
+  window.addEventListener('keyup', dropLoupe);
+  window.addEventListener('blur', dropLoupe);
   rootEl.addEventListener('pointerup', onPointerUp);
   rootEl.addEventListener('pointercancel', onPointerUp);
   rootEl.addEventListener('dblclick', onDoubleClick);

@@ -256,6 +256,7 @@ folder on the Atlas does the same. Symbols view hides both buttons.
 | Ctrl/Cmd+O | another workspace folder (browser-only: add files) |
 | `z` or Space | zoom to the picked design; until the view moves, the arrows and Tab zoom to each design they pick |
 | `f` | fit the whole workspace |
+| `m` (held) | a loupe under the pointer: the desk three times nearer in a circle, drawn again as vectors (on the GPU) |
 | `Shift+T` | arrange the desk by kinship, the same every time |
 | `+` / `-` | zoom about the middle |
 | `Shift+D` | theme |
