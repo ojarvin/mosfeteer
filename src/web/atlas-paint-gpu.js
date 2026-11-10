@@ -67,7 +67,7 @@ void main() {
   if (kind == 0) {
     vec2 p0 = place(a_a.xy), p1 = place(a_a.zw);
     float half_ = a_b.x * k;
-    if (half_ < 0.5 * u_px) { v_fade = half_ / (0.5 * u_px); half_ = 0.5 * u_px; }
+    if (half_ < 0.5 * u_px) { v_fade = sqrt(half_ / (0.5 * u_px)); half_ = 0.5 * u_px; }
     vec2 d = p1 - p0;
     float len = length(d);
     vec2 dir = len > 1e-6 ? d / len : vec2(1.0, 0.0);
@@ -83,8 +83,8 @@ void main() {
     vec2 c = place(a_a.xy);
     float r = a_a.z * k;
     float half_ = kind == 2 ? a_b.x * k : 0.0;
-    if (kind == 2 && half_ < 0.5 * u_px) { v_fade = half_ / (0.5 * u_px); half_ = 0.5 * u_px; }
-    if (kind == 1 && r < 0.5 * u_px) { v_fade = (r * r) / (0.25 * u_px * u_px); r = 0.5 * u_px; }
+    if (kind == 2 && half_ < 0.5 * u_px) { v_fade = sqrt(half_ / (0.5 * u_px)); half_ = 0.5 * u_px; }
+    if (kind == 1 && r < 0.5 * u_px) { v_fade = r / (0.5 * u_px); r = 0.5 * u_px; }
     float out_ = r + half_ + margin;
     p = c + (a_corner * 2.0 - 1.0) * out_;
     v_a = vec4(c, r, half_);
@@ -110,7 +110,8 @@ flat in vec4 v_color;
 flat in float v_fade;
 uniform vec4 u_rect;
 uniform vec2 u_device;
-uniform float u_soft, u_alpha, u_reveal, u_seed;
+uniform vec3 u_under;
+uniform float u_soft, u_fade, u_reveal, u_seed;
 // This pixel's middle, from the window itself: the same in every shape, so
 // two shapes cut along one line agree on which side each pixel is.
 vec2 v_p;
@@ -173,7 +174,10 @@ void main() {
   float cover = clamp(0.5 - d / u_soft, 0.0, 1.0) * v_fade;
   if (cover <= 0.0) discard;
   float shown = revealed((v_p - u_rect.xy) / u_rect.zw, u_reveal, u_seed);
-  color = v_color * (cover * shown * u_alpha);
+  // Faded, it is mixed toward what lies under it, and stays opaque: where
+  // its shapes overlap it is no stronger than elsewhere.
+  vec4 c = v_color * (cover * shown);
+  color = vec4(mix(c.rgb, u_under * c.a, u_fade), c.a);
 }`;
 
 // A design's text (atlas-text.js): each glyph a quad over its cell in the
@@ -215,7 +219,8 @@ flat in float v_scale;
 flat in float v_grow;
 uniform sampler2D u_glyphs;
 uniform vec4 u_rect;
-uniform float u_soft, u_alpha, u_reveal, u_seed;
+uniform vec3 u_under;
+uniform float u_soft, u_fade, u_reveal, u_seed;
 out vec4 color;
 ${REVEAL}
 void main() {
@@ -223,21 +228,8 @@ void main() {
   float d = (${(1 - CUTOFF).toFixed(4)} - field) * ${RADIUS.toFixed(1)} * v_scale - v_grow;
   float cover = clamp(0.5 - d / u_soft, 0.0, 1.0);
   if (cover <= 0.0) discard;
-  color = v_color * (cover * u_alpha * revealed((v_p - u_rect.xy) / u_rect.zw, u_reveal, u_seed));
-}`;
-
-// A faded design's ink, drawn whole into a layer first, laid on the desk at
-// once: where its shapes overlap it is no darker than elsewhere.
-const LAYER_FRAGMENT = `#version 300 es
-precision highp float;
-in vec2 v_p;
-uniform sampler2D u_layer;
-uniform vec4 u_rect;
-uniform float u_alpha, u_reveal, u_seed;
-out vec4 color;
-${REVEAL}
-void main() {
-  color = texelFetch(u_layer, ivec2(gl_FragCoord.xy), 0) * (u_alpha * revealed((v_p - u_rect.xy) / u_rect.zw, u_reveal, u_seed));
+  vec4 c = v_color * (cover * revealed((v_p - u_rect.xy) / u_rect.zw, u_reveal, u_seed));
+  color = vec4(mix(c.rgb, u_under * c.a, u_fade), c.a);
 }`;
 
 const IMAGE_FRAGMENT = `#version 300 es
@@ -342,7 +334,6 @@ export function createGpuDesk(canvas, gl) {
   const pool = linkProgram(gl, QUAD_VERTEX, POOL_FRAGMENT);
   const mip = linkProgram(gl, MIP_VERTEX, MIP_FRAGMENT);
   const inkProgram = linkProgram(gl, INK_VERTEX, INK_FRAGMENT);
-  const layerProgram = linkProgram(gl, QUAD_VERTEX, LAYER_FRAGMENT);
   const glyphProgram = linkProgram(gl, GLYPH_VERTEX, GLYPH_FRAGMENT);
   gl.useProgram(glyphProgram.handle);
   gl.uniform1i(glyphProgram.u.u_glyphs, 2);
@@ -358,10 +349,6 @@ export function createGpuDesk(canvas, gl) {
   gl.activeTexture(gl.TEXTURE0);
   // The atlas as uploaded: its generation (every row is sent on a new one).
   let glyphsSent = 0;
-  gl.useProgram(layerProgram.handle);
-  gl.uniform1i(layerProgram.u.u_layer, 1);
-  /** The screen-sized layer faded ink is drawn into: { frame, texture, width, height }. */
-  let layer = null;
   const mipQuad = createQuad(gl);
   const corners = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, corners);
@@ -475,27 +462,6 @@ export function createGpuDesk(canvas, gl) {
     return entry;
   }
 
-  const layerOf = (width, height) => {
-    if (layer?.width === width && layer.height === height) return layer;
-    if (layer) {
-      gl.deleteFramebuffer(layer.frame);
-      gl.deleteTexture(layer.texture);
-    }
-    const texture = gl.createTexture();
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, width, height);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.activeTexture(gl.TEXTURE0);
-    const frame = gl.createFramebuffer();
-    gl.bindFramebuffer(gl.FRAMEBUFFER, frame);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    layer = { frame, texture, width, height };
-    return layer;
-  };
-
   /** Send the glyph atlas's new rows (all of it after it started again). */
   const sendGlyphs = () => {
     const rows = atlas.takeDirty();
@@ -513,8 +479,9 @@ export function createGpuDesk(canvas, gl) {
     glyphsSent = atlas.generation;
   };
 
-  /** Draw a design's shapes as they are, at `alpha`, revealed so far, then its text. */
-  const drawInk = (entry, box, rect, { alpha, blur, reveal, seed }) => {
+  /** Draw a design's shapes, faded by `fade` toward `under` ([r, g, b]),
+   *  revealed so far, then its text. */
+  const drawInk = (entry, box, rect, { fade, under, blur, reveal, seed }) => {
     const k = rect.w / box.w;
     const px = 1 / pane.dpr;
     gl.useProgram(inkProgram.handle);
@@ -528,7 +495,8 @@ export function createGpuDesk(canvas, gl) {
     gl.uniform2f(u.u_device, pane.dpr, pane.height);
     gl.uniform1f(u.u_px, px);
     gl.uniform1f(u.u_soft, px * Math.pow(2, blur * 1.5));
-    gl.uniform1f(u.u_alpha, alpha);
+    gl.uniform1f(u.u_fade, fade);
+    gl.uniform3fv(u.u_under, under);
     gl.uniform1f(u.u_reveal, reveal);
     gl.uniform1f(u.u_seed, seed);
     if (entry.count) gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, entry.count);
@@ -542,7 +510,8 @@ export function createGpuDesk(canvas, gl) {
       gl.uniform4f(g.u_rect, rect.x, rect.y, rect.w, rect.h);
       gl.uniform1f(g.u_atlas, atlas.size);
       gl.uniform1f(g.u_soft, px * Math.pow(2, blur * 1.5));
-      gl.uniform1f(g.u_alpha, alpha);
+      gl.uniform1f(g.u_fade, fade);
+      gl.uniform3fv(g.u_under, under);
       gl.uniform1f(g.u_reveal, reveal);
       gl.uniform1f(g.u_seed, seed);
       gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, entry.glyphCount);
@@ -595,7 +564,7 @@ export function createGpuDesk(canvas, gl) {
         canvas.width = width;
         canvas.height = height;
       }
-      pane = { w, h, dpr, width, height };
+      pane = { w, h, dpr, width, height, under: premultiplied(paper).slice(0, 3) };
       spent = 0;
       waiting = false;
       shapes.frame(w, h, dpr);
@@ -686,45 +655,14 @@ export function createGpuDesk(canvas, gl) {
     sweepInk(keys) {
       for (const key of [...inks.keys()]) if (!keys.has(key)) dropInk(key);
     },
-    /** A design's ink: its drawing's `box` laid on `rect` on screen. Effects
-     *  as for `image`: `blur` softens its edges by that many octaves. */
-    ink(key, box, rect, alpha, { blur = 0, reveal = 1, seed = 0 } = {}) {
+    /** A design's ink: its drawing's `box` laid on `rect` on screen. Below
+     *  full `alpha` it is faded toward `under` ([r, g, b], the paper's by
+     *  default), opaque. Effects as for `image`: `blur` softens its edges by
+     *  that many octaves. */
+    ink(key, box, rect, alpha, { blur = 0, reveal = 1, seed = 0, under = null } = {}) {
       const entry = inks.get(key);
       if (!(entry?.count || entry?.glyphCount) || !(box?.w > 0) || alpha <= 0) return;
-      if (alpha >= 0.999 && reveal >= 1) {
-        drawInk(entry, box, rect, { alpha: 1, blur, reveal: 1, seed });
-        return;
-      }
-      // Faded or coming up: drawn whole into the layer, then laid on at once.
-      const margin = 2;
-      const x0 = Math.max(0, Math.floor(rect.x - margin));
-      const y0 = Math.max(0, Math.floor(rect.y - margin));
-      const x1 = Math.min(pane.w, Math.ceil(rect.x + rect.w + margin));
-      const y1 = Math.min(pane.h, Math.ceil(rect.y + rect.h + margin));
-      if (x1 <= x0 || y1 <= y0) return;
-      const { dpr, width, height } = pane;
-      const target = layerOf(width, height);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, target.frame);
-      gl.enable(gl.SCISSOR_TEST);
-      const sx = Math.floor(x0 * dpr);
-      const sy = Math.floor(y0 * dpr);
-      gl.scissor(sx, height - Math.ceil(y1 * dpr), Math.ceil(x1 * dpr) - sx, Math.ceil(y1 * dpr) - sy);
-      gl.clearColor(0, 0, 0, 0);
-      gl.clear(gl.COLOR_BUFFER_BIT);
-      drawInk(entry, box, rect, { alpha: 1, blur, reveal: 1, seed });
-      gl.disable(gl.SCISSOR_TEST);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      gl.activeTexture(gl.TEXTURE1);
-      gl.bindTexture(gl.TEXTURE_2D, target.texture);
-      gl.activeTexture(gl.TEXTURE0);
-      shapes.blend(false);
-      shapes.stretch(layerProgram, x0, y0, x1 - x0, y1 - y0);
-      const u = layerProgram.u;
-      gl.uniform4f(u.u_rect, rect.x, rect.y, rect.w, rect.h);
-      gl.uniform1f(u.u_alpha, alpha);
-      gl.uniform1f(u.u_reveal, reveal);
-      gl.uniform1f(u.u_seed, seed);
-      shapes.paintQuad();
+      drawInk(entry, box, rect, { fade: 1 - Math.min(1, alpha), under: under || pane.under, blur, reveal, seed });
     },
 
     /** `blur`: mipmap levels out of focus; `reveal` (0 to 1): how far its

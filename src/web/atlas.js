@@ -52,7 +52,7 @@ import { reducedMotion } from './motion.js';
 import { showHelp } from './help.js';
 import { appendContextItem, openMenuAt } from './context-menu.js';
 import { onAccentChange } from './accent.js';
-import { gpuContext, onAccelerationChange } from './gpu.js';
+import { cssColor, gpuContext, onAccelerationChange } from './gpu.js';
 import { createGpuDesk } from './atlas-paint-gpu.js';
 import { INK_FLOATS, parseColor, svgInk } from './atlas-ink.js';
 import { GLYPH_FLOATS, layoutText, withRules } from './atlas-text.js';
@@ -1046,7 +1046,7 @@ function drawDesk() {
         const since = state.arrived.get(ink.key);
         const arriving = since === undefined ? 1 : Math.min(1, (performance.now() - since) / ARRIVE_MS);
         if (arriving < 1) requestDraw();
-        paint.ink(ink.key, entry.box, rect, fade * arriving, effects);
+        paint.ink(ink.key, entry.box, rect, fade * arriving, { ...effects, under: underOf(tile, lift, palette) });
       }
     }
     const level = imageLevel(imageDetail);
@@ -1267,6 +1267,16 @@ function drawCard(paint, tile, rect, lift, palette) {
     state.rimAt?.delete(tile.id);
     paint.box({ rect: frame, radius, stroke: palette.dim, strokeAlpha: solid * 0.3, strokeWidth: Math.max(0.5, Math.min(1.5, 3 * k)) });
   }
+}
+
+/** What lies under a design on the desk, [r, g, b]: its card as solid as
+ *  it is (drawCard), over the paper. A faded design is mixed toward it. */
+function underOf(tile, lift, palette) {
+  const paper = cssColor(palette.paper);
+  if (lift <= 0.004) return paper.slice(0, 3);
+  const card = cssColor(palette.card);
+  const solid = Math.min(1, lift / (liftOf(tile.id).solidAt ?? RELATED_LIFT)) * card[3];
+  return [0, 1, 2].map((i) => paper[i] + (card[i] - paper[i]) * solid);
 }
 
 /** How far a design's reveal has come (1 at rest): designs nearer the

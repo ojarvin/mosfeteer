@@ -251,11 +251,12 @@ describe('the desk\'s effects, drawn directly', { skip: browserSkip() }, () => {
     assert.deepEqual(r.map((v) => (v > 245 ? 'paper' : v < 10 ? 'ink' : v)), ['paper', 'ink', 'ink', 'paper']);
   });
 
-  test('a line thinner than a pixel stays a pixel wide, as faint as it is thin', async () => {
+  test('a line thinner than a pixel stays a pixel wide, faded by the root of how thin it is', async () => {
     const svg = drawing(200, 200, '<path d="M 0 100.5 L 200 100.5" stroke="#000" stroke-width="0.25" fill="none"/>');
     const r = await scene(`${inked(svg, { x: 0, y: 0, w: 200, h: 200 })} return [99, 100, 101].map((y) => at(100, y));`);
     assert.ok(r[0] > 250 && r[2] > 250, `one row: ${r}`);
-    assert.ok(Math.abs(r[1] - 255 * 0.75) < 12, `a quarter ink: ${r}`);
+    // A quarter of a pixel shows half its ink, as the images' mipmaps kept it.
+    assert.ok(Math.abs(r[1] - 255 * 0.5) < 12, `half ink: ${r}`);
   });
 
   test('a faded design is no darker where its lines cross', async () => {

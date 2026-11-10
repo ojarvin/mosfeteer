@@ -32,11 +32,12 @@ A corner's two runs are cut across its mean direction, meeting in a miter;
 a path's runs along one line that touch (a wire into its pin's lead) are one
 run; the triangles of a fill meet without seams (only outline edges are
 smoothed); so no pixel is drawn twice by one path, and a line thinner than a
-pixel stays a pixel wide and fades by as much without spots where it meets
-itself. Each design is read once, in the light theme, and kept from one
+pixel stays a pixel wide and fades by the root of how thin it is (as the
+images' mipmaps kept ink) without spots where it meets itself. Each design is read once, in the light theme, and kept from one
 visit to the next; the dark theme is its colors changed as the export's
-(`applyExportDarkTheme`), at once. A faded or revealing design is drawn
-whole into a layer and laid on at once, so its overlaps are no darker. Its
+(`applyExportDarkTheme`), at once. A faded design is drawn
+opaque, its colors mixed toward what lies under it (its card, or the paper),
+so its overlaps are no stronger and it costs no more to draw. Its
 text is vectors too (`src/web/atlas-text.js`): the export SVG less its ink is
 laid out once by the browser in a hidden element, SVG text and the math in
 foreignObject alike, and each character read back where the layout put it
