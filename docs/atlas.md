@@ -61,7 +61,9 @@ On the GPU the desk's transitions carry a few passing effects, each a curve in
 `atlas-layout.js`, all skipped with reduced motion and absent on the 2D canvas
 unless noted: the desk goes out of focus while a design is near the glass; a
 pick's beams grow out from it and send one pulse along themselves, lower levels
-a moment later; a light goes once right round the pick's rim; and a design's ink comes up from its middle as
+a moment later; a light goes once right round the pick's rim; a click on
+the bare desk sends one ring of light out through the grid, bending its
+lines as it passes (8 cells out, the same on the desk at any zoom); and a design's ink comes up from its middle as
 it is revealed (on the 2D canvas, a fade). Shadows, glows, and beams are
 dithered against banding. Nothing moves on a desk at rest.
 
