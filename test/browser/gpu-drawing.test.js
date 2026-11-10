@@ -127,7 +127,7 @@ describe('the two painters', { skip: browserSkip() }, () => {
     let total = 0;
     for (let i = 0; i < shots[0].length; i += 4) total += Math.abs(shots[0][i] - shots[1][i]) + Math.abs(shots[0][i + 1] - shots[1][i + 1]) + Math.abs(shots[0][i + 2] - shots[1][i + 2]);
     assert.ok(total / (shots[0].length / 4) < 3, `mean difference ${total / (shots[0].length / 4)}`);
-    // The GPU draws each design from a larger image: finer wherever there is a finer one.
+    // The GPU draws each design's text from a larger image: finer wherever there is a finer one.
     const order = ['small', 'medium', 'large'];
     for (const name of Object.keys(levels[0])) assert.ok(order.indexOf(levels[1][name]) >= order.indexOf(levels[0][name]), JSON.stringify(levels));
     assert.ok(Object.keys(levels[0]).some((name) => order.indexOf(levels[1][name]) > order.indexOf(levels[0][name])), JSON.stringify(levels));
@@ -192,6 +192,44 @@ describe('the desk\'s effects, drawn directly', { skip: browserSkip() }, () => {
     assert.ok(r[0] < 200 && r[1] > 250, `cut where it has grown to: ${r}`);
     assert.ok(r[3] < r[2] - 30, `the pulse is brighter: ${r}`);
     assert.ok(Math.abs(r[4] - r[2]) < 6, `and only where it is: ${r}`);
+  });
+
+  /** Draws `svg` (a drawing's export SVG) at `rect` with `effects`, on white. */
+  const inked = (svg, rect, alpha = 1, effects = {}) => `const ink = (await ${h.module('atlas-ink.js')}).svgInk(${JSON.stringify(svg)});
+      begin(); desk.inkReady('d', () => ink); desk.ink('d', ink.box, ${JSON.stringify(rect)}, ${alpha}, ${JSON.stringify(effects)});`;
+  const drawing = (w, h, body) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}">${body}</svg>`;
+
+  test('ink is drawn as vectors: zoomed in eight times, its edges stay a pixel sharp', async () => {
+    const svg = drawing(25, 25, '<path d="M 0 12.5 L 25 12.5" stroke="#000" stroke-width="1" fill="none"/>');
+    const r = await scene(`${inked(svg, { x: 0, y: 0, w: 200, h: 200 })} return [95, 96, 103, 104].map((y) => at(100, y));`);
+    assert.deepEqual(r.map((v) => (v > 245 ? 'paper' : v < 10 ? 'ink' : v)), ['paper', 'ink', 'ink', 'paper']);
+  });
+
+  test('a line thinner than a pixel stays a pixel wide, as faint as it is thin', async () => {
+    const svg = drawing(200, 200, '<path d="M 0 100.5 L 200 100.5" stroke="#000" stroke-width="0.25" fill="none"/>');
+    const r = await scene(`${inked(svg, { x: 0, y: 0, w: 200, h: 200 })} return [99, 100, 101].map((y) => at(100, y));`);
+    assert.ok(r[0] > 250 && r[2] > 250, `one row: ${r}`);
+    assert.ok(Math.abs(r[1] - 255 * 0.75) < 12, `a quarter ink: ${r}`);
+  });
+
+  test('a faded design is no darker where its lines cross', async () => {
+    const svg = drawing(200, 200, '<path d="M 20 100 L 180 100 M 100 20 L 100 180" stroke="#000" stroke-width="10" stroke-linecap="square" fill="none"/>');
+    const r = await scene(`${inked(svg, { x: 0, y: 0, w: 200, h: 200 }, 0.5)} return [at(100, 100), at(60, 100), at(100, 60)];`);
+    assert.ok(r[1] > 110 && r[1] < 145, `half ink: ${r}`);
+    assert.ok(Math.abs(r[0] - r[1]) <= 2 && Math.abs(r[2] - r[1]) <= 2, `the same at the crossing: ${r}`);
+  });
+
+  test('a corner is mitered to its point, and a fill has no seams', async () => {
+    const corner = drawing(200, 200, '<path d="M 20 40 L 120 40 L 120 160" stroke="#000" stroke-width="20" fill="none"/>');
+    const c = await scene(`${inked(corner, { x: 0, y: 0, w: 200, h: 200 })} return [at(128, 32), at(124, 36), at(133, 40)];`);
+    assert.ok(c[0] < 10 && c[1] < 10, `the corner's outside is inked: ${c}`);
+    assert.ok(c[2] > 245, `and not past it: ${c}`);
+    const fill = drawing(200, 200, '<polygon points="20 20 180 20 180 180 100 120 20 180" fill="#000"/>');
+    const f = await scene(`${inked(fill, { x: 0, y: 0, w: 200, h: 200 })}
+      const row = []; for (let i = 21; i < 179; i++) row.push(at(i, 60), at(i, Math.round(20 + (i - 20) * 0.5)));
+      return [Math.max(...row), at(100, 150)];`);
+    assert.ok(f[0] < 6, `solid inside: ${f}`);
+    assert.ok(f[1] > 245, `and hollow where it turns in: ${f}`);
   });
 
   test('the light on a rim is only where it has got to', async () => {

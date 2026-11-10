@@ -54580,6 +54580,712 @@ async function bakeTiles(tiles, { levels, bake, keep, failed, stale }) {
 __exports.INDEX_CACHE = INDEX_CACHE;
 };
 
+__modules["src/web/atlas-ink.js"] = function (__require, __exports) {
+__exports.parseColor = parseColor;
+__exports.parseTransform = parseTransform;
+__exports.flattenPath = flattenPath;
+__exports.triangulate = triangulate;
+__exports.svgInk = svgInk;
+/**
+ * A design's export SVG as the Atlas desk draws it on the GPU: its ink
+ * (strokes and fills) as shapes the desk's shaders draw at any scale, and
+ * its text (text, math, and pictures) as an SVG of its own, drawn to images.
+ *
+ * Pure: no DOM. The export SVG is the renderer's own regular output (no CSS,
+ * no clipping, no gradients), so a small reader of its elements suffices.
+ *
+ * Each shape is INK_FLOATS floats, in the drawing's own units, in document
+ * order (later shapes over earlier ones):
+ *   segment   [x0, y0, x1, y1,  halfWidth, cap0, cap1, SEGMENT,  r, g, b, a]
+ *   disc      [cx, cy, r, 0,    0, 0, 0, DISC,                    r, g, b, a]
+ *   ring      [cx, cy, r, 0,    halfWidth, 0, 0, RING,            r, g, b, a]
+ *   triangle  [x0, y0, x1, y1,  x2, y2, outerEdges, TRIANGLE,     r, g, b, a]
+ * Caps: BUTT, SQUARE, ROUND, or JOINT (cut hard where a join's wedge, a
+ * triangle, takes over: the two meet without a seam). A triangle's outerEdges has bit i set when its
+ * edge from vertex i to the next lies on the shape's outline: only those are
+ * smoothed, so the triangles of one fill meet without seams. Colors are
+ * premultiplied, 0 to 1.
+ */
+
+const INK_FLOATS = 12;
+const SEGMENT = 0;
+const DISC = 1;
+const RING = 2;
+const TRIANGLE = 3;
+const BUTT = 0;
+const SQUARE = 1;
+const ROUND = 2;
+const JOINT = 3;
+const MITER = 4;
+const BEVEL = 5;
+
+/** Elements drawn as ink, and those drawn with the text. */
+const INK = new Set(['path', 'line', 'polyline', 'polygon', 'rect', 'circle', 'ellipse']);
+const TEXT = new Set(['text', 'foreignObject', 'image']);
+/** Elements whose content is not more drawing. */
+const OPAQUE = new Set(['text', 'foreignObject', 'title', 'desc', 'style', 'script', 'metadata', 'defs']);
+
+/** How finely curves are cut into straight pieces: at most this far off the
+ *  curve, in the drawing's units (a grid cell is 40). */
+const TOLERANCE = 0.08;
+
+const NAMED = {
+  black: [0, 0, 0], white: [1, 1, 1], red: [1, 0, 0], green: [0, 128 / 255, 0], blue: [0, 0, 1],
+  gray: [128 / 255, 128 / 255, 128 / 255], grey: [128 / 255, 128 / 255, 128 / 255],
+  orange: [1, 165 / 255, 0], yellow: [1, 1, 0], purple: [128 / 255, 0, 128 / 255],
+};
+
+/** A paint as straight [r, g, b, a], or null for none. */
+function parseColor(value) {
+  if (value === undefined || value === null) return null;
+  let text = String(value).trim();
+  // A CSS variable takes its fallback: the export is drawn standalone.
+  for (let guard = 0; guard < 4; guard++) {
+    const variable = text.match(/^var\(\s*--[\w-]+\s*,\s*(.+)\)$/);
+    if (!variable) break;
+    text = variable[1].trim();
+  }
+  const lower = text.toLowerCase();
+  if (!lower || lower === 'none' || lower === 'transparent') return null;
+  if (lower[0] === '#') {
+    const hex = lower.slice(1);
+    const digits = hex.length === 3 || hex.length === 4 ? [...hex].map((c) => c + c) : hex.match(/../g);
+    if (!digits || (hex.length !== 3 && hex.length !== 4 && hex.length !== 6 && hex.length !== 8)) return [0, 0, 0, 1];
+    const [r, g, b, a = 'ff'] = digits;
+    return [parseInt(r, 16) / 255, parseInt(g, 16) / 255, parseInt(b, 16) / 255, parseInt(a, 16) / 255];
+  }
+  const fn = lower.match(/^rgba?\(([^)]*)\)$/);
+  if (fn) {
+    const parts = fn[1].split(/[\s,/]+/).filter(Boolean);
+    const channel = (part) => (part.endsWith('%') ? parseFloat(part) / 100 : parseFloat(part) / 255);
+    const alpha = parts[3] === undefined ? 1 : parts[3].endsWith('%') ? parseFloat(parts[3]) / 100 : parseFloat(parts[3]);
+    return [channel(parts[0] || '0'), channel(parts[1] || '0'), channel(parts[2] || '0'), Number.isFinite(alpha) ? alpha : 1];
+  }
+  if (NAMED[lower]) return [...NAMED[lower], 1];
+  return [0, 0, 0, 1];
+}
+
+const IDENTITY = [1, 0, 0, 1, 0, 0];
+
+function multiply(m, n) {
+  return [
+    m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1],
+    m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3],
+    m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5],
+  ];
+}
+
+/** An SVG transform list as a matrix [a, b, c, d, e, f]. */
+function parseTransform(text) {
+  let m = IDENTITY;
+  for (const [, name, args] of String(text || '').matchAll(/(\w+)\s*\(([^)]*)\)/g)) {
+    const v = args.split(/[\s,]+/).filter(Boolean).map(Number);
+    let n = IDENTITY;
+    if (name === 'matrix' && v.length === 6) n = v;
+    else if (name === 'translate') n = [1, 0, 0, 1, v[0] || 0, v[1] || 0];
+    else if (name === 'scale') n = [v[0] ?? 1, 0, 0, v[1] ?? v[0] ?? 1, 0, 0];
+    else if (name === 'rotate') {
+      const a = ((v[0] || 0) * Math.PI) / 180;
+      const cos = Math.cos(a);
+      const sin = Math.sin(a);
+      n = [cos, sin, -sin, cos, 0, 0];
+      if (v.length >= 3) n = multiply(multiply([1, 0, 0, 1, v[1], v[2]], n), [1, 0, 0, 1, -v[1], -v[2]]);
+    } else if (name === 'skewX') n = [1, 0, Math.tan(((v[0] || 0) * Math.PI) / 180), 1, 0, 0];
+    else if (name === 'skewY') n = [1, Math.tan(((v[0] || 0) * Math.PI) / 180), 0, 1, 0, 0];
+    m = multiply(m, n);
+  }
+  return m;
+}
+
+const apply = (m, x, y) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+
+/** A path's `d` as subpaths of points, curves cut into straight pieces:
+ *  [{ points: [[x, y], ...], closed }]. `tolerance` in the path's units. */
+function flattenPath(d, tolerance = TOLERANCE) {
+  const tokens = String(d || '').match(/[a-zA-Z]|[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/g) || [];
+  const subpaths = [];
+  let current = null;
+  let x = 0;
+  let y = 0;
+  let startX = 0;
+  let startY = 0;
+  let command = '';
+  let lastControl = null;
+  let i = 0;
+  const number = () => Number(tokens[i++]);
+  const flag = () => {
+    // Arc flags may be written without separators ("a5 5 0 105 5").
+    const token = tokens[i];
+    if (token.length > 1 && /^[01]/.test(token)) {
+      tokens[i] = token.slice(1);
+      return Number(token[0]);
+    }
+    i += 1;
+    return Number(token);
+  };
+  const begin = (px, py) => {
+    current = { points: [[px, py]], closed: false };
+    subpaths.push(current);
+  };
+  const lineTo = (px, py) => {
+    if (!current) begin(x, y);
+    current.points.push([px, py]);
+  };
+  const steps = (length) => Math.max(1, Math.min(256, Math.ceil(Math.sqrt(length / (8 * tolerance)) * 2)));
+  while (i < tokens.length) {
+    if (/[a-zA-Z]/.test(tokens[i])) command = tokens[i++];
+    else if (!command) { i += 1; continue; }
+    const relative = command === command.toLowerCase();
+    const ox = relative ? x : 0;
+    const oy = relative ? y : 0;
+    const kind = command.toUpperCase();
+    if (kind === 'Z') {
+      if (current) {
+        current.closed = true;
+        x = startX;
+        y = startY;
+        current = null;
+      }
+      lastControl = null;
+      continue;
+    }
+    if (i >= tokens.length || /[a-zA-Z]/.test(tokens[i])) continue;
+    if (kind === 'M') {
+      x = ox + number();
+      y = oy + number();
+      startX = x;
+      startY = y;
+      begin(x, y);
+      // Coordinates after a moveto are linetos.
+      command = relative ? 'l' : 'L';
+      lastControl = null;
+    } else if (kind === 'L') {
+      x = ox + number();
+      y = oy + number();
+      lineTo(x, y);
+      lastControl = null;
+    } else if (kind === 'H') {
+      x = ox + number();
+      lineTo(x, y);
+      lastControl = null;
+    } else if (kind === 'V') {
+      y = oy + number();
+      lineTo(x, y);
+      lastControl = null;
+    } else if (kind === 'C' || kind === 'S') {
+      let x1;
+      let y1;
+      if (kind === 'C') {
+        x1 = ox + number();
+        y1 = oy + number();
+      } else {
+        x1 = lastControl?.cubic ? 2 * x - lastControl.x : x;
+        y1 = lastControl?.cubic ? 2 * y - lastControl.y : y;
+      }
+      const x2 = ox + number();
+      const y2 = oy + number();
+      const ex = ox + number();
+      const ey = oy + number();
+      const n = steps(Math.hypot(x1 - x, y1 - y) + Math.hypot(x2 - x1, y2 - y1) + Math.hypot(ex - x2, ey - y2));
+      for (let s = 1; s <= n; s++) {
+        const t = s / n;
+        const u = 1 - t;
+        lineTo(u * u * u * x + 3 * u * u * t * x1 + 3 * u * t * t * x2 + t * t * t * ex, u * u * u * y + 3 * u * u * t * y1 + 3 * u * t * t * y2 + t * t * t * ey);
+      }
+      lastControl = { x: x2, y: y2, cubic: true };
+      x = ex;
+      y = ey;
+    } else if (kind === 'Q' || kind === 'T') {
+      let x1;
+      let y1;
+      if (kind === 'Q') {
+        x1 = ox + number();
+        y1 = oy + number();
+      } else {
+        x1 = lastControl?.quadratic ? 2 * x - lastControl.x : x;
+        y1 = lastControl?.quadratic ? 2 * y - lastControl.y : y;
+      }
+      const ex = ox + number();
+      const ey = oy + number();
+      const n = steps(Math.hypot(x1 - x, y1 - y) + Math.hypot(ex - x1, ey - y1));
+      for (let s = 1; s <= n; s++) {
+        const t = s / n;
+        const u = 1 - t;
+        lineTo(u * u * x + 2 * u * t * x1 + t * t * ex, u * u * y + 2 * u * t * y1 + t * t * ey);
+      }
+      lastControl = { x: x1, y: y1, quadratic: true };
+      x = ex;
+      y = ey;
+    } else if (kind === 'A') {
+      const rx = Math.abs(number());
+      const ry = Math.abs(number());
+      const rotation = number();
+      const large = flag();
+      const sweep = flag();
+      const ex = ox + number();
+      const ey = oy + number();
+      for (const [px, py] of arcPoints(x, y, rx, ry, rotation, large, sweep, ex, ey, tolerance)) lineTo(px, py);
+      x = ex;
+      y = ey;
+      lastControl = null;
+    } else {
+      i += 1;
+    }
+  }
+  return subpaths.filter((subpath) => subpath.points.length > 1 || subpath.closed);
+}
+
+/** The points along an SVG arc after its start, ending at its end (SVG 1.1 F.6.5). */
+function arcPoints(x1, y1, rx, ry, rotation, large, sweep, x2, y2, tolerance) {
+  if (x1 === x2 && y1 === y2) return [];
+  if (!rx || !ry) return [[x2, y2]];
+  const phi = (rotation * Math.PI) / 180;
+  const cos = Math.cos(phi);
+  const sin = Math.sin(phi);
+  const dx = (x1 - x2) / 2;
+  const dy = (y1 - y2) / 2;
+  const xp = cos * dx + sin * dy;
+  const yp = -sin * dx + cos * dy;
+  const lambda = (xp * xp) / (rx * rx) + (yp * yp) / (ry * ry);
+  if (lambda > 1) {
+    rx *= Math.sqrt(lambda);
+    ry *= Math.sqrt(lambda);
+  }
+  const num = rx * rx * ry * ry - rx * rx * yp * yp - ry * ry * xp * xp;
+  const den = rx * rx * yp * yp + ry * ry * xp * xp;
+  let coef = Math.sqrt(Math.max(0, num / den));
+  if (large === sweep) coef = -coef;
+  const cxp = (coef * rx * yp) / ry;
+  const cyp = (-coef * ry * xp) / rx;
+  const cx = cos * cxp - sin * cyp + (x1 + x2) / 2;
+  const cy = sin * cxp + cos * cyp + (y1 + y2) / 2;
+  const angle = (ux, uy, vx, vy) => {
+    const a = Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy);
+    return a;
+  };
+  const theta = angle(1, 0, (xp - cxp) / rx, (yp - cyp) / ry);
+  let delta = angle((xp - cxp) / rx, (yp - cyp) / ry, (-xp - cxp) / rx, (-yp - cyp) / ry);
+  if (!sweep && delta > 0) delta -= 2 * Math.PI;
+  else if (sweep && delta < 0) delta += 2 * Math.PI;
+  const r = Math.max(rx, ry);
+  // The chord of a step stays within `tolerance` of the curve.
+  const step = 2 * Math.acos(Math.max(-1, Math.min(1, 1 - tolerance / r)));
+  const n = Math.max(2, Math.min(256, Math.ceil(Math.abs(delta) / Math.max(step, 1e-3))));
+  const out = [];
+  for (let s = 1; s < n; s++) {
+    const t = theta + (delta * s) / n;
+    const ex = rx * Math.cos(t);
+    const ey = ry * Math.sin(t);
+    out.push([cos * ex - sin * ey + cx, sin * ex + cos * ey + cy]);
+  }
+  out.push([x2, y2]);
+  return out;
+}
+
+/** Twice the signed area of a polygon. */
+function area2(points) {
+  let sum = 0;
+  for (let i = 0; i < points.length; i++) {
+    const [ax, ay] = points[i];
+    const [bx, by] = points[(i + 1) % points.length];
+    sum += ax * by - bx * ay;
+  }
+  return sum;
+}
+
+const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+
+function inTriangle(p, a, b, c) {
+  const d1 = cross(a, b, p);
+  const d2 = cross(b, c, p);
+  const d3 = cross(c, a, p);
+  return d1 >= 0 && d2 >= 0 && d3 >= 0;
+}
+
+/** A simple polygon as triangles [a, b, c, outerEdges] (ear clipping). */
+function triangulate(input) {
+  // Repeated points (a closing point equal to the first) say nothing.
+  const points = [];
+  for (const point of input) {
+    const previous = points[points.length - 1];
+    if (!previous || previous[0] !== point[0] || previous[1] !== point[1]) points.push(point);
+  }
+  while (points.length > 1 && points[0][0] === points[points.length - 1][0] && points[0][1] === points[points.length - 1][1]) points.pop();
+  if (points.length < 3) return [];
+  // Counter-clockwise in a y-up sense (cross > 0 is a left turn).
+  if (area2(points) < 0) points.reverse();
+  const index = points.map((_, i) => i);
+  // outer[i]: the edge from index[i] to the next is on the outline.
+  const outer = index.map(() => true);
+  const triangles = [];
+  let guard = points.length * points.length;
+  while (index.length > 3 && guard-- > 0) {
+    let clipped = false;
+    for (let i = 0; i < index.length; i++) {
+      const prev = (i + index.length - 1) % index.length;
+      const next = (i + 1) % index.length;
+      const a = points[index[prev]];
+      const b = points[index[i]];
+      const c = points[index[next]];
+      const turn = cross(a, b, c);
+      if (turn < 0) continue;
+      if (turn === 0) {
+        // A point on a straight run: drop it, keeping its outline.
+        outer[prev] = outer[prev] && outer[i];
+        index.splice(i, 1);
+        outer.splice(i, 1);
+        clipped = true;
+        break;
+      }
+      let blocked = false;
+      for (let j = 0; j < index.length && !blocked; j++) {
+        if (j === prev || j === i || j === next) continue;
+        const p = points[index[j]];
+        if ((p[0] === a[0] && p[1] === a[1]) || (p[0] === c[0] && p[1] === c[1])) continue;
+        blocked = inTriangle(p, a, b, c);
+      }
+      if (blocked) continue;
+      triangles.push([a, b, c, (outer[prev] ? 1 : 0) | (outer[i] ? 2 : 0)]);
+      outer[prev] = false;
+      index.splice(i, 1);
+      outer.splice(i, 1);
+      clipped = true;
+      break;
+    }
+    // A self-touching outline with no ear left: fan out what remains.
+    if (!clipped) break;
+  }
+  if (index.length === 3) {
+    const [a, b, c] = index.map((i) => points[i]);
+    if (cross(a, b, c) !== 0) triangles.push([a, b, c, (outer[0] ? 1 : 0) | (outer[1] ? 2 : 0) | (outer[2] ? 4 : 0)]);
+  } else if (index.length > 3) {
+    for (let i = 1; i + 1 < index.length; i++) {
+      triangles.push([points[index[0]], points[index[i]], points[index[i + 1]], (i === 1 && outer[0] ? 1 : 0) | (outer[i] ? 2 : 0) | (i + 2 === index.length && outer[i + 1] ? 4 : 0)]);
+    }
+  }
+  return triangles;
+}
+
+/** Split a polyline into its dashes, the pattern running on across corners. */
+function dashed(points, closed, pattern) {
+  const sum = pattern.reduce((a, b) => a + b, 0);
+  if (!(sum > 0) || pattern.some((v) => v < 0)) return [{ points, closed }];
+  const list = pattern.length % 2 ? [...pattern, ...pattern] : pattern;
+  const runs = [];
+  const all = closed ? [...points, points[0]] : points;
+  let at = 0;
+  let left = list[0];
+  let on = true;
+  let run = on ? [all[0]] : null;
+  for (let i = 1; i < all.length; i++) {
+    let [ax, ay] = all[i - 1];
+    const [bx, by] = all[i];
+    let length = Math.hypot(bx - ax, by - ay);
+    while (length > left) {
+      const t = left / length;
+      const px = ax + (bx - ax) * t;
+      const py = ay + (by - ay) * t;
+      if (on) {
+        run.push([px, py]);
+        runs.push({ points: run, closed: false });
+        run = null;
+      } else {
+        run = [[px, py]];
+      }
+      on = !on;
+      length -= left;
+      ax = px;
+      ay = py;
+      at = (at + 1) % list.length;
+      left = list[at];
+    }
+    left -= length;
+    if (on) run.push([bx, by]);
+  }
+  if (on && run && run.length > 1) runs.push({ points: run, closed: false });
+  return runs;
+}
+
+const CAPS = { butt: BUTT, square: SQUARE, round: ROUND };
+
+/** Read the export SVG. Returns { data: Float32Array, count, textSvg, box },
+ *  `textSvg` null when the design has no text, math, or pictures. */
+function svgInk(svg) {
+  const source = String(svg);
+  const out = [];
+  let count = 0;
+  const push = (values, color) => {
+    out.push(...values, color[0] * color[3], color[1] * color[3], color[2] * color[3], color[3]);
+    count += 1;
+  };
+  const tag = /<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<!\[CDATA\[[\s\S]*?\]\]>|<!DOCTYPE[^>]*>|<(\/?)([a-zA-Z][\w:.-]*)((?:\s+[^\s=>/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*(\/?)>/g;
+  const root = {
+    fill: [0, 0, 0, 1], stroke: null, strokeWidth: 1, cap: BUTT, join: MITER, miterLimit: 4,
+    fillOpacity: 1, strokeOpacity: 1, opacity: 1, dash: null, matrix: IDENTITY, hidden: false,
+  };
+  const stack = [{ name: '#root', style: root }];
+  let box = null;
+  // The text drawing: everything but the ink, as written.
+  const kept = [];
+  let keptFrom = 0;
+  let removing = null; // { depth } while inside an ink element being left out
+  let opaque = null; // { name, depth } while inside text-like content
+  let hasText = false;
+
+  const attributesOf = (text) => {
+    const attrs = {};
+    for (const [, name, , double, single, bare] of text.matchAll(/([^\s=>/]+)(\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g)) {
+      attrs[name] = double ?? single ?? bare ?? '';
+    }
+    if (attrs.style) {
+      for (const declaration of attrs.style.split(';')) {
+        const at = declaration.indexOf(':');
+        if (at > 0) attrs[declaration.slice(0, at).trim()] = declaration.slice(at + 1).trim();
+      }
+    }
+    return attrs;
+  };
+
+  const styleOf = (parent, attrs) => {
+    const style = { ...parent };
+    if (attrs.fill !== undefined) style.fill = parseColor(attrs.fill);
+    if (attrs.stroke !== undefined) style.stroke = parseColor(attrs.stroke);
+    if (attrs['stroke-width'] !== undefined) style.strokeWidth = parseFloat(attrs['stroke-width']) || 0;
+    if (attrs['stroke-linecap'] !== undefined) style.cap = CAPS[attrs['stroke-linecap']] ?? BUTT;
+    if (attrs['stroke-linejoin'] !== undefined) style.join = attrs['stroke-linejoin'] === 'round' ? ROUND : attrs['stroke-linejoin'] === 'bevel' ? BEVEL : MITER;
+    if (attrs['stroke-miterlimit'] !== undefined) style.miterLimit = Math.max(1, parseFloat(attrs['stroke-miterlimit']) || 4);
+    if (attrs['fill-opacity'] !== undefined) style.fillOpacity = Math.max(0, Math.min(1, parseFloat(attrs['fill-opacity'])));
+    if (attrs['stroke-opacity'] !== undefined) style.strokeOpacity = Math.max(0, Math.min(1, parseFloat(attrs['stroke-opacity'])));
+    if (attrs.opacity !== undefined) style.opacity = parent.opacity * Math.max(0, Math.min(1, parseFloat(attrs.opacity)));
+    if (attrs['stroke-dasharray'] !== undefined) {
+      const pattern = attrs['stroke-dasharray'] === 'none' ? [] : attrs['stroke-dasharray'].split(/[\s,]+/).filter(Boolean).map(Number);
+      style.dash = pattern.length && pattern.every(Number.isFinite) ? pattern : null;
+    }
+    if (attrs.display === 'none' || attrs.visibility === 'hidden') style.hidden = true;
+    if (attrs.transform) style.matrix = multiply(parent.matrix, parseTransform(attrs.transform));
+    return style;
+  };
+
+  const paint = (color, opacity) => (color && color[3] * opacity > 0 ? [color[0], color[1], color[2], color[3] * opacity] : null);
+
+  /** Fill and stroke one shape, given as subpaths in its own units. */
+  const draw = (style, subpaths, { fill = true } = {}) => {
+    const m = style.matrix;
+    const scaleOf = Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2]));
+    const fillColor = fill ? paint(style.fill, style.fillOpacity * style.opacity) : null;
+    if (fillColor) {
+      for (const { points } of subpaths) {
+        if (points.length < 3) continue;
+        for (const [a, b, c, edges] of triangulate(points.map(([x, y]) => apply(m, x, y)))) {
+          push([a[0], a[1], b[0], b[1], c[0], c[1], edges, TRIANGLE], fillColor);
+        }
+      }
+    }
+    const strokeColor = paint(style.stroke, style.strokeOpacity * style.opacity);
+    const half = (style.strokeWidth * scaleOf) / 2;
+    if (!strokeColor || !(half > 0)) return;
+    for (const subpath of subpaths) {
+      const runs = style.dash ? dashed(subpath.points, subpath.closed, style.dash) : [subpath];
+      for (const { points, closed } of runs) {
+        const world = points.map(([x, y]) => apply(m, x, y));
+        if (world.length === 1 || (world.length === 2 && world[0][0] === world[1][0] && world[0][1] === world[1][1])) {
+          // A dot: only a round or square cap shows it.
+          if (style.cap !== BUTT) push([world[0][0], world[0][1], world[0][0], world[0][1], half, style.cap, style.cap, SEGMENT], strokeColor);
+          continue;
+        }
+        // Repeated points make no segment and no corner.
+        const pts = world.filter((p, i) => i === 0 || p[0] !== world[i - 1][0] || p[1] !== world[i - 1][1]);
+        if (closed && pts.length > 2 && pts[0][0] === pts[pts.length - 1][0] && pts[0][1] === pts[pts.length - 1][1]) pts.pop();
+        const n = closed ? pts.length : pts.length - 1;
+        const joint = style.join === ROUND ? ROUND : JOINT;
+        for (let i = 0; i < n; i++) {
+          const a = pts[i];
+          const b = pts[(i + 1) % pts.length];
+          const first = !closed && i === 0;
+          const last = !closed && i === n - 1;
+          push([a[0], a[1], b[0], b[1], half, first ? style.cap : joint, last ? style.cap : joint, SEGMENT], strokeColor);
+        }
+        if (style.join !== ROUND) {
+          for (let i = closed ? 0 : 1; i < (closed ? pts.length : pts.length - 1); i++) {
+            joinWedge(pts[(i + pts.length - 1) % pts.length], pts[i], pts[(i + 1) % pts.length], half, style, strokeColor);
+          }
+        }
+      }
+    }
+  };
+
+  /** The outside of the corner at b, between the segments a-b and b-c: a
+   *  miter (or a bevel past the miter limit), its outline edges smoothed. */
+  const joinWedge = (a, b, c, half, style, color) => {
+    let d0x = b[0] - a[0];
+    let d0y = b[1] - a[1];
+    let d1x = c[0] - b[0];
+    let d1y = c[1] - b[1];
+    const l0 = Math.hypot(d0x, d0y);
+    const l1 = Math.hypot(d1x, d1y);
+    if (!l0 || !l1) return;
+    d0x /= l0; d0y /= l0; d1x /= l1; d1y /= l1;
+    const turn = d0x * d1y - d0y * d1x;
+    // Straight on (or turned right back) the two ends meet as they are.
+    if (Math.abs(turn) < 1e-9) return;
+    const s = turn > 0 ? -1 : 1;
+    const ax = b[0] - d0y * half * s;
+    const ay = b[1] + d0x * half * s;
+    const bx = b[0] - d1y * half * s;
+    const by = b[1] + d1x * half * s;
+    const mx = -d0y - d1y;
+    const my = d0x + d1x;
+    const mm = mx * mx + my * my;
+    if (style.join === MITER && mm > 0 && 2 / Math.sqrt(mm) <= style.miterLimit) {
+      const tx = b[0] + (mx * s * half * 2) / mm;
+      const ty = b[1] + (my * s * half * 2) / mm;
+      push([b[0], b[1], ax, ay, tx, ty, 2, TRIANGLE], color);
+      push([b[0], b[1], tx, ty, bx, by, 2, TRIANGLE], color);
+    } else {
+      push([b[0], b[1], ax, ay, bx, by, 2, TRIANGLE], color);
+    }
+  };
+
+  const shape = (name, attrs, style) => {
+    if (style.hidden) return;
+    const num = (key, fallback = 0) => {
+      const value = parseFloat(attrs[key]);
+      return Number.isFinite(value) ? value : fallback;
+    };
+    if (name === 'path') {
+      draw(style, flattenPath(attrs.d));
+    } else if (name === 'line') {
+      draw(style, [{ points: [[num('x1'), num('y1')], [num('x2'), num('y2')]], closed: false }], { fill: false });
+    } else if (name === 'polyline' || name === 'polygon') {
+      const values = String(attrs.points || '').split(/[\s,]+/).filter(Boolean).map(Number);
+      const points = [];
+      for (let i = 0; i + 1 < values.length; i += 2) points.push([values[i], values[i + 1]]);
+      draw(style, [{ points, closed: name === 'polygon' }]);
+    } else if (name === 'rect') {
+      const x = num('x');
+      const y = num('y');
+      const w = num('width');
+      const h = num('height');
+      if (!(w > 0 && h > 0)) return;
+      let rx = attrs.rx !== undefined ? num('rx') : attrs.ry !== undefined ? num('ry') : 0;
+      let ry = attrs.ry !== undefined ? num('ry') : rx;
+      rx = Math.min(Math.max(0, rx), w / 2);
+      ry = Math.min(Math.max(0, ry), h / 2);
+      const points = rx > 0 && ry > 0
+        ? flattenPath(`M ${x + rx} ${y} H ${x + w - rx} A ${rx} ${ry} 0 0 1 ${x + w} ${y + ry} V ${y + h - ry} A ${rx} ${ry} 0 0 1 ${x + w - rx} ${y + h} H ${x + rx} A ${rx} ${ry} 0 0 1 ${x} ${y + h - ry} V ${y + ry} A ${rx} ${ry} 0 0 1 ${x + rx} ${y} Z`)[0].points
+        : [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
+      draw(style, [{ points, closed: true }]);
+    } else if (name === 'circle' || name === 'ellipse') {
+      const cx = num('cx');
+      const cy = num('cy');
+      const rx = name === 'circle' ? num('r') : num('rx');
+      const ry = name === 'circle' ? rx : num('ry');
+      if (!(rx > 0 && ry > 0)) return;
+      const m = style.matrix;
+      // Kept round (a mirror or turn of a circle) it is drawn as one: exact at any scale.
+      const uniform = Math.abs(m[0] - m[3]) < 1e-9 && Math.abs(m[1] + m[2]) < 1e-9;
+      const mirrored = Math.abs(m[0] + m[3]) < 1e-9 && Math.abs(m[1] - m[2]) < 1e-9;
+      if (rx === ry && (uniform || mirrored) && !style.dash) {
+        const scaleOf = Math.hypot(m[0], m[1]);
+        const [x, y] = apply(m, cx, cy);
+        const r = rx * scaleOf;
+        const fillColor = paint(style.fill, style.fillOpacity * style.opacity);
+        if (fillColor) push([x, y, r, 0, 0, 0, 0, DISC], fillColor);
+        const strokeColor = paint(style.stroke, style.strokeOpacity * style.opacity);
+        const half = (style.strokeWidth * scaleOf) / 2;
+        if (strokeColor && half > 0) push([x, y, r, 0, half, 0, 0, RING], strokeColor);
+        return;
+      }
+      draw(style, flattenPath(`M ${cx + rx} ${cy} A ${rx} ${ry} 0 0 1 ${cx - rx} ${cy} A ${rx} ${ry} 0 0 1 ${cx + rx} ${cy} Z`));
+    }
+  };
+
+  let match;
+  while ((match = tag.exec(source))) {
+    const [whole, closing, rawName, attrText, selfClosing] = match;
+    if (!rawName) continue;
+    const name = rawName;
+    if (opaque) {
+      if (name === opaque.name) {
+        if (closing) {
+          opaque.depth -= 1;
+          if (!opaque.depth) opaque = null;
+        } else if (!selfClosing) {
+          opaque.depth += 1;
+        }
+      }
+      continue;
+    }
+    if (closing) {
+      // Close up to the matching element.
+      while (stack.length > 1) {
+        const top = stack.pop();
+        if (removing && removing.depth === stack.length) {
+          // The ink element and its contents (a title) are left out of the text drawing.
+          kept.push(source.slice(keptFrom, removing.from));
+          keptFrom = match.index + whole.length;
+          removing = null;
+        }
+        if (top.name === name) break;
+      }
+      continue;
+    }
+    const attrs = attributesOf(attrText);
+    const parent = stack[stack.length - 1];
+    if (name === 'svg') {
+      const style = { ...parent.style };
+      const viewBox = String(attrs.viewBox || '').split(/[\s,]+/).filter(Boolean).map(Number);
+      if (!box && viewBox.length === 4 && viewBox.every(Number.isFinite)) {
+        box = { x: viewBox[0], y: viewBox[1], w: viewBox[2], h: viewBox[3] };
+      } else if (stack.length > 1) {
+        // A nested drawing: placed at x, y, its view box fitted into its size.
+        const x = parseFloat(attrs.x) || 0;
+        const y = parseFloat(attrs.y) || 0;
+        let local = [1, 0, 0, 1, x, y];
+        if (viewBox.length === 4 && viewBox[2] > 0 && viewBox[3] > 0) {
+          const w = parseFloat(attrs.width) || viewBox[2];
+          const h = parseFloat(attrs.height) || viewBox[3];
+          const k = Math.min(w / viewBox[2], h / viewBox[3]);
+          local = multiply(local, [k, 0, 0, k, (w - viewBox[2] * k) / 2 - viewBox[0] * k, (h - viewBox[3] * k) / 2 - viewBox[1] * k]);
+        }
+        style.matrix = multiply(parent.style.matrix, local);
+      }
+      if (!selfClosing) stack.push({ name, style: styleOf(style, { ...attrs, transform: undefined }) });
+      continue;
+    }
+    if (TEXT.has(name)) hasText = hasText || !parent.style.hidden;
+    if (OPAQUE.has(name)) {
+      if (!selfClosing) opaque = { name, depth: 1 };
+      continue;
+    }
+    const style = styleOf(parent.style, attrs);
+    if (INK.has(name) && !removing) {
+      shape(name, attrs, style);
+      if (selfClosing) {
+        kept.push(source.slice(keptFrom, match.index));
+        keptFrom = match.index + whole.length;
+        continue;
+      }
+      removing = { from: match.index, depth: stack.length };
+    }
+    if (!selfClosing) stack.push({ name, style });
+  }
+  kept.push(source.slice(keptFrom));
+  const textSvg = hasText ? kept.join('').replace(/\n{2,}/g, '\n') : null;
+  return { data: new Float32Array(out), count, textSvg, box };
+}
+
+__exports.INK_FLOATS = INK_FLOATS;
+__exports.SEGMENT = SEGMENT;
+__exports.DISC = DISC;
+__exports.RING = RING;
+__exports.TRIANGLE = TRIANGLE;
+__exports.BUTT = BUTT;
+__exports.SQUARE = SQUARE;
+__exports.ROUND = ROUND;
+__exports.JOINT = JOINT;
+};
+
 __modules["src/web/atlas-layout.js"] = function (__require, __exports) {
 __exports.layoutAtlas = layoutAtlas;
 __exports.tileDetail = tileDetail;
@@ -55309,12 +56015,155 @@ const INK_KEPT = 0.45;
 const MAX_CAPTIONS = 800;
 const TEXT_PAD = 2;
 
+/** How far a design's ink has come up at `uv` (0 to 1 across it): from the
+ *  middle out, along an uneven soft edge. */
+const REVEAL = `
+float revealed(vec2 uv, float reveal, float seed) {
+  if (reveal >= 1.0) return 1.0;
+  vec2 p = uv - 0.5;
+  float a = atan(p.y, p.x);
+  float r = length(p) * 1.41421356 + 0.05 * sin(a * 5.0 + seed) + 0.03 * sin(a * 9.0 - seed * 1.7);
+  float edge = reveal * 1.5 - 0.2;
+  return 1.0 - smoothstep(edge - 0.18, edge, r);
+}`;
+
+// A design's ink (atlas-ink.js): one instance a shape, its quad drawn round
+// it on screen, its edge smoothed over a pixel by its distance. A line
+// thinner than a pixel stays a pixel wide and fades by as much instead.
+const INK_VERTEX = `#version 300 es
+layout(location = 0) in vec2 a_corner;
+layout(location = 1) in vec4 a_a;
+layout(location = 2) in vec4 a_b;
+layout(location = 3) in vec4 a_color;
+uniform vec2 u_pane;
+uniform vec4 u_map;
+uniform float u_px, u_soft;
+out vec2 v_p;
+flat out vec4 v_a;
+flat out vec4 v_b;
+flat out vec4 v_color;
+flat out float v_fade;
+vec2 place(vec2 p) { return p * u_map.x + u_map.zw; }
+void main() {
+  int kind = int(a_b.w + 0.5);
+  float k = u_map.x;
+  float margin = u_soft + u_px;
+  vec2 p;
+  v_color = a_color;
+  v_fade = 1.0;
+  if (kind == 0) {
+    vec2 p0 = place(a_a.xy), p1 = place(a_a.zw);
+    float half_ = a_b.x * k;
+    if (half_ < 0.5 * u_px) { v_fade = half_ / (0.5 * u_px); half_ = 0.5 * u_px; }
+    vec2 d = p1 - p0;
+    float len = length(d);
+    vec2 dir = len > 1e-6 ? d / len : vec2(1.0, 0.0);
+    vec2 n = vec2(-dir.y, dir.x);
+    float out_ = half_ + margin;
+    p = mix(p0 - dir * out_, p1 + dir * out_, a_corner.x) + n * out_ * (a_corner.y * 2.0 - 1.0);
+    v_a = vec4(p0, p1);
+    v_b = vec4(half_, a_b.y, a_b.z, 0.0);
+  } else if (kind == 1 || kind == 2) {
+    vec2 c = place(a_a.xy);
+    float r = a_a.z * k;
+    float half_ = kind == 2 ? a_b.x * k : 0.0;
+    if (kind == 2 && half_ < 0.5 * u_px) { v_fade = half_ / (0.5 * u_px); half_ = 0.5 * u_px; }
+    if (kind == 1 && r < 0.5 * u_px) { v_fade = (r * r) / (0.25 * u_px * u_px); r = 0.5 * u_px; }
+    float out_ = r + half_ + margin;
+    p = c + (a_corner * 2.0 - 1.0) * out_;
+    v_a = vec4(c, r, half_);
+    v_b = vec4(0.0, 0.0, 0.0, float(kind));
+  } else {
+    vec2 p0 = place(a_a.xy), p1 = place(a_a.zw), p2 = place(a_b.xy);
+    vec2 lo = min(p0, min(p1, p2)) - margin, hi = max(p0, max(p1, p2)) + margin;
+    p = mix(lo, hi, a_corner);
+    v_a = vec4(p0, p1);
+    v_b = vec4(p2, a_b.z, 3.0);
+  }
+  v_p = p;
+  vec2 clip = p / u_pane * 2.0 - 1.0;
+  gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
+}`;
+
+const INK_FRAGMENT = `#version 300 es
+precision highp float;
+in vec2 v_p;
+flat in vec4 v_a;
+flat in vec4 v_b;
+flat in vec4 v_color;
+flat in float v_fade;
+uniform vec4 u_rect;
+uniform float u_soft, u_alpha, u_reveal, u_seed;
+out vec4 color;
+${REVEAL}
+float capped(float t, float v, float half_, float cap) {
+  if (cap > 1.5) return length(vec2(t, v)) - half_;
+  return max(abs(v) - half_, cap > 0.5 ? t - half_ : t);
+}
+// Outside the edge a to b, by how far (the triangle wound by s).
+float side(vec2 a, vec2 b, float s) {
+  vec2 e = b - a;
+  return -s * (e.x * (v_p.y - a.y) - e.y * (v_p.x - a.x)) / max(length(e), 1e-6);
+}
+void main() {
+  int kind = int(v_b.w + 0.5);
+  float d;
+  if (kind == 0) {
+    vec2 p0 = v_a.xy, p1 = v_a.zw;
+    vec2 e = p1 - p0;
+    float len = length(e);
+    vec2 dir = len > 1e-6 ? e / len : vec2(1.0, 0.0);
+    vec2 q = v_p - p0;
+    float u = dot(q, dir), v = dot(q, vec2(-dir.y, dir.x));
+    float half_ = v_b.x;
+    // An end at a mitered corner is cut hard: the corner's wedge takes over.
+    if ((u < 0.0 && v_b.y > 2.5) || (u > len && v_b.z > 2.5)) discard;
+    if (u < 0.0) d = capped(-u, v, half_, v_b.y);
+    else if (u > len) d = capped(u - len, v, half_, v_b.z);
+    else d = abs(v) - half_;
+  } else if (kind == 1) {
+    d = length(v_p - v_a.xy) - v_a.z;
+  } else if (kind == 2) {
+    d = abs(length(v_p - v_a.xy) - v_a.z) - v_a.w;
+  } else {
+    vec2 p0 = v_a.xy, p1 = v_a.zw, p2 = v_b.xy;
+    float s = sign((p1.x - p0.x) * (p2.y - p0.y) - (p1.y - p0.y) * (p2.x - p0.x));
+    int edges = int(v_b.z + 0.5);
+    d = -1e6;
+    float e0 = side(p0, p1, s), e1 = side(p1, p2, s), e2 = side(p2, p0, s);
+    // An edge inside the shape cuts hard at the pixel's middle, so the
+    // triangle next to it takes the pixel: no seam between them.
+    if ((edges & 1) != 0) d = max(d, e0); else if (e0 > 0.0) discard;
+    if ((edges & 2) != 0) d = max(d, e1); else if (e1 > 0.0) discard;
+    if ((edges & 4) != 0) d = max(d, e2); else if (e2 > 0.0) discard;
+  }
+  float cover = clamp(0.5 - d / u_soft, 0.0, 1.0) * v_fade;
+  if (cover <= 0.0) discard;
+  float shown = revealed((v_p - u_rect.xy) / u_rect.zw, u_reveal, u_seed);
+  color = v_color * (cover * shown * u_alpha);
+}`;
+
+// A faded design's ink, drawn whole into a layer first, laid on the desk at
+// once: where its shapes overlap it is no darker than elsewhere.
+const LAYER_FRAGMENT = `#version 300 es
+precision highp float;
+in vec2 v_p;
+uniform sampler2D u_layer;
+uniform vec4 u_rect;
+uniform float u_alpha, u_reveal, u_seed;
+out vec4 color;
+${REVEAL}
+void main() {
+  color = texelFetch(u_layer, ivec2(gl_FragCoord.xy), 0) * (u_alpha * revealed((v_p - u_rect.xy) / u_rect.zw, u_reveal, u_seed));
+}`;
+
 const IMAGE_FRAGMENT = `#version 300 es
 precision highp float;
 in vec2 v_uv;
 uniform sampler2D u_image;
 uniform float u_alpha, u_bias, u_blur, u_reveal, u_seed;
 out vec4 color;
+${REVEAL}
 void main() {
   vec4 ink;
   if (u_blur > 0.0) {
@@ -55330,15 +56179,7 @@ void main() {
     ink = 0.25 * (texture(u_image, v_uv + 0.375 * dx + 0.125 * dy, u_bias) + texture(u_image, v_uv - 0.375 * dx - 0.125 * dy, u_bias)
       + texture(u_image, v_uv + 0.125 * dx - 0.375 * dy, u_bias) + texture(u_image, v_uv - 0.125 * dx + 0.375 * dy, u_bias));
   }
-  if (u_reveal < 1.0) {
-    // The ink comes up from the middle, along an uneven soft edge.
-    vec2 p = v_uv - 0.5;
-    float a = atan(p.y, p.x);
-    float r = length(p) * 1.41421356 + 0.05 * sin(a * 5.0 + u_seed) + 0.03 * sin(a * 9.0 - u_seed * 1.7);
-    float edge = u_reveal * 1.5 - 0.2;
-    ink *= 1.0 - smoothstep(edge - 0.18, edge, r);
-  }
-  color = ink * u_alpha;
+  color = ink * (u_alpha * revealed(v_uv, u_reveal, u_seed));
 }`;
 
 // One rule per device pixel, the same one the 2D grid rounds its lines by,
@@ -55417,7 +56258,18 @@ function createGpuDesk(canvas, gl) {
   const grid = linkProgram(gl, QUAD_VERTEX, GRID_FRAGMENT);
   const pool = linkProgram(gl, QUAD_VERTEX, POOL_FRAGMENT);
   const mip = linkProgram(gl, MIP_VERTEX, MIP_FRAGMENT);
+  const inkProgram = linkProgram(gl, INK_VERTEX, INK_FRAGMENT);
+  const layerProgram = linkProgram(gl, QUAD_VERTEX, LAYER_FRAGMENT);
+  gl.useProgram(layerProgram.handle);
+  gl.uniform1i(layerProgram.u.u_layer, 1);
+  /** The screen-sized layer faded ink is drawn into: { frame, texture, width, height }. */
+  let layer = null;
   const mipQuad = createQuad(gl);
+  const corners = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, corners);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
+  /** Each design's ink on the GPU: { array, buffer, count }. */
+  const inks = new Map();
   const mipTarget = gl.createFramebuffer();
   gl.useProgram(mip.handle);
   gl.uniform1i(mip.u.u_image, 0);
@@ -55525,8 +56377,61 @@ function createGpuDesk(canvas, gl) {
     return entry;
   }
 
+  const layerOf = (width, height) => {
+    if (layer?.width === width && layer.height === height) return layer;
+    if (layer) {
+      gl.deleteFramebuffer(layer.frame);
+      gl.deleteTexture(layer.texture);
+    }
+    const texture = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, width, height);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.activeTexture(gl.TEXTURE0);
+    const frame = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, frame);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    layer = { frame, texture, width, height };
+    return layer;
+  };
+
+  /** Draw a design's shapes as they are, at `alpha`, revealed so far. */
+  const drawInk = (entry, box, rect, { alpha, blur, reveal, seed }) => {
+    const k = rect.w / box.w;
+    const px = 1 / pane.dpr;
+    gl.useProgram(inkProgram.handle);
+    gl.bindVertexArray(entry.array);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    const u = inkProgram.u;
+    gl.uniform2f(u.u_pane, pane.w, pane.h);
+    gl.uniform4f(u.u_map, k, k, rect.x - box.x * k, rect.y - box.y * k);
+    gl.uniform4f(u.u_rect, rect.x, rect.y, rect.w, rect.h);
+    gl.uniform1f(u.u_px, px);
+    gl.uniform1f(u.u_soft, px * Math.pow(2, blur * 1.5));
+    gl.uniform1f(u.u_alpha, alpha);
+    gl.uniform1f(u.u_reveal, reveal);
+    gl.uniform1f(u.u_seed, seed);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, entry.count);
+    shapes.invalidate();
+  };
+
+  const dropInk = (key) => {
+    const entry = inks.get(key);
+    if (entry?.buffer) {
+      gl.deleteBuffer(entry.buffer);
+      gl.deleteVertexArray(entry.array);
+    }
+    inks.delete(key);
+  };
+
   return {
     kind: 'gpu',
+    /** Designs are drawn as vectors (inkReady, ink); images hold their text. */
+    vector: true,
     imageScale: IMAGE_SCALE,
     maxLargeImages: MAX_LARGE_IMAGES,
     begin({ w, h, dpr, paper }) {
@@ -55586,6 +56491,94 @@ function createGpuDesk(canvas, gl) {
     clearImages() {
       for (const texture of textures.values()) gl.deleteTexture(texture);
       textures.clear();
+      for (const key of [...inks.keys()]) dropInk(key);
+    },
+
+    hasInk(key) { return inks.has(key); },
+    /** Is this design's ink on the GPU, or can it go there this frame?
+     *  `build()` gives its shapes (atlas-ink.js `svgInk`), or null. */
+    inkReady(key, build) {
+      if (inks.has(key)) return true;
+      if (spent && spent > UPLOAD_BYTES_PER_FRAME) {
+        waiting = true;
+        return false;
+      }
+      const mesh = build();
+      if (!mesh) return false;
+      if (!mesh.count) {
+        inks.set(key, { count: 0 });
+        return true;
+      }
+      spent += mesh.data.byteLength;
+      const array = gl.createVertexArray();
+      gl.bindVertexArray(array);
+      gl.bindBuffer(gl.ARRAY_BUFFER, corners);
+      gl.enableVertexAttribArray(0);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+      const buffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      gl.bufferData(gl.ARRAY_BUFFER, mesh.data, gl.STATIC_DRAW);
+      for (let i = 0; i < 3; i++) {
+        gl.enableVertexAttribArray(1 + i);
+        gl.vertexAttribPointer(1 + i, 4, gl.FLOAT, false, 48, 16 * i);
+        gl.vertexAttribDivisor(1 + i, 1);
+      }
+      gl.bindVertexArray(null);
+      shapes.invalidate();
+      inks.set(key, { array, buffer, count: mesh.count });
+      return true;
+    },
+    /** The same ink under a new key (a design just saved). */
+    renameInk(from, to) {
+      const entry = inks.get(from);
+      if (!entry || from === to) return;
+      inks.delete(from);
+      dropInk(to);
+      inks.set(to, entry);
+    },
+    /** Drop the ink of designs the desk no longer holds (`keys`: those it does). */
+    sweepInk(keys) {
+      for (const key of [...inks.keys()]) if (!keys.has(key)) dropInk(key);
+    },
+    /** A design's ink: its drawing's `box` laid on `rect` on screen. Effects
+     *  as for `image`: `blur` softens its edges by that many octaves. */
+    ink(key, box, rect, alpha, { blur = 0, reveal = 1, seed = 0 } = {}) {
+      const entry = inks.get(key);
+      if (!entry?.count || !(box?.w > 0) || alpha <= 0) return;
+      if (alpha >= 0.999 && reveal >= 1) {
+        drawInk(entry, box, rect, { alpha: 1, blur, reveal: 1, seed });
+        return;
+      }
+      // Faded or coming up: drawn whole into the layer, then laid on at once.
+      const margin = 2;
+      const x0 = Math.max(0, Math.floor(rect.x - margin));
+      const y0 = Math.max(0, Math.floor(rect.y - margin));
+      const x1 = Math.min(pane.w, Math.ceil(rect.x + rect.w + margin));
+      const y1 = Math.min(pane.h, Math.ceil(rect.y + rect.h + margin));
+      if (x1 <= x0 || y1 <= y0) return;
+      const { dpr, width, height } = pane;
+      const target = layerOf(width, height);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, target.frame);
+      gl.enable(gl.SCISSOR_TEST);
+      const sx = Math.floor(x0 * dpr);
+      const sy = Math.floor(y0 * dpr);
+      gl.scissor(sx, height - Math.ceil(y1 * dpr), Math.ceil(x1 * dpr) - sx, Math.ceil(y1 * dpr) - sy);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      drawInk(entry, box, rect, { alpha: 1, blur, reveal: 1, seed });
+      gl.disable(gl.SCISSOR_TEST);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, target.texture);
+      gl.activeTexture(gl.TEXTURE0);
+      shapes.blend(false);
+      shapes.stretch(layerProgram, x0, y0, x1 - x0, y1 - y0);
+      const u = layerProgram.u;
+      gl.uniform4f(u.u_rect, rect.x, rect.y, rect.w, rect.h);
+      gl.uniform1f(u.u_alpha, alpha);
+      gl.uniform1f(u.u_reveal, reveal);
+      gl.uniform1f(u.u_seed, seed);
+      shapes.paintQuad();
     },
 
     /** `blur`: mipmap levels out of focus; `reveal` (0 to 1): how far its
@@ -55808,6 +56801,7 @@ let appendContextItem, openMenuAt; __bind(() => { ({ appendContextItem, openMenu
 let onAccentChange; __bind(() => { ({ onAccentChange } = __require("src/web/accent.js")); });
 let gpuContext; __bind(() => { ({ gpuContext } = __require("src/web/gpu.js")); });
 let createGpuDesk; __bind(() => { ({ createGpuDesk } = __require("src/web/atlas-paint-gpu.js")); });
+let svgInk; __bind(() => { ({ svgInk } = __require("src/web/atlas-ink.js")); });
 let createCanvasDesk; __bind(() => { ({ createCanvasDesk } = __require("src/web/atlas-paint-2d.js")); });
 /**
  * The Atlas view: every design in the workspace laid out at its real
@@ -55821,6 +56815,7 @@ let createCanvasDesk; __bind(() => { ({ createCanvasDesk } = __require("src/web/
  * leaving fly a design between the editor, at the screen, and its place on
  * the desk behind it (drawFlight).
  */
+
 
 
 
@@ -55988,6 +56983,7 @@ function atlasSnapshot() {
         id: tile.id, name: entry?.name, x: tile.x, y: tile.y, w: tile.w, h: tile.h, screen: worldToScreen(tile),
         current: !!entry?.current, selected: state.selected === tile.id || !!state.picked?.has(tile.id),
         lift: liftOf(tile.id).lift, dim: liftOf(tile.id).dim, image: state.shownImage?.get(tile.id) || null,
+        ink: !!(entry?.ink && gpuDesk?.hasInk(entry.ink.key)),
         float: { dx: liftOf(tile.id).dx || 0, dy: liftOf(tile.id).dy || 0 },
       };
     }),
@@ -56289,38 +57285,104 @@ function colorsKey() {
   return `${theme()}|${document.documentElement.dataset.accent || ''}`;
 }
 
+/** What a design's images hold: on the GPU its text alone (its ink is drawn
+ *  as vectors, inkOf), on the 2D canvas the whole drawing. */
+function imageLayer() {
+  return painter().vector ? 'text' : 'full';
+}
+
+function bitmapStem(entry, revision = entry.revision) {
+  return `${entry.id}\n${revision ?? 'live'}\n${theme()}\n${imageLayer()}`;
+}
+
 function bitmapKey(entry, level) {
-  const shade = theme();
+  const stem = bitmapStem(entry);
   const keys = entry.bitmapKeys;
-  if (keys?.revision === entry.revision && keys.shade === shade) return keys[level];
-  const stem = `${entry.id}\n${entry.revision ?? 'live'}\n${shade}`;
-  entry.bitmapKeys = { revision: entry.revision, shade, small: `${stem}\nsmall`, medium: `${stem}\nmedium`, large: `${stem}\nlarge` };
+  if (keys?.stem === stem) return keys[level];
+  entry.bitmapKeys = { stem, small: `${stem}\nsmall`, medium: `${stem}\nmedium`, large: `${stem}\nlarge` };
   return entry.bitmapKeys[level];
+}
+
+/** Ink read in one frame at most this long: the rest waits its turn. */
+const INK_READ_MS_PER_FRAME = 8;
+let inkStamp = 0;
+let inkReadSpent = 0;
+
+/**
+ * A design as the GPU draws it (atlas-ink.js), read from its export SVG in
+ * the theme now: `{ key, textSvg, mesh }`, `textSvg` null for a design with
+ * no text. `mesh` is held only until it is on the GPU. Null when this frame
+ * has read its share already (unless `now`).
+ */
+function inkOf(entry, now = false) {
+  const shade = theme();
+  const ink = entry.ink;
+  if (ink?.shade === shade && ink.svg === entry.svg) return ink;
+  if (!now && inkReadSpent > INK_READ_MS_PER_FRAME) return null;
+  const started = performance.now();
+  const { data, count, textSvg } = svgInk(shade === 'dark' ? applyExportDarkTheme(entry.svg) : entry.svg);
+  inkReadSpent += performance.now() - started;
+  inkStamp += 1;
+  entry.ink = { shade, svg: entry.svg, key: `${entry.id}\n${inkStamp}`, textSvg, mesh: { data, count } };
+  return entry.ink;
+}
+
+/** Its shapes for the GPU, read again if they were let go. */
+function inkMesh(entry) {
+  const ink = entry.ink;
+  if (!ink.mesh) {
+    const { data, count } = svgInk(ink.shade === 'dark' ? applyExportDarkTheme(entry.svg) : entry.svg);
+    return { data, count };
+  }
+  const { mesh } = ink;
+  ink.mesh = null;
+  return mesh;
+}
+
+/** The SVG a design's images are drawn from, in the theme now; null when
+ *  there is nothing to draw (a design with no text, on the GPU). */
+function imageSvg(entry) {
+  if (imageLayer() === 'text') return inkOf(entry, true).textSvg;
+  return theme() === 'dark' ? applyExportDarkTheme(entry.svg) : entry.svg;
+}
+
+/** Whether a design has images to draw at all. */
+function hasImages(entry) {
+  return imageLayer() === 'full' || !!inkOf(entry, true).textSvg;
 }
 
 // Premultiplied, as the desk's shaders blend it.
 const BITMAP_OPTIONS = { premultiplyAlpha: 'premultiply' };
 
-async function rasterize(entry, level) {
-  const svg = await withEmbeddedMathFont(theme() === 'dark' ? applyExportDarkTheme(entry.svg) : entry.svg);
+/** `svg` drawn on a canvas `width` by `height`. */
+async function drawSvg(svg, width, height) {
+  const source = await withEmbeddedMathFont(svg);
   const image = new Image();
   await new Promise((resolve, reject) => {
     image.onload = resolve;
     image.onerror = () => reject(new Error('could not draw the design'));
-    image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(source)}`;
   });
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  canvas.getContext('2d').drawImage(image, 0, 0, width, height);
+  return canvas;
+}
+
+async function rasterize(entry, level) {
+  const themed = imageSvg(entry);
+  if (!themed) throw new Error('nothing to draw');
   const longest = { small: SMALL_PX, medium: MEDIUM_PX, large: LARGE_PX }[level];
   const k = longest / Math.max(entry.box.w, entry.box.h);
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(entry.box.w * k));
-  canvas.height = Math.max(1, Math.round(entry.box.h * k));
-  canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
-  return canvas;
+  return drawSvg(themed, Math.max(1, Math.round(entry.box.w * k)), Math.max(1, Math.round(entry.box.h * k)));
 }
 
 /** Decode (or bake and store) one image. */
 async function bake(entry, level) {
-  const cacheKey = entry.revision && renderingKey(entry.path, entry.revision, `${theme()}-${level}-${IMAGE_CACHE}`);
+  if (!hasImages(entry)) throw new Error('nothing to draw');
+  const layer = imageLayer() === 'text' ? 'text-' : '';
+  const cacheKey = entry.revision && renderingKey(entry.path, entry.revision, `${theme()}-${layer}${level}-${IMAGE_CACHE}`);
   const blob = cacheKey && await cacheGet(cacheKey);
   if (blob) return createImageBitmap(blob, BITMAP_OPTIONS);
   // Drawing an SVG into a bitmap blocks the page; let a zoom finish first.
@@ -56338,7 +57400,7 @@ async function warmSmallImages(generation, budget) {
   // The open design's images are never cached: bake them now, so the
   // flight back can show them.
   const current = state.tiles.map((tile) => state.entries.get(tile.id)).find((entry) => entry.current);
-  const baking = current ? IMAGE_LEVELS.map(async (level) => {
+  const baking = current && hasImages(current) ? IMAGE_LEVELS.map(async (level) => {
     const key = bitmapKey(current, level);
     if (!state.bitmaps.has(key)) state.bitmaps.set(key, await bake(current, level));
   }) : [];
@@ -56347,7 +57409,7 @@ async function warmSmallImages(generation, budget) {
   const loads = state.tiles.map(async (tile) => {
     const entry = state.entries.get(tile.id);
     const key = bitmapKey(entry, 'small');
-    if (!entry.revision || state.bitmaps.has(key)) return;
+    if (!entry.revision || state.bitmaps.has(key) || !hasImages(entry)) return;
     const bitmap = await bake(entry, 'small').catch(() => null);
     if (!bitmap || !state || state.generation !== generation || state.bitmaps.has(key)) return;
     state.bitmaps.set(key, bitmap);
@@ -56363,9 +57425,12 @@ async function warmSmallImages(generation, budget) {
 /** Startup has no editor drawing to bridge from: prepare the desk before revealing it. */
 async function prepareStartupImages(generation, target) {
   await document.fonts.ready;
+  // Each design's ink is read before the desk shows (it takes well under a
+  // millisecond a design): the desk assembles with all of it there.
+  if (painter().vector) for (const tile of state.tiles) inkOf(state.entries.get(tile.id), true);
   const k = paneSize().w / target.w * (window.devicePixelRatio || 1);
   await bakeTiles(state.tiles.map((tile) => ({ tile, entry: state.entries.get(tile.id) })), {
-    levels: ({ tile }) => imageLevels(tileDetail(Math.max(tile.w, tile.h) * k)),
+    levels: ({ tile, entry }) => (hasImages(entry) ? imageLevels(tileDetail(Math.max(tile.w, tile.h) * k)) : []),
     bake: ({ entry }, level) => bake(entry, level),
     keep: ({ entry }, level, bitmap) => state.bitmaps.set(bitmapKey(entry, level), bitmap),
     failed: ({ entry }, level) => state.failed.add(bitmapKey(entry, level)),
@@ -56430,7 +57495,6 @@ function evictBitmaps(level, keep) {
 const canvasDesk = createCanvasDesk(deskEl);
 let gpuDesk = null;
 let gpuTried = false;
-
 function startGpuDesk() {
   gpuTried = true;
   const canvas = document.createElement('canvas');
@@ -56466,6 +57530,11 @@ function startGpuDesk() {
   });
   canvas.addEventListener('webglcontextrestored', () => {
     try { build(); } catch { return; }
+    // The 2D canvas's whole-drawing images give way to text images again.
+    if (state) {
+      for (const bitmap of state.bitmaps.values()) bitmap.close?.();
+      state.bitmaps.clear();
+    }
     requestDraw();
   });
 }
@@ -56589,6 +57658,7 @@ function drawDesk() {
   const { w, h } = paneSize();
   const dpr = window.devicePixelRatio || 1;
   const paint = painter();
+  inkReadSpent = 0;
   // A theme change repaints everything: the palette, and the live SVGs.
   if (state.colorsKey !== colorsKey()) {
     state.colors = colors();
@@ -56662,10 +57732,26 @@ function drawDesk() {
     const fade = (state.matches && !found ? 0.18 : 1) * alpha * (1 - DIMMED * dim);
     if (found?.hits.length && document.activeElement === searchEl) drawHits(paint, tile, entry, found.hits, palette, alpha);
     let imageAlpha = fade;
+    const effects = { reveal: entry.current ? 1 : reveal, seed: tile.x * 0.013 + tile.y * 0.007, blur: state.flight ? deskBlur(state.flight.depth) : 0 };
+    // On the GPU the ink is drawn as vectors, sharp at any size; its images
+    // carry only its text. A design read since the desk showed fades in.
+    const ink = paint.vector ? inkOf(entry) : null;
+    if (paint.vector && !ink) requestDraw();
+    if (ink && !flying) {
+      const fresh = !paint.hasInk(ink.key);
+      if (paint.inkReady(ink.key, () => inkMesh(entry))) {
+        if (fresh && !entry.current && !rootEl.classList.contains('preparing')) state.arrived.set(ink.key, performance.now());
+        const since = state.arrived.get(ink.key);
+        const arriving = since === undefined ? 1 : Math.min(1, (performance.now() - since) / ARRIVE_MS);
+        if (arriving < 1) requestDraw();
+        paint.ink(ink.key, entry.box, rect, fade * arriving, effects);
+      }
+    }
     const level = imageLevel(imageDetail);
+    const withImages = !paint.vector || !!ink?.textSvg;
     // Its own image, else the sharpest one there is.
-    let imageKey = bitmapKey(entry, level);
-    if (!paint.ready(imageKey, state.bitmaps.get(imageKey))) {
+    let imageKey = withImages ? bitmapKey(entry, level) : null;
+    if (imageKey && !paint.ready(imageKey, state.bitmaps.get(imageKey))) {
       imageKey = null;
       for (let i = IMAGE_LEVELS.length - 1; i >= 0 && !imageKey; i--) {
         const key = bitmapKey(entry, IMAGE_LEVELS[i]);
@@ -56680,12 +57766,12 @@ function drawDesk() {
       imageAlpha *= arriving;
       // While a design flies at the glass, the desk behind it goes out of focus.
       (state.shownImage ||= new Map()).set(tile.id, imageKey.split('\n').pop());
-      paint.image(imageKey, rect, imageAlpha, { reveal: entry.current ? 1 : reveal, seed: tile.x * 0.013 + tile.y * 0.007, blur: state.flight ? deskBlur(state.flight.depth) : 0 });
+      paint.image(imageKey, rect, imageAlpha, effects);
     }
     const distance = Math.hypot(tile.x + tile.w / 2 - center.x, tile.y + tile.h / 2 - center.y);
     // Mid-animation only small images are fetched: decoding a larger one
     // would drop frames, and the view does not rest here anyway.
-    for (const need of moving ? ['small'] : imageLevels(imageDetail)) {
+    for (const need of !withImages ? [] : moving ? ['small'] : imageLevels(imageDetail)) {
       const key = bitmapKey(entry, need);
       // In motion only what is missing matters: nothing is being kept.
       if (!moving || !state.bitmaps.has(key)) wanted.push({ entry, level: need, key, distance });
@@ -56695,6 +57781,8 @@ function drawDesk() {
   drawLinks(paint, palette, shown);
   if (state.flight) drawFlight(paint, palette, w, h);
   paint.sweep(state.bitmaps);
+  // The ink of designs no longer on the desk (or read again) goes.
+  if (paint.vector) paint.sweepInk(new Set([...state.entries.values()].map((entry) => entry.ink?.key).filter(Boolean)));
   if (paint.end()) requestDraw();
   // Every small image first (the whole desk becomes recognizable), then
   // the rest, nearest the middle first.
@@ -57922,7 +59010,7 @@ async function saveTags(entry, text) {
         for (const level of IMAGE_LEVELS) {
           const bitmap = state?.bitmaps.get(bitmapKey(entry, level));
           if (!bitmap) continue;
-          const key = `${entry.id}\n${revision}\n${theme()}\n${level}`;
+          const key = `${bitmapStem(entry, revision)}\n${level}`;
           state.bitmaps.set(key, bitmap);
           painter().rename(bitmapKey(entry, level), key);
         }
@@ -58072,10 +59160,12 @@ function syncVectorOverlays(list, moving = false) {
   for (const { tile, rect } of list) {
     let el = state.overlays.get(tile.id);
     if (!el) {
+      // On the GPU the ink is on the desk already: only its text is laid over.
+      const drawing = imageSvg(state.entries.get(tile.id));
+      if (!drawing) continue;
       el = document.createElement('div');
       el.className = 'atlas-vector';
-      const { svg: drawing } = state.entries.get(tile.id);
-      el.innerHTML = theme() === 'dark' ? applyExportDarkTheme(drawing) : drawing;
+      el.innerHTML = drawing;
       const svg = el.querySelector('svg');
       svg?.removeAttribute('width');
       svg?.removeAttribute('height');
@@ -58496,7 +59586,11 @@ function drawFlight(paint, palette, w, h) {
   }
   if (grid) drawGrid(paint, palette, grid, grid.k, { alpha: alpha * smoothstep(near * 1.25), clip: { ...sheet, radius } });
   if (design) {
-    const key = IMAGE_LEVELS.slice().reverse().map((level) => bitmapKey(entry, level)).find((candidate) => paint.ready(candidate, state.bitmaps.get(candidate)));
+    // On the GPU its ink stays sharp all the way to the glass.
+    const ink = paint.vector ? inkOf(entry, true) : null;
+    if (ink && paint.inkReady(ink.key, () => inkMesh(entry))) paint.ink(ink.key, entry.box, design, 1);
+    const key = paint.vector && !ink?.textSvg ? null
+      : IMAGE_LEVELS.slice().reverse().map((level) => bitmapKey(entry, level)).find((candidate) => paint.ready(candidate, state.bitmaps.get(candidate)));
     if (key) paint.image(key, design, 1);
   }
   // In flight its edge catches the light, most of all midway.
@@ -58857,7 +59951,7 @@ async function openDesk(generation, source, animate, startup) {
  *  most `budget` ms: the desk fades in with the design already on it. */
 async function bakeOpenDesign(budget) {
   const entry = state.tiles.map((tile) => state.entries.get(tile.id)).find((candidate) => candidate?.current);
-  if (!entry) return;
+  if (!entry || !hasImages(entry)) return;
   const jobs = IMAGE_LEVELS.map(async (level) => {
     const key = bitmapKey(entry, level);
     if (state.bitmaps.has(key)) return;

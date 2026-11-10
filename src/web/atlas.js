@@ -54,6 +54,7 @@ import { appendContextItem, openMenuAt } from './context-menu.js';
 import { onAccentChange } from './accent.js';
 import { gpuContext } from './gpu.js';
 import { createGpuDesk } from './atlas-paint-gpu.js';
+import { svgInk } from './atlas-ink.js';
 import { createCanvasDesk } from './atlas-paint-2d.js';
 
 const rootEl = document.getElementById('atlas');
@@ -180,6 +181,7 @@ export function atlasSnapshot() {
         id: tile.id, name: entry?.name, x: tile.x, y: tile.y, w: tile.w, h: tile.h, screen: worldToScreen(tile),
         current: !!entry?.current, selected: state.selected === tile.id || !!state.picked?.has(tile.id),
         lift: liftOf(tile.id).lift, dim: liftOf(tile.id).dim, image: state.shownImage?.get(tile.id) || null,
+        ink: !!(entry?.ink && gpuDesk?.hasInk(entry.ink.key)),
         float: { dx: liftOf(tile.id).dx || 0, dy: liftOf(tile.id).dy || 0 },
       };
     }),
@@ -481,38 +483,104 @@ function colorsKey() {
   return `${theme()}|${document.documentElement.dataset.accent || ''}`;
 }
 
+/** What a design's images hold: on the GPU its text alone (its ink is drawn
+ *  as vectors, inkOf), on the 2D canvas the whole drawing. */
+function imageLayer() {
+  return painter().vector ? 'text' : 'full';
+}
+
+function bitmapStem(entry, revision = entry.revision) {
+  return `${entry.id}\n${revision ?? 'live'}\n${theme()}\n${imageLayer()}`;
+}
+
 function bitmapKey(entry, level) {
-  const shade = theme();
+  const stem = bitmapStem(entry);
   const keys = entry.bitmapKeys;
-  if (keys?.revision === entry.revision && keys.shade === shade) return keys[level];
-  const stem = `${entry.id}\n${entry.revision ?? 'live'}\n${shade}`;
-  entry.bitmapKeys = { revision: entry.revision, shade, small: `${stem}\nsmall`, medium: `${stem}\nmedium`, large: `${stem}\nlarge` };
+  if (keys?.stem === stem) return keys[level];
+  entry.bitmapKeys = { stem, small: `${stem}\nsmall`, medium: `${stem}\nmedium`, large: `${stem}\nlarge` };
   return entry.bitmapKeys[level];
+}
+
+/** Ink read in one frame at most this long: the rest waits its turn. */
+const INK_READ_MS_PER_FRAME = 8;
+let inkStamp = 0;
+let inkReadSpent = 0;
+
+/**
+ * A design as the GPU draws it (atlas-ink.js), read from its export SVG in
+ * the theme now: `{ key, textSvg, mesh }`, `textSvg` null for a design with
+ * no text. `mesh` is held only until it is on the GPU. Null when this frame
+ * has read its share already (unless `now`).
+ */
+function inkOf(entry, now = false) {
+  const shade = theme();
+  const ink = entry.ink;
+  if (ink?.shade === shade && ink.svg === entry.svg) return ink;
+  if (!now && inkReadSpent > INK_READ_MS_PER_FRAME) return null;
+  const started = performance.now();
+  const { data, count, textSvg } = svgInk(shade === 'dark' ? applyExportDarkTheme(entry.svg) : entry.svg);
+  inkReadSpent += performance.now() - started;
+  inkStamp += 1;
+  entry.ink = { shade, svg: entry.svg, key: `${entry.id}\n${inkStamp}`, textSvg, mesh: { data, count } };
+  return entry.ink;
+}
+
+/** Its shapes for the GPU, read again if they were let go. */
+function inkMesh(entry) {
+  const ink = entry.ink;
+  if (!ink.mesh) {
+    const { data, count } = svgInk(ink.shade === 'dark' ? applyExportDarkTheme(entry.svg) : entry.svg);
+    return { data, count };
+  }
+  const { mesh } = ink;
+  ink.mesh = null;
+  return mesh;
+}
+
+/** The SVG a design's images are drawn from, in the theme now; null when
+ *  there is nothing to draw (a design with no text, on the GPU). */
+function imageSvg(entry) {
+  if (imageLayer() === 'text') return inkOf(entry, true).textSvg;
+  return theme() === 'dark' ? applyExportDarkTheme(entry.svg) : entry.svg;
+}
+
+/** Whether a design has images to draw at all. */
+function hasImages(entry) {
+  return imageLayer() === 'full' || !!inkOf(entry, true).textSvg;
 }
 
 // Premultiplied, as the desk's shaders blend it.
 const BITMAP_OPTIONS = { premultiplyAlpha: 'premultiply' };
 
-async function rasterize(entry, level) {
-  const svg = await withEmbeddedMathFont(theme() === 'dark' ? applyExportDarkTheme(entry.svg) : entry.svg);
+/** `svg` drawn on a canvas `width` by `height`. */
+async function drawSvg(svg, width, height) {
+  const source = await withEmbeddedMathFont(svg);
   const image = new Image();
   await new Promise((resolve, reject) => {
     image.onload = resolve;
     image.onerror = () => reject(new Error('could not draw the design'));
-    image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(source)}`;
   });
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  canvas.getContext('2d').drawImage(image, 0, 0, width, height);
+  return canvas;
+}
+
+async function rasterize(entry, level) {
+  const themed = imageSvg(entry);
+  if (!themed) throw new Error('nothing to draw');
   const longest = { small: SMALL_PX, medium: MEDIUM_PX, large: LARGE_PX }[level];
   const k = longest / Math.max(entry.box.w, entry.box.h);
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(entry.box.w * k));
-  canvas.height = Math.max(1, Math.round(entry.box.h * k));
-  canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
-  return canvas;
+  return drawSvg(themed, Math.max(1, Math.round(entry.box.w * k)), Math.max(1, Math.round(entry.box.h * k)));
 }
 
 /** Decode (or bake and store) one image. */
 async function bake(entry, level) {
-  const cacheKey = entry.revision && renderingKey(entry.path, entry.revision, `${theme()}-${level}-${IMAGE_CACHE}`);
+  if (!hasImages(entry)) throw new Error('nothing to draw');
+  const layer = imageLayer() === 'text' ? 'text-' : '';
+  const cacheKey = entry.revision && renderingKey(entry.path, entry.revision, `${theme()}-${layer}${level}-${IMAGE_CACHE}`);
   const blob = cacheKey && await cacheGet(cacheKey);
   if (blob) return createImageBitmap(blob, BITMAP_OPTIONS);
   // Drawing an SVG into a bitmap blocks the page; let a zoom finish first.
@@ -530,7 +598,7 @@ async function warmSmallImages(generation, budget) {
   // The open design's images are never cached: bake them now, so the
   // flight back can show them.
   const current = state.tiles.map((tile) => state.entries.get(tile.id)).find((entry) => entry.current);
-  const baking = current ? IMAGE_LEVELS.map(async (level) => {
+  const baking = current && hasImages(current) ? IMAGE_LEVELS.map(async (level) => {
     const key = bitmapKey(current, level);
     if (!state.bitmaps.has(key)) state.bitmaps.set(key, await bake(current, level));
   }) : [];
@@ -539,7 +607,7 @@ async function warmSmallImages(generation, budget) {
   const loads = state.tiles.map(async (tile) => {
     const entry = state.entries.get(tile.id);
     const key = bitmapKey(entry, 'small');
-    if (!entry.revision || state.bitmaps.has(key)) return;
+    if (!entry.revision || state.bitmaps.has(key) || !hasImages(entry)) return;
     const bitmap = await bake(entry, 'small').catch(() => null);
     if (!bitmap || !state || state.generation !== generation || state.bitmaps.has(key)) return;
     state.bitmaps.set(key, bitmap);
@@ -555,9 +623,12 @@ async function warmSmallImages(generation, budget) {
 /** Startup has no editor drawing to bridge from: prepare the desk before revealing it. */
 async function prepareStartupImages(generation, target) {
   await document.fonts.ready;
+  // Each design's ink is read before the desk shows (it takes well under a
+  // millisecond a design): the desk assembles with all of it there.
+  if (painter().vector) for (const tile of state.tiles) inkOf(state.entries.get(tile.id), true);
   const k = paneSize().w / target.w * (window.devicePixelRatio || 1);
   await bakeTiles(state.tiles.map((tile) => ({ tile, entry: state.entries.get(tile.id) })), {
-    levels: ({ tile }) => imageLevels(tileDetail(Math.max(tile.w, tile.h) * k)),
+    levels: ({ tile, entry }) => (hasImages(entry) ? imageLevels(tileDetail(Math.max(tile.w, tile.h) * k)) : []),
     bake: ({ entry }, level) => bake(entry, level),
     keep: ({ entry }, level, bitmap) => state.bitmaps.set(bitmapKey(entry, level), bitmap),
     failed: ({ entry }, level) => state.failed.add(bitmapKey(entry, level)),
@@ -622,7 +693,6 @@ function evictBitmaps(level, keep) {
 const canvasDesk = createCanvasDesk(deskEl);
 let gpuDesk = null;
 let gpuTried = false;
-
 function startGpuDesk() {
   gpuTried = true;
   const canvas = document.createElement('canvas');
@@ -658,6 +728,11 @@ function startGpuDesk() {
   });
   canvas.addEventListener('webglcontextrestored', () => {
     try { build(); } catch { return; }
+    // The 2D canvas's whole-drawing images give way to text images again.
+    if (state) {
+      for (const bitmap of state.bitmaps.values()) bitmap.close?.();
+      state.bitmaps.clear();
+    }
     requestDraw();
   });
 }
@@ -781,6 +856,7 @@ function drawDesk() {
   const { w, h } = paneSize();
   const dpr = window.devicePixelRatio || 1;
   const paint = painter();
+  inkReadSpent = 0;
   // A theme change repaints everything: the palette, and the live SVGs.
   if (state.colorsKey !== colorsKey()) {
     state.colors = colors();
@@ -854,10 +930,26 @@ function drawDesk() {
     const fade = (state.matches && !found ? 0.18 : 1) * alpha * (1 - DIMMED * dim);
     if (found?.hits.length && document.activeElement === searchEl) drawHits(paint, tile, entry, found.hits, palette, alpha);
     let imageAlpha = fade;
+    const effects = { reveal: entry.current ? 1 : reveal, seed: tile.x * 0.013 + tile.y * 0.007, blur: state.flight ? deskBlur(state.flight.depth) : 0 };
+    // On the GPU the ink is drawn as vectors, sharp at any size; its images
+    // carry only its text. A design read since the desk showed fades in.
+    const ink = paint.vector ? inkOf(entry) : null;
+    if (paint.vector && !ink) requestDraw();
+    if (ink && !flying) {
+      const fresh = !paint.hasInk(ink.key);
+      if (paint.inkReady(ink.key, () => inkMesh(entry))) {
+        if (fresh && !entry.current && !rootEl.classList.contains('preparing')) state.arrived.set(ink.key, performance.now());
+        const since = state.arrived.get(ink.key);
+        const arriving = since === undefined ? 1 : Math.min(1, (performance.now() - since) / ARRIVE_MS);
+        if (arriving < 1) requestDraw();
+        paint.ink(ink.key, entry.box, rect, fade * arriving, effects);
+      }
+    }
     const level = imageLevel(imageDetail);
+    const withImages = !paint.vector || !!ink?.textSvg;
     // Its own image, else the sharpest one there is.
-    let imageKey = bitmapKey(entry, level);
-    if (!paint.ready(imageKey, state.bitmaps.get(imageKey))) {
+    let imageKey = withImages ? bitmapKey(entry, level) : null;
+    if (imageKey && !paint.ready(imageKey, state.bitmaps.get(imageKey))) {
       imageKey = null;
       for (let i = IMAGE_LEVELS.length - 1; i >= 0 && !imageKey; i--) {
         const key = bitmapKey(entry, IMAGE_LEVELS[i]);
@@ -872,12 +964,12 @@ function drawDesk() {
       imageAlpha *= arriving;
       // While a design flies at the glass, the desk behind it goes out of focus.
       (state.shownImage ||= new Map()).set(tile.id, imageKey.split('\n').pop());
-      paint.image(imageKey, rect, imageAlpha, { reveal: entry.current ? 1 : reveal, seed: tile.x * 0.013 + tile.y * 0.007, blur: state.flight ? deskBlur(state.flight.depth) : 0 });
+      paint.image(imageKey, rect, imageAlpha, effects);
     }
     const distance = Math.hypot(tile.x + tile.w / 2 - center.x, tile.y + tile.h / 2 - center.y);
     // Mid-animation only small images are fetched: decoding a larger one
     // would drop frames, and the view does not rest here anyway.
-    for (const need of moving ? ['small'] : imageLevels(imageDetail)) {
+    for (const need of !withImages ? [] : moving ? ['small'] : imageLevels(imageDetail)) {
       const key = bitmapKey(entry, need);
       // In motion only what is missing matters: nothing is being kept.
       if (!moving || !state.bitmaps.has(key)) wanted.push({ entry, level: need, key, distance });
@@ -887,6 +979,8 @@ function drawDesk() {
   drawLinks(paint, palette, shown);
   if (state.flight) drawFlight(paint, palette, w, h);
   paint.sweep(state.bitmaps);
+  // The ink of designs no longer on the desk (or read again) goes.
+  if (paint.vector) paint.sweepInk(new Set([...state.entries.values()].map((entry) => entry.ink?.key).filter(Boolean)));
   if (paint.end()) requestDraw();
   // Every small image first (the whole desk becomes recognizable), then
   // the rest, nearest the middle first.
@@ -2114,7 +2208,7 @@ async function saveTags(entry, text) {
         for (const level of IMAGE_LEVELS) {
           const bitmap = state?.bitmaps.get(bitmapKey(entry, level));
           if (!bitmap) continue;
-          const key = `${entry.id}\n${revision}\n${theme()}\n${level}`;
+          const key = `${bitmapStem(entry, revision)}\n${level}`;
           state.bitmaps.set(key, bitmap);
           painter().rename(bitmapKey(entry, level), key);
         }
@@ -2264,10 +2358,12 @@ function syncVectorOverlays(list, moving = false) {
   for (const { tile, rect } of list) {
     let el = state.overlays.get(tile.id);
     if (!el) {
+      // On the GPU the ink is on the desk already: only its text is laid over.
+      const drawing = imageSvg(state.entries.get(tile.id));
+      if (!drawing) continue;
       el = document.createElement('div');
       el.className = 'atlas-vector';
-      const { svg: drawing } = state.entries.get(tile.id);
-      el.innerHTML = theme() === 'dark' ? applyExportDarkTheme(drawing) : drawing;
+      el.innerHTML = drawing;
       const svg = el.querySelector('svg');
       svg?.removeAttribute('width');
       svg?.removeAttribute('height');
@@ -2688,7 +2784,11 @@ function drawFlight(paint, palette, w, h) {
   }
   if (grid) drawGrid(paint, palette, grid, grid.k, { alpha: alpha * smoothstep(near * 1.25), clip: { ...sheet, radius } });
   if (design) {
-    const key = IMAGE_LEVELS.slice().reverse().map((level) => bitmapKey(entry, level)).find((candidate) => paint.ready(candidate, state.bitmaps.get(candidate)));
+    // On the GPU its ink stays sharp all the way to the glass.
+    const ink = paint.vector ? inkOf(entry, true) : null;
+    if (ink && paint.inkReady(ink.key, () => inkMesh(entry))) paint.ink(ink.key, entry.box, design, 1);
+    const key = paint.vector && !ink?.textSvg ? null
+      : IMAGE_LEVELS.slice().reverse().map((level) => bitmapKey(entry, level)).find((candidate) => paint.ready(candidate, state.bitmaps.get(candidate)));
     if (key) paint.image(key, design, 1);
   }
   // In flight its edge catches the light, most of all midway.
@@ -3049,7 +3149,7 @@ async function openDesk(generation, source, animate, startup) {
  *  most `budget` ms: the desk fades in with the design already on it. */
 async function bakeOpenDesign(budget) {
   const entry = state.tiles.map((tile) => state.entries.get(tile.id)).find((candidate) => candidate?.current);
-  if (!entry) return;
+  if (!entry || !hasImages(entry)) return;
   const jobs = IMAGE_LEVELS.map(async (level) => {
     const key = bitmapKey(entry, level);
     if (state.bitmaps.has(key)) return;

@@ -24,11 +24,18 @@ design back to the desk, as below. Reduced-motion preferences skip the startup a
 
 The desk is drawn with WebGL2 (`src/web/atlas-paint-gpu.js`, shapes and beams
 in `src/web/gpu.js`) or on a 2D canvas (`src/web/atlas-paint-2d.js`), behind
-the same drawing operations, so `draw` and its helpers have one path. The
-GPU's designs are mipmapped textures drawn from images three times their size
-on screen, sampled four times a pixel, at most 12 MB uploaded a frame; each
-smaller level keeps part of its strongest ink, so thin lines survive zooming out; the grid,
-shadows, glows, and beams are shaders; captions are small cached textures.
+the same drawing operations, so `draw` and its helpers have one path. On the
+GPU a design's ink is vectors (`src/web/atlas-ink.js`): its export SVG read
+once into segments, discs, rings, and triangles in document order, one
+instanced draw a design, each edge smoothed over a pixel by its distance.
+Miter and bevel corners are wedges of their own; the triangles of a fill meet
+without seams (only outline edges are smoothed); a line thinner than a pixel
+stays a pixel wide and fades by as much. A faded or revealing design is drawn
+whole into a layer and laid on at once, so its overlaps are no darker. Its
+text (text, math, pictures) is the export SVG less its ink, drawn to mipmapped
+images three times its size on screen, sampled four times a pixel, at most
+12 MB uploaded a frame; each smaller level keeps part of its strongest ink.
+The grid, shadows, glows, and beams are shaders; captions are small cached textures.
 A browser with no real GPU (software renderers included) keeps the 2D canvas,
 and a lost context falls back to it until the context returns.
 `localStorage['mosfeteer.gpu']` is `off` to stay on the 2D canvas, or `on` to
@@ -323,10 +330,10 @@ open no design: a double-click zooms to a card, Esc returns.
   scaled to about fill it, then pushed apart where they overlap (each the
   side its place puts it) while pulled back to their places and toward the
   middle, and laid on the grid from the middle out.
-- **Levels of detail**: one canvas paints every design from a baked image, small (256 px longest
+- **Levels of detail**: one canvas paints every design (on the GPU, its text) from a baked image, small (256 px longest
   side), medium (640 px) or large (1280 px), the one nearest its size on
   screen (at most 1.25 times stretched), and once even the large one would
-  blur, the live SVG is laid over it (at most six at a time). At most 128
+  blur, the live SVG (on the GPU, its text) is laid over it (at most six at a time). At most 128
   medium and 24 large images are kept; past that the designs nearest the
   middle of the screen have theirs and the rest show the sharpest they
   have, so a desk at rest stops baking.

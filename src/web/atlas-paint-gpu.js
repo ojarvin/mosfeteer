@@ -26,12 +26,155 @@ const INK_KEPT = 0.45;
 const MAX_CAPTIONS = 800;
 const TEXT_PAD = 2;
 
+/** How far a design's ink has come up at `uv` (0 to 1 across it): from the
+ *  middle out, along an uneven soft edge. */
+const REVEAL = `
+float revealed(vec2 uv, float reveal, float seed) {
+  if (reveal >= 1.0) return 1.0;
+  vec2 p = uv - 0.5;
+  float a = atan(p.y, p.x);
+  float r = length(p) * 1.41421356 + 0.05 * sin(a * 5.0 + seed) + 0.03 * sin(a * 9.0 - seed * 1.7);
+  float edge = reveal * 1.5 - 0.2;
+  return 1.0 - smoothstep(edge - 0.18, edge, r);
+}`;
+
+// A design's ink (atlas-ink.js): one instance a shape, its quad drawn round
+// it on screen, its edge smoothed over a pixel by its distance. A line
+// thinner than a pixel stays a pixel wide and fades by as much instead.
+const INK_VERTEX = `#version 300 es
+layout(location = 0) in vec2 a_corner;
+layout(location = 1) in vec4 a_a;
+layout(location = 2) in vec4 a_b;
+layout(location = 3) in vec4 a_color;
+uniform vec2 u_pane;
+uniform vec4 u_map;
+uniform float u_px, u_soft;
+out vec2 v_p;
+flat out vec4 v_a;
+flat out vec4 v_b;
+flat out vec4 v_color;
+flat out float v_fade;
+vec2 place(vec2 p) { return p * u_map.x + u_map.zw; }
+void main() {
+  int kind = int(a_b.w + 0.5);
+  float k = u_map.x;
+  float margin = u_soft + u_px;
+  vec2 p;
+  v_color = a_color;
+  v_fade = 1.0;
+  if (kind == 0) {
+    vec2 p0 = place(a_a.xy), p1 = place(a_a.zw);
+    float half_ = a_b.x * k;
+    if (half_ < 0.5 * u_px) { v_fade = half_ / (0.5 * u_px); half_ = 0.5 * u_px; }
+    vec2 d = p1 - p0;
+    float len = length(d);
+    vec2 dir = len > 1e-6 ? d / len : vec2(1.0, 0.0);
+    vec2 n = vec2(-dir.y, dir.x);
+    float out_ = half_ + margin;
+    p = mix(p0 - dir * out_, p1 + dir * out_, a_corner.x) + n * out_ * (a_corner.y * 2.0 - 1.0);
+    v_a = vec4(p0, p1);
+    v_b = vec4(half_, a_b.y, a_b.z, 0.0);
+  } else if (kind == 1 || kind == 2) {
+    vec2 c = place(a_a.xy);
+    float r = a_a.z * k;
+    float half_ = kind == 2 ? a_b.x * k : 0.0;
+    if (kind == 2 && half_ < 0.5 * u_px) { v_fade = half_ / (0.5 * u_px); half_ = 0.5 * u_px; }
+    if (kind == 1 && r < 0.5 * u_px) { v_fade = (r * r) / (0.25 * u_px * u_px); r = 0.5 * u_px; }
+    float out_ = r + half_ + margin;
+    p = c + (a_corner * 2.0 - 1.0) * out_;
+    v_a = vec4(c, r, half_);
+    v_b = vec4(0.0, 0.0, 0.0, float(kind));
+  } else {
+    vec2 p0 = place(a_a.xy), p1 = place(a_a.zw), p2 = place(a_b.xy);
+    vec2 lo = min(p0, min(p1, p2)) - margin, hi = max(p0, max(p1, p2)) + margin;
+    p = mix(lo, hi, a_corner);
+    v_a = vec4(p0, p1);
+    v_b = vec4(p2, a_b.z, 3.0);
+  }
+  v_p = p;
+  vec2 clip = p / u_pane * 2.0 - 1.0;
+  gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
+}`;
+
+const INK_FRAGMENT = `#version 300 es
+precision highp float;
+in vec2 v_p;
+flat in vec4 v_a;
+flat in vec4 v_b;
+flat in vec4 v_color;
+flat in float v_fade;
+uniform vec4 u_rect;
+uniform float u_soft, u_alpha, u_reveal, u_seed;
+out vec4 color;
+${REVEAL}
+float capped(float t, float v, float half_, float cap) {
+  if (cap > 1.5) return length(vec2(t, v)) - half_;
+  return max(abs(v) - half_, cap > 0.5 ? t - half_ : t);
+}
+// Outside the edge a to b, by how far (the triangle wound by s).
+float side(vec2 a, vec2 b, float s) {
+  vec2 e = b - a;
+  return -s * (e.x * (v_p.y - a.y) - e.y * (v_p.x - a.x)) / max(length(e), 1e-6);
+}
+void main() {
+  int kind = int(v_b.w + 0.5);
+  float d;
+  if (kind == 0) {
+    vec2 p0 = v_a.xy, p1 = v_a.zw;
+    vec2 e = p1 - p0;
+    float len = length(e);
+    vec2 dir = len > 1e-6 ? e / len : vec2(1.0, 0.0);
+    vec2 q = v_p - p0;
+    float u = dot(q, dir), v = dot(q, vec2(-dir.y, dir.x));
+    float half_ = v_b.x;
+    // An end at a mitered corner is cut hard: the corner's wedge takes over.
+    if ((u < 0.0 && v_b.y > 2.5) || (u > len && v_b.z > 2.5)) discard;
+    if (u < 0.0) d = capped(-u, v, half_, v_b.y);
+    else if (u > len) d = capped(u - len, v, half_, v_b.z);
+    else d = abs(v) - half_;
+  } else if (kind == 1) {
+    d = length(v_p - v_a.xy) - v_a.z;
+  } else if (kind == 2) {
+    d = abs(length(v_p - v_a.xy) - v_a.z) - v_a.w;
+  } else {
+    vec2 p0 = v_a.xy, p1 = v_a.zw, p2 = v_b.xy;
+    float s = sign((p1.x - p0.x) * (p2.y - p0.y) - (p1.y - p0.y) * (p2.x - p0.x));
+    int edges = int(v_b.z + 0.5);
+    d = -1e6;
+    float e0 = side(p0, p1, s), e1 = side(p1, p2, s), e2 = side(p2, p0, s);
+    // An edge inside the shape cuts hard at the pixel's middle, so the
+    // triangle next to it takes the pixel: no seam between them.
+    if ((edges & 1) != 0) d = max(d, e0); else if (e0 > 0.0) discard;
+    if ((edges & 2) != 0) d = max(d, e1); else if (e1 > 0.0) discard;
+    if ((edges & 4) != 0) d = max(d, e2); else if (e2 > 0.0) discard;
+  }
+  float cover = clamp(0.5 - d / u_soft, 0.0, 1.0) * v_fade;
+  if (cover <= 0.0) discard;
+  float shown = revealed((v_p - u_rect.xy) / u_rect.zw, u_reveal, u_seed);
+  color = v_color * (cover * shown * u_alpha);
+}`;
+
+// A faded design's ink, drawn whole into a layer first, laid on the desk at
+// once: where its shapes overlap it is no darker than elsewhere.
+const LAYER_FRAGMENT = `#version 300 es
+precision highp float;
+in vec2 v_p;
+uniform sampler2D u_layer;
+uniform vec4 u_rect;
+uniform float u_alpha, u_reveal, u_seed;
+out vec4 color;
+${REVEAL}
+void main() {
+  color = texelFetch(u_layer, ivec2(gl_FragCoord.xy), 0) * (u_alpha * revealed((v_p - u_rect.xy) / u_rect.zw, u_reveal, u_seed));
+}`;
+
 const IMAGE_FRAGMENT = `#version 300 es
 precision highp float;
 in vec2 v_uv;
 uniform sampler2D u_image;
 uniform float u_alpha, u_bias, u_blur, u_reveal, u_seed;
 out vec4 color;
+${REVEAL}
 void main() {
   vec4 ink;
   if (u_blur > 0.0) {
@@ -47,15 +190,7 @@ void main() {
     ink = 0.25 * (texture(u_image, v_uv + 0.375 * dx + 0.125 * dy, u_bias) + texture(u_image, v_uv - 0.375 * dx - 0.125 * dy, u_bias)
       + texture(u_image, v_uv + 0.125 * dx - 0.375 * dy, u_bias) + texture(u_image, v_uv - 0.125 * dx + 0.375 * dy, u_bias));
   }
-  if (u_reveal < 1.0) {
-    // The ink comes up from the middle, along an uneven soft edge.
-    vec2 p = v_uv - 0.5;
-    float a = atan(p.y, p.x);
-    float r = length(p) * 1.41421356 + 0.05 * sin(a * 5.0 + u_seed) + 0.03 * sin(a * 9.0 - u_seed * 1.7);
-    float edge = u_reveal * 1.5 - 0.2;
-    ink *= 1.0 - smoothstep(edge - 0.18, edge, r);
-  }
-  color = ink * u_alpha;
+  color = ink * (u_alpha * revealed(v_uv, u_reveal, u_seed));
 }`;
 
 // One rule per device pixel, the same one the 2D grid rounds its lines by,
@@ -134,7 +269,18 @@ export function createGpuDesk(canvas, gl) {
   const grid = linkProgram(gl, QUAD_VERTEX, GRID_FRAGMENT);
   const pool = linkProgram(gl, QUAD_VERTEX, POOL_FRAGMENT);
   const mip = linkProgram(gl, MIP_VERTEX, MIP_FRAGMENT);
+  const inkProgram = linkProgram(gl, INK_VERTEX, INK_FRAGMENT);
+  const layerProgram = linkProgram(gl, QUAD_VERTEX, LAYER_FRAGMENT);
+  gl.useProgram(layerProgram.handle);
+  gl.uniform1i(layerProgram.u.u_layer, 1);
+  /** The screen-sized layer faded ink is drawn into: { frame, texture, width, height }. */
+  let layer = null;
   const mipQuad = createQuad(gl);
+  const corners = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, corners);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
+  /** Each design's ink on the GPU: { array, buffer, count }. */
+  const inks = new Map();
   const mipTarget = gl.createFramebuffer();
   gl.useProgram(mip.handle);
   gl.uniform1i(mip.u.u_image, 0);
@@ -242,8 +388,61 @@ export function createGpuDesk(canvas, gl) {
     return entry;
   }
 
+  const layerOf = (width, height) => {
+    if (layer?.width === width && layer.height === height) return layer;
+    if (layer) {
+      gl.deleteFramebuffer(layer.frame);
+      gl.deleteTexture(layer.texture);
+    }
+    const texture = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, width, height);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.activeTexture(gl.TEXTURE0);
+    const frame = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, frame);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    layer = { frame, texture, width, height };
+    return layer;
+  };
+
+  /** Draw a design's shapes as they are, at `alpha`, revealed so far. */
+  const drawInk = (entry, box, rect, { alpha, blur, reveal, seed }) => {
+    const k = rect.w / box.w;
+    const px = 1 / pane.dpr;
+    gl.useProgram(inkProgram.handle);
+    gl.bindVertexArray(entry.array);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    const u = inkProgram.u;
+    gl.uniform2f(u.u_pane, pane.w, pane.h);
+    gl.uniform4f(u.u_map, k, k, rect.x - box.x * k, rect.y - box.y * k);
+    gl.uniform4f(u.u_rect, rect.x, rect.y, rect.w, rect.h);
+    gl.uniform1f(u.u_px, px);
+    gl.uniform1f(u.u_soft, px * Math.pow(2, blur * 1.5));
+    gl.uniform1f(u.u_alpha, alpha);
+    gl.uniform1f(u.u_reveal, reveal);
+    gl.uniform1f(u.u_seed, seed);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, entry.count);
+    shapes.invalidate();
+  };
+
+  const dropInk = (key) => {
+    const entry = inks.get(key);
+    if (entry?.buffer) {
+      gl.deleteBuffer(entry.buffer);
+      gl.deleteVertexArray(entry.array);
+    }
+    inks.delete(key);
+  };
+
   return {
     kind: 'gpu',
+    /** Designs are drawn as vectors (inkReady, ink); images hold their text. */
+    vector: true,
     imageScale: IMAGE_SCALE,
     maxLargeImages: MAX_LARGE_IMAGES,
     begin({ w, h, dpr, paper }) {
@@ -303,6 +502,94 @@ export function createGpuDesk(canvas, gl) {
     clearImages() {
       for (const texture of textures.values()) gl.deleteTexture(texture);
       textures.clear();
+      for (const key of [...inks.keys()]) dropInk(key);
+    },
+
+    hasInk(key) { return inks.has(key); },
+    /** Is this design's ink on the GPU, or can it go there this frame?
+     *  `build()` gives its shapes (atlas-ink.js `svgInk`), or null. */
+    inkReady(key, build) {
+      if (inks.has(key)) return true;
+      if (spent && spent > UPLOAD_BYTES_PER_FRAME) {
+        waiting = true;
+        return false;
+      }
+      const mesh = build();
+      if (!mesh) return false;
+      if (!mesh.count) {
+        inks.set(key, { count: 0 });
+        return true;
+      }
+      spent += mesh.data.byteLength;
+      const array = gl.createVertexArray();
+      gl.bindVertexArray(array);
+      gl.bindBuffer(gl.ARRAY_BUFFER, corners);
+      gl.enableVertexAttribArray(0);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+      const buffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      gl.bufferData(gl.ARRAY_BUFFER, mesh.data, gl.STATIC_DRAW);
+      for (let i = 0; i < 3; i++) {
+        gl.enableVertexAttribArray(1 + i);
+        gl.vertexAttribPointer(1 + i, 4, gl.FLOAT, false, 48, 16 * i);
+        gl.vertexAttribDivisor(1 + i, 1);
+      }
+      gl.bindVertexArray(null);
+      shapes.invalidate();
+      inks.set(key, { array, buffer, count: mesh.count });
+      return true;
+    },
+    /** The same ink under a new key (a design just saved). */
+    renameInk(from, to) {
+      const entry = inks.get(from);
+      if (!entry || from === to) return;
+      inks.delete(from);
+      dropInk(to);
+      inks.set(to, entry);
+    },
+    /** Drop the ink of designs the desk no longer holds (`keys`: those it does). */
+    sweepInk(keys) {
+      for (const key of [...inks.keys()]) if (!keys.has(key)) dropInk(key);
+    },
+    /** A design's ink: its drawing's `box` laid on `rect` on screen. Effects
+     *  as for `image`: `blur` softens its edges by that many octaves. */
+    ink(key, box, rect, alpha, { blur = 0, reveal = 1, seed = 0 } = {}) {
+      const entry = inks.get(key);
+      if (!entry?.count || !(box?.w > 0) || alpha <= 0) return;
+      if (alpha >= 0.999 && reveal >= 1) {
+        drawInk(entry, box, rect, { alpha: 1, blur, reveal: 1, seed });
+        return;
+      }
+      // Faded or coming up: drawn whole into the layer, then laid on at once.
+      const margin = 2;
+      const x0 = Math.max(0, Math.floor(rect.x - margin));
+      const y0 = Math.max(0, Math.floor(rect.y - margin));
+      const x1 = Math.min(pane.w, Math.ceil(rect.x + rect.w + margin));
+      const y1 = Math.min(pane.h, Math.ceil(rect.y + rect.h + margin));
+      if (x1 <= x0 || y1 <= y0) return;
+      const { dpr, width, height } = pane;
+      const target = layerOf(width, height);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, target.frame);
+      gl.enable(gl.SCISSOR_TEST);
+      const sx = Math.floor(x0 * dpr);
+      const sy = Math.floor(y0 * dpr);
+      gl.scissor(sx, height - Math.ceil(y1 * dpr), Math.ceil(x1 * dpr) - sx, Math.ceil(y1 * dpr) - sy);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      drawInk(entry, box, rect, { alpha: 1, blur, reveal: 1, seed });
+      gl.disable(gl.SCISSOR_TEST);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, target.texture);
+      gl.activeTexture(gl.TEXTURE0);
+      shapes.blend(false);
+      shapes.stretch(layerProgram, x0, y0, x1 - x0, y1 - y0);
+      const u = layerProgram.u;
+      gl.uniform4f(u.u_rect, rect.x, rect.y, rect.w, rect.h);
+      gl.uniform1f(u.u_alpha, alpha);
+      gl.uniform1f(u.u_reveal, reveal);
+      gl.uniform1f(u.u_seed, seed);
+      shapes.paintQuad();
     },
 
     /** `blur`: mipmap levels out of focus; `reveal` (0 to 1): how far its
