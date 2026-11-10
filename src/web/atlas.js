@@ -1336,7 +1336,7 @@ function litBy(ink, found, palette, searchLight) {
 }
 
 /** The loupe: its radius (CSS pixels), and how much nearer it shows the desk. */
-const LOUPE_RADIUS = 150;
+const LOUPE_RADIUS = 220;
 const LOUPE_ZOOM = 3;
 
 /** The desk under the pointer, LOUPE_ZOOM times nearer, in a circle over it:
