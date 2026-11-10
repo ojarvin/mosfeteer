@@ -79287,6 +79287,7 @@ let onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickA
 let noteSelectionForTips, openArrangePicker; __bind(() => { ({ noteSelectionForTips, openArrangePicker } = __require("src/web/arrange-ui.js")); });
 let toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi; __bind(() => { ({ toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } = __require("src/web/toolbar-ui.js")); });
 let installNetBeams, mountNetBeams, syncNetBeams; __bind(() => { ({ installNetBeams, mountNetBeams, syncNetBeams } = __require("src/web/net-beams.js")); });
+let installWireSweep; __bind(() => { ({ installWireSweep } = __require("src/web/wire-sweep.js")); });
 let installPictureTheme; __bind(() => { ({ installPictureTheme } = __require("src/web/picture-theme.js")); });
 let axisPlacement, cycleSymmetryAxis, mirrorRecordedEdit, mountSymmetryAxis, syncSymmetryAxis; __bind(() => { ({ axisPlacement, cycleSymmetryAxis, mirrorRecordedEdit, mountSymmetryAxis, syncSymmetryAxis } = __require("src/web/symmetry-axis.js")); });
 let acceptArrangeSuggestion, dismissArrangeSuggestion, installArrangeSuggestions, mountArrangeSuggestion, noteDrawingEdit, noteDrawingReplaced, syncArrangeSuggestion; __bind(() => { ({ acceptArrangeSuggestion, dismissArrangeSuggestion, installArrangeSuggestions, mountArrangeSuggestion, noteDrawingEdit, noteDrawingReplaced, syncArrangeSuggestion } = __require("src/web/arrange-suggest.js")); });
@@ -79322,6 +79323,7 @@ let setHidden; __bind(() => { ({ setHidden } = __require("src/web/dom.js")); });
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -86968,6 +86970,7 @@ clearCheckButtonEl?.addEventListener('click', () => {
 // above has been declared.
 installToolbarUi();
 installNetBeams();
+installWireSweep();
 installPictureTheme();
 installArrangeSuggestions();
 
@@ -102767,6 +102770,114 @@ function queryWireHitIndex(index, raw, snapped, tolerance) {
   // when the raw pointer is not near any wire.
   const rawHits = measure(raw);
   return rawHits.length ? rawHits : measure(snapped);
+}
+
+};
+
+__modules["src/web/wire-sweep.js"] = function (__require, __exports) {
+__exports.sweepWires = sweepWires;
+__exports.installWireSweep = installWireSweep;
+let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let afterRender, onDocumentShown; __bind(() => { ({ afterRender, onDocumentShown } = __require("src/web/main.js")); });
+let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion.js")); });
+let easeInOut; __bind(() => { ({ easeInOut } = __require("src/web/easing.js")); });
+/**
+ * A design shown in the editor greets with one sweep of light along its
+ * wires, left to right: its wires (the drawing's own wire ink) drawn again in
+ * the accent, soft, seen only through a band that runs across the drawing.
+ * Its own layer over the drawing, following its frame, gone when it is done.
+ * Reduced motion skips it.
+ */
+
+
+
+
+
+
+
+const SVG = 'http://www.w3.org/2000/svg';
+/** How long the light takes to cross, and how long after the design shows it starts. */
+const SWEEP_MS = 1800;
+const SWEEP_DELAY_MS = 220;
+/** How wide its band is, as a part of the drawing's width. */
+const BAND = 0.18;
+
+let sweep = null;
+
+function stop() {
+  if (!sweep) return;
+  cancelAnimationFrame(sweep.frame);
+  clearTimeout(sweep.timer);
+  sweep.layer?.remove();
+  sweep.unwatch?.();
+  sweep = null;
+}
+
+/** The layer takes the drawing's frame, as the math labels' layer does. */
+function follow() {
+  const drawing = editor.canvasSvgEl;
+  if (!sweep?.layer || !drawing) return;
+  for (const name of ['width', 'height', 'viewBox']) sweep.layer.setAttribute(name, drawing.getAttribute(name));
+}
+
+function begin() {
+  const ink = editor.canvasSvgEl?.querySelector('path.wire-ink');
+  const d = ink?.getAttribute('d');
+  if (!d) {
+    stop();
+    return;
+  }
+  const box = ink.getBBox();
+  if (!(box.width > 0)) {
+    stop();
+    return;
+  }
+  const width = parseFloat(ink.getAttribute('stroke-width')) || 6;
+  const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#4f9cf9';
+  const layer = document.createElementNS(SVG, 'svg');
+  layer.setAttribute('class', 'wire-sweep');
+  layer.setAttribute('aria-hidden', 'true');
+  layer.innerHTML = `<defs>
+      <linearGradient id="wire-sweep-band" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0" stop-color="${accent}" stop-opacity="0"/>
+        <stop offset="0.5" stop-color="${accent}" stop-opacity="1"/>
+        <stop offset="1" stop-color="${accent}" stop-opacity="0"/>
+      </linearGradient>
+      <filter id="wire-sweep-glow" x="-10%" y="-10%" width="120%" height="120%"><feGaussianBlur stdDeviation="${width * 1.2}"/></filter>
+    </defs>
+    <path d="${d}" fill="none" stroke="url(#wire-sweep-band)" stroke-width="${width * 3}" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" filter="url(#wire-sweep-glow)"/>
+    <path d="${d}" fill="none" stroke="url(#wire-sweep-band)" stroke-width="${width}" stroke-linecap="square" stroke-linejoin="miter"/>`;
+  canvasEl.appendChild(layer);
+  sweep.layer = layer;
+  follow();
+  const gradient = layer.querySelector('linearGradient');
+  const band = Math.max(box.width * BAND, width * 12);
+  const from = box.x - band;
+  const to = box.x + box.width + band;
+  const started = performance.now();
+  const step = (now) => {
+    if (!sweep || sweep.layer !== layer) return;
+    const t = Math.min(1, (now - started) / SWEEP_MS);
+    const middle = from + (to - from) * easeInOut(t);
+    gradient.setAttribute('x1', String(middle - band / 2));
+    gradient.setAttribute('x2', String(middle + band / 2));
+    if (t < 1) sweep.frame = requestAnimationFrame(step);
+    else stop();
+  };
+  sweep.frame = requestAnimationFrame(step);
+}
+
+/** Sweep the wires of the design now shown. */
+function sweepWires() {
+  stop();
+  if (reducedMotion()) return;
+  sweep = { layer: null, frame: 0, timer: 0, unwatch: afterRender(follow) };
+  sweep.timer = setTimeout(begin, SWEEP_DELAY_MS);
+}
+
+function installWireSweep() {
+  onDocumentShown(sweepWires);
 }
 
 };

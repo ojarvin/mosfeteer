@@ -85,6 +85,7 @@ import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQ
 import { noteSelectionForTips, openArrangePicker } from './arrange-ui.js';
 import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } from './toolbar-ui.js';
 import { installNetBeams, mountNetBeams, syncNetBeams } from './net-beams.js';
+import { installWireSweep } from './wire-sweep.js';
 import { installPictureTheme } from './picture-theme.js';
 import { axisPlacement, cycleSymmetryAxis, mirrorRecordedEdit, mountSymmetryAxis, syncSymmetryAxis } from './symmetry-axis.js';
 import { acceptArrangeSuggestion, dismissArrangeSuggestion, installArrangeSuggestions, mountArrangeSuggestion, noteDrawingEdit, noteDrawingReplaced, syncArrangeSuggestion } from './arrange-suggest.js';
@@ -7663,6 +7664,7 @@ clearCheckButtonEl?.addEventListener('click', () => {
 // above has been declared.
 installToolbarUi();
 installNetBeams();
+installWireSweep();
 installPictureTheme();
 installArrangeSuggestions();
 

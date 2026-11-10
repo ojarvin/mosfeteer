@@ -326,3 +326,25 @@ describe('canvas editing', { skip: browserSkip() }, () => {
     assert.ok(rows.every((r) => r.buttons === 0));
   });
 });
+
+describe('the sweep along a design\'s wires', { skip: browserSkip() }, () => {
+  test('a design shown sweeps its wires once with light and leaves no trace; reduced motion skips it', async () => {
+    const h = await start({ docs: { amp: amplifier() } });
+    try {
+      await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+      await h.open('amp');
+      await h.until(`!!document.querySelector('svg.wire-sweep path[stroke^="url"]')`, 5000);
+      // It runs over the drawing's own wire ink, in the drawing's frame.
+      assert.equal(await h.evaluate(`document.querySelector('svg.wire-sweep path:last-child').getAttribute('d') === document.querySelector('#canvas svg path.wire-ink, .canvas svg path.wire-ink')?.getAttribute('d')`), true);
+      assert.equal(await h.evaluate(`document.querySelector('svg.wire-sweep').getAttribute('viewBox') === document.querySelector('svg.wire-sweep').parentNode.querySelector('svg:not(.wire-sweep):not(.math-layer)').getAttribute('viewBox')`), true);
+      await h.until(`!document.querySelector('svg.wire-sweep')`, 5000);
+      await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+      await h.evaluate(`window.__load(${JSON.stringify(amplifier())})`);
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      assert.equal(await h.evaluate(`!!document.querySelector('svg.wire-sweep')`), false);
+      assert.deepEqual(h.exceptions(), []);
+    } finally {
+      await h.stop();
+    }
+  });
+});

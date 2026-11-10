@@ -3016,7 +3016,8 @@ html.dark.invert-pictures .light-picture {
 }
 
 /* Math labels, drawn over the drawing in the same frame (main.js). */
-.canvas svg.math-layer {
+.canvas svg.math-layer,
+.canvas svg.wire-sweep {
   position: absolute;
   inset: 0;
   background: none;

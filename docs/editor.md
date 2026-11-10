@@ -116,6 +116,12 @@ modules split out of it reach that state through the `editor` accessor
 loads. A module's `installX()` runs its load-time wiring where `main.js` calls
 it, so the call's position keeps the original load order.
 
+A design shown in the editor (opened, from the Atlas or a file) greets with
+one sweep of light along its wires, left to right (`src/web/wire-sweep.js`):
+the drawing's own wire ink drawn again in the accent on a layer of its own,
+seen through a band that crosses the drawing, gone when it has. Reduced
+motion skips it.
+
 Settings → Display → Accent color picks the interface's accent (selection,
 the active tool, focus) from the drawing's palette, or the default teal
 (`src/web/accent.js`): a browser preference like the theme, shaded for
