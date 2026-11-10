@@ -28,9 +28,14 @@ the same drawing operations, so `draw` and its helpers have one path. On the
 GPU a design's ink is vectors (`src/web/atlas-ink.js`): its export SVG read
 once into segments, discs, rings, and triangles in document order, one
 instanced draw a design, each edge smoothed over a pixel by its distance.
-Miter and bevel corners are wedges of their own; the triangles of a fill meet
-without seams (only outline edges are smoothed); a line thinner than a pixel
-stays a pixel wide and fades by as much. A faded or revealing design is drawn
+A corner's two runs are cut across its mean direction, meeting in a miter;
+a path's runs along one line that touch (a wire into its pin's lead) are one
+run; the triangles of a fill meet without seams (only outline edges are
+smoothed); so no pixel is drawn twice by one path, and a line thinner than a
+pixel stays a pixel wide and fades by as much without spots where it meets
+itself. Each design is read once, in the light theme, and kept from one
+visit to the next; the dark theme is its colors changed as the export's
+(`applyExportDarkTheme`), at once. A faded or revealing design is drawn
 whole into a layer and laid on at once, so its overlaps are no darker. Its
 text is vectors too (`src/web/atlas-text.js`): the export SVG less its ink is
 laid out once by the browser in a hidden element, SVG text and the math in

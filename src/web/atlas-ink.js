@@ -12,8 +12,10 @@
  *   disc      [cx, cy, r, 0,    0, 0, 0, DISC,                    r, g, b, a]
  *   ring      [cx, cy, r, 0,    halfWidth, 0, 0, RING,            r, g, b, a]
  *   triangle  [x0, y0, x1, y1,  x2, y2, outerEdges, TRIANGLE,     r, g, b, a]
- * Caps: BUTT, SQUARE, ROUND, or JOINT (cut hard where a join's wedge, a
- * triangle, takes over: the two meet without a seam). A triangle's outerEdges has bit i set when its
+ * Caps: BUTT, SQUARE, ROUND, or a corner: JOINT + the angle of the corner's
+ * mean direction (the two runs' directions added), across which the two are
+ * cut, so they meet in a miter, without a seam or an overlap at any width
+ * (JOINT alone: cut square, where a line turns right back). A triangle's outerEdges has bit i set when its
  * edge from vertex i to the next lies on the shape's outline: only those are
  * smoothed, so the triangles of one fill meet without seams. Colors are
  * premultiplied, 0 to 1.
@@ -28,8 +30,8 @@ export const BUTT = 0;
 export const SQUARE = 1;
 export const ROUND = 2;
 export const JOINT = 3;
-const MITER = 4;
-const BEVEL = 5;
+/** How far a miter reaches, in half widths, before it is cut off. */
+export const MITER_LIMIT = 4;
 
 /** Elements drawn as ink, and those drawn with the text. */
 const INK = new Set(['path', 'line', 'polyline', 'polygon', 'rect', 'circle', 'ellipse']);
@@ -420,6 +422,69 @@ function dashed(points, closed, pattern) {
 
 const CAPS = { butt: BUTT, square: SQUARE, round: ROUND };
 
+/**
+ * One path's straight runs that lie along one horizontal or vertical line
+ * and touch or overlap (a wire and the pin lead it runs into, both with
+ * square ends) as one run: a path's strokes cover a pixel once, as the
+ * browser draws them, never twice where they overlap (which shows wherever
+ * they are drawn faint, thinner than a pixel). A square end is that much
+ * more length; a cut (JOINT) or round end stays as it is.
+ * `segments`: [x0, y0, x1, y1, cap0, cap1].
+ */
+export function mergeRuns(segments, half) {
+  const lines = new Map();
+  const rest = [];
+  for (const segment of segments) {
+    const [x0, y0, x1, y1] = segment;
+    const across = y0 === y1 && x0 !== x1 ? 'h' : x0 === x1 && y0 !== y1 ? 'v' : null;
+    if (!across) {
+      rest.push(segment);
+      continue;
+    }
+    const key = across === 'h' ? `h${y0}` : `v${x0}`;
+    if (!lines.has(key)) lines.set(key, []);
+    lines.get(key).push(segment);
+  }
+  const out = [...rest];
+  for (const [key, list] of lines) {
+    if (list.length === 1) {
+      out.push(list[0]);
+      continue;
+    }
+    const horizontal = key[0] === 'h';
+    const along = (x, y) => (horizontal ? x : y);
+    // Each run's two ends, the low one first: where it reaches, and how it ends there.
+    const runs = list.map(([x0, y0, x1, y1, cap0, cap1]) => {
+      const a = along(x0, y0);
+      const b = along(x1, y1);
+      // `first`: the run's first end (a corner's cut is read from it, facing on).
+      const end = (p, cap, out, first) => ({ p, cap, first, reach: cap === SQUARE || cap === ROUND ? p + out * half : p });
+      return a <= b ? { lo: end(a, cap0, -1, true), hi: end(b, cap1, 1, false) } : { lo: end(b, cap1, -1, false), hi: end(a, cap0, 1, true) };
+    }).sort((r, s) => r.lo.reach - s.lo.reach);
+    const merged = [];
+    for (const run of runs) {
+      const last = merged[merged.length - 1];
+      if (last && run.lo.reach <= last.hi.reach + 1e-6) {
+        if (run.hi.reach > last.hi.reach) last.hi = run.hi;
+      } else {
+        merged.push({ ...run });
+      }
+    }
+    const fixed = horizontal ? list[0][1] : list[0][0];
+    for (const { lo, hi } of merged) {
+      // A square end becomes a plain end where its square reaches.
+      const a = lo.cap === SQUARE ? lo.reach : lo.p;
+      const b = hi.cap === SQUARE ? hi.reach : hi.p;
+      // A corner's end now on the other end of its run faces the other way.
+      const turned = (cap) => JOINT + 7 + ((cap - JOINT - 7 + Math.PI) % (2 * Math.PI));
+      const capA = lo.cap === SQUARE ? BUTT : lo.cap >= JOINT + 7 && !lo.first ? turned(lo.cap) : lo.cap;
+      const capB = hi.cap === SQUARE ? BUTT : hi.cap >= JOINT + 7 && hi.first ? turned(hi.cap) : hi.cap;
+      out.push(horizontal ? [a, fixed, b, fixed, capA, capB] : [fixed, a, fixed, b, capA, capB]);
+    }
+  }
+  return out;
+}
+
 /** Read the export SVG. Returns { data: Float32Array, count, textSvg,
  *  picturesSvg, box }: `textSvg` the drawing less its ink, null when the
  *  design has no text, math, or pictures; `picturesSvg` that less its text
@@ -434,7 +499,7 @@ export function svgInk(svg) {
   };
   const tag = /<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<!\[CDATA\[[\s\S]*?\]\]>|<!DOCTYPE[^>]*>|<(\/?)([a-zA-Z][\w:.-]*)((?:\s+[^\s=>/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*(\/?)>/g;
   const root = {
-    fill: [0, 0, 0, 1], stroke: null, strokeWidth: 1, cap: BUTT, join: MITER, miterLimit: 4,
+    fill: [0, 0, 0, 1], stroke: null, strokeWidth: 1, cap: BUTT, join: JOINT,
     fillOpacity: 1, strokeOpacity: 1, opacity: 1, dash: null, matrix: IDENTITY, hidden: false,
   };
   const stack = [{ name: '#root', style: root }];
@@ -466,8 +531,7 @@ export function svgInk(svg) {
     if (attrs.stroke !== undefined) style.stroke = parseColor(attrs.stroke);
     if (attrs['stroke-width'] !== undefined) style.strokeWidth = parseFloat(attrs['stroke-width']) || 0;
     if (attrs['stroke-linecap'] !== undefined) style.cap = CAPS[attrs['stroke-linecap']] ?? BUTT;
-    if (attrs['stroke-linejoin'] !== undefined) style.join = attrs['stroke-linejoin'] === 'round' ? ROUND : attrs['stroke-linejoin'] === 'bevel' ? BEVEL : MITER;
-    if (attrs['stroke-miterlimit'] !== undefined) style.miterLimit = Math.max(1, parseFloat(attrs['stroke-miterlimit']) || 4);
+    if (attrs['stroke-linejoin'] !== undefined) style.join = attrs['stroke-linejoin'] === 'round' ? ROUND : JOINT;
     if (attrs['fill-opacity'] !== undefined) style.fillOpacity = Math.max(0, Math.min(1, parseFloat(attrs['fill-opacity'])));
     if (attrs['stroke-opacity'] !== undefined) style.strokeOpacity = Math.max(0, Math.min(1, parseFloat(attrs['stroke-opacity'])));
     if (attrs.opacity !== undefined) style.opacity = parent.opacity * Math.max(0, Math.min(1, parseFloat(attrs.opacity)));
@@ -498,66 +562,43 @@ export function svgInk(svg) {
     const strokeColor = paint(style.stroke, style.strokeOpacity * style.opacity);
     const half = (style.strokeWidth * scaleOf) / 2;
     if (!strokeColor || !(half > 0)) return;
+    const segments = [];
     for (const subpath of subpaths) {
       const runs = style.dash ? dashed(subpath.points, subpath.closed, style.dash) : [subpath];
       for (const { points, closed } of runs) {
         const world = points.map(([x, y]) => apply(m, x, y));
         if (world.length === 1 || (world.length === 2 && world[0][0] === world[1][0] && world[0][1] === world[1][1])) {
           // A dot: only a round or square cap shows it.
-          if (style.cap !== BUTT) push([world[0][0], world[0][1], world[0][0], world[0][1], half, style.cap, style.cap, SEGMENT], strokeColor);
+          if (style.cap !== BUTT) segments.push([world[0][0], world[0][1], world[0][0], world[0][1], style.cap, style.cap]);
           continue;
         }
         // Repeated points make no segment and no corner.
         const pts = world.filter((p, i) => i === 0 || p[0] !== world[i - 1][0] || p[1] !== world[i - 1][1]);
         if (closed && pts.length > 2 && pts[0][0] === pts[pts.length - 1][0] && pts[0][1] === pts[pts.length - 1][1]) pts.pop();
         const n = closed ? pts.length : pts.length - 1;
-        const joint = style.join === ROUND ? ROUND : JOINT;
+        // How each corner is cut: round, or across its mean direction.
+        const corner = (i) => {
+          if (style.join === ROUND) return ROUND;
+          const [px, py] = pts[(i + pts.length - 1) % pts.length];
+          const [cx, cy] = pts[i];
+          const [nx, ny] = pts[(i + 1) % pts.length];
+          const l0 = Math.hypot(cx - px, cy - py);
+          const l1 = Math.hypot(nx - cx, ny - cy);
+          const tx = (cx - px) / l0 + (nx - cx) / l1;
+          const ty = (cy - py) / l0 + (ny - cy) / l1;
+          if (Math.hypot(tx, ty) < 1e-6) return JOINT;
+          return JOINT + 7 + ((Math.atan2(ty, tx) + 2 * Math.PI) % (2 * Math.PI));
+        };
         for (let i = 0; i < n; i++) {
           const a = pts[i];
           const b = pts[(i + 1) % pts.length];
           const first = !closed && i === 0;
           const last = !closed && i === n - 1;
-          push([a[0], a[1], b[0], b[1], half, first ? style.cap : joint, last ? style.cap : joint, SEGMENT], strokeColor);
-        }
-        if (style.join !== ROUND) {
-          for (let i = closed ? 0 : 1; i < (closed ? pts.length : pts.length - 1); i++) {
-            joinWedge(pts[(i + pts.length - 1) % pts.length], pts[i], pts[(i + 1) % pts.length], half, style, strokeColor);
-          }
+          segments.push([a[0], a[1], b[0], b[1], first ? style.cap : corner(i), last ? style.cap : corner((i + 1) % pts.length)]);
         }
       }
     }
-  };
-
-  /** The outside of the corner at b, between the segments a-b and b-c: a
-   *  miter (or a bevel past the miter limit), its outline edges smoothed. */
-  const joinWedge = (a, b, c, half, style, color) => {
-    let d0x = b[0] - a[0];
-    let d0y = b[1] - a[1];
-    let d1x = c[0] - b[0];
-    let d1y = c[1] - b[1];
-    const l0 = Math.hypot(d0x, d0y);
-    const l1 = Math.hypot(d1x, d1y);
-    if (!l0 || !l1) return;
-    d0x /= l0; d0y /= l0; d1x /= l1; d1y /= l1;
-    const turn = d0x * d1y - d0y * d1x;
-    // Straight on (or turned right back) the two ends meet as they are.
-    if (Math.abs(turn) < 1e-9) return;
-    const s = turn > 0 ? -1 : 1;
-    const ax = b[0] - d0y * half * s;
-    const ay = b[1] + d0x * half * s;
-    const bx = b[0] - d1y * half * s;
-    const by = b[1] + d1x * half * s;
-    const mx = -d0y - d1y;
-    const my = d0x + d1x;
-    const mm = mx * mx + my * my;
-    if (style.join === MITER && mm > 0 && 2 / Math.sqrt(mm) <= style.miterLimit) {
-      const tx = b[0] + (mx * s * half * 2) / mm;
-      const ty = b[1] + (my * s * half * 2) / mm;
-      push([b[0], b[1], ax, ay, tx, ty, 2, TRIANGLE], color);
-      push([b[0], b[1], tx, ty, bx, by, 2, TRIANGLE], color);
-    } else {
-      push([b[0], b[1], ax, ay, bx, by, 2, TRIANGLE], color);
-    }
+    for (const [x0, y0, x1, y1, cap0, cap1] of mergeRuns(segments, half)) push([x0, y0, x1, y1, half, cap0, cap1, SEGMENT], strokeColor);
   };
 
   const shape = (name, attrs, style) => {

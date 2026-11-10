@@ -54,8 +54,8 @@ import { appendContextItem, openMenuAt } from './context-menu.js';
 import { onAccentChange } from './accent.js';
 import { gpuContext, onAccelerationChange } from './gpu.js';
 import { createGpuDesk } from './atlas-paint-gpu.js';
-import { INK_FLOATS, svgInk } from './atlas-ink.js';
-import { layoutText, withRules } from './atlas-text.js';
+import { INK_FLOATS, parseColor, svgInk } from './atlas-ink.js';
+import { GLYPH_FLOATS, layoutText, withRules } from './atlas-text.js';
 import { glyphAtlas } from './atlas-glyphs.js';
 import { createCanvasDesk } from './atlas-paint-2d.js';
 
@@ -175,6 +175,8 @@ export function atlasSnapshot() {
     flight: state.flight ? { id: state.flight.id, depth: state.flight.depth } : null,
     beams: state.beams || [],
     baked: state.baked || 0,
+    // Designs read for the GPU so far (once each, whatever the theme).
+    reads: inkStamp,
     baking: !!state.baking || !!state.wanted?.length,
     accent: state.colors?.accent || null,
     tiles: state.tiles.map((tile) => {
@@ -520,55 +522,101 @@ function mathFontReady() {
   return false;
 }
 
-/** A design's shapes and glyphs, read from its export SVG in `shade`. */
-function readDesign(entry, shade) {
-  const { data, count, textSvg, picturesSvg } = svgInk(shade === 'dark' ? applyExportDarkTheme(entry.svg) : entry.svg);
+/** A design's shapes and glyphs, read from its export SVG (as drawn in the
+ *  light theme: the dark one is its colors changed, `inkMesh`). */
+function readDesign(entry) {
+  const { data, count, textSvg, picturesSvg } = svgInk(entry.svg);
   const atlas = glyphAtlas();
+  // Its text in the colors of the export itself, not of the page.
+  const text = textSvg ? textSvg.replace(/var\(--[\w-]+,\s*([^()]+)\)/g, '$1') : null;
   // The glyph atlas full, it starts again: laid out once more into the new one.
-  const text = textSvg ? layoutText(textSvg, entry.box, atlas) || layoutText(textSvg, entry.box, atlas) : null;
-  const rules = text?.rules || [];
+  const laid = text ? layoutText(text, entry.box, atlas) || layoutText(text, entry.box, atlas) : null;
+  const rules = laid?.rules || [];
   return {
     textSvg, picturesSvg, generation: atlas.generation,
-    mesh: { data: withRules(data, rules), count: count + rules.length / INK_FLOATS, glyphs: text?.glyphs, glyphCount: text?.glyphCount || 0 },
+    mesh: { data: withRules(data, rules), count: count + rules.length / INK_FLOATS, glyphs: laid?.glyphs, glyphCount: laid?.glyphCount || 0 },
   };
 }
 
+/** Designs read, kept from one visit to the next: by id, `{ svg, ... }`. */
+const readDesigns = new Map();
+const MAX_READ_DESIGNS = 800;
+
 /**
  * A design as the GPU draws it (atlas-ink.js, atlas-text.js), read from its
- * export SVG in the theme now: `{ key, textSvg, picturesSvg, mesh }`.
- * `mesh` is held only until it is on the GPU. Null when this frame has read
- * its share already, or its math waits for its font (unless `now`).
+ * export SVG once: `{ key, textSvg, picturesSvg, mesh }`, `key` naming it in
+ * the theme now. Null when this frame has read its share already, or its
+ * math waits for its font (unless `now`).
  */
 function inkOf(entry, now = false) {
   const shade = theme();
-  const ink = entry.ink;
   const generation = glyphAtlas().generation;
-  if (ink?.shade === shade && ink.svg === entry.svg && ink.generation === generation && !(ink.withoutFont && mathFontReady())) return ink;
-  if (!now && inkReadSpent > INK_READ_MS_PER_FRAME) return null;
-  // Math laid out before its font has loaded would take another size.
-  const withoutFont = usesMathFont(entry.svg) && !mathFontReady();
-  if (withoutFont && !now) return null;
-  const started = performance.now();
-  const read = readDesign(entry, shade);
-  inkReadSpent += performance.now() - started;
-  inkStamp += 1;
-  entry.ink = { shade, svg: entry.svg, key: `${entry.id}\n${inkStamp}`, withoutFont, ...read };
-  return entry.ink;
+  let ink = entry.ink || readDesigns.get(entry.id);
+  if (!(ink?.svg === entry.svg && ink.generation === generation && !(ink.withoutFont && mathFontReady()))) {
+    if (!now && inkReadSpent > INK_READ_MS_PER_FRAME) return null;
+    // Math laid out before its font has loaded would take another size.
+    const withoutFont = usesMathFont(entry.svg) && !mathFontReady();
+    if (withoutFont && !now) return null;
+    const started = performance.now();
+    const read = readDesign(entry);
+    inkReadSpent += performance.now() - started;
+    inkStamp += 1;
+    ink = { svg: entry.svg, stamp: inkStamp, withoutFont, shown: false, ...read };
+    readDesigns.delete(entry.id);
+    readDesigns.set(entry.id, ink);
+    if (readDesigns.size > MAX_READ_DESIGNS) readDesigns.delete(readDesigns.keys().next().value);
+  }
+  entry.ink = ink;
+  if (ink.shade !== shade) {
+    ink.shade = shade;
+    ink.key = `${entry.id}\n${ink.stamp}\n${shade}`;
+  }
+  return ink;
 }
 
-/** Its shapes and glyphs for the GPU, read again if they were let go. */
+/** Colors as the export's dark theme draws them (applyExportDarkTheme), by
+ *  their light ones: [r, g, b] 0 to 1. */
+const darkColors = new Map();
+function darkColor(r, g, b) {
+  const bytes = [r, g, b].map((v) => Math.max(0, Math.min(255, Math.round(v * 255))));
+  const short = bytes.every((v) => v % 17 === 0);
+  const hex = `#${bytes.map((v) => (short ? (v / 17).toString(16) : v.toString(16).padStart(2, '0'))).join('')}`;
+  let color = darkColors.get(hex);
+  if (!color) {
+    color = parseColor(applyExportDarkTheme(hex)).slice(0, 3);
+    darkColors.set(hex, color);
+  }
+  return color;
+}
+
+/** `data` (shapes of `floats` floats, a premultiplied color at `at`) in `shade`. */
+function inShade(data, floats, at, shade) {
+  if (shade !== 'dark' || !data?.length) return data;
+  const out = new Float32Array(data);
+  for (let i = at; i < out.length; i += floats) {
+    const a = out[i + 3];
+    if (!(a > 0)) continue;
+    const [r, g, b] = darkColor(out[i] / a, out[i + 1] / a, out[i + 2] / a);
+    out[i] = r * a;
+    out[i + 1] = g * a;
+    out[i + 2] = b * a;
+  }
+  return out;
+}
+
+/** Its shapes and glyphs for the GPU, in the theme now. */
 function inkMesh(entry) {
-  const ink = entry.ink;
-  if (!ink.mesh) return readDesign(entry, ink.shade).mesh;
-  const { mesh } = ink;
-  ink.mesh = null;
-  return mesh;
+  const { mesh, shade } = entry.ink;
+  return { ...mesh, data: inShade(mesh.data, INK_FLOATS, 8, shade), glyphs: inShade(mesh.glyphs, GLYPH_FLOATS, 12, shade) };
 }
 
 /** The SVG a design's images are drawn from, in the theme now; null when
  *  there is nothing to draw (a design with no pictures, on the GPU). */
 function imageSvg(entry) {
-  if (imageLayer() === 'pictures') return inkOf(entry, true).picturesSvg;
+  if (imageLayer() === 'pictures') {
+    const pictures = inkOf(entry, true).picturesSvg;
+    return pictures && theme() === 'dark' ? applyExportDarkTheme(pictures) : pictures;
+  }
   return theme() === 'dark' ? applyExportDarkTheme(entry.svg) : entry.svg;
 }
 
@@ -991,9 +1039,10 @@ function drawDesk() {
     const ink = paint.vector ? inkOf(entry) : null;
     if (paint.vector && !ink) requestDraw();
     if (ink && !flying) {
-      const fresh = !paint.hasInk(ink.key);
       if (paint.inkReady(ink.key, () => inkMesh(entry))) {
-        if (fresh && !entry.current && !rootEl.classList.contains('preparing')) state.arrived.set(ink.key, performance.now());
+        // Fades in once, when first read: in another theme it is at once.
+        if (!ink.shown && !entry.current && !rootEl.classList.contains('preparing')) state.arrived.set(ink.key, performance.now());
+        ink.shown = true;
         const since = state.arrived.get(ink.key);
         const arriving = since === undefined ? 1 : Math.min(1, (performance.now() - since) / ARRIVE_MS);
         if (arriving < 1) requestDraw();

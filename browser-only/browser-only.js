@@ -54779,6 +54779,7 @@ __exports.parseColor = parseColor;
 __exports.parseTransform = parseTransform;
 __exports.flattenPath = flattenPath;
 __exports.triangulate = triangulate;
+__exports.mergeRuns = mergeRuns;
 __exports.svgInk = svgInk;
 /**
  * A design's export SVG as the Atlas desk draws it on the GPU: its ink
@@ -54794,8 +54795,10 @@ __exports.svgInk = svgInk;
  *   disc      [cx, cy, r, 0,    0, 0, 0, DISC,                    r, g, b, a]
  *   ring      [cx, cy, r, 0,    halfWidth, 0, 0, RING,            r, g, b, a]
  *   triangle  [x0, y0, x1, y1,  x2, y2, outerEdges, TRIANGLE,     r, g, b, a]
- * Caps: BUTT, SQUARE, ROUND, or JOINT (cut hard where a join's wedge, a
- * triangle, takes over: the two meet without a seam). A triangle's outerEdges has bit i set when its
+ * Caps: BUTT, SQUARE, ROUND, or a corner: JOINT + the angle of the corner's
+ * mean direction (the two runs' directions added), across which the two are
+ * cut, so they meet in a miter, without a seam or an overlap at any width
+ * (JOINT alone: cut square, where a line turns right back). A triangle's outerEdges has bit i set when its
  * edge from vertex i to the next lies on the shape's outline: only those are
  * smoothed, so the triangles of one fill meet without seams. Colors are
  * premultiplied, 0 to 1.
@@ -54810,8 +54813,8 @@ const BUTT = 0;
 const SQUARE = 1;
 const ROUND = 2;
 const JOINT = 3;
-const MITER = 4;
-const BEVEL = 5;
+/** How far a miter reaches, in half widths, before it is cut off. */
+const MITER_LIMIT = 4;
 
 /** Elements drawn as ink, and those drawn with the text. */
 const INK = new Set(['path', 'line', 'polyline', 'polygon', 'rect', 'circle', 'ellipse']);
@@ -55202,6 +55205,69 @@ function dashed(points, closed, pattern) {
 
 const CAPS = { butt: BUTT, square: SQUARE, round: ROUND };
 
+/**
+ * One path's straight runs that lie along one horizontal or vertical line
+ * and touch or overlap (a wire and the pin lead it runs into, both with
+ * square ends) as one run: a path's strokes cover a pixel once, as the
+ * browser draws them, never twice where they overlap (which shows wherever
+ * they are drawn faint, thinner than a pixel). A square end is that much
+ * more length; a cut (JOINT) or round end stays as it is.
+ * `segments`: [x0, y0, x1, y1, cap0, cap1].
+ */
+function mergeRuns(segments, half) {
+  const lines = new Map();
+  const rest = [];
+  for (const segment of segments) {
+    const [x0, y0, x1, y1] = segment;
+    const across = y0 === y1 && x0 !== x1 ? 'h' : x0 === x1 && y0 !== y1 ? 'v' : null;
+    if (!across) {
+      rest.push(segment);
+      continue;
+    }
+    const key = across === 'h' ? `h${y0}` : `v${x0}`;
+    if (!lines.has(key)) lines.set(key, []);
+    lines.get(key).push(segment);
+  }
+  const out = [...rest];
+  for (const [key, list] of lines) {
+    if (list.length === 1) {
+      out.push(list[0]);
+      continue;
+    }
+    const horizontal = key[0] === 'h';
+    const along = (x, y) => (horizontal ? x : y);
+    // Each run's two ends, the low one first: where it reaches, and how it ends there.
+    const runs = list.map(([x0, y0, x1, y1, cap0, cap1]) => {
+      const a = along(x0, y0);
+      const b = along(x1, y1);
+      // `first`: the run's first end (a corner's cut is read from it, facing on).
+      const end = (p, cap, out, first) => ({ p, cap, first, reach: cap === SQUARE || cap === ROUND ? p + out * half : p });
+      return a <= b ? { lo: end(a, cap0, -1, true), hi: end(b, cap1, 1, false) } : { lo: end(b, cap1, -1, false), hi: end(a, cap0, 1, true) };
+    }).sort((r, s) => r.lo.reach - s.lo.reach);
+    const merged = [];
+    for (const run of runs) {
+      const last = merged[merged.length - 1];
+      if (last && run.lo.reach <= last.hi.reach + 1e-6) {
+        if (run.hi.reach > last.hi.reach) last.hi = run.hi;
+      } else {
+        merged.push({ ...run });
+      }
+    }
+    const fixed = horizontal ? list[0][1] : list[0][0];
+    for (const { lo, hi } of merged) {
+      // A square end becomes a plain end where its square reaches.
+      const a = lo.cap === SQUARE ? lo.reach : lo.p;
+      const b = hi.cap === SQUARE ? hi.reach : hi.p;
+      // A corner's end now on the other end of its run faces the other way.
+      const turned = (cap) => JOINT + 7 + ((cap - JOINT - 7 + Math.PI) % (2 * Math.PI));
+      const capA = lo.cap === SQUARE ? BUTT : lo.cap >= JOINT + 7 && !lo.first ? turned(lo.cap) : lo.cap;
+      const capB = hi.cap === SQUARE ? BUTT : hi.cap >= JOINT + 7 && hi.first ? turned(hi.cap) : hi.cap;
+      out.push(horizontal ? [a, fixed, b, fixed, capA, capB] : [fixed, a, fixed, b, capA, capB]);
+    }
+  }
+  return out;
+}
+
 /** Read the export SVG. Returns { data: Float32Array, count, textSvg,
  *  picturesSvg, box }: `textSvg` the drawing less its ink, null when the
  *  design has no text, math, or pictures; `picturesSvg` that less its text
@@ -55216,7 +55282,7 @@ function svgInk(svg) {
   };
   const tag = /<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<!\[CDATA\[[\s\S]*?\]\]>|<!DOCTYPE[^>]*>|<(\/?)([a-zA-Z][\w:.-]*)((?:\s+[^\s=>/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*(\/?)>/g;
   const root = {
-    fill: [0, 0, 0, 1], stroke: null, strokeWidth: 1, cap: BUTT, join: MITER, miterLimit: 4,
+    fill: [0, 0, 0, 1], stroke: null, strokeWidth: 1, cap: BUTT, join: JOINT,
     fillOpacity: 1, strokeOpacity: 1, opacity: 1, dash: null, matrix: IDENTITY, hidden: false,
   };
   const stack = [{ name: '#root', style: root }];
@@ -55248,8 +55314,7 @@ function svgInk(svg) {
     if (attrs.stroke !== undefined) style.stroke = parseColor(attrs.stroke);
     if (attrs['stroke-width'] !== undefined) style.strokeWidth = parseFloat(attrs['stroke-width']) || 0;
     if (attrs['stroke-linecap'] !== undefined) style.cap = CAPS[attrs['stroke-linecap']] ?? BUTT;
-    if (attrs['stroke-linejoin'] !== undefined) style.join = attrs['stroke-linejoin'] === 'round' ? ROUND : attrs['stroke-linejoin'] === 'bevel' ? BEVEL : MITER;
-    if (attrs['stroke-miterlimit'] !== undefined) style.miterLimit = Math.max(1, parseFloat(attrs['stroke-miterlimit']) || 4);
+    if (attrs['stroke-linejoin'] !== undefined) style.join = attrs['stroke-linejoin'] === 'round' ? ROUND : JOINT;
     if (attrs['fill-opacity'] !== undefined) style.fillOpacity = Math.max(0, Math.min(1, parseFloat(attrs['fill-opacity'])));
     if (attrs['stroke-opacity'] !== undefined) style.strokeOpacity = Math.max(0, Math.min(1, parseFloat(attrs['stroke-opacity'])));
     if (attrs.opacity !== undefined) style.opacity = parent.opacity * Math.max(0, Math.min(1, parseFloat(attrs.opacity)));
@@ -55280,66 +55345,43 @@ function svgInk(svg) {
     const strokeColor = paint(style.stroke, style.strokeOpacity * style.opacity);
     const half = (style.strokeWidth * scaleOf) / 2;
     if (!strokeColor || !(half > 0)) return;
+    const segments = [];
     for (const subpath of subpaths) {
       const runs = style.dash ? dashed(subpath.points, subpath.closed, style.dash) : [subpath];
       for (const { points, closed } of runs) {
         const world = points.map(([x, y]) => apply(m, x, y));
         if (world.length === 1 || (world.length === 2 && world[0][0] === world[1][0] && world[0][1] === world[1][1])) {
           // A dot: only a round or square cap shows it.
-          if (style.cap !== BUTT) push([world[0][0], world[0][1], world[0][0], world[0][1], half, style.cap, style.cap, SEGMENT], strokeColor);
+          if (style.cap !== BUTT) segments.push([world[0][0], world[0][1], world[0][0], world[0][1], style.cap, style.cap]);
           continue;
         }
         // Repeated points make no segment and no corner.
         const pts = world.filter((p, i) => i === 0 || p[0] !== world[i - 1][0] || p[1] !== world[i - 1][1]);
         if (closed && pts.length > 2 && pts[0][0] === pts[pts.length - 1][0] && pts[0][1] === pts[pts.length - 1][1]) pts.pop();
         const n = closed ? pts.length : pts.length - 1;
-        const joint = style.join === ROUND ? ROUND : JOINT;
+        // How each corner is cut: round, or across its mean direction.
+        const corner = (i) => {
+          if (style.join === ROUND) return ROUND;
+          const [px, py] = pts[(i + pts.length - 1) % pts.length];
+          const [cx, cy] = pts[i];
+          const [nx, ny] = pts[(i + 1) % pts.length];
+          const l0 = Math.hypot(cx - px, cy - py);
+          const l1 = Math.hypot(nx - cx, ny - cy);
+          const tx = (cx - px) / l0 + (nx - cx) / l1;
+          const ty = (cy - py) / l0 + (ny - cy) / l1;
+          if (Math.hypot(tx, ty) < 1e-6) return JOINT;
+          return JOINT + 7 + ((Math.atan2(ty, tx) + 2 * Math.PI) % (2 * Math.PI));
+        };
         for (let i = 0; i < n; i++) {
           const a = pts[i];
           const b = pts[(i + 1) % pts.length];
           const first = !closed && i === 0;
           const last = !closed && i === n - 1;
-          push([a[0], a[1], b[0], b[1], half, first ? style.cap : joint, last ? style.cap : joint, SEGMENT], strokeColor);
-        }
-        if (style.join !== ROUND) {
-          for (let i = closed ? 0 : 1; i < (closed ? pts.length : pts.length - 1); i++) {
-            joinWedge(pts[(i + pts.length - 1) % pts.length], pts[i], pts[(i + 1) % pts.length], half, style, strokeColor);
-          }
+          segments.push([a[0], a[1], b[0], b[1], first ? style.cap : corner(i), last ? style.cap : corner((i + 1) % pts.length)]);
         }
       }
     }
-  };
-
-  /** The outside of the corner at b, between the segments a-b and b-c: a
-   *  miter (or a bevel past the miter limit), its outline edges smoothed. */
-  const joinWedge = (a, b, c, half, style, color) => {
-    let d0x = b[0] - a[0];
-    let d0y = b[1] - a[1];
-    let d1x = c[0] - b[0];
-    let d1y = c[1] - b[1];
-    const l0 = Math.hypot(d0x, d0y);
-    const l1 = Math.hypot(d1x, d1y);
-    if (!l0 || !l1) return;
-    d0x /= l0; d0y /= l0; d1x /= l1; d1y /= l1;
-    const turn = d0x * d1y - d0y * d1x;
-    // Straight on (or turned right back) the two ends meet as they are.
-    if (Math.abs(turn) < 1e-9) return;
-    const s = turn > 0 ? -1 : 1;
-    const ax = b[0] - d0y * half * s;
-    const ay = b[1] + d0x * half * s;
-    const bx = b[0] - d1y * half * s;
-    const by = b[1] + d1x * half * s;
-    const mx = -d0y - d1y;
-    const my = d0x + d1x;
-    const mm = mx * mx + my * my;
-    if (style.join === MITER && mm > 0 && 2 / Math.sqrt(mm) <= style.miterLimit) {
-      const tx = b[0] + (mx * s * half * 2) / mm;
-      const ty = b[1] + (my * s * half * 2) / mm;
-      push([b[0], b[1], ax, ay, tx, ty, 2, TRIANGLE], color);
-      push([b[0], b[1], tx, ty, bx, by, 2, TRIANGLE], color);
-    } else {
-      push([b[0], b[1], ax, ay, bx, by, 2, TRIANGLE], color);
-    }
+    for (const [x0, y0, x1, y1, cap0, cap1] of mergeRuns(segments, half)) push([x0, y0, x1, y1, half, cap0, cap1, SEGMENT], strokeColor);
   };
 
   const shape = (name, attrs, style) => {
@@ -55483,6 +55525,7 @@ __exports.BUTT = BUTT;
 __exports.SQUARE = SQUARE;
 __exports.ROUND = ROUND;
 __exports.JOINT = JOINT;
+__exports.MITER_LIMIT = MITER_LIMIT;
 };
 
 __modules["src/web/atlas-layout.js"] = function (__require, __exports) {
@@ -56187,12 +56230,14 @@ __modules["src/web/atlas-paint-gpu.js"] = function (__require, __exports) {
 __exports.createGpuDesk = createGpuDesk;
 let DITHER, QUAD_VERTEX, ROUNDED_BOX, createQuad, createShapes, linkProgram, premultiplied, textMeasure; __bind(() => { ({ DITHER, QUAD_VERTEX, ROUNDED_BOX, createQuad, createShapes, linkProgram, premultiplied, textMeasure } = __require("src/web/gpu.js")); });
 let CUTOFF, RADIUS, glyphAtlas; __bind(() => { ({ CUTOFF, RADIUS, glyphAtlas } = __require("src/web/atlas-glyphs.js")); });
+let MITER_LIMIT; __bind(() => { ({ MITER_LIMIT } = __require("src/web/atlas-ink.js")); });
 /**
  * The Atlas desk in WebGL2: the same drawing operations as the 2D painter
  * (atlas-paint-2d.js). Each design is a mipmapped texture, which zooms
  * smoothly at any scale; the grid, shadows, glows, and beams are shaders.
  * Once uploaded, a design's bitmap is closed: the texture is its one copy.
  */
+
 
 
 
@@ -56239,7 +56284,7 @@ layout(location = 3) in vec4 a_color;
 uniform vec2 u_pane;
 uniform vec4 u_map;
 uniform float u_px, u_soft;
-out vec2 v_p;
+out vec2 v_p_;
 flat out vec4 v_a;
 flat out vec4 v_b;
 flat out vec4 v_color;
@@ -56261,7 +56306,10 @@ void main() {
     vec2 dir = len > 1e-6 ? d / len : vec2(1.0, 0.0);
     vec2 n = vec2(-dir.y, dir.x);
     float out_ = half_ + margin;
-    p = mix(p0 - dir * out_, p1 + dir * out_, a_corner.x) + n * out_ * (a_corner.y * 2.0 - 1.0);
+    // A corner's end reaches on to its miter.
+    float out0 = a_b.y > 9.5 ? half_ * ${MITER_LIMIT.toFixed(1)} + margin : out_;
+    float out1 = a_b.z > 9.5 ? half_ * ${MITER_LIMIT.toFixed(1)} + margin : out_;
+    p = mix(p0 - dir * out0, p1 + dir * out1, a_corner.x) + n * out_ * (a_corner.y * 2.0 - 1.0);
     v_a = vec4(p0, p1);
     v_b = vec4(half_, a_b.y, a_b.z, 0.0);
   } else if (kind == 1 || kind == 2) {
@@ -56281,20 +56329,24 @@ void main() {
     v_a = vec4(p0, p1);
     v_b = vec4(p2, a_b.z, 3.0);
   }
-  v_p = p;
+  v_p_ = p;
   vec2 clip = p / u_pane * 2.0 - 1.0;
   gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
 }`;
 
 const INK_FRAGMENT = `#version 300 es
 precision highp float;
-in vec2 v_p;
+in vec2 v_p_;
 flat in vec4 v_a;
 flat in vec4 v_b;
 flat in vec4 v_color;
 flat in float v_fade;
 uniform vec4 u_rect;
+uniform vec2 u_device;
 uniform float u_soft, u_alpha, u_reveal, u_seed;
+// This pixel's middle, from the window itself: the same in every shape, so
+// two shapes cut along one line agree on which side each pixel is.
+vec2 v_p;
 out vec4 color;
 ${REVEAL}
 float capped(float t, float v, float half_, float cap) {
@@ -56307,6 +56359,7 @@ float side(vec2 a, vec2 b, float s) {
   return -s * (e.x * (v_p.y - a.y) - e.y * (v_p.x - a.x)) / max(length(e), 1e-6);
 }
 void main() {
+  v_p = vec2(gl_FragCoord.x, u_device.y - gl_FragCoord.y) / u_device.x;
   int kind = int(v_b.w + 0.5);
   float d;
   if (kind == 0) {
@@ -56317,11 +56370,23 @@ void main() {
     vec2 q = v_p - p0;
     float u = dot(q, dir), v = dot(q, vec2(-dir.y, dir.x));
     float half_ = v_b.x;
-    // An end at a mitered corner is cut hard: the corner's wedge takes over.
-    if ((u < 0.0 && v_b.y > 2.5) || (u > len && v_b.z > 2.5)) discard;
-    if (u < 0.0) d = capped(-u, v, half_, v_b.y);
-    else if (u > len) d = capped(u - len, v, half_, v_b.z);
-    else d = abs(v) - half_;
+    d = abs(v) - half_;
+    // A corner's end is cut across the corner's mean direction, where the
+    // run on from it starts: the two make a miter, each pixel drawn by one.
+    if (v_b.y > 9.5) {
+      float a = v_b.y - 10.0;
+      if (dot(v_p - p0, vec2(cos(a), sin(a))) < 0.0 || (u < 0.0 && length(v_p - p0) > half_ * ${MITER_LIMIT.toFixed(1)})) discard;
+    } else if (u < 0.0) {
+      if (v_b.y > 2.5) discard;
+      d = capped(-u, v, half_, v_b.y);
+    }
+    if (v_b.z > 9.5) {
+      float a = v_b.z - 10.0;
+      if (dot(v_p - p1, vec2(cos(a), sin(a))) >= 0.0 || (u > len && length(v_p - p1) > half_ * ${MITER_LIMIT.toFixed(1)})) discard;
+    } else if (u > len) {
+      if (v_b.z > 2.5) discard;
+      d = capped(u - len, v, half_, v_b.z);
+    }
   } else if (kind == 1) {
     d = length(v_p - v_a.xy) - v_a.z;
   } else if (kind == 2) {
@@ -56693,6 +56758,7 @@ function createGpuDesk(canvas, gl) {
     gl.uniform2f(u.u_pane, pane.w, pane.h);
     gl.uniform4f(u.u_map, k, k, rect.x - box.x * k, rect.y - box.y * k);
     gl.uniform4f(u.u_rect, rect.x, rect.y, rect.w, rect.h);
+    gl.uniform2f(u.u_device, pane.dpr, pane.height);
     gl.uniform1f(u.u_px, px);
     gl.uniform1f(u.u_soft, px * Math.pow(2, blur * 1.5));
     gl.uniform1f(u.u_alpha, alpha);
@@ -57428,8 +57494,8 @@ let appendContextItem, openMenuAt; __bind(() => { ({ appendContextItem, openMenu
 let onAccentChange; __bind(() => { ({ onAccentChange } = __require("src/web/accent.js")); });
 let gpuContext, onAccelerationChange; __bind(() => { ({ gpuContext, onAccelerationChange } = __require("src/web/gpu.js")); });
 let createGpuDesk; __bind(() => { ({ createGpuDesk } = __require("src/web/atlas-paint-gpu.js")); });
-let INK_FLOATS, svgInk; __bind(() => { ({ INK_FLOATS, svgInk } = __require("src/web/atlas-ink.js")); });
-let layoutText, withRules; __bind(() => { ({ layoutText, withRules } = __require("src/web/atlas-text.js")); });
+let INK_FLOATS, parseColor, svgInk; __bind(() => { ({ INK_FLOATS, parseColor, svgInk } = __require("src/web/atlas-ink.js")); });
+let GLYPH_FLOATS, layoutText, withRules; __bind(() => { ({ GLYPH_FLOATS, layoutText, withRules } = __require("src/web/atlas-text.js")); });
 let glyphAtlas; __bind(() => { ({ glyphAtlas } = __require("src/web/atlas-glyphs.js")); });
 let createCanvasDesk; __bind(() => { ({ createCanvasDesk } = __require("src/web/atlas-paint-2d.js")); });
 /**
@@ -57606,6 +57672,8 @@ function atlasSnapshot() {
     flight: state.flight ? { id: state.flight.id, depth: state.flight.depth } : null,
     beams: state.beams || [],
     baked: state.baked || 0,
+    // Designs read for the GPU so far (once each, whatever the theme).
+    reads: inkStamp,
     baking: !!state.baking || !!state.wanted?.length,
     accent: state.colors?.accent || null,
     tiles: state.tiles.map((tile) => {
@@ -57951,55 +58019,101 @@ function mathFontReady() {
   return false;
 }
 
-/** A design's shapes and glyphs, read from its export SVG in `shade`. */
-function readDesign(entry, shade) {
-  const { data, count, textSvg, picturesSvg } = svgInk(shade === 'dark' ? applyExportDarkTheme(entry.svg) : entry.svg);
+/** A design's shapes and glyphs, read from its export SVG (as drawn in the
+ *  light theme: the dark one is its colors changed, `inkMesh`). */
+function readDesign(entry) {
+  const { data, count, textSvg, picturesSvg } = svgInk(entry.svg);
   const atlas = glyphAtlas();
+  // Its text in the colors of the export itself, not of the page.
+  const text = textSvg ? textSvg.replace(/var\(--[\w-]+,\s*([^()]+)\)/g, '$1') : null;
   // The glyph atlas full, it starts again: laid out once more into the new one.
-  const text = textSvg ? layoutText(textSvg, entry.box, atlas) || layoutText(textSvg, entry.box, atlas) : null;
-  const rules = text?.rules || [];
+  const laid = text ? layoutText(text, entry.box, atlas) || layoutText(text, entry.box, atlas) : null;
+  const rules = laid?.rules || [];
   return {
     textSvg, picturesSvg, generation: atlas.generation,
-    mesh: { data: withRules(data, rules), count: count + rules.length / INK_FLOATS, glyphs: text?.glyphs, glyphCount: text?.glyphCount || 0 },
+    mesh: { data: withRules(data, rules), count: count + rules.length / INK_FLOATS, glyphs: laid?.glyphs, glyphCount: laid?.glyphCount || 0 },
   };
 }
 
+/** Designs read, kept from one visit to the next: by id, `{ svg, ... }`. */
+const readDesigns = new Map();
+const MAX_READ_DESIGNS = 800;
+
 /**
  * A design as the GPU draws it (atlas-ink.js, atlas-text.js), read from its
- * export SVG in the theme now: `{ key, textSvg, picturesSvg, mesh }`.
- * `mesh` is held only until it is on the GPU. Null when this frame has read
- * its share already, or its math waits for its font (unless `now`).
+ * export SVG once: `{ key, textSvg, picturesSvg, mesh }`, `key` naming it in
+ * the theme now. Null when this frame has read its share already, or its
+ * math waits for its font (unless `now`).
  */
 function inkOf(entry, now = false) {
   const shade = theme();
-  const ink = entry.ink;
   const generation = glyphAtlas().generation;
-  if (ink?.shade === shade && ink.svg === entry.svg && ink.generation === generation && !(ink.withoutFont && mathFontReady())) return ink;
-  if (!now && inkReadSpent > INK_READ_MS_PER_FRAME) return null;
-  // Math laid out before its font has loaded would take another size.
-  const withoutFont = usesMathFont(entry.svg) && !mathFontReady();
-  if (withoutFont && !now) return null;
-  const started = performance.now();
-  const read = readDesign(entry, shade);
-  inkReadSpent += performance.now() - started;
-  inkStamp += 1;
-  entry.ink = { shade, svg: entry.svg, key: `${entry.id}\n${inkStamp}`, withoutFont, ...read };
-  return entry.ink;
+  let ink = entry.ink || readDesigns.get(entry.id);
+  if (!(ink?.svg === entry.svg && ink.generation === generation && !(ink.withoutFont && mathFontReady()))) {
+    if (!now && inkReadSpent > INK_READ_MS_PER_FRAME) return null;
+    // Math laid out before its font has loaded would take another size.
+    const withoutFont = usesMathFont(entry.svg) && !mathFontReady();
+    if (withoutFont && !now) return null;
+    const started = performance.now();
+    const read = readDesign(entry);
+    inkReadSpent += performance.now() - started;
+    inkStamp += 1;
+    ink = { svg: entry.svg, stamp: inkStamp, withoutFont, shown: false, ...read };
+    readDesigns.delete(entry.id);
+    readDesigns.set(entry.id, ink);
+    if (readDesigns.size > MAX_READ_DESIGNS) readDesigns.delete(readDesigns.keys().next().value);
+  }
+  entry.ink = ink;
+  if (ink.shade !== shade) {
+    ink.shade = shade;
+    ink.key = `${entry.id}\n${ink.stamp}\n${shade}`;
+  }
+  return ink;
 }
 
-/** Its shapes and glyphs for the GPU, read again if they were let go. */
+/** Colors as the export's dark theme draws them (applyExportDarkTheme), by
+ *  their light ones: [r, g, b] 0 to 1. */
+const darkColors = new Map();
+function darkColor(r, g, b) {
+  const bytes = [r, g, b].map((v) => Math.max(0, Math.min(255, Math.round(v * 255))));
+  const short = bytes.every((v) => v % 17 === 0);
+  const hex = `#${bytes.map((v) => (short ? (v / 17).toString(16) : v.toString(16).padStart(2, '0'))).join('')}`;
+  let color = darkColors.get(hex);
+  if (!color) {
+    color = parseColor(applyExportDarkTheme(hex)).slice(0, 3);
+    darkColors.set(hex, color);
+  }
+  return color;
+}
+
+/** `data` (shapes of `floats` floats, a premultiplied color at `at`) in `shade`. */
+function inShade(data, floats, at, shade) {
+  if (shade !== 'dark' || !data?.length) return data;
+  const out = new Float32Array(data);
+  for (let i = at; i < out.length; i += floats) {
+    const a = out[i + 3];
+    if (!(a > 0)) continue;
+    const [r, g, b] = darkColor(out[i] / a, out[i + 1] / a, out[i + 2] / a);
+    out[i] = r * a;
+    out[i + 1] = g * a;
+    out[i + 2] = b * a;
+  }
+  return out;
+}
+
+/** Its shapes and glyphs for the GPU, in the theme now. */
 function inkMesh(entry) {
-  const ink = entry.ink;
-  if (!ink.mesh) return readDesign(entry, ink.shade).mesh;
-  const { mesh } = ink;
-  ink.mesh = null;
-  return mesh;
+  const { mesh, shade } = entry.ink;
+  return { ...mesh, data: inShade(mesh.data, INK_FLOATS, 8, shade), glyphs: inShade(mesh.glyphs, GLYPH_FLOATS, 12, shade) };
 }
 
 /** The SVG a design's images are drawn from, in the theme now; null when
  *  there is nothing to draw (a design with no pictures, on the GPU). */
 function imageSvg(entry) {
-  if (imageLayer() === 'pictures') return inkOf(entry, true).picturesSvg;
+  if (imageLayer() === 'pictures') {
+    const pictures = inkOf(entry, true).picturesSvg;
+    return pictures && theme() === 'dark' ? applyExportDarkTheme(pictures) : pictures;
+  }
   return theme() === 'dark' ? applyExportDarkTheme(entry.svg) : entry.svg;
 }
 
@@ -58422,9 +58536,10 @@ function drawDesk() {
     const ink = paint.vector ? inkOf(entry) : null;
     if (paint.vector && !ink) requestDraw();
     if (ink && !flying) {
-      const fresh = !paint.hasInk(ink.key);
       if (paint.inkReady(ink.key, () => inkMesh(entry))) {
-        if (fresh && !entry.current && !rootEl.classList.contains('preparing')) state.arrived.set(ink.key, performance.now());
+        // Fades in once, when first read: in another theme it is at once.
+        if (!ink.shown && !entry.current && !rootEl.classList.contains('preparing')) state.arrived.set(ink.key, performance.now());
+        ink.shown = true;
         const since = state.arrived.get(ink.key);
         const arriving = since === undefined ? 1 : Math.min(1, (performance.now() - since) / ARRIVE_MS);
         if (arriving < 1) requestDraw();

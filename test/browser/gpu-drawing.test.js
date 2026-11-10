@@ -90,6 +90,24 @@ describe('the Atlas desk on the GPU', { skip: browserSkip() }, () => {
     assert.ok(landing.ink > 0.05, `the beam at its landing: ${JSON.stringify(landing)}`);
   });
 
+  test('a theme change recolors every design, reading none again', async () => {
+    const reads = (await snapshot(h)).reads;
+    await h.evaluate(`${h.module('toolbar-ui.js')}.then((m) => m.toggleTheme())`);
+    await stillDesk(h);
+    const s = await snapshot(h);
+    assert.equal(s.reads, reads, 'no design read again');
+    assert.ok(s.tiles.every((t) => t.ink), JSON.stringify(s.tiles.map((t) => [t.name, t.ink])));
+    // In the dark theme the ink is light.
+    let light = 0;
+    for (const { screen } of s.tiles) {
+      const p = await pixels(h, screen, true);
+      for (let i = 0; i < p.length; i += 4) if (p[i] > 180 && p[i + 1] > 180 && p[i + 2] > 180) light += 1;
+    }
+    assert.ok(light > 20, `light ink: ${light}`);
+    await h.evaluate(`${h.module('toolbar-ui.js')}.then((m) => m.toggleTheme())`);
+    await stillDesk(h);
+  });
+
   test('a lost context falls back to the 2D canvas, and a restored one returns', async () => {
     const rect = await tileRect(h, 'amp');
     await h.evaluate(`window.__lost = document.getElementById('atlas-desk-gpu').getContext('webgl2').getExtension('WEBGL_lose_context'); window.__lost.loseContext()`);
@@ -257,6 +275,18 @@ describe('the desk\'s effects, drawn directly', { skip: browserSkip() }, () => {
     // The stem of an I, some 15 pixels wide here: solid, with an edge of a pixel or two each side.
     assert.ok(r.inked > 8, JSON.stringify(r));
     assert.ok(r.between <= 4, JSON.stringify(r));
+  });
+
+  test('thinner than a pixel, a wire and the pin lead it runs into are no brighter where they meet', async () => {
+    // Square ends 3 wide overlapping by 6, drawn at a tenth: 0.6 of a pixel wide.
+    const svg = drawing(2000, 2000, '<path d="M 0 1000 L 1000 1000 M 1003 1000 L 2000 1000 M 1000 0 L 1000 300 M 1000 303 L 1000 600" stroke="#000" stroke-width="6" stroke-linecap="square" fill="none"/>');
+    const r = await scene(`${inked(svg, { x: 0, y: 0, w: 200, h: 200 })}
+      const column = (x) => Math.min(...[98, 99, 100, 101, 102].map((y) => at(x, y)));
+      const row = (y) => Math.min(...[98, 99, 100, 101, 102].map((x) => at(x, y)));
+      return { meeting: column(100), along: column(50), turn: row(30), down: row(15) };`);
+    assert.ok(r.along < 250, `the line shows: ${JSON.stringify(r)}`);
+    assert.ok(Math.abs(r.meeting - r.along) <= 3, `as strong where they meet: ${JSON.stringify(r)}`);
+    assert.ok(Math.abs(r.turn - r.down) <= 3, `and up and down: ${JSON.stringify(r)}`);
   });
 
   test('a corner is mitered to its point, and a fill has no seams', async () => {

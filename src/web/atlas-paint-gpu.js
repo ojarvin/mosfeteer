@@ -7,6 +7,7 @@
 
 import { DITHER, QUAD_VERTEX, ROUNDED_BOX, createQuad, createShapes, linkProgram, premultiplied, textMeasure } from './gpu.js';
 import { CUTOFF, RADIUS, glyphAtlas } from './atlas-glyphs.js';
+import { MITER_LIMIT } from './atlas-ink.js';
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 /** Pixels of design images uploaded in one frame: the rest wait, so a burst
@@ -50,7 +51,7 @@ layout(location = 3) in vec4 a_color;
 uniform vec2 u_pane;
 uniform vec4 u_map;
 uniform float u_px, u_soft;
-out vec2 v_p;
+out vec2 v_p_;
 flat out vec4 v_a;
 flat out vec4 v_b;
 flat out vec4 v_color;
@@ -72,7 +73,10 @@ void main() {
     vec2 dir = len > 1e-6 ? d / len : vec2(1.0, 0.0);
     vec2 n = vec2(-dir.y, dir.x);
     float out_ = half_ + margin;
-    p = mix(p0 - dir * out_, p1 + dir * out_, a_corner.x) + n * out_ * (a_corner.y * 2.0 - 1.0);
+    // A corner's end reaches on to its miter.
+    float out0 = a_b.y > 9.5 ? half_ * ${MITER_LIMIT.toFixed(1)} + margin : out_;
+    float out1 = a_b.z > 9.5 ? half_ * ${MITER_LIMIT.toFixed(1)} + margin : out_;
+    p = mix(p0 - dir * out0, p1 + dir * out1, a_corner.x) + n * out_ * (a_corner.y * 2.0 - 1.0);
     v_a = vec4(p0, p1);
     v_b = vec4(half_, a_b.y, a_b.z, 0.0);
   } else if (kind == 1 || kind == 2) {
@@ -92,20 +96,24 @@ void main() {
     v_a = vec4(p0, p1);
     v_b = vec4(p2, a_b.z, 3.0);
   }
-  v_p = p;
+  v_p_ = p;
   vec2 clip = p / u_pane * 2.0 - 1.0;
   gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
 }`;
 
 const INK_FRAGMENT = `#version 300 es
 precision highp float;
-in vec2 v_p;
+in vec2 v_p_;
 flat in vec4 v_a;
 flat in vec4 v_b;
 flat in vec4 v_color;
 flat in float v_fade;
 uniform vec4 u_rect;
+uniform vec2 u_device;
 uniform float u_soft, u_alpha, u_reveal, u_seed;
+// This pixel's middle, from the window itself: the same in every shape, so
+// two shapes cut along one line agree on which side each pixel is.
+vec2 v_p;
 out vec4 color;
 ${REVEAL}
 float capped(float t, float v, float half_, float cap) {
@@ -118,6 +126,7 @@ float side(vec2 a, vec2 b, float s) {
   return -s * (e.x * (v_p.y - a.y) - e.y * (v_p.x - a.x)) / max(length(e), 1e-6);
 }
 void main() {
+  v_p = vec2(gl_FragCoord.x, u_device.y - gl_FragCoord.y) / u_device.x;
   int kind = int(v_b.w + 0.5);
   float d;
   if (kind == 0) {
@@ -128,11 +137,23 @@ void main() {
     vec2 q = v_p - p0;
     float u = dot(q, dir), v = dot(q, vec2(-dir.y, dir.x));
     float half_ = v_b.x;
-    // An end at a mitered corner is cut hard: the corner's wedge takes over.
-    if ((u < 0.0 && v_b.y > 2.5) || (u > len && v_b.z > 2.5)) discard;
-    if (u < 0.0) d = capped(-u, v, half_, v_b.y);
-    else if (u > len) d = capped(u - len, v, half_, v_b.z);
-    else d = abs(v) - half_;
+    d = abs(v) - half_;
+    // A corner's end is cut across the corner's mean direction, where the
+    // run on from it starts: the two make a miter, each pixel drawn by one.
+    if (v_b.y > 9.5) {
+      float a = v_b.y - 10.0;
+      if (dot(v_p - p0, vec2(cos(a), sin(a))) < 0.0 || (u < 0.0 && length(v_p - p0) > half_ * ${MITER_LIMIT.toFixed(1)})) discard;
+    } else if (u < 0.0) {
+      if (v_b.y > 2.5) discard;
+      d = capped(-u, v, half_, v_b.y);
+    }
+    if (v_b.z > 9.5) {
+      float a = v_b.z - 10.0;
+      if (dot(v_p - p1, vec2(cos(a), sin(a))) >= 0.0 || (u > len && length(v_p - p1) > half_ * ${MITER_LIMIT.toFixed(1)})) discard;
+    } else if (u > len) {
+      if (v_b.z > 2.5) discard;
+      d = capped(u - len, v, half_, v_b.z);
+    }
   } else if (kind == 1) {
     d = length(v_p - v_a.xy) - v_a.z;
   } else if (kind == 2) {
@@ -504,6 +525,7 @@ export function createGpuDesk(canvas, gl) {
     gl.uniform2f(u.u_pane, pane.w, pane.h);
     gl.uniform4f(u.u_map, k, k, rect.x - box.x * k, rect.y - box.y * k);
     gl.uniform4f(u.u_rect, rect.x, rect.y, rect.w, rect.h);
+    gl.uniform2f(u.u_device, pane.dpr, pane.height);
     gl.uniform1f(u.u_px, px);
     gl.uniform1f(u.u_soft, px * Math.pow(2, blur * 1.5));
     gl.uniform1f(u.u_alpha, alpha);

@@ -2,7 +2,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BUTT, DISC, INK_FLOATS, JOINT, RING, ROUND, SEGMENT, SQUARE, TRIANGLE, flattenPath, parseColor, parseTransform, svgInk, triangulate } from '../src/web/atlas-ink.js';
+import { BUTT, DISC, INK_FLOATS, JOINT, RING, ROUND, SEGMENT, SQUARE, TRIANGLE, flattenPath, mergeRuns, parseColor, parseTransform, svgInk, triangulate } from '../src/web/atlas-ink.js';
 import { svgString } from '../src/core/render.js';
 import { DRAWING_EXPORT_OPTIONS } from '../src/core/selection-drawing.js';
 import { builtInDrawings } from '../src/core/arrange-builtins.js';
@@ -53,22 +53,34 @@ test('a fill is cut into triangles that cover it once, only its outline smoothed
   assert.ok(Math.abs(notch.reduce((sum, t) => sum + area(t), 0) - (400 - 120)) < 1e-9);
 });
 
-test('strokes become segments with their caps, a miter fills its corner, and hidden ink is left out', () => {
+test('strokes become segments with their caps, a corner is cut across its mean direction, and hidden ink is left out', () => {
   const ink = svgInk(drawing(`
     <path d="M 0 0 L 100 0 L 100 50" stroke="#111" stroke-width="6" stroke-linecap="square" fill="none"/>
     <path d="M 0 0 L 9 9" stroke="#111" stroke-width="6" stroke-opacity="0" fill="none"><title>a hit area</title></path>
     <g transform="translate(10 10)" opacity="0.5"><line x1="0" y1="0" x2="10" y2="0" stroke="#000" stroke-width="2" stroke-linecap="round"/></g>`));
-  const [first, second, wedgeA, wedgeB, line] = shapes(ink);
-  assert.equal(ink.count, 5);
-  assert.deepEqual(first.slice(0, 8), [0, 0, 100, 0, 3, SQUARE, JOINT, SEGMENT]);
-  assert.deepEqual(second.slice(0, 8), [100, 0, 100, 50, 3, JOINT, SQUARE, SEGMENT]);
-  // The corner's outside, up to its point (103, -3).
-  assert.equal(wedgeA[7], TRIANGLE);
-  assert.ok([wedgeA, wedgeB].some((t) => [[t[0], t[1]], [t[2], t[3]], [t[4], t[5]]].some(([x, y]) => near([x, y], [103, -3]))));
+  const [first, second, line] = shapes(ink);
+  assert.equal(ink.count, 3);
+  // East then south: both cut across south-east (45°), where they meet in a miter.
+  const corner = JOINT + 7 + Math.PI / 4;
+  assert.ok(near(first.slice(0, 8), [0, 0, 100, 0, 3, SQUARE, corner, SEGMENT], 1e-5), String(first));
+  assert.ok(near(second.slice(0, 8), [100, 0, 100, 50, 3, corner, SQUARE, SEGMENT], 1e-5), String(second));
   // Moved by its group and half as opaque, premultiplied.
   assert.deepEqual(line.slice(0, 8), [10, 10, 20, 10, 1, ROUND, ROUND, SEGMENT]);
   assert.ok(near(line.slice(8), [0, 0, 0, 0.5]));
   assert.deepEqual(ink.box, { x: -10, y: -20, w: 200, h: 100 });
+});
+
+test('a path\'s runs along one line that touch are one run: a wire and the pin lead it runs into', () => {
+  // A wire ending at 120 and a lead from 123, both with square ends 3 wide: they overlap.
+  const ink = svgInk(drawing('<path d="M 0 0 L 120 0 M 123 0 L 160 0 M 200 0 L 220 0" stroke="#111" stroke-width="6" stroke-linecap="square" fill="none"/>'));
+  assert.deepEqual(shapes(ink).map((s) => s.slice(0, 7)), [[-3, 0, 163, 0, 3, BUTT, BUTT], [197, 0, 223, 0, 3, BUTT, BUTT]]);
+  // A cut end (a corner's) and a round one stay; a run on another line is its own.
+  assert.deepEqual(mergeRuns([[0, 0, 10, 0, JOINT, SQUARE], [12, 0, 20, 0, SQUARE, ROUND], [0, 5, 10, 5, BUTT, BUTT]], 3), [[0, 0, 20, 0, JOINT, ROUND], [0, 5, 10, 5, BUTT, BUTT]]);
+  // A run drawn right to left comes out left to right: its corner's cut faces the other way.
+  const [[, , , , cap0]] = mergeRuns([[20, 0, 12, 0, JOINT + 7 + Math.PI / 2, SQUARE], [0, 0, 10, 0, SQUARE, SQUARE]], 3);
+  assert.equal(cap0, BUTT);
+  const [[, , , , , cap1]] = mergeRuns([[20, 0, 12, 0, JOINT + 7 + Math.PI / 2, SQUARE], [0, 0, 13, 0, SQUARE, SQUARE]], 3);
+  assert.ok(Math.abs(cap1 - (JOINT + 7 + 1.5 * Math.PI)) < 1e-9, String(cap1));
 });
 
 test('circles are discs and rings, dashes are cut, fills come before their strokes', () => {
