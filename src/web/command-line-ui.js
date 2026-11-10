@@ -6,7 +6,7 @@
  */
 
 import { EDITOR_COMMANDS, canonicalDocumentLine, commandLineIntent, commandWord, didYouMean, lineSuggestions, resolveEditorCommand, tabComplete } from './command-line.js';
-import { analysisDialog, canvasEl, cmdInput, cmdSuggestionsEl, reduceMotionButton, scrollSchemeButton, tipsButton } from './elements.js';
+import { analysisDialog, canvasEl, cmdInput, cmdSuggestionsEl, hardwareAccelerationButton, reduceMotionButton, scrollSchemeButton, tipsButton } from './elements.js';
 import { editor } from './editor-state.js';
 import { applyLogDrawerEvent, hintLine, logCommand, logLine } from './status-bar-ui.js';
 import { toggleTheme, setGrid, setCrosshair, setGuides } from './toolbar-ui.js';
@@ -73,6 +73,7 @@ export const ACTIONS = {
   beats: (state) => toggleTo(state, editor.beatStripOpen, toggleBeatStrip),
   tips: (state) => toggleTo(state, checked(tipsButton), () => tipsButton?.click()),
   'reduce-motion': (state) => toggleTo(state, checked(reduceMotionButton), () => reduceMotionButton?.click()),
+  'hardware-acceleration': (state) => toggleTo(state, checked(hardwareAccelerationButton), () => hardwareAccelerationButton?.click()),
   'net-beams': (state) => setNetBeams(state ?? !netBeamsShown()),
   'invert-pictures': (state) => setPicturesFollowTheme(state ?? !picturesFollowTheme()),
   'arrange-suggestions': (state) => setArrangeSuggestions(state ?? !arrangeSuggestionsOn()),

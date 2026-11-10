@@ -5,7 +5,8 @@
  *
  * A browser with no real GPU gets no context (`gpuContext` returns null) and
  * the caller keeps its 2D drawing. `localStorage['mosfeteer.gpu']`: `off`
- * never uses WebGL, `on` also accepts a software renderer.
+ * never uses WebGL (Settings -> Hardware acceleration), `on` also accepts a
+ * software renderer.
  */
 
 const SETTING_KEY = 'mosfeteer.gpu';
@@ -13,6 +14,26 @@ const SOFTWARE = /swiftshader|llvmpipe|softpipe|software|basic render/i;
 
 function setting() {
   try { return globalThis.localStorage?.getItem(SETTING_KEY) || ''; } catch { return ''; }
+}
+
+const accelerationListeners = new Set();
+
+/** Whether drawing may use the GPU (Settings -> Hardware acceleration). */
+export function hardwareAcceleration() {
+  return setting() !== 'off';
+}
+
+/** Turn the GPU on or off; those drawing with it start again (onAccelerationChange). */
+export function setHardwareAcceleration(on) {
+  try {
+    if (!on) globalThis.localStorage?.setItem(SETTING_KEY, 'off');
+    else if (setting() === 'off') globalThis.localStorage?.removeItem(SETTING_KEY);
+  } catch { /* per-session only */ }
+  for (const listener of accelerationListeners) listener(on);
+}
+
+export function onAccelerationChange(listener) {
+  accelerationListeners.add(listener);
 }
 
 /** A WebGL2 context for `canvas`, or null. */

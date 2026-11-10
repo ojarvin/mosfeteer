@@ -38,7 +38,9 @@ images three times its size on screen, sampled four times a pixel, at most
 The grid, shadows, glows, and beams are shaders; captions are small cached textures.
 A browser with no real GPU (software renderers included) keeps the 2D canvas,
 and a lost context falls back to it until the context returns.
-`localStorage['mosfeteer.gpu']` is `off` to stay on the 2D canvas, or `on` to
+Settings → Hardware acceleration (on by default; `:hardware-acceleration`)
+turns the GPU off for the desk and the net beams, which then draw as without
+one, at once. It is `localStorage['mosfeteer.gpu']`: `off`, or `on` to also
 accept a software renderer (`gpu: true` in the browser test harness).
 
 On the GPU the desk's transitions carry a few passing effects, each a curve in

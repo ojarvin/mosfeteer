@@ -31,6 +31,7 @@ export const ICON_PATHS = {
   'chevron-down': '<path d="m6 10 6 6 6-6"/>',
   'edge-fall': '<path d="M3 7h8v10h10"/>',
   'edge-rise': '<path d="M3 17h8V7h10"/>',
+  chip: '<rect x="7" y="7" width="10" height="10" rx="1.5"/><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"/>',
   motion: '<path d="M3 8h7M5 12h6M3 16h7"/><circle cx="16" cy="12" r="4"/>',
   moon: '<path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5z"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',

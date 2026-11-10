@@ -8,7 +8,8 @@
 import { PAGE_GUIDE_UNITS, customPageGuide, normalizePageGuide, pageGuideCaption, pageGuideTitle } from '../core/page-guide.js';
 import { minimalRevealScroll } from './toolbar.js';
 import { chooseToolbarStage, toolbarFits, toolbarStageTokens } from './toolbar-fit.js';
-import { canvasEl, circuitNameEl, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, reduceMotionButton, scrollSchemeButton, themeButtons, gridBtn, crosshairBtn, guidesBtn } from './elements.js';
+import { canvasEl, circuitNameEl, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, reduceMotionButton, hardwareAccelerationButton, scrollSchemeButton, themeButtons, gridBtn, crosshairBtn, guidesBtn } from './elements.js';
+import { hardwareAcceleration, setHardwareAcceleration } from './gpu.js';
 import { ICON_PATHS, syncToolCursor } from './icons.js';
 import { logLine, hintLine } from './status-bar-ui.js';
 import { runCheck } from './design-check-ui.js';
@@ -776,6 +777,13 @@ export function installToolbarUi() {
     hintLine(reduceMotionSetting() ? 'animations reduced' : reducedMotion() ? 'animations still reduced: the system asks for reduced motion' : 'animations on');
   });
   reduceMotionButton?.setAttribute('aria-checked', String(reduceMotionSetting()));
+
+  hardwareAccelerationButton?.addEventListener('click', () => {
+    setHardwareAcceleration(!hardwareAcceleration());
+    hardwareAccelerationButton.setAttribute('aria-checked', String(hardwareAcceleration()));
+    hintLine(hardwareAcceleration() ? 'hardware acceleration on: the GPU draws where it can' : 'hardware acceleration off: drawn without the GPU');
+  });
+  hardwareAccelerationButton?.setAttribute('aria-checked', String(hardwareAcceleration()));
 
   // The theme chosen here, kept across reloads; with none, the system's,
   // followed as it changes.

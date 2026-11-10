@@ -56799,7 +56799,7 @@ let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion
 let showHelp; __bind(() => { ({ showHelp } = __require("src/web/help.js")); });
 let appendContextItem, openMenuAt; __bind(() => { ({ appendContextItem, openMenuAt } = __require("src/web/context-menu.js")); });
 let onAccentChange; __bind(() => { ({ onAccentChange } = __require("src/web/accent.js")); });
-let gpuContext; __bind(() => { ({ gpuContext } = __require("src/web/gpu.js")); });
+let gpuContext, onAccelerationChange; __bind(() => { ({ gpuContext, onAccelerationChange } = __require("src/web/gpu.js")); });
 let createGpuDesk; __bind(() => { ({ createGpuDesk } = __require("src/web/atlas-paint-gpu.js")); });
 let svgInk; __bind(() => { ({ svgInk } = __require("src/web/atlas-ink.js")); });
 let createCanvasDesk; __bind(() => { ({ createCanvasDesk } = __require("src/web/atlas-paint-2d.js")); });
@@ -57495,6 +57495,26 @@ function evictBitmaps(level, keep) {
 const canvasDesk = createCanvasDesk(deskEl);
 let gpuDesk = null;
 let gpuTried = false;
+let gpuCanvas = null;
+
+// Hardware acceleration turned on or off: the desk is drawn again from the start.
+onAccelerationChange(() => {
+  if (gpuCanvas) {
+    const canvas = gpuCanvas;
+    gpuCanvas = null;
+    gpuDesk = null;
+    canvas.getContext('webgl2')?.getExtension('WEBGL_lose_context')?.loseContext();
+    canvas.remove();
+  }
+  gpuTried = false;
+  deskEl.hidden = false;
+  if (state) {
+    for (const bitmap of state.bitmaps.values()) bitmap.close?.();
+    state.bitmaps.clear();
+    state.failed.clear();
+    requestDraw();
+  }
+});
 function startGpuDesk() {
   gpuTried = true;
   const canvas = document.createElement('canvas');
@@ -57516,7 +57536,9 @@ function startGpuDesk() {
     return;
   }
   deskEl.after(canvas);
+  gpuCanvas = canvas;
   canvas.addEventListener('webglcontextlost', (ev) => {
+    if (gpuCanvas !== canvas) return;
     ev.preventDefault();
     gpuDesk = null;
     deskEl.hidden = false;
@@ -63684,7 +63706,7 @@ function writeDrawingToClipboard(svg, {
 __modules["src/web/command-line-ui.js"] = function (__require, __exports) {
 __exports.installCommandLine = installCommandLine;
 let EDITOR_COMMANDS, canonicalDocumentLine, commandLineIntent, commandWord, didYouMean, lineSuggestions, resolveEditorCommand, tabComplete; __bind(() => { ({ EDITOR_COMMANDS, canonicalDocumentLine, commandLineIntent, commandWord, didYouMean, lineSuggestions, resolveEditorCommand, tabComplete } = __require("src/web/command-line.js")); });
-let analysisDialog, canvasEl, cmdInput, cmdSuggestionsEl, reduceMotionButton, scrollSchemeButton, tipsButton; __bind(() => { ({ analysisDialog, canvasEl, cmdInput, cmdSuggestionsEl, reduceMotionButton, scrollSchemeButton, tipsButton } = __require("src/web/elements.js")); });
+let analysisDialog, canvasEl, cmdInput, cmdSuggestionsEl, hardwareAccelerationButton, reduceMotionButton, scrollSchemeButton, tipsButton; __bind(() => { ({ analysisDialog, canvasEl, cmdInput, cmdSuggestionsEl, hardwareAccelerationButton, reduceMotionButton, scrollSchemeButton, tipsButton } = __require("src/web/elements.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let applyLogDrawerEvent, hintLine, logCommand, logLine; __bind(() => { ({ applyLogDrawerEvent, hintLine, logCommand, logLine } = __require("src/web/status-bar-ui.js")); });
 let toggleTheme, setGrid, setCrosshair, setGuides; __bind(() => { ({ toggleTheme, setGrid, setCrosshair, setGuides } = __require("src/web/toolbar-ui.js")); });
@@ -63787,6 +63809,7 @@ const ACTIONS = {
   beats: (state) => toggleTo(state, editor.beatStripOpen, toggleBeatStrip),
   tips: (state) => toggleTo(state, checked(tipsButton), () => tipsButton?.click()),
   'reduce-motion': (state) => toggleTo(state, checked(reduceMotionButton), () => reduceMotionButton?.click()),
+  'hardware-acceleration': (state) => toggleTo(state, checked(hardwareAccelerationButton), () => hardwareAccelerationButton?.click()),
   'net-beams': (state) => setNetBeams(state ?? !netBeamsShown()),
   'invert-pictures': (state) => setPicturesFollowTheme(state ?? !picturesFollowTheme()),
   'arrange-suggestions': (state) => setArrangeSuggestions(state ?? !arrangeSuggestionsOn()),
@@ -64074,6 +64097,7 @@ const EDITOR_COMMANDS = [
   { name: 'beats', aliases: ['beat-strip', 'steps', 'slides'], toggle: true, help: 'show or hide the beats window (Shift+B)' },
   { name: 'tips', aliases: ['hints'], toggle: true, help: 'turn the corner tips on or off' },
   { name: 'reduce-motion', aliases: ['reduce-animations', 'reduced-motion'], toggle: true, help: 'reduce animations: no zooms, slides, or flashes (Settings)' },
+  { name: 'hardware-acceleration', aliases: ['gpu'], toggle: true, help: 'draw the Atlas and net beams on the GPU where there is one (Settings)' },
   { name: 'arrange-suggestions', aliases: ['suggestions', 'suggest'], toggle: true, help: 'offer to draw a cell an edit completes as your other drawings draw it (Settings)' },
   { name: 'invert-pictures', aliases: ['pictures-follow-theme', 'invert-images', 'dark-pictures'], toggle: true, help: 'in the dark theme, invert pictures on a light background (Settings)' },
   { name: 'net-beams', aliases: ['beams', 'flight-lines', 'net-flight-lines'], toggle: true, help: 'beams from a hovered net to the nets its name connects (Settings)' },
@@ -69992,6 +70016,7 @@ const sidePanelEl = document.getElementById('side-panel');
 const sidePanelToggleEl = document.getElementById('btn-side-panel');
 const scrollSchemeButton = document.getElementById('btn-scroll-scheme');
 const reduceMotionButton = document.getElementById('btn-reduce-motion');
+const hardwareAccelerationButton = document.getElementById('btn-hardware-acceleration');
 const netBeamsButton = document.getElementById('btn-net-beams');
 const invertPicturesButton = document.getElementById('btn-invert-pictures');
 const arrangeSuggestionsButton = document.getElementById('btn-arrange-suggestions');
@@ -70096,6 +70121,7 @@ __exports.sidePanelEl = sidePanelEl;
 __exports.sidePanelToggleEl = sidePanelToggleEl;
 __exports.scrollSchemeButton = scrollSchemeButton;
 __exports.reduceMotionButton = reduceMotionButton;
+__exports.hardwareAccelerationButton = hardwareAccelerationButton;
 __exports.netBeamsButton = netBeamsButton;
 __exports.invertPicturesButton = invertPicturesButton;
 __exports.arrangeSuggestionsButton = arrangeSuggestionsButton;
@@ -72702,6 +72728,9 @@ function pinJoinPoints(circuit, pins, carried = new Set()) {
 };
 
 __modules["src/web/gpu.js"] = function (__require, __exports) {
+__exports.hardwareAcceleration = hardwareAcceleration;
+__exports.setHardwareAcceleration = setHardwareAcceleration;
+__exports.onAccelerationChange = onAccelerationChange;
 __exports.gpuContext = gpuContext;
 __exports.linkProgram = linkProgram;
 __exports.cssColor = cssColor;
@@ -72716,7 +72745,8 @@ __exports.createShapes = createShapes;
  *
  * A browser with no real GPU gets no context (`gpuContext` returns null) and
  * the caller keeps its 2D drawing. `localStorage['mosfeteer.gpu']`: `off`
- * never uses WebGL, `on` also accepts a software renderer.
+ * never uses WebGL (Settings -> Hardware acceleration), `on` also accepts a
+ * software renderer.
  */
 
 const SETTING_KEY = 'mosfeteer.gpu';
@@ -72724,6 +72754,26 @@ const SOFTWARE = /swiftshader|llvmpipe|softpipe|software|basic render/i;
 
 function setting() {
   try { return globalThis.localStorage?.getItem(SETTING_KEY) || ''; } catch { return ''; }
+}
+
+const accelerationListeners = new Set();
+
+/** Whether drawing may use the GPU (Settings -> Hardware acceleration). */
+function hardwareAcceleration() {
+  return setting() !== 'off';
+}
+
+/** Turn the GPU on or off; those drawing with it start again (onAccelerationChange). */
+function setHardwareAcceleration(on) {
+  try {
+    if (!on) globalThis.localStorage?.setItem(SETTING_KEY, 'off');
+    else if (setting() === 'off') globalThis.localStorage?.removeItem(SETTING_KEY);
+  } catch { /* per-session only */ }
+  for (const listener of accelerationListeners) listener(on);
+}
+
+function onAccelerationChange(listener) {
+  accelerationListeners.add(listener);
 }
 
 /** A WebGL2 context for `canvas`, or null. */
@@ -75272,6 +75322,7 @@ const ICON_PATHS = {
   'chevron-down': '<path d="m6 10 6 6 6-6"/>',
   'edge-fall': '<path d="M3 7h8v10h10"/>',
   'edge-rise': '<path d="M3 17h8V7h10"/>',
+  chip: '<rect x="7" y="7" width="10" height="10" rx="1.5"/><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"/>',
   motion: '<path d="M3 8h7M5 12h6M3 16h7"/><circle cx="16" cy="12" r="4"/>',
   moon: '<path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5z"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
@@ -86379,7 +86430,7 @@ __exports.installNetBeams = installNetBeams;
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let beamShape, netBeams; __bind(() => { ({ beamShape, netBeams } = __require("src/core/net-beams.js")); });
 let canvasEl, netBeamsButton; __bind(() => { ({ canvasEl, netBeamsButton } = __require("src/web/elements.js")); });
-let createShapes, gpuContext; __bind(() => { ({ createShapes, gpuContext } = __require("src/web/gpu.js")); });
+let createShapes, gpuContext, onAccelerationChange; __bind(() => { ({ createShapes, gpuContext, onAccelerationChange } = __require("src/web/gpu.js")); });
 let hintLine; __bind(() => { ({ hintLine } = __require("src/web/status-bar-ui.js")); });
 let worldPerPixel; __bind(() => { ({ worldPerPixel } = __require("src/web/align-tool.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
@@ -86473,6 +86524,17 @@ function beamsSvg(drawn) {
 let gpu = null;
 let gpuTried = false;
 
+// Hardware acceleration turned on or off: the beams start again from the SVG layer.
+onAccelerationChange(() => {
+  if (gpu) {
+    gpu.gl.getExtension('WEBGL_lose_context')?.loseContext();
+    gpu.canvas.remove();
+  }
+  gpu = null;
+  gpuTried = false;
+  syncNetBeams();
+});
+
 function startGpu() {
   gpuTried = true;
   const canvas = document.createElement('canvas');
@@ -86490,6 +86552,7 @@ function startGpu() {
     return;
   }
   canvas.addEventListener('webglcontextlost', (ev) => {
+    if (!canvas.isConnected) return;
     ev.preventDefault();
     gpu = null;
     canvas.hidden = true;
@@ -99436,7 +99499,8 @@ __exports.installToolbarUi = installToolbarUi;
 let PAGE_GUIDE_UNITS, customPageGuide, normalizePageGuide, pageGuideCaption, pageGuideTitle; __bind(() => { ({ PAGE_GUIDE_UNITS, customPageGuide, normalizePageGuide, pageGuideCaption, pageGuideTitle } = __require("src/core/page-guide.js")); });
 let minimalRevealScroll; __bind(() => { ({ minimalRevealScroll } = __require("src/web/toolbar.js")); });
 let chooseToolbarStage, toolbarFits, toolbarStageTokens; __bind(() => { ({ chooseToolbarStage, toolbarFits, toolbarStageTokens } = __require("src/web/toolbar-fit.js")); });
-let canvasEl, circuitNameEl, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, reduceMotionButton, scrollSchemeButton, themeButtons, gridBtn, crosshairBtn, guidesBtn; __bind(() => { ({ canvasEl, circuitNameEl, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, reduceMotionButton, scrollSchemeButton, themeButtons, gridBtn, crosshairBtn, guidesBtn } = __require("src/web/elements.js")); });
+let canvasEl, circuitNameEl, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, reduceMotionButton, hardwareAccelerationButton, scrollSchemeButton, themeButtons, gridBtn, crosshairBtn, guidesBtn; __bind(() => { ({ canvasEl, circuitNameEl, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, reduceMotionButton, hardwareAccelerationButton, scrollSchemeButton, themeButtons, gridBtn, crosshairBtn, guidesBtn } = __require("src/web/elements.js")); });
+let hardwareAcceleration, setHardwareAcceleration; __bind(() => { ({ hardwareAcceleration, setHardwareAcceleration } = __require("src/web/gpu.js")); });
 let ICON_PATHS, syncToolCursor; __bind(() => { ({ ICON_PATHS, syncToolCursor } = __require("src/web/icons.js")); });
 let logLine, hintLine; __bind(() => { ({ logLine, hintLine } = __require("src/web/status-bar-ui.js")); });
 let runCheck; __bind(() => { ({ runCheck } = __require("src/web/design-check-ui.js")); });
@@ -99453,6 +99517,7 @@ let setAttr; __bind(() => { ({ setAttr } = __require("src/web/dom.js")); });
  * settings menus, and the theme, grid, guides, crosshair, scroll scheme,
  * and page guide toggles. Fitting's rules are in toolbar-fit.js.
  */
+
 
 
 
@@ -100225,6 +100290,13 @@ function installToolbarUi() {
     hintLine(reduceMotionSetting() ? 'animations reduced' : reducedMotion() ? 'animations still reduced: the system asks for reduced motion' : 'animations on');
   });
   reduceMotionButton?.setAttribute('aria-checked', String(reduceMotionSetting()));
+
+  hardwareAccelerationButton?.addEventListener('click', () => {
+    setHardwareAcceleration(!hardwareAcceleration());
+    hardwareAccelerationButton.setAttribute('aria-checked', String(hardwareAcceleration()));
+    hintLine(hardwareAcceleration() ? 'hardware acceleration on: the GPU draws where it can' : 'hardware acceleration off: drawn without the GPU');
+  });
+  hardwareAccelerationButton?.setAttribute('aria-checked', String(hardwareAcceleration()));
 
   // The theme chosen here, kept across reloads; with none, the system's,
   // followed as it changes.

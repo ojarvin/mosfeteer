@@ -36,6 +36,7 @@ export const EDITOR_COMMANDS = [
   { name: 'beats', aliases: ['beat-strip', 'steps', 'slides'], toggle: true, help: 'show or hide the beats window (Shift+B)' },
   { name: 'tips', aliases: ['hints'], toggle: true, help: 'turn the corner tips on or off' },
   { name: 'reduce-motion', aliases: ['reduce-animations', 'reduced-motion'], toggle: true, help: 'reduce animations: no zooms, slides, or flashes (Settings)' },
+  { name: 'hardware-acceleration', aliases: ['gpu'], toggle: true, help: 'draw the Atlas and net beams on the GPU where there is one (Settings)' },
   { name: 'arrange-suggestions', aliases: ['suggestions', 'suggest'], toggle: true, help: 'offer to draw a cell an edit completes as your other drawings draw it (Settings)' },
   { name: 'invert-pictures', aliases: ['pictures-follow-theme', 'invert-images', 'dark-pictures'], toggle: true, help: 'in the dark theme, invert pictures on a light background (Settings)' },
   { name: 'net-beams', aliases: ['beams', 'flight-lines', 'net-flight-lines'], toggle: true, help: 'beams from a hovered net to the nets its name connects (Settings)' },

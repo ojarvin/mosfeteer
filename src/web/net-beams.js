@@ -11,7 +11,7 @@
 import { GRID } from '../core/grid.js';
 import { beamShape, netBeams } from '../core/net-beams.js';
 import { canvasEl, netBeamsButton } from './elements.js';
-import { createShapes, gpuContext } from './gpu.js';
+import { createShapes, gpuContext, onAccelerationChange } from './gpu.js';
 import { hintLine } from './status-bar-ui.js';
 import { worldPerPixel } from './align-tool.js';
 import { editor } from './editor-state.js';
@@ -86,6 +86,17 @@ function beamsSvg(drawn) {
 let gpu = null;
 let gpuTried = false;
 
+// Hardware acceleration turned on or off: the beams start again from the SVG layer.
+onAccelerationChange(() => {
+  if (gpu) {
+    gpu.gl.getExtension('WEBGL_lose_context')?.loseContext();
+    gpu.canvas.remove();
+  }
+  gpu = null;
+  gpuTried = false;
+  syncNetBeams();
+});
+
 function startGpu() {
   gpuTried = true;
   const canvas = document.createElement('canvas');
@@ -103,6 +114,7 @@ function startGpu() {
     return;
   }
   canvas.addEventListener('webglcontextlost', (ev) => {
+    if (!canvas.isConnected) return;
     ev.preventDefault();
     gpu = null;
     canvas.hidden = true;

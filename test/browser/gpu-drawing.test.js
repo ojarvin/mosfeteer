@@ -106,6 +106,32 @@ describe('the Atlas desk on the GPU', { skip: browserSkip() }, () => {
   });
 });
 
+describe('hardware acceleration', { skip: browserSkip() }, () => {
+  test('turned off in Settings, the desk draws without the GPU; turned on, it is back on it', async () => {
+    const h = await start({ docs: docs(), gpu: true });
+    try {
+      await openDesk(h, 4);
+      assert.deepEqual(await painted(h), { gpu: true, canvas: false });
+      const button = '#btn-hardware-acceleration';
+      assert.equal(await h.evaluate(`document.querySelector('${button}').getAttribute('aria-checked')`), 'true');
+      await h.evaluate(`document.querySelector('${button}').click()`);
+      await h.until(`!document.getElementById('atlas-desk').hidden && !document.getElementById('atlas-desk-gpu')`);
+      await stillDesk(h);
+      assert.equal(await h.evaluate(`document.querySelector('${button}').getAttribute('aria-checked')`), 'false');
+      assert.equal(await h.evaluate(`localStorage.getItem('mosfeteer.gpu')`), 'off');
+      assert.ok((await pixels(h, await tileRect(h, 'amp'))).ink > 0.002, 'drawn on the 2D canvas');
+      // The harness's software renderer counts as a GPU only with 'on'.
+      await h.evaluate(`localStorage.setItem('mosfeteer.gpu', 'on'); ${h.module('gpu.js')}.then((m) => m.setHardwareAcceleration(true))`);
+      await h.until(`document.getElementById('atlas-desk').hidden && !!document.getElementById('atlas-desk-gpu')`);
+      await stillDesk(h);
+      assert.ok((await pixels(h, await tileRect(h, 'amp'))).ink > 0.002, 'drawn on the GPU again');
+      assert.deepEqual(h.exceptions(), []);
+    } finally {
+      await h.stop();
+    }
+  });
+});
+
 describe('the two painters', { skip: browserSkip() }, () => {
   test('a software renderer stays on the 2D canvas, and looks the same as the GPU', async () => {
     const shots = [];

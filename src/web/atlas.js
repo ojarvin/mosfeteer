@@ -52,7 +52,7 @@ import { reducedMotion } from './motion.js';
 import { showHelp } from './help.js';
 import { appendContextItem, openMenuAt } from './context-menu.js';
 import { onAccentChange } from './accent.js';
-import { gpuContext } from './gpu.js';
+import { gpuContext, onAccelerationChange } from './gpu.js';
 import { createGpuDesk } from './atlas-paint-gpu.js';
 import { svgInk } from './atlas-ink.js';
 import { createCanvasDesk } from './atlas-paint-2d.js';
@@ -693,6 +693,26 @@ function evictBitmaps(level, keep) {
 const canvasDesk = createCanvasDesk(deskEl);
 let gpuDesk = null;
 let gpuTried = false;
+let gpuCanvas = null;
+
+// Hardware acceleration turned on or off: the desk is drawn again from the start.
+onAccelerationChange(() => {
+  if (gpuCanvas) {
+    const canvas = gpuCanvas;
+    gpuCanvas = null;
+    gpuDesk = null;
+    canvas.getContext('webgl2')?.getExtension('WEBGL_lose_context')?.loseContext();
+    canvas.remove();
+  }
+  gpuTried = false;
+  deskEl.hidden = false;
+  if (state) {
+    for (const bitmap of state.bitmaps.values()) bitmap.close?.();
+    state.bitmaps.clear();
+    state.failed.clear();
+    requestDraw();
+  }
+});
 function startGpuDesk() {
   gpuTried = true;
   const canvas = document.createElement('canvas');
@@ -714,7 +734,9 @@ function startGpuDesk() {
     return;
   }
   deskEl.after(canvas);
+  gpuCanvas = canvas;
   canvas.addEventListener('webglcontextlost', (ev) => {
+    if (gpuCanvas !== canvas) return;
     ev.preventDefault();
     gpuDesk = null;
     deskEl.hidden = false;
