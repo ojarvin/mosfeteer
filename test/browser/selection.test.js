@@ -129,6 +129,38 @@ describe('selection and editing', { skip: browserSkip() }, () => {
     assert.equal(await ed(`e.selLabels.has(${JSON.stringify(id)})`), false, 'and out');
   });
 
+  test('Ctrl/Cmd takes objects out of the selection: a click toggles one, a box takes out what it holds', async () => {
+    const circuit = new Circuit();
+    for (const line of ['add resistor R1 --at 0 0', 'add resistor R2 --at 400 0', 'add resistor R3 --at 800 0', 'connect R2.b R3.a', 'annotation add note 400 400']) runCommand(circuit, line);
+    await h.evaluate(`window.__load(${JSON.stringify(circuit.toJSON())})`);
+    await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.fitView())`);
+    const state = () => ed(`({ parts: [...e.multi].sort(), labels: [...e.selLabels].map((id) => c.labels.get(id).text).sort(), wires: e.selectedWires.size, nets: e.selectedNets.size })`);
+    const corners = await h.evaluate(`${h.module('canvas-view.js')}.then((m) => { const r = document.getElementById('canvas').getBoundingClientRect(); return [m.clientToWorld(r.left + 8, r.top + 8), m.clientToWorld(r.right - 8, r.bottom - 8)]; })`);
+    const all = async () => {
+      await press(corners[0].x, corners[0].y, { to: corners[1] });
+      assert.deepEqual(await state(), { parts: ['R1', 'R2', 'R3'], labels: ['R_{1}', 'R_{2}', 'R_{3}', 'note'], wires: 1, nets: 1 });
+    };
+    const ctrl = 2;
+    await all();
+    // A part goes with its own name; the rest stays.
+    await press(400, 0, { modifiers: ctrl });
+    assert.deepEqual(await state(), { parts: ['R1', 'R3'], labels: ['R_{1}', 'R_{3}', 'note'], wires: 1, nets: 1 });
+    await sleep(600);
+    await press(400, 0, { modifiers: ctrl });
+    assert.deepEqual((await state()).parts, ['R1', 'R2', 'R3'], 'and comes back');
+    // A wire goes on its own, and its net is no longer selected whole.
+    await press(600, 0, { modifiers: ctrl });
+    assert.deepEqual(await state(), { parts: ['R1', 'R2', 'R3'], labels: ['R_{1}', 'R_{3}', 'note'], wires: 0, nets: 0 });
+    await press(400, 400, { modifiers: ctrl });
+    assert.deepEqual((await state()).labels, ['R_{1}', 'R_{3}']);
+    // A Ctrl box takes out what it holds and keeps the rest.
+    await all();
+    await press(corners[0].x, corners[0].y, { modifiers: ctrl, to: { x: 200, y: 160 } });
+    assert.deepEqual(await state(), { parts: ['R2', 'R3'], labels: ['R_{2}', 'R_{3}', 'note'], wires: 1, nets: 1 });
+    await press(corners[0].x, corners[0].y, { modifiers: ctrl, to: { x: corners[1].x, y: 160 } });
+    assert.deepEqual(await state(), { parts: [], labels: ['note'], wires: 0, nets: 0 });
+  });
+
   test("a box catching only some of a line's vertices picks them; they drag together and go with Delete", async () => {
     const points = () => ed(`[...c.labels.values()].find((l) => l.kind === 'line').points.map((p) => p.x + ',' + p.y)`);
     // Only the picked corner moves; the others stay.

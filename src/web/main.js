@@ -1079,6 +1079,26 @@ export function keyToWire(key) {
   return { netId, branch: Number(branch), segment: Number(segment) };
 }
 
+/** The selection keys of every segment of a net. */
+function netWireKeys(netId) {
+  const keys = [];
+  (circuit.nets.get(netId)?.paths() || []).forEach((path, branch) => {
+    for (let segment = 1; segment < path.length; segment++) keys.push(`${netId}:${branch}:${segment}`);
+  });
+  return keys;
+}
+
+/** Toggle one wire segment in the selection. A net selected whole stands for
+ *  all its segments: toggling one out leaves the others selected. */
+function toggleWireKey(key) {
+  const { netId } = keyToWire(key);
+  if (selectedNets.has(netId)) for (const k of netWireKeys(netId)) selectedWires.add(k);
+  selectedNets.delete(netId);
+  if (selectedWires.has(key)) selectedWires.delete(key);
+  else selectedWires.add(key);
+  syncSelectedWire();
+}
+
 /** The segment a "netId:branch:segment" key names, as drawn now: { a, b }
  *  (its ends) with the key's parts, or null when it no longer exists. */
 export function wireSegmentAt(key) {
@@ -1111,6 +1131,11 @@ export function applyEditorSelection(target, extend = false) {
   if (target.kind === 'component') {
     const added = toggle(multi, target.id);
     selected = added ? target.id : (selected === target.id ? multi.values().next().value || null : selected);
+    // A part toggled out takes its own labels with it.
+    if (!added) {
+      for (const id of [...selLabels]) if (circuit.labels.get(id)?.owner === target.id) selLabels.delete(id);
+      if (selLabel && !selLabels.has(selLabel)) selLabel = selLabels.values().next().value || null;
+    }
   } else if (target.kind === 'label') {
     const added = toggle(selLabels, target.id);
     selLabel = added ? target.id : (selLabel === target.id ? selLabels.values().next().value || null : selLabel);
@@ -3068,12 +3093,7 @@ export function renderCanvas(modelKey) {
   const previewBox = marqueeDrag && drag.rubber ? drag.rubber : null;
   if (previewBox) {
     const found = boxSelectionContents(previewBox.x0, previewBox.y0, previewBox.x1, previewBox.y1);
-    previewSelection = {
-      refs: marqueeDrag && drag.shift ? [...new Set([...multi, ...found.refs])] : found.refs,
-      labels: marqueeDrag && drag.shift ? [...new Set([...selLabels, ...found.labels])] : found.labels,
-      nets: marqueeDrag && drag.shift ? [...new Set([...selectedNets, ...found.nets])] : found.nets,
-      wires: marqueeDrag && drag.shift ? [...new Set([...selectedWires, ...found.wires])] : found.wires,
-    };
+    previewSelection = boxSelectionResult(found, drag.boxMode || 'replace');
   }
   const overlay = editorOverlay(circuit, {
     beatView: activeBeatView(previewTransaction ? `${modelRevision}:preview:${previewRevision}` : modelRevision),
@@ -3333,26 +3353,54 @@ function cancelDrag() {
   render();
 }
 
-/** Select everything COMPLETELY inside a world box (components by bbox, labels
- *  by bbox, nets by route). With `shift` the box adds to the current selection.
- *  The mouse marquee's. */
-function applyBoxSelection(x0, y0, x1, y1, shift) {
-  const found = boxSelectionContents(x0, y0, x1, y1);
-  if (shift) {
-    const set = new Set(multi);
-    for (const r of found.refs) set.add(r);
-    setSelection([...set], undefined, true);
-    const labSet = new Set(selLabels);
-    for (const id of found.labels) labSet.add(id);
-    setLabelSelection([...labSet], undefined, true);
-    selectedWires = new Set([...selectedWires, ...found.wires]);
-  } else {
-    setSelection(found.refs, undefined, true);
-    setLabelSelection(found.labels, undefined, true);
-    selectedWires = new Set(found.wires);
+/** How a marquee applies: Shift adds to the selection, Ctrl/Cmd takes the
+ *  boxed objects out of it, a plain box replaces it. */
+function marqueeModeOf(ev) {
+  if (ev.shiftKey) return 'add';
+  return ev.ctrlKey || ev.metaKey ? 'subtract' : 'replace';
+}
+
+/** The selection a box leaves: `found` (boxSelectionContents) applied to the
+ *  current selection in `mode`. A part taken out takes its own labels, and a
+ *  wire taken out leaves its net no longer whole. */
+function boxSelectionResult(found, mode) {
+  if (mode === 'add') {
+    return {
+      refs: [...new Set([...multi, ...found.refs])],
+      labels: [...new Set([...selLabels, ...found.labels])],
+      nets: [...new Set([...selectedNets, ...found.nets])],
+      wires: [...new Set([...selectedWires, ...found.wires])],
+    };
   }
+  if (mode === 'subtract') {
+    const refs = new Set(found.refs);
+    const labels = new Set(found.labels);
+    const wires = new Set(found.wires);
+    const nets = new Set(found.nets);
+    for (const id of selLabels) if (refs.has(circuit.labels.get(id)?.owner)) labels.add(id);
+    for (const key of wires) nets.add(keyToWire(key).netId);
+    // A net selected whole keeps the segments the box left.
+    const kept = new Set(selectedWires);
+    for (const id of selectedNets) if (nets.has(id)) for (const key of netWireKeys(id)) kept.add(key);
+    return {
+      refs: [...multi].filter((r) => !refs.has(r)),
+      labels: [...selLabels].filter((id) => !labels.has(id)),
+      nets: [...selectedNets].filter((id) => !nets.has(id)),
+      wires: [...kept].filter((key) => !wires.has(key)),
+    };
+  }
+  return found;
+}
+
+/** Select everything COMPLETELY inside a world box (components by bbox, labels
+ *  by bbox, nets by route), in `mode` (marqueeModeOf). The mouse marquee's. */
+function applyBoxSelection(x0, y0, x1, y1, mode = 'replace') {
+  const result = boxSelectionResult(boxSelectionContents(x0, y0, x1, y1), mode);
+  setSelection(result.refs, multi.has(selected) && result.refs.includes(selected) ? selected : undefined, true);
+  setLabelSelection(result.labels, result.labels.includes(selLabel) ? selLabel : undefined, true);
+  selectedWires = new Set(result.wires);
   syncSelectedWire();
-  selectedNets = shift ? new Set([...selectedNets, ...found.nets]) : new Set(found.nets);
+  selectedNets = new Set(result.nets);
 }
 
 /** Purely compute the objects a contained marquee box would select. */
@@ -3377,7 +3425,8 @@ function boxSelectionContents(x0, y0, x1, y1) {
 
 export function beginMarqueeSelection(startWorld, startClient, ev) {
   cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
-  if (!ev.shiftKey) setSelection([]);
+  const boxMode = marqueeModeOf(ev);
+  if (boxMode === 'replace') setSelection([]);
   drag = {
     mode: 'marquee',
     startClient,
@@ -3385,6 +3434,7 @@ export function beginMarqueeSelection(startWorld, startClient, ev) {
     startSelection: new Set(multi),
     startLabelSelection: new Set(selLabels),
     shift: ev.shiftKey,
+    boxMode,
     moved: false,
     rubber: null,
   };
@@ -3544,7 +3594,7 @@ function floatingWireDragAt(hit, startWorld, startClient, ev, moveKeys) {
   }
   drag = {
     mode: 'floatingwire', fragments, startWorld, startClient, moved: false,
-    committed: false, startSnapshot, shift: ev.shiftKey,
+    committed: false, startSnapshot, shift: ev.shiftKey, extend: isSelectionModifier(ev),
     key: `${hit.net.id}:${hit.branch}:${hit.seg}`,
   };
   cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
@@ -4173,6 +4223,7 @@ function beginWireSegDrag(runs, net, wireHit, { startWorld, startClient, ev, key
     startClient,
     startWorld,
     shift: ev.shiftKey,
+    extend: isSelectionModifier(ev),
     key,
     moved: false,
     committed: false,
@@ -5020,9 +5071,7 @@ function canvasMouseDown(ev) {
     for (const selectedKey of [...moveKeys]) if (isDiagonalWireKey(selectedKey)) moveKeys.delete(selectedKey);
     if (!moveKeys.size) {
       // Shift-clicking a diagonal toggles it in the selection without a drag.
-      if (selectedWires.has(key)) selectedWires.delete(key);
-      else selectedWires.add(key);
-      syncSelectedWire();
+      toggleWireKey(key);
       render();
       return;
     }
@@ -6141,13 +6190,13 @@ function finishCanvasMouseUp(ev) {
     const anyMoved = drag.runs.some((r) => JSON.stringify(r.pts) !== JSON.stringify(r.orig));
     if (!drag.moved || !anyMoved) {
       cancelPreviewTransaction();
-      // A plain click (or a jittery gesture that never actually moved a run):
-      selectedNets.clear();
-      if (drag.shift) {
-        if (selectedWires.has(drag.key)) selectedWires.delete(drag.key);
-        else selectedWires.add(drag.key);
-        syncSelectedWire();
+      // A plain click (or a jittery gesture that never actually moved a run)
+      // selects the segment; with Shift or Ctrl/Cmd it toggles it in the
+      // selection, and its net is no longer selected whole.
+      if (drag.extend) {
+        toggleWireKey(drag.key);
       } else {
+        selectedNets.clear();
         setSelection([]);
         selectedWires = new Set([drag.key]);
         selectedWire = keyToWire(drag.key);
@@ -6269,15 +6318,13 @@ function finishCanvasMouseUp(ev) {
     }
     if (!drag.moved) {
       cancelPreviewTransaction();
-      if (!drag.shift) setSelection([]);
-      selectedNets.clear();
-      if (drag.shift) {
-        if (selectedWires.has(drag.key)) selectedWires.delete(drag.key);
-        else selectedWires.add(drag.key);
+      if (drag.extend) {
+        toggleWireKey(drag.key);
       } else {
+        setSelection([]);
         selectedWires = new Set([drag.key]);
+        syncSelectedWire();
       }
-      syncSelectedWire();
     } else {
       // Attach every landed endpoint.  A detached island can reconnect both
       // ends in one drop; stopping after the first endpoint leaves the second
@@ -6362,7 +6409,8 @@ function finishCanvasMouseUp(ev) {
   } else if (drag.mode === 'marquee' || drag.mode === 'deletemarquee') {
     if (drag.moved) {
       const box = worldRect(drag.startWorld, w);
-      if (drag.mode !== 'marquee' || !pickVerticesInBox(box, drag.shift)) applyBoxSelection(box.x0, box.y0, box.x1, box.y1, drag.shift);
+      const boxMode = drag.boxMode || (drag.shift ? 'add' : 'replace');
+      if (drag.mode !== 'marquee' || boxMode === 'subtract' || !pickVerticesInBox(box, drag.shift)) applyBoxSelection(box.x0, box.y0, box.x1, box.y1, boxMode);
       if (drag.mode === 'deletemarquee' && copySelectionExists()) deleteSelection();
     } else if (drag.mode === 'deletemarquee') {
       if (copySelectionExists()) deleteSelection();

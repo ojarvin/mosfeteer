@@ -104,6 +104,10 @@ terminal of the part being pointed at still picks that terminal.
 Selection is role-aware across components, labels, nets, annotations, and wire
 runs; clicking a selected object again selects the next object stacked at that
 point (`nextStackedSelection`), and a press there drags the selected one.
+Shift/Ctrl/Cmd+click toggles one object in the selection; a part toggled out
+takes its own labels, and a wire segment toggled out leaves its net no longer
+selected whole. A box replaces the selection, Shift+box adds to it, and
+Ctrl/Cmd+box takes out what it holds.
 Component/managed-wire transactions are one undo entry.
 
 `src/web/main.js` owns the editor's state and its core interaction; feature
