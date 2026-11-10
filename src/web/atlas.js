@@ -2458,7 +2458,7 @@ function animate(duration, frame) {
 }
 
 /** Animate the view to `target`. */
-function animateView(target, duration = 320) {
+function animateView(target, duration = 220) {
   const from = { ...state.view };
   const done = animate(duration, (t) => { state.view = lerpView(from, target, t); });
   if (state.animation) state.animation.target = target;
@@ -2747,7 +2747,7 @@ function flightRatio(flight) {
 }
 
 /** A flight takes longer the farther it goes, so a long one does not rush. */
-const flightMs = (flight) => Math.round(Math.min(650, 400 + 60 * Math.log2(flightRatio(flight))));
+const flightMs = (flight) => Math.round(Math.min(460, 280 + 45 * Math.log2(flightRatio(flight))));
 
 /** The design has landed: it lies picked on the desk, and the desk rings. */
 function landFlight() {
@@ -3131,7 +3131,7 @@ async function openDesk(generation, source, animate, startup) {
     // The designs assemble as the camera settles.
     state.revealAt = performance.now();
     draw();
-    await Promise.race([Promise.all([revealStartup(), animateView(target, 760)]), hurried()]);
+    await Promise.race([Promise.all([revealStartup(), animateView(target, 560)]), hurried()]);
   } else if (state.fromEditor) {
     // The design flies back from the glass and lands on its place on the
     // desk, which rests as it was left; the other designs appear around it,

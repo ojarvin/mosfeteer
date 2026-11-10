@@ -119,7 +119,7 @@ export function cancelViewAnimation() {
   viewAnimation = 0;
 }
 
-export function animateViewTo(target, ms = 260, landed = () => {}) {
+export function animateViewTo(target, ms = 200, landed = () => {}) {
   cancelViewAnimation();
   const from = { ...editor.view };
   const to = { x: target.x, y: target.y, w: target.w, h: target.h };
