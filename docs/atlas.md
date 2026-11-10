@@ -267,7 +267,12 @@ The search field finds designs by what is in them: part names, part types
 (`vcm`, `V_CM`, and `V_{CM}` are the same word). Every word must be found;
 `#word` looks only at the document's tags. Designs it does not find fade,
 and what it finds is marked in each design while the field has focus (the
-marks step aside when it loses it, and return with it). When typing pauses (400 ms), the
+marks step aside when it loses it, and return with it). On the GPU the marks
+are light: what was found (a part, its name, a net's wires and labels, a
+text) takes the accent color with a soft glow behind it, and the rest of the
+design recedes toward the paper; each shape is tagged with what it belongs to
+as the design is read (`atlas-ink.js` tags; a wire run takes its net's from
+the net's own wire paths), so the light follows the drawing itself. When typing pauses (400 ms), the
 desk packs the designs found together on their own and fits them; a search
 that finds nothing leaves the desk as it was, faded. Enter, Esc, and
 clearing the search pack at once. Enter (Shift+Enter) steps through the

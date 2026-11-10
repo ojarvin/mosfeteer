@@ -39,7 +39,8 @@ function segmentBox(a, b, pad = 10) {
  * The index of one circuit: `{ tags, notes?, noteLinks?, items }` (`notes`
  * as one search key, `noteLinks` the designs they link to; `links`, `beats`,
  * `timing`, `checkpoints` when it has them), each item
- * `{ kind: 'part'|'net'|'text', id, text, type?, boxes }` in drawing units.
+ * `{ kind: 'part'|'net'|'text', id, text, type?, boxes, labels? }` in drawing
+ * units, `labels` the ids of a part's or net's own labels.
  */
 export function designIndex(circuit) {
   const items = [];
@@ -53,6 +54,7 @@ export function designIndex(circuit) {
       text: words.filter(Boolean).join(' '),
       type: component.type,
       boxes: [box(component.bboxWorld())],
+      labels: [...circuit.labels.values()].filter((l) => l.owner === component.refdes).map((l) => l.id),
       // The design it links to: the Atlas draws the link from this part.
       ...(component.link ? { link: component.link } : {}),
     });
@@ -61,8 +63,9 @@ export function designIndex(circuit) {
     if (!net.name) continue;
     const boxes = [];
     for (const path of net.paths()) for (let i = 1; i < path.length; i++) boxes.push(segmentBox(path[i - 1], path[i]));
-    for (const label of circuit.netLabels(net)) boxes.push(box(label.inkRect()));
-    items.push({ kind: 'net', id: net.id, text: net.name, boxes });
+    const labels = circuit.netLabels(net);
+    for (const label of labels) boxes.push(box(label.inkRect()));
+    items.push({ kind: 'net', id: net.id, text: net.name, boxes, labels: labels.map((label) => label.id) });
   }
   for (const label of circuit.labels.values()) {
     if (label.owner || label.netId || label.role || !label.text) continue;

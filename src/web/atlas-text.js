@@ -6,14 +6,15 @@
  * bars, table lines) come back as segments of ink.
  *
  * Glyphs are GLYPH_FLOATS floats each:
- *   [ox, oy, xx, xy,  yx, yy, grow, 0,  u0, v0, u1, v1,  r, g, b, a]
+ *   [ox, oy, xx, xy,  yx, yy, grow, 0,  u0, v0, u1, v1,  r, g, b, a,  tag, 0, 0, 0]
  * the cell's corner, its two sides, how far the glyph is grown (a text
- * stroke, half its width), its place in the atlas, and its premultiplied color.
+ * stroke, half its width), its place in the atlas, its premultiplied color,
+ * and what it belongs to (the drawing's tags, atlas-ink.js).
  */
 
-import { BUTT, INK_FLOATS, SEGMENT, parseColor } from './atlas-ink.js';
+import { BUTT, INK, INK_FLOATS, SEGMENT, createTags, parseColor } from './atlas-ink.js';
 
-export const GLYPH_FLOATS = 16;
+export const GLYPH_FLOATS = 20;
 
 /** Accents a math layout stretches across. */
 const WIDE = new Set([...'¯‾_^ˆ~˜→←↔⏞⏟︷︸']);
@@ -47,12 +48,13 @@ function hostEl() {
 const fontOf = (style) => ({ style: style.fontStyle || 'normal', weight: style.fontWeight || '400', family: style.fontFamily || 'sans-serif' });
 
 /**
- * Lay out `svg` (a design's text drawing, in the theme now) and read its
- * glyphs from `atlas`. `box` is its view box. Returns
+ * Lay out `svg` (a design's text drawing) and read its glyphs from `atlas`.
+ * `box` is its view box; `tags` the drawing's (atlas-ink.js), each glyph
+ * tagged with the label or part it belongs to. Returns
  * `{ glyphs: Float32Array, glyphCount, rules: number[] (ink shapes) }`, or
  * null when the atlas filled up meanwhile (lay it out again).
  */
-export function layoutText(svg, box, atlas) {
+export function layoutText(svg, box, atlas, tags = createTags()) {
   const root = hostEl();
   root.innerHTML = svg;
   const drawing = root.querySelector('svg');
@@ -85,6 +87,19 @@ export function layoutText(svg, box, atlas) {
   const rules = [];
   let count = 0;
   let full = false;
+  const tagged = new Map();
+  /** The tag of what `el` belongs to: its label, part, or net. */
+  const tagOf = (el) => {
+    if (!el) return 0;
+    let tag = tagged.get(el);
+    if (tag === undefined) {
+      const owner = el.closest('[data-label-id],[data-ref],[data-net-id]');
+      tag = !owner ? 0 : owner.dataset.labelId ? tags.index(`label:${owner.dataset.labelId}`)
+        : owner.dataset.ref ? tags.index(`part:${owner.dataset.ref}`) : tags.index(`net:${owner.dataset.netId}`);
+      tagged.set(el, tag);
+    }
+    return tag;
+  };
   const opacities = new Map();
   const opacityOf = (el) => {
     if (!el || el === drawing.parentNode) return 1;
@@ -104,7 +119,7 @@ export function layoutText(svg, box, atlas) {
   };
 
   /** One glyph, its pen on the baseline at (x, y), `size` the em, turned by `angle`. */
-  const place = (font, char, x, y, size, angle, color, { sx = 1, sy = 1, grow = 0 } = {}) => {
+  const place = (font, char, x, y, size, angle, color, { sx = 1, sy = 1, grow = 0, tag = 0 } = {}) => {
     const glyph = atlas.glyph(font, char);
     if (!glyph) {
       full = true;
@@ -122,14 +137,15 @@ export function layoutText(svg, box, atlas) {
       -sin * h, cos * h, grow, 0,
       glyph.u0, glyph.v0, glyph.u1, glyph.v1,
       ...color,
+      tag, 0, 0, 0,
     );
     count += 1;
     return glyph;
   };
 
-  const rule = (x0, y0, x1, y1, width, color) => {
+  const rule = (x0, y0, x1, y1, width, color, tag = 0) => {
     if (!color || !(width > 0)) return;
-    rules.push(x0, y0, x1, y1, width / 2, BUTT, BUTT, SEGMENT, ...color);
+    rules.push(x0, y0, x1, y1, width / 2, BUTT, BUTT, SEGMENT, ...color, tag, INK, 0, 0);
   };
 
   // SVG text: each character where the layout put it, turned with it.
@@ -164,7 +180,7 @@ export function layoutText(svg, box, atlas) {
               const start = text.getStartPositionOfChar(index + j);
               const angle = turn + (text.getRotationOfChar(index + j) * Math.PI) / 180;
               const p = new DOMPoint(start.x, start.y).matrixTransform(matrix);
-              place(font, char, toX(p.x), toY(p.y), size, angle, color);
+              place(font, char, toX(p.x), toY(p.y), size, angle, color, { tag: tagOf(text) });
             } catch { /* not drawn */ }
           } else {
             const range = document.createRange();
@@ -172,7 +188,7 @@ export function layoutText(svg, box, atlas) {
             range.setEnd(node, j + length);
             const r = range.getBoundingClientRect();
             const glyph = r.width ? atlas.glyph(font, char) : null;
-            if (glyph && !glyph.empty) place(font, char, toX(r.left), toY(r.top) + glyph.ascent * size, size, turn, color);
+            if (glyph && !glyph.empty) place(font, char, toX(r.left), toY(r.top) + glyph.ascent * size, size, turn, color, { tag: tagOf(text) });
           }
         }
         j += length;
@@ -215,10 +231,10 @@ export function layoutText(svg, box, atlas) {
               const sy = operator.height / ink;
               // A taller variant is wider too, as far as its box says.
               const sx = LARGE.has(char) ? sy : Math.max(1, Math.min(sy, operator.width / Math.max(glyph.advance * size, 1e-6)));
-              place(font, char, toX(operator.left), toY(operator.top) + glyph.inkAscent * size * sy, size, 0, color, { sx, sy, grow });
+              place(font, char, toX(operator.left), toY(operator.top) + glyph.inkAscent * size * sy, size, 0, color, { sx, sy, grow, tag: tagOf(parent) });
             } else {
               const sx = WIDE.has(char) && r.width > glyph.advance * size * 1.2 ? r.width / (glyph.advance * size) : 1;
-              place(font, char, toX(r.left), toY(r.top) + glyph.ascent * size, size, 0, color, { sx, grow });
+              place(font, char, toX(r.left), toY(r.top) + glyph.ascent * size, size, 0, color, { sx, grow, tag: tagOf(parent) });
             }
           }
         }
@@ -237,8 +253,8 @@ export function layoutText(svg, box, atlas) {
       const y1 = toY(r.bottom);
       const background = premultiplied(style.backgroundColor, alpha);
       if (background && r.width && r.height) {
-        if (r.width >= r.height) rule(x0, (y0 + y1) / 2, x1, (y0 + y1) / 2, y1 - y0, background);
-        else rule((x0 + x1) / 2, y0, (x0 + x1) / 2, y1, x1 - x0, background);
+        if (r.width >= r.height) rule(x0, (y0 + y1) / 2, x1, (y0 + y1) / 2, y1 - y0, background, tagOf(el));
+        else rule((x0 + x1) / 2, y0, (x0 + x1) / 2, y1, x1 - x0, background, tagOf(el));
       }
       for (const [side, a, b, c, d, along] of [
         ['Top', x0, y0, x1, y0, 'h'], ['Bottom', x0, y1, x1, y1, 'h'], ['Left', x0, y0, x0, y1, 'v'], ['Right', x1, y0, x1, y1, 'v'],
@@ -247,8 +263,8 @@ export function layoutText(svg, box, atlas) {
         if (!(width > 0) || style[`border${side}Style`] === 'none') continue;
         const inward = side === 'Top' || side === 'Left' ? width / 2 : -width / 2;
         const color = premultiplied(style[`border${side}Color`], alpha);
-        if (along === 'h') rule(a, b + inward, c, d + inward, width, color);
-        else rule(a + inward, b, c + inward, d, width, color);
+        if (along === 'h') rule(a, b + inward, c, d + inward, width, color, tagOf(el));
+        else rule(a + inward, b, c + inward, d, width, color, tagOf(el));
       }
       const tag = el.localName;
       const size = parseFloat(style.fontSize) || 16;
@@ -262,7 +278,7 @@ export function layoutText(svg, box, atlas) {
         const bottom = el.children[1].getBoundingClientRect();
         const y = probe ? toY(probe.getBoundingClientRect().top) - 0.25 * size : toY((top.bottom + bottom.top) / 2);
         const thick = parseFloat(el.getAttribute('linethickness')) || 0.04 * size;
-        rule(x0, y, x1, y, thick, ink);
+        rule(x0, y, x1, y, thick, ink, tagOf(el));
       } else if ((tag === 'msqrt' || tag === 'mroot') && el.children.length) {
         // The layout paints the radical sign itself: drawn stretched to the
         // root's height, left of the radicand, the bar on from its top.
@@ -280,10 +296,10 @@ export function layoutText(svg, box, atlas) {
           const sy = tall > 0 ? (y1 - y0) / tall : 1;
           const width = (sign.inkLeft + sign.inkRight) * size;
           const pen = from - width + sign.inkLeft * size;
-          place(font, '√', pen, y0 + sign.inkAscent * size * sy, size, 0, ink, { sy, grow: stroke / 2 });
+          place(font, '√', pen, y0 + sign.inkAscent * size * sy, size, 0, ink, { sy, grow: stroke / 2, tag: tagOf(el) });
           from = pen + sign.inkRight * size - thick;
         }
-        rule(from, y0 + thick / 2, x1, y0 + thick / 2, thick, ink);
+        rule(from, y0 + thick / 2, x1, y0 + thick / 2, thick, ink, tagOf(el));
       }
     }
   }

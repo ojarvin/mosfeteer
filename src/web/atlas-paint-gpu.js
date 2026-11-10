@@ -7,7 +7,8 @@
 
 import { DITHER, QUAD_VERTEX, ROUNDED_BOX, createQuad, createShapes, linkProgram, premultiplied, textMeasure } from './gpu.js';
 import { CUTOFF, RADIUS, glyphAtlas } from './atlas-glyphs.js';
-import { MITER_LIMIT } from './atlas-ink.js';
+import { INK_FLOATS, MITER_LIMIT } from './atlas-ink.js';
+import { GLYPH_FLOATS } from './atlas-text.js';
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 /** Pixels of design images uploaded in one frame: the rest wait, so a burst
@@ -27,6 +28,9 @@ const MAX_LARGE_IMAGES = 72;
 const INK_KEPT = 0.45;
 const MAX_CAPTIONS = 800;
 const TEXT_PAD = 2;
+/** The hit mask: a byte a tag, rows this wide (atlas-ink.js tags). */
+const HIT_WIDTH = 4096;
+const HIT_ROWS = 4;
 
 /** How far a design's ink has come up at `uv` (0 to 1 across it): from the
  *  middle out, along an uneven soft edge. */
@@ -40,6 +44,17 @@ float revealed(vec2 uv, float reveal, float seed) {
   return 1.0 - smoothstep(edge - 0.18, edge, r);
 }`;
 
+/** What lights a shape: a search that found what it belongs to (its tag set
+ *  in u_hits). */
+const LIGHT = `
+uniform sampler2D u_hits;
+uniform float u_search;
+float hitOf(float tag) {
+  if (u_search <= 0.0 || tag < 0.5) return 0.0;
+  int t = int(tag + 0.5);
+  return texelFetch(u_hits, ivec2(t % ${HIT_WIDTH}, t / ${HIT_WIDTH}), 0).r;
+}`;
+
 // A design's ink (atlas-ink.js): one instance a shape, its quad drawn round
 // it on screen, its edge smoothed over a pixel by its distance. A line
 // thinner than a pixel stays a pixel wide and fades by as much instead.
@@ -48,6 +63,7 @@ layout(location = 0) in vec2 a_corner;
 layout(location = 1) in vec4 a_a;
 layout(location = 2) in vec4 a_b;
 layout(location = 3) in vec4 a_color;
+layout(location = 4) in vec4 a_tag;
 uniform vec2 u_pane;
 uniform vec4 u_map;
 uniform float u_px, u_soft;
@@ -56,10 +72,13 @@ flat out vec4 v_a;
 flat out vec4 v_b;
 flat out vec4 v_color;
 flat out float v_fade;
+flat out float v_hit;
+${LIGHT}
 vec2 place(vec2 p) { return p * u_map.x + u_map.zw; }
 void main() {
   int kind = int(a_b.w + 0.5);
   float k = u_map.x;
+  v_hit = hitOf(a_tag.x);
   float margin = u_soft + u_px;
   vec2 p;
   v_color = a_color;
@@ -108,10 +127,12 @@ flat in vec4 v_a;
 flat in vec4 v_b;
 flat in vec4 v_color;
 flat in float v_fade;
+flat in float v_hit;
 uniform vec4 u_rect;
 uniform vec2 u_device;
-uniform vec3 u_under;
+uniform vec3 u_under, u_light;
 uniform float u_soft, u_fade, u_reveal, u_seed;
+${LIGHT}
 // This pixel's middle, from the window itself: the same in every shape, so
 // two shapes cut along one line agree on which side each pixel is.
 vec2 v_p;
@@ -128,8 +149,11 @@ float side(vec2 a, vec2 b, float s) {
 }
 void main() {
   v_p = vec2(gl_FragCoord.x, u_device.y - gl_FragCoord.y) / u_device.x;
+  float hit = v_hit * u_search;
   int kind = int(v_b.w + 0.5);
   float d;
+  // Cut away (a corner's other run takes the pixel): no ink, only light.
+  bool cut = false;
   if (kind == 0) {
     vec2 p0 = v_a.xy, p1 = v_a.zw;
     vec2 e = p1 - p0;
@@ -143,17 +167,17 @@ void main() {
     // run on from it starts: the two make a miter, each pixel drawn by one.
     if (v_b.y > 9.5) {
       float a = v_b.y - 10.0;
-      if (dot(v_p - p0, vec2(cos(a), sin(a))) < 0.0 || (u < 0.0 && length(v_p - p0) > half_ * ${MITER_LIMIT.toFixed(1)})) discard;
+      if (dot(v_p - p0, vec2(cos(a), sin(a))) < 0.0 || (u < 0.0 && length(v_p - p0) > half_ * ${MITER_LIMIT.toFixed(1)})) cut = true;
     } else if (u < 0.0) {
-      if (v_b.y > 2.5) discard;
-      d = capped(-u, v, half_, v_b.y);
+      if (v_b.y > 2.5) cut = true;
+      else d = capped(-u, v, half_, v_b.y);
     }
     if (v_b.z > 9.5) {
       float a = v_b.z - 10.0;
-      if (dot(v_p - p1, vec2(cos(a), sin(a))) >= 0.0 || (u > len && length(v_p - p1) > half_ * ${MITER_LIMIT.toFixed(1)})) discard;
+      if (dot(v_p - p1, vec2(cos(a), sin(a))) >= 0.0 || (u > len && length(v_p - p1) > half_ * ${MITER_LIMIT.toFixed(1)})) cut = true;
     } else if (u > len) {
-      if (v_b.z > 2.5) discard;
-      d = capped(u - len, v, half_, v_b.z);
+      if (v_b.z > 2.5) cut = true;
+      else d = capped(u - len, v, half_, v_b.z);
     }
   } else if (kind == 1) {
     d = length(v_p - v_a.xy) - v_a.z;
@@ -167,17 +191,21 @@ void main() {
     float e0 = side(p0, p1, s), e1 = side(p1, p2, s), e2 = side(p2, p0, s);
     // An edge inside the shape cuts hard at the pixel's middle, so the
     // triangle next to it takes the pixel: no seam between them.
-    if ((edges & 1) != 0) d = max(d, e0); else if (e0 > 0.0) discard;
-    if ((edges & 2) != 0) d = max(d, e1); else if (e1 > 0.0) discard;
-    if ((edges & 4) != 0) d = max(d, e2); else if (e2 > 0.0) discard;
+    if ((edges & 1) != 0) d = max(d, e0); else if (e0 > 0.0) cut = true;
+    if ((edges & 2) != 0) d = max(d, e1); else if (e1 > 0.0) cut = true;
+    if ((edges & 4) != 0) d = max(d, e2); else if (e2 > 0.0) cut = true;
   }
-  float cover = clamp(0.5 - d / u_soft, 0.0, 1.0) * v_fade;
+  float cover = cut ? 0.0 : clamp(0.5 - d / u_soft, 0.0, 1.0) * v_fade;
   if (cover <= 0.0) discard;
   float shown = revealed((v_p - u_rect.xy) / u_rect.zw, u_reveal, u_seed);
   // Faded, it is mixed toward what lies under it, and stays opaque: where
-  // its shapes overlap it is no stronger than elsewhere.
+  // its shapes overlap it is no stronger than elsewhere. In a design a
+  // search found, what it did not find recedes the same way.
   vec4 c = v_color * (cover * shown);
-  color = vec4(mix(c.rgb, u_under * c.a, u_fade), c.a);
+  float fade = 1.0 - (1.0 - u_fade) * (1.0 - u_search * (1.0 - v_hit) * 0.65);
+  c.rgb = mix(c.rgb, u_under * c.a, fade);
+  // What it found takes the light's color (and glows from behind: the desk's glow).
+  color = vec4(mix(c.rgb, u_light * c.a, hit * 0.7), c.a);
 }`;
 
 // A design's text (atlas-text.js): each glyph a quad over its cell in the
@@ -189,6 +217,7 @@ layout(location = 1) in vec4 a_a;
 layout(location = 2) in vec4 a_b;
 layout(location = 3) in vec4 a_uv;
 layout(location = 4) in vec4 a_color;
+layout(location = 5) in vec4 a_tag;
 uniform vec2 u_pane;
 uniform vec4 u_map;
 uniform float u_atlas;
@@ -197,8 +226,11 @@ out vec2 v_p;
 flat out vec4 v_color;
 flat out float v_scale;
 flat out float v_grow;
+flat out float v_hit;
+${LIGHT}
 void main() {
   float k = u_map.x;
+  v_hit = hitOf(a_tag.x);
   vec2 x = a_a.zw * k, y = a_b.xy * k;
   vec2 p = a_a.xy * k + u_map.zw + x * a_corner.x + y * a_corner.y;
   v_uv = mix(a_uv.xy, a_uv.zw, a_corner);
@@ -217,19 +249,26 @@ in vec2 v_p;
 flat in vec4 v_color;
 flat in float v_scale;
 flat in float v_grow;
+flat in float v_hit;
 uniform sampler2D u_glyphs;
 uniform vec4 u_rect;
-uniform vec3 u_under;
+uniform vec3 u_under, u_light;
 uniform float u_soft, u_fade, u_reveal, u_seed;
+${LIGHT}
 out vec4 color;
 ${REVEAL}
 void main() {
   float field = texture(u_glyphs, v_uv).r;
-  float d = (${(1 - CUTOFF).toFixed(4)} - field) * ${RADIUS.toFixed(1)} * v_scale - v_grow;
+  float hit = v_hit * u_search;
+  // Found, the text is a touch heavier, in the light's color.
+  float d = (${(1 - CUTOFF).toFixed(4)} - field) * ${RADIUS.toFixed(1)} * v_scale - v_grow - hit * 0.35 * u_soft;
   float cover = clamp(0.5 - d / u_soft, 0.0, 1.0);
   if (cover <= 0.0) discard;
-  vec4 c = v_color * (cover * revealed((v_p - u_rect.xy) / u_rect.zw, u_reveal, u_seed));
-  color = vec4(mix(c.rgb, u_under * c.a, u_fade), c.a);
+  float shown = revealed((v_p - u_rect.xy) / u_rect.zw, u_reveal, u_seed);
+  vec4 c = v_color * (cover * shown);
+  float fade = 1.0 - (1.0 - u_fade) * (1.0 - u_search * (1.0 - v_hit) * 0.65);
+  c.rgb = mix(c.rgb, u_under * c.a, fade);
+  color = vec4(mix(c.rgb, u_light * c.a, hit * 0.85), c.a);
 }`;
 
 const IMAGE_FRAGMENT = `#version 300 es
@@ -349,6 +388,20 @@ export function createGpuDesk(canvas, gl) {
   gl.activeTexture(gl.TEXTURE0);
   // The atlas as uploaded: its generation (every row is sent on a new one).
   let glyphsSent = 0;
+  // The hit mask of the design being drawn (u_hits), and which one it holds.
+  const hitTexture = gl.createTexture();
+  const hitBytes = new Uint8Array(HIT_WIDTH * HIT_ROWS);
+  let hitsSent = null;
+  gl.activeTexture(gl.TEXTURE3);
+  gl.bindTexture(gl.TEXTURE_2D, hitTexture);
+  gl.texStorage2D(gl.TEXTURE_2D, 1, gl.R8, HIT_WIDTH, HIT_ROWS);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.activeTexture(gl.TEXTURE0);
+  for (const program of [inkProgram, glyphProgram]) {
+    gl.useProgram(program.handle);
+    gl.uniform1i(program.u.u_hits, 3);
+  }
   const mipQuad = createQuad(gl);
   const corners = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, corners);
@@ -479,11 +532,33 @@ export function createGpuDesk(canvas, gl) {
     glyphsSent = atlas.generation;
   };
 
+  /** Send `hits` (a byte a tag) to u_hits, unless it is there already. */
+  const sendHits = (hits) => {
+    if (hits === hitsSent) return;
+    hitBytes.fill(0);
+    hitBytes.set(hits.subarray(0, hitBytes.length));
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, hitTexture);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, HIT_WIDTH, HIT_ROWS, gl.RED, gl.UNSIGNED_BYTE, hitBytes);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    gl.activeTexture(gl.TEXTURE0);
+    hitsSent = hits;
+  };
+
+  /** The light's uniforms, the same in both programs. */
+  const setLight = (u, { search, light }) => {
+    gl.uniform1f(u.u_search, search);
+    gl.uniform3fv(u.u_light, light);
+  };
+
   /** Draw a design's shapes, faded by `fade` toward `under` ([r, g, b]),
-   *  revealed so far, then its text. */
-  const drawInk = (entry, box, rect, { fade, under, blur, reveal, seed }) => {
+   *  revealed so far, then its text; lit as `lit` says (`ink`). */
+  const drawInk = (entry, box, rect, { fade, under, blur, reveal, seed, lit }) => {
     const k = rect.w / box.w;
     const px = 1 / pane.dpr;
+    if (lit.search > 0 && lit.hits) sendHits(lit.hits);
     gl.useProgram(inkProgram.handle);
     gl.bindVertexArray(entry.array);
     gl.enable(gl.BLEND);
@@ -499,6 +574,7 @@ export function createGpuDesk(canvas, gl) {
     gl.uniform3fv(u.u_under, under);
     gl.uniform1f(u.u_reveal, reveal);
     gl.uniform1f(u.u_seed, seed);
+    setLight(u, lit);
     if (entry.count) gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, entry.count);
     if (entry.glyphCount) {
       sendGlyphs();
@@ -512,6 +588,7 @@ export function createGpuDesk(canvas, gl) {
       gl.uniform1f(g.u_soft, px * Math.pow(2, blur * 1.5));
       gl.uniform1f(g.u_fade, fade);
       gl.uniform3fv(g.u_under, under);
+      setLight(g, lit);
       gl.uniform1f(g.u_reveal, reveal);
       gl.uniform1f(g.u_seed, seed);
       gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, entry.glyphCount);
@@ -632,11 +709,11 @@ export function createGpuDesk(canvas, gl) {
       const entry = { count: mesh.count, glyphCount: mesh.glyphCount || 0 };
       if (mesh.count) {
         spent += mesh.data.byteLength;
-        Object.assign(entry, instances(mesh.data, 12));
+        Object.assign(entry, instances(mesh.data, INK_FLOATS));
       }
       if (entry.glyphCount) {
         spent += mesh.glyphs.byteLength;
-        const { array, buffer } = instances(mesh.glyphs, 16);
+        const { array, buffer } = instances(mesh.glyphs, GLYPH_FLOATS);
         Object.assign(entry, { glyphArray: array, glyphBuffer: buffer });
       }
       shapes.invalidate();
@@ -658,11 +735,14 @@ export function createGpuDesk(canvas, gl) {
     /** A design's ink: its drawing's `box` laid on `rect` on screen. Below
      *  full `alpha` it is faded toward `under` ([r, g, b], the paper's by
      *  default), opaque. Effects as for `image`: `blur` softens its edges by
-     *  that many octaves. */
-    ink(key, box, rect, alpha, { blur = 0, reveal = 1, seed = 0, under = null } = {}) {
+     *  that many octaves. A search lights what it found: `hits` a byte a tag
+     *  (atlas-ink.js), `search` how strongly (0 to 1), in `light`
+     *  ([r, g, b]); the rest recedes. */
+    ink(key, box, rect, alpha, { blur = 0, reveal = 1, seed = 0, under = null, search = 0, hits = null, light = null } = {}) {
       const entry = inks.get(key);
       if (!(entry?.count || entry?.glyphCount) || !(box?.w > 0) || alpha <= 0) return;
-      drawInk(entry, box, rect, { fade: 1 - Math.min(1, alpha), under: under || pane.under, blur, reveal, seed });
+      const lit = { search: hits ? search : 0, hits, light: light || [0.3, 0.6, 1] };
+      drawInk(entry, box, rect, { fade: 1 - Math.min(1, alpha), under: under || pane.under, blur, reveal, seed, lit });
     },
 
     /** `blur`: mipmap levels out of focus; `reveal` (0 to 1): how far its
@@ -690,6 +770,13 @@ export function createGpuDesk(canvas, gl) {
     },
 
     box: shapes.box,
+
+    /** A soft light over `rect` (rounded by `radius`), `blur` wide: what a
+     *  search found glows from behind its drawing. Added to what is under it
+     *  where the paper is dark. */
+    glow({ rect, radius = 0, blur, color, alpha = 1, additive = false }) {
+      shapes.shadow({ rect, radius, blur, color, alpha, additive });
+    },
 
     /** A shadow, and the box that casts it over it. */
     raised({ rect, radius, fill, alpha, blur, drop, color }) {

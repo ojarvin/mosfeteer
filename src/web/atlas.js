@@ -525,15 +525,15 @@ function mathFontReady() {
 /** A design's shapes and glyphs, read from its export SVG (as drawn in the
  *  light theme: the dark one is its colors changed, `inkMesh`). */
 function readDesign(entry) {
-  const { data, count, textSvg, picturesSvg } = svgInk(entry.svg);
+  const { data, count, textSvg, picturesSvg, tags } = svgInk(entry.svg);
   const atlas = glyphAtlas();
   // Its text in the colors of the export itself, not of the page.
   const text = textSvg ? textSvg.replace(/var\(--[\w-]+,\s*([^()]+)\)/g, '$1') : null;
   // The glyph atlas full, it starts again: laid out once more into the new one.
-  const laid = text ? layoutText(text, entry.box, atlas) || layoutText(text, entry.box, atlas) : null;
+  const laid = text ? layoutText(text, entry.box, atlas, tags) || layoutText(text, entry.box, atlas, tags) : null;
   const rules = laid?.rules || [];
   return {
-    textSvg, picturesSvg, generation: atlas.generation,
+    textSvg, picturesSvg, tags, generation: atlas.generation,
     mesh: { data: withRules(data, rules), count: count + rules.length / INK_FLOATS, glyphs: laid?.glyphs, glyphCount: laid?.glyphCount || 0 },
   };
 }
@@ -994,6 +994,7 @@ function drawDesk() {
   });
   const wanted = [];
   const center = { x: state.view.x + state.view.w / 2, y: state.view.y + state.view.h / 2 };
+  const searchLight = paint.vector ? searchLightNow() : 0;
   const placed = visible.map(({ tile, alpha }) => {
     const rect = worldToScreen(tile);
     const px = Math.max(rect.w, rect.h) * dpr;
@@ -1031,7 +1032,8 @@ function drawDesk() {
     // marked under the drawing, like a highlighter, while the search box has
     // focus -- away from it, the marks step aside and the drawings read clean.
     const fade = (state.matches && !found ? 0.18 : 1) * alpha * (1 - DIMMED * dim);
-    if (found?.hits.length && document.activeElement === searchEl) drawHits(paint, tile, entry, found.hits, palette, alpha);
+    // On the 2D canvas; on the GPU what it found glows instead (litBy).
+    if (!paint.vector && found?.hits.length && document.activeElement === searchEl) drawHits(paint, tile, entry, found.hits, palette, alpha);
     let imageAlpha = fade;
     const effects = { reveal: entry.current ? 1 : reveal, seed: tile.x * 0.013 + tile.y * 0.007, blur: state.flight ? deskBlur(state.flight.depth) : 0 };
     // On the GPU the ink and text are drawn as vectors, sharp at any size;
@@ -1040,13 +1042,15 @@ function drawDesk() {
     if (paint.vector && !ink) requestDraw();
     if (ink && !flying) {
       if (paint.inkReady(ink.key, () => inkMesh(entry))) {
+        // What a search found glows from behind it.
+        if (found?.hits.length && searchLight > 0) drawHitGlow(paint, entry, rect, found.hits, palette, fade * searchLight);
         // Fades in once, when first read: in another theme it is at once.
         if (!ink.shown && !entry.current && !rootEl.classList.contains('preparing')) state.arrived.set(ink.key, performance.now());
         ink.shown = true;
         const since = state.arrived.get(ink.key);
         const arriving = since === undefined ? 1 : Math.min(1, (performance.now() - since) / ARRIVE_MS);
         if (arriving < 1) requestDraw();
-        paint.ink(ink.key, entry.box, rect, fade * arriving, { ...effects, under: underOf(tile, lift, palette) });
+        paint.ink(ink.key, entry.box, rect, fade * arriving, { ...effects, under: underOf(tile, lift, palette), ...litBy(ink, found, palette, searchLight) });
       }
     }
     const level = imageLevel(imageDetail);
@@ -1267,6 +1271,63 @@ function drawCard(paint, tile, rect, lift, palette) {
     state.rimAt?.delete(tile.id);
     paint.box({ rect: frame, radius, stroke: palette.dim, strokeAlpha: solid * 0.3, strokeWidth: Math.max(0.5, Math.min(1.5, 3 * k)) });
   }
+}
+
+/** How long a search's light takes to come up, or go. */
+const SEARCH_LIGHT_MS = 160;
+
+/** How strongly a search lights what it found now (0 to 1): while the
+ *  search box has focus, as its marks show on the 2D canvas. */
+function searchLightNow() {
+  const target = state.matches && document.activeElement === searchEl ? 1 : 0;
+  const now = performance.now();
+  const light = state.searchLight || { value: 0, at: now };
+  const step = (now - light.at) / SEARCH_LIGHT_MS;
+  light.value = target > light.value ? Math.min(target, light.value + step) : Math.max(target, light.value - step);
+  light.at = now;
+  state.searchLight = light;
+  if (light.value !== target) requestDraw();
+  return reducedMotion() ? target : light.value;
+}
+
+/** A soft light behind each thing a search found in a design drawn at `rect`. */
+function drawHitGlow(paint, entry, rect, hits, palette, alpha) {
+  const k = rect.w / entry.box.w;
+  const dark = theme() === 'dark';
+  const pad = 3;
+  for (const hit of hits) {
+    for (const b of hit.boxes) {
+      const box = { x: rect.x + (b.x - entry.box.x) * k - pad, y: rect.y + (b.y - entry.box.y) * k - pad, w: b.w * k + 2 * pad, h: b.h * k + 2 * pad };
+      // Found text is in the light's color already: its box, roomy, glows less.
+      const strength = (dark ? 0.55 : 0.4) * (hit.kind === 'text' ? 0.45 : 1);
+      paint.glow({ rect: box, radius: pad * 2, blur: 16, color: palette.accent, alpha: alpha * strength, additive: dark });
+    }
+  }
+}
+
+/** The tags of what a search found: each part, net, or text, and a part's or net's own labels. */
+function hitTags(hits) {
+  const names = [];
+  for (const hit of hits) {
+    names.push(`${hit.kind === 'text' ? 'label' : hit.kind}:${hit.id}`);
+    for (const id of hit.labels || []) names.push(`label:${id}`);
+  }
+  return names;
+}
+
+/** How a design is lit (paint.ink): what a search found in it. */
+function litBy(ink, found, palette, searchLight) {
+  const lit = { light: cssColor(palette.accent).slice(0, 3) };
+  if (found?.hits.length && searchLight > 0) {
+    found.masks ||= new WeakMap();
+    let hits = found.masks.get(ink);
+    if (!hits) {
+      hits = ink.tags.mask(hitTags(found.hits));
+      found.masks.set(ink, hits);
+    }
+    Object.assign(lit, { hits, search: searchLight });
+  }
+  return lit;
 }
 
 /** What lies under a design on the desk, [r, g, b]: its card as solid as

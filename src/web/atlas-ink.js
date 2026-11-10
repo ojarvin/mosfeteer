@@ -8,10 +8,14 @@
  *
  * Each shape is INK_FLOATS floats, in the drawing's own units, in document
  * order (later shapes over earlier ones):
- *   segment   [x0, y0, x1, y1,  halfWidth, cap0, cap1, SEGMENT,  r, g, b, a]
- *   disc      [cx, cy, r, 0,    0, 0, 0, DISC,                    r, g, b, a]
- *   ring      [cx, cy, r, 0,    halfWidth, 0, 0, RING,            r, g, b, a]
- *   triangle  [x0, y0, x1, y1,  x2, y2, outerEdges, TRIANGLE,     r, g, b, a]
+ *   segment   [x0, y0, x1, y1,  halfWidth, cap0, cap1, SEGMENT,  r, g, b, a,  tag, role, 0, 0]
+ *   disc      [cx, cy, r, 0,    0, 0, 0, DISC,                    r, g, b, a,  tag, role, 0, 0]
+ *   ring      [cx, cy, r, 0,    halfWidth, 0, 0, RING,            r, g, b, a,  tag, role, 0, 0]
+ *   triangle  [x0, y0, x1, y1,  x2, y2, outerEdges, TRIANGLE,     r, g, b, a,  tag, role, 0, 0]
+ * `tag`: what the shape belongs to, an index into the drawing's `tags`
+ * (`part:R1`, `label:L3`, `net:N2`; 0 for nothing), so a search can light
+ * it; `role`: INK, or WIRE (the drawing's wires, each run tagged with its
+ * net, read from the net's own wire paths, which are not drawn).
  * Caps: BUTT, SQUARE, ROUND, or a corner: JOINT + the angle of the corner's
  * mean direction (the two runs' directions added), across which the two are
  * cut, so they meet in a miter, without a seam or an overlap at any width
@@ -21,7 +25,38 @@
  * premultiplied, 0 to 1.
  */
 
-export const INK_FLOATS = 12;
+export const INK_FLOATS = 16;
+export const INK = 0;
+export const WIRE = 1;
+const NET_PATH = 2;
+
+/** A drawing's tags: `list[i]` names tag i (0: none), `index(name)` gives one. */
+export function createTags() {
+  const list = [''];
+  const map = new Map();
+  return {
+    list,
+    index(name) {
+      if (!name) return 0;
+      let i = map.get(name);
+      if (i === undefined) {
+        i = list.length;
+        list.push(name);
+        map.set(name, i);
+      }
+      return i;
+    },
+    /** The tags of `names`, as a mask a byte a tag (255: one of them). */
+    mask(names) {
+      const out = new Uint8Array(list.length);
+      for (const name of names) {
+        const i = map.get(name);
+        if (i !== undefined) out[i] = 255;
+      }
+      return out;
+    },
+  };
+}
 export const SEGMENT = 0;
 export const DISC = 1;
 export const RING = 2;
@@ -34,7 +69,7 @@ export const JOINT = 3;
 export const MITER_LIMIT = 4;
 
 /** Elements drawn as ink, and those drawn with the text. */
-const INK = new Set(['path', 'line', 'polyline', 'polygon', 'rect', 'circle', 'ellipse']);
+const INK_ELEMENTS = new Set(['path', 'line', 'polyline', 'polygon', 'rect', 'circle', 'ellipse']);
 const TEXT = new Set(['text', 'foreignObject', 'image']);
 /** Elements whose content is not more drawing. */
 const OPAQUE = new Set(['text', 'foreignObject', 'title', 'desc', 'style', 'script', 'metadata', 'defs']);
@@ -431,6 +466,13 @@ const CAPS = { butt: BUTT, square: SQUARE, round: ROUND };
  * more length; a cut (JOINT) or round end stays as it is.
  * `segments`: [x0, y0, x1, y1, cap0, cap1].
  */
+/** The line a horizontal or vertical run lies on (`h<y>`, `v<x>`), else null. */
+function lineKey(x0, y0, x1, y1) {
+  if (y0 === y1 && x0 !== x1) return `h${y0}`;
+  if (x0 === x1 && y0 !== y1) return `v${x0}`;
+  return null;
+}
+
 export function mergeRuns(segments, half) {
   const lines = new Map();
   const rest = [];
@@ -486,21 +528,22 @@ export function mergeRuns(segments, half) {
 }
 
 /** Read the export SVG. Returns { data: Float32Array, count, textSvg,
- *  picturesSvg, box }: `textSvg` the drawing less its ink, null when the
+ *  picturesSvg, box, tags } (`tags` as createTags, or those given): `textSvg` the drawing less its ink, null when the
  *  design has no text, math, or pictures; `picturesSvg` that less its text
  *  too, null when it has no pictures. */
-export function svgInk(svg) {
+export function svgInk(svg, tags = createTags()) {
   const source = String(svg);
   const out = [];
   let count = 0;
-  const push = (values, color) => {
-    out.push(...values, color[0] * color[3], color[1] * color[3], color[2] * color[3], color[3]);
+  const push = (values, color, style) => {
+    out.push(...values, color[0] * color[3], color[1] * color[3], color[2] * color[3], color[3], style.tag, style.role, 0, 0);
     count += 1;
   };
   const tag = /<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<!\[CDATA\[[\s\S]*?\]\]>|<!DOCTYPE[^>]*>|<(\/?)([a-zA-Z][\w:.-]*)((?:\s+[^\s=>/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*(\/?)>/g;
   const root = {
     fill: [0, 0, 0, 1], stroke: null, strokeWidth: 1, cap: BUTT, join: JOINT,
     fillOpacity: 1, strokeOpacity: 1, opacity: 1, dash: null, matrix: IDENTITY, hidden: false,
+    tag: 0, role: INK,
   };
   const stack = [{ name: '#root', style: root }];
   let box = null;
@@ -510,6 +553,8 @@ export function svgInk(svg) {
   let removing = null; // { depth } while inside an ink element being left out
   let opaque = null; // { name, depth } while inside text-like content
   let hasText = false;
+  /** The nets' own straight runs, by line (as mergeRuns keys them): [lo, hi, tag]. */
+  const netRuns = new Map();
 
   const attributesOf = (text) => {
     const attrs = {};
@@ -541,6 +586,12 @@ export function svgInk(svg) {
     }
     if (attrs.display === 'none' || attrs.visibility === 'hidden') style.hidden = true;
     if (attrs.transform) style.matrix = multiply(parent.matrix, parseTransform(attrs.transform));
+    if (attrs['data-ref']) style.tag = tags.index(`part:${attrs['data-ref']}`);
+    if (attrs['data-label-id']) style.tag = tags.index(`label:${attrs['data-label-id']}`);
+    if (attrs['data-net-id']) style.tag = tags.index(`net:${attrs['data-net-id']}`);
+    const classes = ` ${attrs.class || ''} `;
+    if (classes.includes(' wire-ink ')) style.role = WIRE;
+    if (classes.includes(' wire-managed ')) style.role = NET_PATH;
     return style;
   };
 
@@ -550,16 +601,18 @@ export function svgInk(svg) {
   const draw = (style, subpaths, { fill = true } = {}) => {
     const m = style.matrix;
     const scaleOf = Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2]));
-    const fillColor = fill ? paint(style.fill, style.fillOpacity * style.opacity) : null;
+    // A net's own wires only say which net the drawing's wires are.
+    const netPath = style.role === NET_PATH;
+    const fillColor = fill && !netPath ? paint(style.fill, style.fillOpacity * style.opacity) : null;
     if (fillColor) {
       for (const { points } of subpaths) {
         if (points.length < 3) continue;
         for (const [a, b, c, edges] of triangulate(points.map(([x, y]) => apply(m, x, y)))) {
-          push([a[0], a[1], b[0], b[1], c[0], c[1], edges, TRIANGLE], fillColor);
+          push([a[0], a[1], b[0], b[1], c[0], c[1], edges, TRIANGLE], fillColor, style);
         }
       }
     }
-    const strokeColor = paint(style.stroke, style.strokeOpacity * style.opacity);
+    const strokeColor = netPath ? [0, 0, 0, 0] : paint(style.stroke, style.strokeOpacity * style.opacity);
     const half = (style.strokeWidth * scaleOf) / 2;
     if (!strokeColor || !(half > 0)) return;
     const segments = [];
@@ -598,7 +651,33 @@ export function svgInk(svg) {
         }
       }
     }
-    for (const [x0, y0, x1, y1, cap0, cap1] of mergeRuns(segments, half)) push([x0, y0, x1, y1, half, cap0, cap1, SEGMENT], strokeColor);
+    for (const [x0, y0, x1, y1, cap0, cap1] of mergeRuns(segments, half)) {
+      if (netPath) {
+        const key = lineKey(x0, y0, x1, y1);
+        if (!key) continue;
+        const run = key[0] === 'h' ? [Math.min(x0, x1), Math.max(x0, x1), style.tag] : [Math.min(y0, y1), Math.max(y0, y1), style.tag];
+        if (!netRuns.has(key)) netRuns.set(key, []);
+        netRuns.get(key).push(run);
+        continue;
+      }
+      push([x0, y0, x1, y1, half, cap0, cap1, SEGMENT], strokeColor, style);
+    }
+  };
+
+  /** Each straight wire run takes the tag of the net whose own run it lies along. */
+  const tagWires = () => {
+    for (let i = 0; i < count; i++) {
+      const o = i * INK_FLOATS;
+      if (out[o + 13] !== WIRE || out[o + 7] !== SEGMENT) continue;
+      const key = lineKey(out[o], out[o + 1], out[o + 2], out[o + 3]);
+      const runs = key && netRuns.get(key);
+      if (!runs) continue;
+      const along = key[0] === 'h' ? [out[o], out[o + 2]] : [out[o + 1], out[o + 3]];
+      const lo = Math.min(...along);
+      const hi = Math.max(...along);
+      const run = runs.find(([a, b]) => a < hi && b > lo);
+      if (run) out[o + 12] = run[2];
+    }
   };
 
   const shape = (name, attrs, style) => {
@@ -645,10 +724,10 @@ export function svgInk(svg) {
         const [x, y] = apply(m, cx, cy);
         const r = rx * scaleOf;
         const fillColor = paint(style.fill, style.fillOpacity * style.opacity);
-        if (fillColor) push([x, y, r, 0, 0, 0, 0, DISC], fillColor);
+        if (fillColor) push([x, y, r, 0, 0, 0, 0, DISC], fillColor, style);
         const strokeColor = paint(style.stroke, style.strokeOpacity * style.opacity);
         const half = (style.strokeWidth * scaleOf) / 2;
-        if (strokeColor && half > 0) push([x, y, r, 0, half, 0, 0, RING], strokeColor);
+        if (strokeColor && half > 0) push([x, y, r, 0, half, 0, 0, RING], strokeColor, style);
         return;
       }
       draw(style, flattenPath(`M ${cx + rx} ${cy} A ${rx} ${ry} 0 0 1 ${cx - rx} ${cy} A ${rx} ${ry} 0 0 1 ${cx + rx} ${cy} Z`));
@@ -714,7 +793,7 @@ export function svgInk(svg) {
       continue;
     }
     const style = styleOf(parent.style, attrs);
-    if (INK.has(name) && !removing) {
+    if (INK_ELEMENTS.has(name) && !removing) {
       shape(name, attrs, style);
       if (selfClosing) {
         kept.push(source.slice(keptFrom, match.index));
@@ -725,10 +804,11 @@ export function svgInk(svg) {
     }
     if (!selfClosing) stack.push({ name, style });
   }
+  tagWires();
   kept.push(source.slice(keptFrom));
   const textSvg = hasText ? kept.join('').replace(/\n{2,}/g, '\n') : null;
   const picturesSvg = textSvg && /<image\b/.test(textSvg)
     ? textSvg.replace(/<text\b[\s\S]*?<\/text>/g, '').replace(/<foreignObject\b[\s\S]*?<\/foreignObject>/g, '')
     : null;
-  return { data: new Float32Array(out), count, textSvg, picturesSvg, box };
+  return { data: new Float32Array(out), count, textSvg, picturesSvg, box, tags };
 }

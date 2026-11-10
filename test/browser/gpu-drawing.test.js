@@ -290,6 +290,18 @@ describe('the desk\'s effects, drawn directly', { skip: browserSkip() }, () => {
     assert.ok(Math.abs(r.turn - r.down) <= 3, `and up and down: ${JSON.stringify(r)}`);
   });
 
+  test('a search tints what it found in the light\'s color, and the rest of the design recedes', async () => {
+    const svg = drawing(200, 200, '<g data-ref="A"><path d="M 20 50 L 180 50" stroke="#000" stroke-width="10" fill="none"/></g><g data-ref="B"><path d="M 20 150 L 180 150" stroke="#000" stroke-width="10" fill="none"/></g>');
+    const r = await scene(`const ink = (await ${h.module('atlas-ink.js')}).svgInk(${JSON.stringify(svg)});
+      const hits = ink.tags.mask(['part:A']);
+      const draw = (effects) => { begin(); desk.inkReady('s', () => ink); desk.ink('s', ink.box, { x: 0, y: 0, w: 200, h: 200 }, 1, effects); return [at(100, 50), at(100, 150)]; };
+      // Red only: the light is blue, so what it found keeps no red, and what recedes goes toward the white paper.
+      return { plain: draw({}), found: draw({ hits, search: 1, light: [0, 0, 1] }) };`);
+    assert.deepEqual(r.plain.map((v) => v < 10), [true, true], JSON.stringify(r));
+    assert.ok(r.found[0] < 30, `found: blue ink, no red: ${JSON.stringify(r)}`);
+    assert.ok(r.found[1] > 120, `the rest recedes toward the paper: ${JSON.stringify(r)}`);
+  });
+
   test('a corner is mitered to its point, and a fill has no seams', async () => {
     const corner = drawing(200, 200, '<path d="M 20 40 L 120 40 L 120 160" stroke="#000" stroke-width="20" fill="none"/>');
     const c = await scene(`${inked(corner, { x: 0, y: 0, w: 200, h: 200 })} return [at(128, 32), at(124, 36), at(133, 40)];`);

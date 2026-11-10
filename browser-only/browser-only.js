@@ -27985,7 +27985,8 @@ function segmentBox(a, b, pad = 10) {
  * The index of one circuit: `{ tags, notes?, noteLinks?, items }` (`notes`
  * as one search key, `noteLinks` the designs they link to; `links`, `beats`,
  * `timing`, `checkpoints` when it has them), each item
- * `{ kind: 'part'|'net'|'text', id, text, type?, boxes }` in drawing units.
+ * `{ kind: 'part'|'net'|'text', id, text, type?, boxes, labels? }` in drawing
+ * units, `labels` the ids of a part's or net's own labels.
  */
 function designIndex(circuit) {
   const items = [];
@@ -27999,6 +28000,7 @@ function designIndex(circuit) {
       text: words.filter(Boolean).join(' '),
       type: component.type,
       boxes: [box(component.bboxWorld())],
+      labels: [...circuit.labels.values()].filter((l) => l.owner === component.refdes).map((l) => l.id),
       // The design it links to: the Atlas draws the link from this part.
       ...(component.link ? { link: component.link } : {}),
     });
@@ -28007,8 +28009,9 @@ function designIndex(circuit) {
     if (!net.name) continue;
     const boxes = [];
     for (const path of net.paths()) for (let i = 1; i < path.length; i++) boxes.push(segmentBox(path[i - 1], path[i]));
-    for (const label of circuit.netLabels(net)) boxes.push(box(label.inkRect()));
-    items.push({ kind: 'net', id: net.id, text: net.name, boxes });
+    const labels = circuit.netLabels(net);
+    for (const label of labels) boxes.push(box(label.inkRect()));
+    items.push({ kind: 'net', id: net.id, text: net.name, boxes, labels: labels.map((label) => label.id) });
   }
   for (const label of circuit.labels.values()) {
     if (label.owner || label.netId || label.role || !label.text) continue;
@@ -54512,7 +54515,7 @@ function transact(db, mode, run) {
 /** The cache key of one rendering of a document revision. */
 /** The cached design index's version (core/design-index.js): bump it when
  *  the index gains or changes what it holds. */
-const INDEX_CACHE = 'index-v6';
+const INDEX_CACHE = 'index-v7';
 
 function renderingKey(path, revision, part) {
   return `${path}\n${revision}\n${part}`;
@@ -54775,6 +54778,7 @@ __exports.CUTOFF = CUTOFF;
 };
 
 __modules["src/web/atlas-ink.js"] = function (__require, __exports) {
+__exports.createTags = createTags;
 __exports.parseColor = parseColor;
 __exports.parseTransform = parseTransform;
 __exports.flattenPath = flattenPath;
@@ -54791,10 +54795,14 @@ __exports.svgInk = svgInk;
  *
  * Each shape is INK_FLOATS floats, in the drawing's own units, in document
  * order (later shapes over earlier ones):
- *   segment   [x0, y0, x1, y1,  halfWidth, cap0, cap1, SEGMENT,  r, g, b, a]
- *   disc      [cx, cy, r, 0,    0, 0, 0, DISC,                    r, g, b, a]
- *   ring      [cx, cy, r, 0,    halfWidth, 0, 0, RING,            r, g, b, a]
- *   triangle  [x0, y0, x1, y1,  x2, y2, outerEdges, TRIANGLE,     r, g, b, a]
+ *   segment   [x0, y0, x1, y1,  halfWidth, cap0, cap1, SEGMENT,  r, g, b, a,  tag, role, 0, 0]
+ *   disc      [cx, cy, r, 0,    0, 0, 0, DISC,                    r, g, b, a,  tag, role, 0, 0]
+ *   ring      [cx, cy, r, 0,    halfWidth, 0, 0, RING,            r, g, b, a,  tag, role, 0, 0]
+ *   triangle  [x0, y0, x1, y1,  x2, y2, outerEdges, TRIANGLE,     r, g, b, a,  tag, role, 0, 0]
+ * `tag`: what the shape belongs to, an index into the drawing's `tags`
+ * (`part:R1`, `label:L3`, `net:N2`; 0 for nothing), so a search can light
+ * it; `role`: INK, or WIRE (the drawing's wires, each run tagged with its
+ * net, read from the net's own wire paths, which are not drawn).
  * Caps: BUTT, SQUARE, ROUND, or a corner: JOINT + the angle of the corner's
  * mean direction (the two runs' directions added), across which the two are
  * cut, so they meet in a miter, without a seam or an overlap at any width
@@ -54804,7 +54812,38 @@ __exports.svgInk = svgInk;
  * premultiplied, 0 to 1.
  */
 
-const INK_FLOATS = 12;
+const INK_FLOATS = 16;
+const INK = 0;
+const WIRE = 1;
+const NET_PATH = 2;
+
+/** A drawing's tags: `list[i]` names tag i (0: none), `index(name)` gives one. */
+function createTags() {
+  const list = [''];
+  const map = new Map();
+  return {
+    list,
+    index(name) {
+      if (!name) return 0;
+      let i = map.get(name);
+      if (i === undefined) {
+        i = list.length;
+        list.push(name);
+        map.set(name, i);
+      }
+      return i;
+    },
+    /** The tags of `names`, as a mask a byte a tag (255: one of them). */
+    mask(names) {
+      const out = new Uint8Array(list.length);
+      for (const name of names) {
+        const i = map.get(name);
+        if (i !== undefined) out[i] = 255;
+      }
+      return out;
+    },
+  };
+}
 const SEGMENT = 0;
 const DISC = 1;
 const RING = 2;
@@ -54817,7 +54856,7 @@ const JOINT = 3;
 const MITER_LIMIT = 4;
 
 /** Elements drawn as ink, and those drawn with the text. */
-const INK = new Set(['path', 'line', 'polyline', 'polygon', 'rect', 'circle', 'ellipse']);
+const INK_ELEMENTS = new Set(['path', 'line', 'polyline', 'polygon', 'rect', 'circle', 'ellipse']);
 const TEXT = new Set(['text', 'foreignObject', 'image']);
 /** Elements whose content is not more drawing. */
 const OPAQUE = new Set(['text', 'foreignObject', 'title', 'desc', 'style', 'script', 'metadata', 'defs']);
@@ -55214,6 +55253,13 @@ const CAPS = { butt: BUTT, square: SQUARE, round: ROUND };
  * more length; a cut (JOINT) or round end stays as it is.
  * `segments`: [x0, y0, x1, y1, cap0, cap1].
  */
+/** The line a horizontal or vertical run lies on (`h<y>`, `v<x>`), else null. */
+function lineKey(x0, y0, x1, y1) {
+  if (y0 === y1 && x0 !== x1) return `h${y0}`;
+  if (x0 === x1 && y0 !== y1) return `v${x0}`;
+  return null;
+}
+
 function mergeRuns(segments, half) {
   const lines = new Map();
   const rest = [];
@@ -55269,21 +55315,22 @@ function mergeRuns(segments, half) {
 }
 
 /** Read the export SVG. Returns { data: Float32Array, count, textSvg,
- *  picturesSvg, box }: `textSvg` the drawing less its ink, null when the
+ *  picturesSvg, box, tags } (`tags` as createTags, or those given): `textSvg` the drawing less its ink, null when the
  *  design has no text, math, or pictures; `picturesSvg` that less its text
  *  too, null when it has no pictures. */
-function svgInk(svg) {
+function svgInk(svg, tags = createTags()) {
   const source = String(svg);
   const out = [];
   let count = 0;
-  const push = (values, color) => {
-    out.push(...values, color[0] * color[3], color[1] * color[3], color[2] * color[3], color[3]);
+  const push = (values, color, style) => {
+    out.push(...values, color[0] * color[3], color[1] * color[3], color[2] * color[3], color[3], style.tag, style.role, 0, 0);
     count += 1;
   };
   const tag = /<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<!\[CDATA\[[\s\S]*?\]\]>|<!DOCTYPE[^>]*>|<(\/?)([a-zA-Z][\w:.-]*)((?:\s+[^\s=>/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*(\/?)>/g;
   const root = {
     fill: [0, 0, 0, 1], stroke: null, strokeWidth: 1, cap: BUTT, join: JOINT,
     fillOpacity: 1, strokeOpacity: 1, opacity: 1, dash: null, matrix: IDENTITY, hidden: false,
+    tag: 0, role: INK,
   };
   const stack = [{ name: '#root', style: root }];
   let box = null;
@@ -55293,6 +55340,8 @@ function svgInk(svg) {
   let removing = null; // { depth } while inside an ink element being left out
   let opaque = null; // { name, depth } while inside text-like content
   let hasText = false;
+  /** The nets' own straight runs, by line (as mergeRuns keys them): [lo, hi, tag]. */
+  const netRuns = new Map();
 
   const attributesOf = (text) => {
     const attrs = {};
@@ -55324,6 +55373,12 @@ function svgInk(svg) {
     }
     if (attrs.display === 'none' || attrs.visibility === 'hidden') style.hidden = true;
     if (attrs.transform) style.matrix = multiply(parent.matrix, parseTransform(attrs.transform));
+    if (attrs['data-ref']) style.tag = tags.index(`part:${attrs['data-ref']}`);
+    if (attrs['data-label-id']) style.tag = tags.index(`label:${attrs['data-label-id']}`);
+    if (attrs['data-net-id']) style.tag = tags.index(`net:${attrs['data-net-id']}`);
+    const classes = ` ${attrs.class || ''} `;
+    if (classes.includes(' wire-ink ')) style.role = WIRE;
+    if (classes.includes(' wire-managed ')) style.role = NET_PATH;
     return style;
   };
 
@@ -55333,16 +55388,18 @@ function svgInk(svg) {
   const draw = (style, subpaths, { fill = true } = {}) => {
     const m = style.matrix;
     const scaleOf = Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2]));
-    const fillColor = fill ? paint(style.fill, style.fillOpacity * style.opacity) : null;
+    // A net's own wires only say which net the drawing's wires are.
+    const netPath = style.role === NET_PATH;
+    const fillColor = fill && !netPath ? paint(style.fill, style.fillOpacity * style.opacity) : null;
     if (fillColor) {
       for (const { points } of subpaths) {
         if (points.length < 3) continue;
         for (const [a, b, c, edges] of triangulate(points.map(([x, y]) => apply(m, x, y)))) {
-          push([a[0], a[1], b[0], b[1], c[0], c[1], edges, TRIANGLE], fillColor);
+          push([a[0], a[1], b[0], b[1], c[0], c[1], edges, TRIANGLE], fillColor, style);
         }
       }
     }
-    const strokeColor = paint(style.stroke, style.strokeOpacity * style.opacity);
+    const strokeColor = netPath ? [0, 0, 0, 0] : paint(style.stroke, style.strokeOpacity * style.opacity);
     const half = (style.strokeWidth * scaleOf) / 2;
     if (!strokeColor || !(half > 0)) return;
     const segments = [];
@@ -55381,7 +55438,33 @@ function svgInk(svg) {
         }
       }
     }
-    for (const [x0, y0, x1, y1, cap0, cap1] of mergeRuns(segments, half)) push([x0, y0, x1, y1, half, cap0, cap1, SEGMENT], strokeColor);
+    for (const [x0, y0, x1, y1, cap0, cap1] of mergeRuns(segments, half)) {
+      if (netPath) {
+        const key = lineKey(x0, y0, x1, y1);
+        if (!key) continue;
+        const run = key[0] === 'h' ? [Math.min(x0, x1), Math.max(x0, x1), style.tag] : [Math.min(y0, y1), Math.max(y0, y1), style.tag];
+        if (!netRuns.has(key)) netRuns.set(key, []);
+        netRuns.get(key).push(run);
+        continue;
+      }
+      push([x0, y0, x1, y1, half, cap0, cap1, SEGMENT], strokeColor, style);
+    }
+  };
+
+  /** Each straight wire run takes the tag of the net whose own run it lies along. */
+  const tagWires = () => {
+    for (let i = 0; i < count; i++) {
+      const o = i * INK_FLOATS;
+      if (out[o + 13] !== WIRE || out[o + 7] !== SEGMENT) continue;
+      const key = lineKey(out[o], out[o + 1], out[o + 2], out[o + 3]);
+      const runs = key && netRuns.get(key);
+      if (!runs) continue;
+      const along = key[0] === 'h' ? [out[o], out[o + 2]] : [out[o + 1], out[o + 3]];
+      const lo = Math.min(...along);
+      const hi = Math.max(...along);
+      const run = runs.find(([a, b]) => a < hi && b > lo);
+      if (run) out[o + 12] = run[2];
+    }
   };
 
   const shape = (name, attrs, style) => {
@@ -55428,10 +55511,10 @@ function svgInk(svg) {
         const [x, y] = apply(m, cx, cy);
         const r = rx * scaleOf;
         const fillColor = paint(style.fill, style.fillOpacity * style.opacity);
-        if (fillColor) push([x, y, r, 0, 0, 0, 0, DISC], fillColor);
+        if (fillColor) push([x, y, r, 0, 0, 0, 0, DISC], fillColor, style);
         const strokeColor = paint(style.stroke, style.strokeOpacity * style.opacity);
         const half = (style.strokeWidth * scaleOf) / 2;
-        if (strokeColor && half > 0) push([x, y, r, 0, half, 0, 0, RING], strokeColor);
+        if (strokeColor && half > 0) push([x, y, r, 0, half, 0, 0, RING], strokeColor, style);
         return;
       }
       draw(style, flattenPath(`M ${cx + rx} ${cy} A ${rx} ${ry} 0 0 1 ${cx - rx} ${cy} A ${rx} ${ry} 0 0 1 ${cx + rx} ${cy} Z`));
@@ -55497,7 +55580,7 @@ function svgInk(svg) {
       continue;
     }
     const style = styleOf(parent.style, attrs);
-    if (INK.has(name) && !removing) {
+    if (INK_ELEMENTS.has(name) && !removing) {
       shape(name, attrs, style);
       if (selfClosing) {
         kept.push(source.slice(keptFrom, match.index));
@@ -55508,15 +55591,18 @@ function svgInk(svg) {
     }
     if (!selfClosing) stack.push({ name, style });
   }
+  tagWires();
   kept.push(source.slice(keptFrom));
   const textSvg = hasText ? kept.join('').replace(/\n{2,}/g, '\n') : null;
   const picturesSvg = textSvg && /<image\b/.test(textSvg)
     ? textSvg.replace(/<text\b[\s\S]*?<\/text>/g, '').replace(/<foreignObject\b[\s\S]*?<\/foreignObject>/g, '')
     : null;
-  return { data: new Float32Array(out), count, textSvg, picturesSvg, box };
+  return { data: new Float32Array(out), count, textSvg, picturesSvg, box, tags };
 }
 
 __exports.INK_FLOATS = INK_FLOATS;
+__exports.INK = INK;
+__exports.WIRE = WIRE;
 __exports.SEGMENT = SEGMENT;
 __exports.DISC = DISC;
 __exports.RING = RING;
@@ -56230,13 +56316,15 @@ __modules["src/web/atlas-paint-gpu.js"] = function (__require, __exports) {
 __exports.createGpuDesk = createGpuDesk;
 let DITHER, QUAD_VERTEX, ROUNDED_BOX, createQuad, createShapes, linkProgram, premultiplied, textMeasure; __bind(() => { ({ DITHER, QUAD_VERTEX, ROUNDED_BOX, createQuad, createShapes, linkProgram, premultiplied, textMeasure } = __require("src/web/gpu.js")); });
 let CUTOFF, RADIUS, glyphAtlas; __bind(() => { ({ CUTOFF, RADIUS, glyphAtlas } = __require("src/web/atlas-glyphs.js")); });
-let MITER_LIMIT; __bind(() => { ({ MITER_LIMIT } = __require("src/web/atlas-ink.js")); });
+let INK_FLOATS, MITER_LIMIT; __bind(() => { ({ INK_FLOATS, MITER_LIMIT } = __require("src/web/atlas-ink.js")); });
+let GLYPH_FLOATS; __bind(() => { ({ GLYPH_FLOATS } = __require("src/web/atlas-text.js")); });
 /**
  * The Atlas desk in WebGL2: the same drawing operations as the 2D painter
  * (atlas-paint-2d.js). Each design is a mipmapped texture, which zooms
  * smoothly at any scale; the grid, shadows, glows, and beams are shaders.
  * Once uploaded, a design's bitmap is closed: the texture is its one copy.
  */
+
 
 
 
@@ -56260,6 +56348,9 @@ const MAX_LARGE_IMAGES = 72;
 const INK_KEPT = 0.45;
 const MAX_CAPTIONS = 800;
 const TEXT_PAD = 2;
+/** The hit mask: a byte a tag, rows this wide (atlas-ink.js tags). */
+const HIT_WIDTH = 4096;
+const HIT_ROWS = 4;
 
 /** How far a design's ink has come up at `uv` (0 to 1 across it): from the
  *  middle out, along an uneven soft edge. */
@@ -56273,6 +56364,17 @@ float revealed(vec2 uv, float reveal, float seed) {
   return 1.0 - smoothstep(edge - 0.18, edge, r);
 }`;
 
+/** What lights a shape: a search that found what it belongs to (its tag set
+ *  in u_hits). */
+const LIGHT = `
+uniform sampler2D u_hits;
+uniform float u_search;
+float hitOf(float tag) {
+  if (u_search <= 0.0 || tag < 0.5) return 0.0;
+  int t = int(tag + 0.5);
+  return texelFetch(u_hits, ivec2(t % ${HIT_WIDTH}, t / ${HIT_WIDTH}), 0).r;
+}`;
+
 // A design's ink (atlas-ink.js): one instance a shape, its quad drawn round
 // it on screen, its edge smoothed over a pixel by its distance. A line
 // thinner than a pixel stays a pixel wide and fades by as much instead.
@@ -56281,6 +56383,7 @@ layout(location = 0) in vec2 a_corner;
 layout(location = 1) in vec4 a_a;
 layout(location = 2) in vec4 a_b;
 layout(location = 3) in vec4 a_color;
+layout(location = 4) in vec4 a_tag;
 uniform vec2 u_pane;
 uniform vec4 u_map;
 uniform float u_px, u_soft;
@@ -56289,10 +56392,13 @@ flat out vec4 v_a;
 flat out vec4 v_b;
 flat out vec4 v_color;
 flat out float v_fade;
+flat out float v_hit;
+${LIGHT}
 vec2 place(vec2 p) { return p * u_map.x + u_map.zw; }
 void main() {
   int kind = int(a_b.w + 0.5);
   float k = u_map.x;
+  v_hit = hitOf(a_tag.x);
   float margin = u_soft + u_px;
   vec2 p;
   v_color = a_color;
@@ -56341,10 +56447,12 @@ flat in vec4 v_a;
 flat in vec4 v_b;
 flat in vec4 v_color;
 flat in float v_fade;
+flat in float v_hit;
 uniform vec4 u_rect;
 uniform vec2 u_device;
-uniform vec3 u_under;
+uniform vec3 u_under, u_light;
 uniform float u_soft, u_fade, u_reveal, u_seed;
+${LIGHT}
 // This pixel's middle, from the window itself: the same in every shape, so
 // two shapes cut along one line agree on which side each pixel is.
 vec2 v_p;
@@ -56361,8 +56469,11 @@ float side(vec2 a, vec2 b, float s) {
 }
 void main() {
   v_p = vec2(gl_FragCoord.x, u_device.y - gl_FragCoord.y) / u_device.x;
+  float hit = v_hit * u_search;
   int kind = int(v_b.w + 0.5);
   float d;
+  // Cut away (a corner's other run takes the pixel): no ink, only light.
+  bool cut = false;
   if (kind == 0) {
     vec2 p0 = v_a.xy, p1 = v_a.zw;
     vec2 e = p1 - p0;
@@ -56376,17 +56487,17 @@ void main() {
     // run on from it starts: the two make a miter, each pixel drawn by one.
     if (v_b.y > 9.5) {
       float a = v_b.y - 10.0;
-      if (dot(v_p - p0, vec2(cos(a), sin(a))) < 0.0 || (u < 0.0 && length(v_p - p0) > half_ * ${MITER_LIMIT.toFixed(1)})) discard;
+      if (dot(v_p - p0, vec2(cos(a), sin(a))) < 0.0 || (u < 0.0 && length(v_p - p0) > half_ * ${MITER_LIMIT.toFixed(1)})) cut = true;
     } else if (u < 0.0) {
-      if (v_b.y > 2.5) discard;
-      d = capped(-u, v, half_, v_b.y);
+      if (v_b.y > 2.5) cut = true;
+      else d = capped(-u, v, half_, v_b.y);
     }
     if (v_b.z > 9.5) {
       float a = v_b.z - 10.0;
-      if (dot(v_p - p1, vec2(cos(a), sin(a))) >= 0.0 || (u > len && length(v_p - p1) > half_ * ${MITER_LIMIT.toFixed(1)})) discard;
+      if (dot(v_p - p1, vec2(cos(a), sin(a))) >= 0.0 || (u > len && length(v_p - p1) > half_ * ${MITER_LIMIT.toFixed(1)})) cut = true;
     } else if (u > len) {
-      if (v_b.z > 2.5) discard;
-      d = capped(u - len, v, half_, v_b.z);
+      if (v_b.z > 2.5) cut = true;
+      else d = capped(u - len, v, half_, v_b.z);
     }
   } else if (kind == 1) {
     d = length(v_p - v_a.xy) - v_a.z;
@@ -56400,17 +56511,21 @@ void main() {
     float e0 = side(p0, p1, s), e1 = side(p1, p2, s), e2 = side(p2, p0, s);
     // An edge inside the shape cuts hard at the pixel's middle, so the
     // triangle next to it takes the pixel: no seam between them.
-    if ((edges & 1) != 0) d = max(d, e0); else if (e0 > 0.0) discard;
-    if ((edges & 2) != 0) d = max(d, e1); else if (e1 > 0.0) discard;
-    if ((edges & 4) != 0) d = max(d, e2); else if (e2 > 0.0) discard;
+    if ((edges & 1) != 0) d = max(d, e0); else if (e0 > 0.0) cut = true;
+    if ((edges & 2) != 0) d = max(d, e1); else if (e1 > 0.0) cut = true;
+    if ((edges & 4) != 0) d = max(d, e2); else if (e2 > 0.0) cut = true;
   }
-  float cover = clamp(0.5 - d / u_soft, 0.0, 1.0) * v_fade;
+  float cover = cut ? 0.0 : clamp(0.5 - d / u_soft, 0.0, 1.0) * v_fade;
   if (cover <= 0.0) discard;
   float shown = revealed((v_p - u_rect.xy) / u_rect.zw, u_reveal, u_seed);
   // Faded, it is mixed toward what lies under it, and stays opaque: where
-  // its shapes overlap it is no stronger than elsewhere.
+  // its shapes overlap it is no stronger than elsewhere. In a design a
+  // search found, what it did not find recedes the same way.
   vec4 c = v_color * (cover * shown);
-  color = vec4(mix(c.rgb, u_under * c.a, u_fade), c.a);
+  float fade = 1.0 - (1.0 - u_fade) * (1.0 - u_search * (1.0 - v_hit) * 0.65);
+  c.rgb = mix(c.rgb, u_under * c.a, fade);
+  // What it found takes the light's color (and glows from behind: the desk's glow).
+  color = vec4(mix(c.rgb, u_light * c.a, hit * 0.7), c.a);
 }`;
 
 // A design's text (atlas-text.js): each glyph a quad over its cell in the
@@ -56422,6 +56537,7 @@ layout(location = 1) in vec4 a_a;
 layout(location = 2) in vec4 a_b;
 layout(location = 3) in vec4 a_uv;
 layout(location = 4) in vec4 a_color;
+layout(location = 5) in vec4 a_tag;
 uniform vec2 u_pane;
 uniform vec4 u_map;
 uniform float u_atlas;
@@ -56430,8 +56546,11 @@ out vec2 v_p;
 flat out vec4 v_color;
 flat out float v_scale;
 flat out float v_grow;
+flat out float v_hit;
+${LIGHT}
 void main() {
   float k = u_map.x;
+  v_hit = hitOf(a_tag.x);
   vec2 x = a_a.zw * k, y = a_b.xy * k;
   vec2 p = a_a.xy * k + u_map.zw + x * a_corner.x + y * a_corner.y;
   v_uv = mix(a_uv.xy, a_uv.zw, a_corner);
@@ -56450,19 +56569,26 @@ in vec2 v_p;
 flat in vec4 v_color;
 flat in float v_scale;
 flat in float v_grow;
+flat in float v_hit;
 uniform sampler2D u_glyphs;
 uniform vec4 u_rect;
-uniform vec3 u_under;
+uniform vec3 u_under, u_light;
 uniform float u_soft, u_fade, u_reveal, u_seed;
+${LIGHT}
 out vec4 color;
 ${REVEAL}
 void main() {
   float field = texture(u_glyphs, v_uv).r;
-  float d = (${(1 - CUTOFF).toFixed(4)} - field) * ${RADIUS.toFixed(1)} * v_scale - v_grow;
+  float hit = v_hit * u_search;
+  // Found, the text is a touch heavier, in the light's color.
+  float d = (${(1 - CUTOFF).toFixed(4)} - field) * ${RADIUS.toFixed(1)} * v_scale - v_grow - hit * 0.35 * u_soft;
   float cover = clamp(0.5 - d / u_soft, 0.0, 1.0);
   if (cover <= 0.0) discard;
-  vec4 c = v_color * (cover * revealed((v_p - u_rect.xy) / u_rect.zw, u_reveal, u_seed));
-  color = vec4(mix(c.rgb, u_under * c.a, u_fade), c.a);
+  float shown = revealed((v_p - u_rect.xy) / u_rect.zw, u_reveal, u_seed);
+  vec4 c = v_color * (cover * shown);
+  float fade = 1.0 - (1.0 - u_fade) * (1.0 - u_search * (1.0 - v_hit) * 0.65);
+  c.rgb = mix(c.rgb, u_under * c.a, fade);
+  color = vec4(mix(c.rgb, u_light * c.a, hit * 0.85), c.a);
 }`;
 
 const IMAGE_FRAGMENT = `#version 300 es
@@ -56582,6 +56708,20 @@ function createGpuDesk(canvas, gl) {
   gl.activeTexture(gl.TEXTURE0);
   // The atlas as uploaded: its generation (every row is sent on a new one).
   let glyphsSent = 0;
+  // The hit mask of the design being drawn (u_hits), and which one it holds.
+  const hitTexture = gl.createTexture();
+  const hitBytes = new Uint8Array(HIT_WIDTH * HIT_ROWS);
+  let hitsSent = null;
+  gl.activeTexture(gl.TEXTURE3);
+  gl.bindTexture(gl.TEXTURE_2D, hitTexture);
+  gl.texStorage2D(gl.TEXTURE_2D, 1, gl.R8, HIT_WIDTH, HIT_ROWS);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.activeTexture(gl.TEXTURE0);
+  for (const program of [inkProgram, glyphProgram]) {
+    gl.useProgram(program.handle);
+    gl.uniform1i(program.u.u_hits, 3);
+  }
   const mipQuad = createQuad(gl);
   const corners = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, corners);
@@ -56712,11 +56852,33 @@ function createGpuDesk(canvas, gl) {
     glyphsSent = atlas.generation;
   };
 
+  /** Send `hits` (a byte a tag) to u_hits, unless it is there already. */
+  const sendHits = (hits) => {
+    if (hits === hitsSent) return;
+    hitBytes.fill(0);
+    hitBytes.set(hits.subarray(0, hitBytes.length));
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, hitTexture);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, HIT_WIDTH, HIT_ROWS, gl.RED, gl.UNSIGNED_BYTE, hitBytes);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    gl.activeTexture(gl.TEXTURE0);
+    hitsSent = hits;
+  };
+
+  /** The light's uniforms, the same in both programs. */
+  const setLight = (u, { search, light }) => {
+    gl.uniform1f(u.u_search, search);
+    gl.uniform3fv(u.u_light, light);
+  };
+
   /** Draw a design's shapes, faded by `fade` toward `under` ([r, g, b]),
-   *  revealed so far, then its text. */
-  const drawInk = (entry, box, rect, { fade, under, blur, reveal, seed }) => {
+   *  revealed so far, then its text; lit as `lit` says (`ink`). */
+  const drawInk = (entry, box, rect, { fade, under, blur, reveal, seed, lit }) => {
     const k = rect.w / box.w;
     const px = 1 / pane.dpr;
+    if (lit.search > 0 && lit.hits) sendHits(lit.hits);
     gl.useProgram(inkProgram.handle);
     gl.bindVertexArray(entry.array);
     gl.enable(gl.BLEND);
@@ -56732,6 +56894,7 @@ function createGpuDesk(canvas, gl) {
     gl.uniform3fv(u.u_under, under);
     gl.uniform1f(u.u_reveal, reveal);
     gl.uniform1f(u.u_seed, seed);
+    setLight(u, lit);
     if (entry.count) gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, entry.count);
     if (entry.glyphCount) {
       sendGlyphs();
@@ -56745,6 +56908,7 @@ function createGpuDesk(canvas, gl) {
       gl.uniform1f(g.u_soft, px * Math.pow(2, blur * 1.5));
       gl.uniform1f(g.u_fade, fade);
       gl.uniform3fv(g.u_under, under);
+      setLight(g, lit);
       gl.uniform1f(g.u_reveal, reveal);
       gl.uniform1f(g.u_seed, seed);
       gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, entry.glyphCount);
@@ -56865,11 +57029,11 @@ function createGpuDesk(canvas, gl) {
       const entry = { count: mesh.count, glyphCount: mesh.glyphCount || 0 };
       if (mesh.count) {
         spent += mesh.data.byteLength;
-        Object.assign(entry, instances(mesh.data, 12));
+        Object.assign(entry, instances(mesh.data, INK_FLOATS));
       }
       if (entry.glyphCount) {
         spent += mesh.glyphs.byteLength;
-        const { array, buffer } = instances(mesh.glyphs, 16);
+        const { array, buffer } = instances(mesh.glyphs, GLYPH_FLOATS);
         Object.assign(entry, { glyphArray: array, glyphBuffer: buffer });
       }
       shapes.invalidate();
@@ -56891,11 +57055,14 @@ function createGpuDesk(canvas, gl) {
     /** A design's ink: its drawing's `box` laid on `rect` on screen. Below
      *  full `alpha` it is faded toward `under` ([r, g, b], the paper's by
      *  default), opaque. Effects as for `image`: `blur` softens its edges by
-     *  that many octaves. */
-    ink(key, box, rect, alpha, { blur = 0, reveal = 1, seed = 0, under = null } = {}) {
+     *  that many octaves. A search lights what it found: `hits` a byte a tag
+     *  (atlas-ink.js), `search` how strongly (0 to 1), in `light`
+     *  ([r, g, b]); the rest recedes. */
+    ink(key, box, rect, alpha, { blur = 0, reveal = 1, seed = 0, under = null, search = 0, hits = null, light = null } = {}) {
       const entry = inks.get(key);
       if (!(entry?.count || entry?.glyphCount) || !(box?.w > 0) || alpha <= 0) return;
-      drawInk(entry, box, rect, { fade: 1 - Math.min(1, alpha), under: under || pane.under, blur, reveal, seed });
+      const lit = { search: hits ? search : 0, hits, light: light || [0.3, 0.6, 1] };
+      drawInk(entry, box, rect, { fade: 1 - Math.min(1, alpha), under: under || pane.under, blur, reveal, seed, lit });
     },
 
     /** `blur`: mipmap levels out of focus; `reveal` (0 to 1): how far its
@@ -56923,6 +57090,13 @@ function createGpuDesk(canvas, gl) {
     },
 
     box: shapes.box,
+
+    /** A soft light over `rect` (rounded by `radius`), `blur` wide: what a
+     *  search found glows from behind its drawing. Added to what is under it
+     *  where the paper is dark. */
+    glow({ rect, radius = 0, blur, color, alpha = 1, additive = false }) {
+      shapes.shadow({ rect, radius, blur, color, alpha, additive });
+    },
 
     /** A shadow, and the box that casts it over it. */
     raised({ rect, radius, fill, alpha, blur, drop, color }) {
@@ -57070,7 +57244,7 @@ __modules["src/web/atlas-text.js"] = function (__require, __exports) {
 __exports.mathItalic = mathItalic;
 __exports.layoutText = layoutText;
 __exports.withRules = withRules;
-let BUTT, INK_FLOATS, SEGMENT, parseColor; __bind(() => { ({ BUTT, INK_FLOATS, SEGMENT, parseColor } = __require("src/web/atlas-ink.js")); });
+let BUTT, INK, INK_FLOATS, SEGMENT, createTags, parseColor; __bind(() => { ({ BUTT, INK, INK_FLOATS, SEGMENT, createTags, parseColor } = __require("src/web/atlas-ink.js")); });
 /**
  * A design's text as the Atlas desk draws it on the GPU: laid out once by
  * the browser (SVG text and the math in foreignObject alike), then read
@@ -57079,14 +57253,15 @@ let BUTT, INK_FLOATS, SEGMENT, parseColor; __bind(() => { ({ BUTT, INK_FLOATS, S
  * bars, table lines) come back as segments of ink.
  *
  * Glyphs are GLYPH_FLOATS floats each:
- *   [ox, oy, xx, xy,  yx, yy, grow, 0,  u0, v0, u1, v1,  r, g, b, a]
+ *   [ox, oy, xx, xy,  yx, yy, grow, 0,  u0, v0, u1, v1,  r, g, b, a,  tag, 0, 0, 0]
  * the cell's corner, its two sides, how far the glyph is grown (a text
- * stroke, half its width), its place in the atlas, and its premultiplied color.
+ * stroke, half its width), its place in the atlas, its premultiplied color,
+ * and what it belongs to (the drawing's tags, atlas-ink.js).
  */
 
 
 
-const GLYPH_FLOATS = 16;
+const GLYPH_FLOATS = 20;
 
 /** Accents a math layout stretches across. */
 const WIDE = new Set([...'¯‾_^ˆ~˜→←↔⏞⏟︷︸']);
@@ -57120,12 +57295,13 @@ function hostEl() {
 const fontOf = (style) => ({ style: style.fontStyle || 'normal', weight: style.fontWeight || '400', family: style.fontFamily || 'sans-serif' });
 
 /**
- * Lay out `svg` (a design's text drawing, in the theme now) and read its
- * glyphs from `atlas`. `box` is its view box. Returns
+ * Lay out `svg` (a design's text drawing) and read its glyphs from `atlas`.
+ * `box` is its view box; `tags` the drawing's (atlas-ink.js), each glyph
+ * tagged with the label or part it belongs to. Returns
  * `{ glyphs: Float32Array, glyphCount, rules: number[] (ink shapes) }`, or
  * null when the atlas filled up meanwhile (lay it out again).
  */
-function layoutText(svg, box, atlas) {
+function layoutText(svg, box, atlas, tags = createTags()) {
   const root = hostEl();
   root.innerHTML = svg;
   const drawing = root.querySelector('svg');
@@ -57158,6 +57334,19 @@ function layoutText(svg, box, atlas) {
   const rules = [];
   let count = 0;
   let full = false;
+  const tagged = new Map();
+  /** The tag of what `el` belongs to: its label, part, or net. */
+  const tagOf = (el) => {
+    if (!el) return 0;
+    let tag = tagged.get(el);
+    if (tag === undefined) {
+      const owner = el.closest('[data-label-id],[data-ref],[data-net-id]');
+      tag = !owner ? 0 : owner.dataset.labelId ? tags.index(`label:${owner.dataset.labelId}`)
+        : owner.dataset.ref ? tags.index(`part:${owner.dataset.ref}`) : tags.index(`net:${owner.dataset.netId}`);
+      tagged.set(el, tag);
+    }
+    return tag;
+  };
   const opacities = new Map();
   const opacityOf = (el) => {
     if (!el || el === drawing.parentNode) return 1;
@@ -57177,7 +57366,7 @@ function layoutText(svg, box, atlas) {
   };
 
   /** One glyph, its pen on the baseline at (x, y), `size` the em, turned by `angle`. */
-  const place = (font, char, x, y, size, angle, color, { sx = 1, sy = 1, grow = 0 } = {}) => {
+  const place = (font, char, x, y, size, angle, color, { sx = 1, sy = 1, grow = 0, tag = 0 } = {}) => {
     const glyph = atlas.glyph(font, char);
     if (!glyph) {
       full = true;
@@ -57195,14 +57384,15 @@ function layoutText(svg, box, atlas) {
       -sin * h, cos * h, grow, 0,
       glyph.u0, glyph.v0, glyph.u1, glyph.v1,
       ...color,
+      tag, 0, 0, 0,
     );
     count += 1;
     return glyph;
   };
 
-  const rule = (x0, y0, x1, y1, width, color) => {
+  const rule = (x0, y0, x1, y1, width, color, tag = 0) => {
     if (!color || !(width > 0)) return;
-    rules.push(x0, y0, x1, y1, width / 2, BUTT, BUTT, SEGMENT, ...color);
+    rules.push(x0, y0, x1, y1, width / 2, BUTT, BUTT, SEGMENT, ...color, tag, INK, 0, 0);
   };
 
   // SVG text: each character where the layout put it, turned with it.
@@ -57237,7 +57427,7 @@ function layoutText(svg, box, atlas) {
               const start = text.getStartPositionOfChar(index + j);
               const angle = turn + (text.getRotationOfChar(index + j) * Math.PI) / 180;
               const p = new DOMPoint(start.x, start.y).matrixTransform(matrix);
-              place(font, char, toX(p.x), toY(p.y), size, angle, color);
+              place(font, char, toX(p.x), toY(p.y), size, angle, color, { tag: tagOf(text) });
             } catch { /* not drawn */ }
           } else {
             const range = document.createRange();
@@ -57245,7 +57435,7 @@ function layoutText(svg, box, atlas) {
             range.setEnd(node, j + length);
             const r = range.getBoundingClientRect();
             const glyph = r.width ? atlas.glyph(font, char) : null;
-            if (glyph && !glyph.empty) place(font, char, toX(r.left), toY(r.top) + glyph.ascent * size, size, turn, color);
+            if (glyph && !glyph.empty) place(font, char, toX(r.left), toY(r.top) + glyph.ascent * size, size, turn, color, { tag: tagOf(text) });
           }
         }
         j += length;
@@ -57288,10 +57478,10 @@ function layoutText(svg, box, atlas) {
               const sy = operator.height / ink;
               // A taller variant is wider too, as far as its box says.
               const sx = LARGE.has(char) ? sy : Math.max(1, Math.min(sy, operator.width / Math.max(glyph.advance * size, 1e-6)));
-              place(font, char, toX(operator.left), toY(operator.top) + glyph.inkAscent * size * sy, size, 0, color, { sx, sy, grow });
+              place(font, char, toX(operator.left), toY(operator.top) + glyph.inkAscent * size * sy, size, 0, color, { sx, sy, grow, tag: tagOf(parent) });
             } else {
               const sx = WIDE.has(char) && r.width > glyph.advance * size * 1.2 ? r.width / (glyph.advance * size) : 1;
-              place(font, char, toX(r.left), toY(r.top) + glyph.ascent * size, size, 0, color, { sx, grow });
+              place(font, char, toX(r.left), toY(r.top) + glyph.ascent * size, size, 0, color, { sx, grow, tag: tagOf(parent) });
             }
           }
         }
@@ -57310,8 +57500,8 @@ function layoutText(svg, box, atlas) {
       const y1 = toY(r.bottom);
       const background = premultiplied(style.backgroundColor, alpha);
       if (background && r.width && r.height) {
-        if (r.width >= r.height) rule(x0, (y0 + y1) / 2, x1, (y0 + y1) / 2, y1 - y0, background);
-        else rule((x0 + x1) / 2, y0, (x0 + x1) / 2, y1, x1 - x0, background);
+        if (r.width >= r.height) rule(x0, (y0 + y1) / 2, x1, (y0 + y1) / 2, y1 - y0, background, tagOf(el));
+        else rule((x0 + x1) / 2, y0, (x0 + x1) / 2, y1, x1 - x0, background, tagOf(el));
       }
       for (const [side, a, b, c, d, along] of [
         ['Top', x0, y0, x1, y0, 'h'], ['Bottom', x0, y1, x1, y1, 'h'], ['Left', x0, y0, x0, y1, 'v'], ['Right', x1, y0, x1, y1, 'v'],
@@ -57320,8 +57510,8 @@ function layoutText(svg, box, atlas) {
         if (!(width > 0) || style[`border${side}Style`] === 'none') continue;
         const inward = side === 'Top' || side === 'Left' ? width / 2 : -width / 2;
         const color = premultiplied(style[`border${side}Color`], alpha);
-        if (along === 'h') rule(a, b + inward, c, d + inward, width, color);
-        else rule(a + inward, b, c + inward, d, width, color);
+        if (along === 'h') rule(a, b + inward, c, d + inward, width, color, tagOf(el));
+        else rule(a + inward, b, c + inward, d, width, color, tagOf(el));
       }
       const tag = el.localName;
       const size = parseFloat(style.fontSize) || 16;
@@ -57335,7 +57525,7 @@ function layoutText(svg, box, atlas) {
         const bottom = el.children[1].getBoundingClientRect();
         const y = probe ? toY(probe.getBoundingClientRect().top) - 0.25 * size : toY((top.bottom + bottom.top) / 2);
         const thick = parseFloat(el.getAttribute('linethickness')) || 0.04 * size;
-        rule(x0, y, x1, y, thick, ink);
+        rule(x0, y, x1, y, thick, ink, tagOf(el));
       } else if ((tag === 'msqrt' || tag === 'mroot') && el.children.length) {
         // The layout paints the radical sign itself: drawn stretched to the
         // root's height, left of the radicand, the bar on from its top.
@@ -57353,10 +57543,10 @@ function layoutText(svg, box, atlas) {
           const sy = tall > 0 ? (y1 - y0) / tall : 1;
           const width = (sign.inkLeft + sign.inkRight) * size;
           const pen = from - width + sign.inkLeft * size;
-          place(font, '√', pen, y0 + sign.inkAscent * size * sy, size, 0, ink, { sy, grow: stroke / 2 });
+          place(font, '√', pen, y0 + sign.inkAscent * size * sy, size, 0, ink, { sy, grow: stroke / 2, tag: tagOf(el) });
           from = pen + sign.inkRight * size - thick;
         }
-        rule(from, y0 + thick / 2, x1, y0 + thick / 2, thick, ink);
+        rule(from, y0 + thick / 2, x1, y0 + thick / 2, thick, ink, tagOf(el));
       }
     }
   }
@@ -57960,15 +58150,15 @@ function mathFontReady() {
 /** A design's shapes and glyphs, read from its export SVG (as drawn in the
  *  light theme: the dark one is its colors changed, `inkMesh`). */
 function readDesign(entry) {
-  const { data, count, textSvg, picturesSvg } = svgInk(entry.svg);
+  const { data, count, textSvg, picturesSvg, tags } = svgInk(entry.svg);
   const atlas = glyphAtlas();
   // Its text in the colors of the export itself, not of the page.
   const text = textSvg ? textSvg.replace(/var\(--[\w-]+,\s*([^()]+)\)/g, '$1') : null;
   // The glyph atlas full, it starts again: laid out once more into the new one.
-  const laid = text ? layoutText(text, entry.box, atlas) || layoutText(text, entry.box, atlas) : null;
+  const laid = text ? layoutText(text, entry.box, atlas, tags) || layoutText(text, entry.box, atlas, tags) : null;
   const rules = laid?.rules || [];
   return {
-    textSvg, picturesSvg, generation: atlas.generation,
+    textSvg, picturesSvg, tags, generation: atlas.generation,
     mesh: { data: withRules(data, rules), count: count + rules.length / INK_FLOATS, glyphs: laid?.glyphs, glyphCount: laid?.glyphCount || 0 },
   };
 }
@@ -58429,6 +58619,7 @@ function drawDesk() {
   });
   const wanted = [];
   const center = { x: state.view.x + state.view.w / 2, y: state.view.y + state.view.h / 2 };
+  const searchLight = paint.vector ? searchLightNow() : 0;
   const placed = visible.map(({ tile, alpha }) => {
     const rect = worldToScreen(tile);
     const px = Math.max(rect.w, rect.h) * dpr;
@@ -58466,7 +58657,8 @@ function drawDesk() {
     // marked under the drawing, like a highlighter, while the search box has
     // focus -- away from it, the marks step aside and the drawings read clean.
     const fade = (state.matches && !found ? 0.18 : 1) * alpha * (1 - DIMMED * dim);
-    if (found?.hits.length && document.activeElement === searchEl) drawHits(paint, tile, entry, found.hits, palette, alpha);
+    // On the 2D canvas; on the GPU what it found glows instead (litBy).
+    if (!paint.vector && found?.hits.length && document.activeElement === searchEl) drawHits(paint, tile, entry, found.hits, palette, alpha);
     let imageAlpha = fade;
     const effects = { reveal: entry.current ? 1 : reveal, seed: tile.x * 0.013 + tile.y * 0.007, blur: state.flight ? deskBlur(state.flight.depth) : 0 };
     // On the GPU the ink and text are drawn as vectors, sharp at any size;
@@ -58475,13 +58667,15 @@ function drawDesk() {
     if (paint.vector && !ink) requestDraw();
     if (ink && !flying) {
       if (paint.inkReady(ink.key, () => inkMesh(entry))) {
+        // What a search found glows from behind it.
+        if (found?.hits.length && searchLight > 0) drawHitGlow(paint, entry, rect, found.hits, palette, fade * searchLight);
         // Fades in once, when first read: in another theme it is at once.
         if (!ink.shown && !entry.current && !rootEl.classList.contains('preparing')) state.arrived.set(ink.key, performance.now());
         ink.shown = true;
         const since = state.arrived.get(ink.key);
         const arriving = since === undefined ? 1 : Math.min(1, (performance.now() - since) / ARRIVE_MS);
         if (arriving < 1) requestDraw();
-        paint.ink(ink.key, entry.box, rect, fade * arriving, { ...effects, under: underOf(tile, lift, palette) });
+        paint.ink(ink.key, entry.box, rect, fade * arriving, { ...effects, under: underOf(tile, lift, palette), ...litBy(ink, found, palette, searchLight) });
       }
     }
     const level = imageLevel(imageDetail);
@@ -58702,6 +58896,63 @@ function drawCard(paint, tile, rect, lift, palette) {
     state.rimAt?.delete(tile.id);
     paint.box({ rect: frame, radius, stroke: palette.dim, strokeAlpha: solid * 0.3, strokeWidth: Math.max(0.5, Math.min(1.5, 3 * k)) });
   }
+}
+
+/** How long a search's light takes to come up, or go. */
+const SEARCH_LIGHT_MS = 160;
+
+/** How strongly a search lights what it found now (0 to 1): while the
+ *  search box has focus, as its marks show on the 2D canvas. */
+function searchLightNow() {
+  const target = state.matches && document.activeElement === searchEl ? 1 : 0;
+  const now = performance.now();
+  const light = state.searchLight || { value: 0, at: now };
+  const step = (now - light.at) / SEARCH_LIGHT_MS;
+  light.value = target > light.value ? Math.min(target, light.value + step) : Math.max(target, light.value - step);
+  light.at = now;
+  state.searchLight = light;
+  if (light.value !== target) requestDraw();
+  return reducedMotion() ? target : light.value;
+}
+
+/** A soft light behind each thing a search found in a design drawn at `rect`. */
+function drawHitGlow(paint, entry, rect, hits, palette, alpha) {
+  const k = rect.w / entry.box.w;
+  const dark = theme() === 'dark';
+  const pad = 3;
+  for (const hit of hits) {
+    for (const b of hit.boxes) {
+      const box = { x: rect.x + (b.x - entry.box.x) * k - pad, y: rect.y + (b.y - entry.box.y) * k - pad, w: b.w * k + 2 * pad, h: b.h * k + 2 * pad };
+      // Found text is in the light's color already: its box, roomy, glows less.
+      const strength = (dark ? 0.55 : 0.4) * (hit.kind === 'text' ? 0.45 : 1);
+      paint.glow({ rect: box, radius: pad * 2, blur: 16, color: palette.accent, alpha: alpha * strength, additive: dark });
+    }
+  }
+}
+
+/** The tags of what a search found: each part, net, or text, and a part's or net's own labels. */
+function hitTags(hits) {
+  const names = [];
+  for (const hit of hits) {
+    names.push(`${hit.kind === 'text' ? 'label' : hit.kind}:${hit.id}`);
+    for (const id of hit.labels || []) names.push(`label:${id}`);
+  }
+  return names;
+}
+
+/** How a design is lit (paint.ink): what a search found in it. */
+function litBy(ink, found, palette, searchLight) {
+  const lit = { light: cssColor(palette.accent).slice(0, 3) };
+  if (found?.hits.length && searchLight > 0) {
+    found.masks ||= new WeakMap();
+    let hits = found.masks.get(ink);
+    if (!hits) {
+      hits = ink.tags.mask(hitTags(found.hits));
+      found.masks.set(ink, hits);
+    }
+    Object.assign(lit, { hits, search: searchLight });
+  }
+  return lit;
 }
 
 /** What lies under a design on the desk, [r, g, b]: its card as solid as
@@ -73847,11 +74098,12 @@ function createShapes(gl) {
       gl.uniform4fv(box.u.u_glow, sigma ? premultiplied(glow, glowAlpha) : [0, 0, 0, 0]);
       paintQuad();
     },
-    /** The soft shadow a rounded box casts (a canvas's shadowBlur `blur`). */
-    shadow({ rect, radius = 0, blur, drop = 0, color, alpha = 1 }) {
+    /** The soft shadow a rounded box casts (a canvas's shadowBlur `blur`);
+     *  `additive`, a light it sheds. */
+    shadow({ rect, radius = 0, blur, drop = 0, color, alpha = 1, additive = false }) {
       const sigma = Math.max(0.01, blur / 2);
       const margin = 3 * sigma + 1;
-      blend(false);
+      blend(additive);
       stretch(shadow, rect.x - margin, rect.y + drop - margin, rect.w + 2 * margin, rect.h + 2 * margin);
       gl.uniform4f(shadow.u.u_box, rect.x, rect.y + drop, rect.w, rect.h);
       gl.uniform1f(shadow.u.u_radius, radius);

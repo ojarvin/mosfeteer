@@ -2,7 +2,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BUTT, DISC, INK_FLOATS, JOINT, RING, ROUND, SEGMENT, SQUARE, TRIANGLE, flattenPath, mergeRuns, parseColor, parseTransform, svgInk, triangulate } from '../src/web/atlas-ink.js';
+import { BUTT, DISC, INK, INK_FLOATS, JOINT, RING, ROUND, SEGMENT, SQUARE, TRIANGLE, WIRE, createTags, flattenPath, mergeRuns, parseColor, parseTransform, svgInk, triangulate } from '../src/web/atlas-ink.js';
 import { svgString } from '../src/core/render.js';
 import { DRAWING_EXPORT_OPTIONS } from '../src/core/selection-drawing.js';
 import { builtInDrawings } from '../src/core/arrange-builtins.js';
@@ -66,7 +66,7 @@ test('strokes become segments with their caps, a corner is cut across its mean d
   assert.ok(near(second.slice(0, 8), [100, 0, 100, 50, 3, corner, SQUARE, SEGMENT], 1e-5), String(second));
   // Moved by its group and half as opaque, premultiplied.
   assert.deepEqual(line.slice(0, 8), [10, 10, 20, 10, 1, ROUND, ROUND, SEGMENT]);
-  assert.ok(near(line.slice(8), [0, 0, 0, 0.5]));
+  assert.ok(near(line.slice(8, 12), [0, 0, 0, 0.5]));
   assert.deepEqual(ink.box, { x: -10, y: -20, w: 200, h: 100 });
 });
 
@@ -116,4 +116,20 @@ test('every built-in drawing reads: its wires and parts as ink, its names as tex
     assert.match(ink.textSvg, /<text/, name);
     assert.doesNotMatch(ink.textSvg, /<(path|circle|polygon|rect|line)\b/, name);
   }
+});
+
+test('each shape is tagged with what it belongs to, and each wire run with its net', () => {
+  const ink = svgInk(drawing(`
+    <path class="wire-managed" d="M 0 0 L 100 0" stroke="#111" stroke-width="6" stroke-opacity="0" data-net-id="N1" fill="none"><title>wire</title></path>
+    <path class="wire-ink" d="M 0 0 L 100 0 M 0 50 L 40 50" stroke="#111" stroke-width="6" fill="none"/>
+    <g data-ref="R1"><g class="sym" data-ref="R1"><path d="M 0 0 L 10 10" stroke="#111" fill="none"/></g></g>
+    <g data-label-id="L1"><rect x="0" y="0" width="5" height="5" fill="#111"/></g>`));
+  const all = shapes(ink);
+  const tagOf = (s) => ink.tags.list[s[12]];
+  // The net's own path is not drawn: it only names the wire run along it.
+  assert.deepEqual(all.map((s) => [tagOf(s), s[13]]), [['net:N1', WIRE], ['', WIRE], ['part:R1', INK], ['label:L1', INK], ['label:L1', INK]]);
+  const tags = createTags();
+  assert.equal(tags.index('part:M1'), 1);
+  assert.equal(tags.index('part:M1'), 1);
+  assert.deepEqual([...tags.mask(['part:M1', 'part:X'])], [0, 255]);
 });

@@ -382,11 +382,12 @@ export function createShapes(gl) {
       gl.uniform4fv(box.u.u_glow, sigma ? premultiplied(glow, glowAlpha) : [0, 0, 0, 0]);
       paintQuad();
     },
-    /** The soft shadow a rounded box casts (a canvas's shadowBlur `blur`). */
-    shadow({ rect, radius = 0, blur, drop = 0, color, alpha = 1 }) {
+    /** The soft shadow a rounded box casts (a canvas's shadowBlur `blur`);
+     *  `additive`, a light it sheds. */
+    shadow({ rect, radius = 0, blur, drop = 0, color, alpha = 1, additive = false }) {
       const sigma = Math.max(0.01, blur / 2);
       const margin = 3 * sigma + 1;
-      blend(false);
+      blend(additive);
       stretch(shadow, rect.x - margin, rect.y + drop - margin, rect.w + 2 * margin, rect.h + 2 * margin);
       gl.uniform4f(shadow.u.u_box, rect.x, rect.y + drop, rect.w, rect.h);
       gl.uniform1f(shadow.u.u_radius, radius);
