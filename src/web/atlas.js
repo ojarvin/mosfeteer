@@ -54,7 +54,9 @@ import { appendContextItem, openMenuAt } from './context-menu.js';
 import { onAccentChange } from './accent.js';
 import { gpuContext, onAccelerationChange } from './gpu.js';
 import { createGpuDesk } from './atlas-paint-gpu.js';
-import { svgInk } from './atlas-ink.js';
+import { INK_FLOATS, svgInk } from './atlas-ink.js';
+import { layoutText, withRules } from './atlas-text.js';
+import { glyphAtlas } from './atlas-glyphs.js';
 import { createCanvasDesk } from './atlas-paint-2d.js';
 
 const rootEl = document.getElementById('atlas');
@@ -483,10 +485,10 @@ function colorsKey() {
   return `${theme()}|${document.documentElement.dataset.accent || ''}`;
 }
 
-/** What a design's images hold: on the GPU its text alone (its ink is drawn
- *  as vectors, inkOf), on the 2D canvas the whole drawing. */
+/** What a design's images hold: on the GPU its pictures alone (its ink and
+ *  text are drawn as vectors, inkOf), on the 2D canvas the whole drawing. */
 function imageLayer() {
-  return painter().vector ? 'text' : 'full';
+  return painter().vector ? 'pictures' : 'full';
 }
 
 function bitmapStem(entry, revision = entry.revision) {
@@ -501,52 +503,78 @@ function bitmapKey(entry, level) {
   return entry.bitmapKeys[level];
 }
 
-/** Ink read in one frame at most this long: the rest waits its turn. */
+/** Designs read in one frame for at most this long: the rest wait their turn. */
 const INK_READ_MS_PER_FRAME = 8;
 let inkStamp = 0;
 let inkReadSpent = 0;
 
+const MATH_FONT = "16px 'Latin Modern Math'";
+const usesMathFont = (svg) => svg.includes('schematic-math-label') || svg.includes('Latin Modern Math');
+let mathFontLoading = null;
+
+/** Whether the math font has loaded; if not, it is asked for, and the desk
+ *  drawn again once it has. */
+function mathFontReady() {
+  if (document.fonts.check(MATH_FONT)) return true;
+  mathFontLoading ||= document.fonts.load(MATH_FONT).catch(() => null).then(() => requestDraw());
+  return false;
+}
+
+/** A design's shapes and glyphs, read from its export SVG in `shade`. */
+function readDesign(entry, shade) {
+  const { data, count, textSvg, picturesSvg } = svgInk(shade === 'dark' ? applyExportDarkTheme(entry.svg) : entry.svg);
+  const atlas = glyphAtlas();
+  // The glyph atlas full, it starts again: laid out once more into the new one.
+  const text = textSvg ? layoutText(textSvg, entry.box, atlas) || layoutText(textSvg, entry.box, atlas) : null;
+  const rules = text?.rules || [];
+  return {
+    textSvg, picturesSvg, generation: atlas.generation,
+    mesh: { data: withRules(data, rules), count: count + rules.length / INK_FLOATS, glyphs: text?.glyphs, glyphCount: text?.glyphCount || 0 },
+  };
+}
+
 /**
- * A design as the GPU draws it (atlas-ink.js), read from its export SVG in
- * the theme now: `{ key, textSvg, mesh }`, `textSvg` null for a design with
- * no text. `mesh` is held only until it is on the GPU. Null when this frame
- * has read its share already (unless `now`).
+ * A design as the GPU draws it (atlas-ink.js, atlas-text.js), read from its
+ * export SVG in the theme now: `{ key, textSvg, picturesSvg, mesh }`.
+ * `mesh` is held only until it is on the GPU. Null when this frame has read
+ * its share already, or its math waits for its font (unless `now`).
  */
 function inkOf(entry, now = false) {
   const shade = theme();
   const ink = entry.ink;
-  if (ink?.shade === shade && ink.svg === entry.svg) return ink;
+  const generation = glyphAtlas().generation;
+  if (ink?.shade === shade && ink.svg === entry.svg && ink.generation === generation && !(ink.withoutFont && mathFontReady())) return ink;
   if (!now && inkReadSpent > INK_READ_MS_PER_FRAME) return null;
+  // Math laid out before its font has loaded would take another size.
+  const withoutFont = usesMathFont(entry.svg) && !mathFontReady();
+  if (withoutFont && !now) return null;
   const started = performance.now();
-  const { data, count, textSvg } = svgInk(shade === 'dark' ? applyExportDarkTheme(entry.svg) : entry.svg);
+  const read = readDesign(entry, shade);
   inkReadSpent += performance.now() - started;
   inkStamp += 1;
-  entry.ink = { shade, svg: entry.svg, key: `${entry.id}\n${inkStamp}`, textSvg, mesh: { data, count } };
+  entry.ink = { shade, svg: entry.svg, key: `${entry.id}\n${inkStamp}`, withoutFont, ...read };
   return entry.ink;
 }
 
-/** Its shapes for the GPU, read again if they were let go. */
+/** Its shapes and glyphs for the GPU, read again if they were let go. */
 function inkMesh(entry) {
   const ink = entry.ink;
-  if (!ink.mesh) {
-    const { data, count } = svgInk(ink.shade === 'dark' ? applyExportDarkTheme(entry.svg) : entry.svg);
-    return { data, count };
-  }
+  if (!ink.mesh) return readDesign(entry, ink.shade).mesh;
   const { mesh } = ink;
   ink.mesh = null;
   return mesh;
 }
 
 /** The SVG a design's images are drawn from, in the theme now; null when
- *  there is nothing to draw (a design with no text, on the GPU). */
+ *  there is nothing to draw (a design with no pictures, on the GPU). */
 function imageSvg(entry) {
-  if (imageLayer() === 'text') return inkOf(entry, true).textSvg;
+  if (imageLayer() === 'pictures') return inkOf(entry, true).picturesSvg;
   return theme() === 'dark' ? applyExportDarkTheme(entry.svg) : entry.svg;
 }
 
 /** Whether a design has images to draw at all. */
 function hasImages(entry) {
-  return imageLayer() === 'full' || !!inkOf(entry, true).textSvg;
+  return imageLayer() === 'full' || !!inkOf(entry, true).picturesSvg;
 }
 
 // Premultiplied, as the desk's shaders blend it.
@@ -579,7 +607,7 @@ async function rasterize(entry, level) {
 /** Decode (or bake and store) one image. */
 async function bake(entry, level) {
   if (!hasImages(entry)) throw new Error('nothing to draw');
-  const layer = imageLayer() === 'text' ? 'text-' : '';
+  const layer = imageLayer() === 'pictures' ? 'pictures-' : '';
   const cacheKey = entry.revision && renderingKey(entry.path, entry.revision, `${theme()}-${layer}${level}-${IMAGE_CACHE}`);
   const blob = cacheKey && await cacheGet(cacheKey);
   if (blob) return createImageBitmap(blob, BITMAP_OPTIONS);
@@ -623,9 +651,13 @@ async function warmSmallImages(generation, budget) {
 /** Startup has no editor drawing to bridge from: prepare the desk before revealing it. */
 async function prepareStartupImages(generation, target) {
   await document.fonts.ready;
-  // Each design's ink is read before the desk shows (it takes well under a
-  // millisecond a design): the desk assembles with all of it there.
-  if (painter().vector) for (const tile of state.tiles) inkOf(state.entries.get(tile.id), true);
+  // Each design is read before the desk shows (about a millisecond a
+  // design, its text laid out with the math font): the desk assembles with
+  // all of it there.
+  if (painter().vector) {
+    await document.fonts.load(MATH_FONT).catch(() => null);
+    for (const tile of state.tiles) inkOf(state.entries.get(tile.id), true);
+  }
   const k = paneSize().w / target.w * (window.devicePixelRatio || 1);
   await bakeTiles(state.tiles.map((tile) => ({ tile, entry: state.entries.get(tile.id) })), {
     levels: ({ tile, entry }) => (hasImages(entry) ? imageLevels(tileDetail(Math.max(tile.w, tile.h) * k)) : []),
@@ -922,7 +954,8 @@ function drawDesk() {
   // The tiles that fill the screen are drawn live; their images would only
   // blur the vector lines through the transparent paper. Not while the view
   // animates, though: a live SVG changing size is redrawn whole every frame.
-  const vector = moving ? [] : placed.filter((item) => item.detail === 'vector')
+  // On the GPU the text is vectors too: nothing is laid over it.
+  const vector = moving || paint.vector ? [] : placed.filter((item) => item.detail === 'vector')
     .sort((a, b) => b.rect.w * b.rect.h - a.rect.w * a.rect.h)
     .slice(0, MAX_VECTOR_TILES);
   const live = new Set(vector.map((item) => item.tile.id));
@@ -953,8 +986,8 @@ function drawDesk() {
     if (found?.hits.length && document.activeElement === searchEl) drawHits(paint, tile, entry, found.hits, palette, alpha);
     let imageAlpha = fade;
     const effects = { reveal: entry.current ? 1 : reveal, seed: tile.x * 0.013 + tile.y * 0.007, blur: state.flight ? deskBlur(state.flight.depth) : 0 };
-    // On the GPU the ink is drawn as vectors, sharp at any size; its images
-    // carry only its text. A design read since the desk showed fades in.
+    // On the GPU the ink and text are drawn as vectors, sharp at any size;
+    // its images carry only its pictures. A design read since the desk showed fades in.
     const ink = paint.vector ? inkOf(entry) : null;
     if (paint.vector && !ink) requestDraw();
     if (ink && !flying) {
@@ -968,7 +1001,7 @@ function drawDesk() {
       }
     }
     const level = imageLevel(imageDetail);
-    const withImages = !paint.vector || !!ink?.textSvg;
+    const withImages = !paint.vector || !!ink?.picturesSvg;
     // Its own image, else the sharpest one there is.
     let imageKey = withImages ? bitmapKey(entry, level) : null;
     if (imageKey && !paint.ready(imageKey, state.bitmaps.get(imageKey))) {
@@ -2809,7 +2842,7 @@ function drawFlight(paint, palette, w, h) {
     // On the GPU its ink stays sharp all the way to the glass.
     const ink = paint.vector ? inkOf(entry, true) : null;
     if (ink && paint.inkReady(ink.key, () => inkMesh(entry))) paint.ink(ink.key, entry.box, design, 1);
-    const key = paint.vector && !ink?.textSvg ? null
+    const key = paint.vector && !ink?.picturesSvg ? null
       : IMAGE_LEVELS.slice().reverse().map((level) => bitmapKey(entry, level)).find((candidate) => paint.ready(candidate, state.bitmaps.get(candidate)));
     if (key) paint.image(key, design, 1);
   }

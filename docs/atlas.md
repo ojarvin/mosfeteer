@@ -32,8 +32,16 @@ Miter and bevel corners are wedges of their own; the triangles of a fill meet
 without seams (only outline edges are smoothed); a line thinner than a pixel
 stays a pixel wide and fades by as much. A faded or revealing design is drawn
 whole into a layer and laid on at once, so its overlaps are no darker. Its
-text (text, math, pictures) is the export SVG less its ink, drawn to mipmapped
-images three times its size on screen, sampled four times a pixel, at most
+text is vectors too (`src/web/atlas-text.js`): the export SVG less its ink is
+laid out once by the browser in a hidden element, SVG text and the math in
+foreignObject alike, and each character read back where the layout put it
+(turned with SVG text), drawn from one atlas of signed-distance glyphs
+(`src/web/atlas-glyphs.js`, each glyph drawn once with the page's fonts). What
+math draws beyond its text is matched: a single letter in its math italic, a
+stretched bracket or large operator to its box, the radical sign, fraction
+bars on the math axis, table rules. Math waits for its font before it is laid
+out. Only pictures (`<image>`) are images on the GPU, drawn to mipmapped
+images three times their size on screen, sampled four times a pixel, at most
 12 MB uploaded a frame; each smaller level keeps part of its strongest ink.
 The grid, shadows, glows, and beams are shaders; captions are small cached textures.
 A browser with no real GPU (software renderers included) keeps the 2D canvas,
@@ -332,10 +340,10 @@ open no design: a double-click zooms to a card, Esc returns.
   scaled to about fill it, then pushed apart where they overlap (each the
   side its place puts it) while pulled back to their places and toward the
   middle, and laid on the grid from the middle out.
-- **Levels of detail**: one canvas paints every design (on the GPU, its text) from a baked image, small (256 px longest
+- **Levels of detail**: the 2D canvas paints every design (the GPU, its pictures) from a baked image, small (256 px longest
   side), medium (640 px) or large (1280 px), the one nearest its size on
   screen (at most 1.25 times stretched), and once even the large one would
-  blur, the live SVG (on the GPU, its text) is laid over it (at most six at a time). At most 128
+  blur, the live SVG is laid over it on the 2D canvas (at most six at a time). At most 128
   medium and 24 large images are kept; past that the designs nearest the
   middle of the screen have theirs and the rest show the sharpest they
   have, so a desk at rest stops baking.

@@ -6,6 +6,7 @@
  */
 
 import { DITHER, QUAD_VERTEX, ROUNDED_BOX, createQuad, createShapes, linkProgram, premultiplied, textMeasure } from './gpu.js';
+import { CUTOFF, RADIUS, glyphAtlas } from './atlas-glyphs.js';
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 /** Pixels of design images uploaded in one frame: the rest wait, so a burst
@@ -154,6 +155,56 @@ void main() {
   color = v_color * (cover * shown * u_alpha);
 }`;
 
+// A design's text (atlas-text.js): each glyph a quad over its cell in the
+// glyph atlas, a signed distance field, its edge smoothed over a pixel at
+// any size. A text stroke grows it by half its width.
+const GLYPH_VERTEX = `#version 300 es
+layout(location = 0) in vec2 a_corner;
+layout(location = 1) in vec4 a_a;
+layout(location = 2) in vec4 a_b;
+layout(location = 3) in vec4 a_uv;
+layout(location = 4) in vec4 a_color;
+uniform vec2 u_pane;
+uniform vec4 u_map;
+uniform float u_atlas;
+out vec2 v_uv;
+out vec2 v_p;
+flat out vec4 v_color;
+flat out float v_scale;
+flat out float v_grow;
+void main() {
+  float k = u_map.x;
+  vec2 x = a_a.zw * k, y = a_b.xy * k;
+  vec2 p = a_a.xy * k + u_map.zw + x * a_corner.x + y * a_corner.y;
+  v_uv = mix(a_uv.xy, a_uv.zw, a_corner);
+  v_p = p;
+  v_scale = length(x) / max((a_uv.z - a_uv.x) * u_atlas, 1e-6);
+  v_grow = a_b.z * k;
+  v_color = a_color;
+  vec2 clip = p / u_pane * 2.0 - 1.0;
+  gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
+}`;
+
+const GLYPH_FRAGMENT = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+in vec2 v_p;
+flat in vec4 v_color;
+flat in float v_scale;
+flat in float v_grow;
+uniform sampler2D u_glyphs;
+uniform vec4 u_rect;
+uniform float u_soft, u_alpha, u_reveal, u_seed;
+out vec4 color;
+${REVEAL}
+void main() {
+  float field = texture(u_glyphs, v_uv).r;
+  float d = (${(1 - CUTOFF).toFixed(4)} - field) * ${RADIUS.toFixed(1)} * v_scale - v_grow;
+  float cover = clamp(0.5 - d / u_soft, 0.0, 1.0);
+  if (cover <= 0.0) discard;
+  color = v_color * (cover * u_alpha * revealed((v_p - u_rect.xy) / u_rect.zw, u_reveal, u_seed));
+}`;
+
 // A faded design's ink, drawn whole into a layer first, laid on the desk at
 // once: where its shapes overlap it is no darker than elsewhere.
 const LAYER_FRAGMENT = `#version 300 es
@@ -271,6 +322,21 @@ export function createGpuDesk(canvas, gl) {
   const mip = linkProgram(gl, MIP_VERTEX, MIP_FRAGMENT);
   const inkProgram = linkProgram(gl, INK_VERTEX, INK_FRAGMENT);
   const layerProgram = linkProgram(gl, QUAD_VERTEX, LAYER_FRAGMENT);
+  const glyphProgram = linkProgram(gl, GLYPH_VERTEX, GLYPH_FRAGMENT);
+  gl.useProgram(glyphProgram.handle);
+  gl.uniform1i(glyphProgram.u.u_glyphs, 2);
+  const atlas = glyphAtlas();
+  const glyphTexture = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE2);
+  gl.bindTexture(gl.TEXTURE_2D, glyphTexture);
+  gl.texStorage2D(gl.TEXTURE_2D, 1, gl.R8, atlas.size, atlas.size);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.activeTexture(gl.TEXTURE0);
+  // The atlas as uploaded: its generation (every row is sent on a new one).
+  let glyphsSent = 0;
   gl.useProgram(layerProgram.handle);
   gl.uniform1i(layerProgram.u.u_layer, 1);
   /** The screen-sized layer faded ink is drawn into: { frame, texture, width, height }. */
@@ -409,7 +475,24 @@ export function createGpuDesk(canvas, gl) {
     return layer;
   };
 
-  /** Draw a design's shapes as they are, at `alpha`, revealed so far. */
+  /** Send the glyph atlas's new rows (all of it after it started again). */
+  const sendGlyphs = () => {
+    const rows = atlas.takeDirty();
+    const whole = glyphsSent !== atlas.generation;
+    if (!rows && !whole) return;
+    const y0 = whole ? 0 : rows.y0;
+    const y1 = whole ? atlas.size : rows.y1;
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, glyphTexture);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, y0, atlas.size, y1 - y0, gl.RED, gl.UNSIGNED_BYTE, atlas.pixels.subarray(y0 * atlas.size, y1 * atlas.size));
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    gl.activeTexture(gl.TEXTURE0);
+    glyphsSent = atlas.generation;
+  };
+
+  /** Draw a design's shapes as they are, at `alpha`, revealed so far, then its text. */
   const drawInk = (entry, box, rect, { alpha, blur, reveal, seed }) => {
     const k = rect.w / box.w;
     const px = 1 / pane.dpr;
@@ -426,7 +509,22 @@ export function createGpuDesk(canvas, gl) {
     gl.uniform1f(u.u_alpha, alpha);
     gl.uniform1f(u.u_reveal, reveal);
     gl.uniform1f(u.u_seed, seed);
-    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, entry.count);
+    if (entry.count) gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, entry.count);
+    if (entry.glyphCount) {
+      sendGlyphs();
+      const g = glyphProgram.u;
+      gl.useProgram(glyphProgram.handle);
+      gl.bindVertexArray(entry.glyphArray);
+      gl.uniform2f(g.u_pane, pane.w, pane.h);
+      gl.uniform4f(g.u_map, k, k, rect.x - box.x * k, rect.y - box.y * k);
+      gl.uniform4f(g.u_rect, rect.x, rect.y, rect.w, rect.h);
+      gl.uniform1f(g.u_atlas, atlas.size);
+      gl.uniform1f(g.u_soft, px * Math.pow(2, blur * 1.5));
+      gl.uniform1f(g.u_alpha, alpha);
+      gl.uniform1f(g.u_reveal, reveal);
+      gl.uniform1f(g.u_seed, seed);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, entry.glyphCount);
+    }
     shapes.invalidate();
   };
 
@@ -436,7 +534,30 @@ export function createGpuDesk(canvas, gl) {
       gl.deleteBuffer(entry.buffer);
       gl.deleteVertexArray(entry.array);
     }
+    if (entry?.glyphBuffer) {
+      gl.deleteBuffer(entry.glyphBuffer);
+      gl.deleteVertexArray(entry.glyphArray);
+    }
     inks.delete(key);
+  };
+
+  /** A vertex array of `data`, `floats` a shape in vec4s from location 1. */
+  const instances = (data, floats) => {
+    const array = gl.createVertexArray();
+    gl.bindVertexArray(array);
+    gl.bindBuffer(gl.ARRAY_BUFFER, corners);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    const buffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+    for (let i = 0; i < floats / 4; i++) {
+      gl.enableVertexAttribArray(1 + i);
+      gl.vertexAttribPointer(1 + i, 4, gl.FLOAT, false, floats * 4, 16 * i);
+      gl.vertexAttribDivisor(1 + i, 1);
+    }
+    gl.bindVertexArray(null);
+    return { array, buffer };
   };
 
   return {
@@ -507,7 +628,8 @@ export function createGpuDesk(canvas, gl) {
 
     hasInk(key) { return inks.has(key); },
     /** Is this design's ink on the GPU, or can it go there this frame?
-     *  `build()` gives its shapes (atlas-ink.js `svgInk`), or null. */
+     *  `build()` gives its shapes (atlas-ink.js `svgInk`) and glyphs
+     *  (atlas-text.js `layoutText`: `glyphs`, `glyphCount`), or null. */
     inkReady(key, build) {
       if (inks.has(key)) return true;
       if (spent && spent > UPLOAD_BYTES_PER_FRAME) {
@@ -516,27 +638,18 @@ export function createGpuDesk(canvas, gl) {
       }
       const mesh = build();
       if (!mesh) return false;
-      if (!mesh.count) {
-        inks.set(key, { count: 0 });
-        return true;
+      const entry = { count: mesh.count, glyphCount: mesh.glyphCount || 0 };
+      if (mesh.count) {
+        spent += mesh.data.byteLength;
+        Object.assign(entry, instances(mesh.data, 12));
       }
-      spent += mesh.data.byteLength;
-      const array = gl.createVertexArray();
-      gl.bindVertexArray(array);
-      gl.bindBuffer(gl.ARRAY_BUFFER, corners);
-      gl.enableVertexAttribArray(0);
-      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-      const buffer = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-      gl.bufferData(gl.ARRAY_BUFFER, mesh.data, gl.STATIC_DRAW);
-      for (let i = 0; i < 3; i++) {
-        gl.enableVertexAttribArray(1 + i);
-        gl.vertexAttribPointer(1 + i, 4, gl.FLOAT, false, 48, 16 * i);
-        gl.vertexAttribDivisor(1 + i, 1);
+      if (entry.glyphCount) {
+        spent += mesh.glyphs.byteLength;
+        const { array, buffer } = instances(mesh.glyphs, 16);
+        Object.assign(entry, { glyphArray: array, glyphBuffer: buffer });
       }
-      gl.bindVertexArray(null);
       shapes.invalidate();
-      inks.set(key, { array, buffer, count: mesh.count });
+      inks.set(key, entry);
       return true;
     },
     /** The same ink under a new key (a design just saved). */
@@ -555,7 +668,7 @@ export function createGpuDesk(canvas, gl) {
      *  as for `image`: `blur` softens its edges by that many octaves. */
     ink(key, box, rect, alpha, { blur = 0, reveal = 1, seed = 0 } = {}) {
       const entry = inks.get(key);
-      if (!entry?.count || !(box?.w > 0) || alpha <= 0) return;
+      if (!(entry?.count || entry?.glyphCount) || !(box?.w > 0) || alpha <= 0) return;
       if (alpha >= 0.999 && reveal >= 1) {
         drawInk(entry, box, rect, { alpha: 1, blur, reveal: 1, seed });
         return;

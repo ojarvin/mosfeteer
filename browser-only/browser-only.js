@@ -54580,6 +54580,200 @@ async function bakeTiles(tiles, { levels, bake, keep, failed, stale }) {
 __exports.INDEX_CACHE = INDEX_CACHE;
 };
 
+__modules["src/web/atlas-glyphs.js"] = function (__require, __exports) {
+__exports.createGlyphAtlas = createGlyphAtlas;
+__exports.glyphAtlas = glyphAtlas;
+/**
+ * The Atlas desk's glyphs as signed distance fields: each glyph (a font and
+ * a character) drawn once, with the page's own fonts, into one shared
+ * one-channel image the desk's shaders read text from at any size.
+ *
+ * A texel holds 1 - (distance / RADIUS + CUTOFF), the distance in reference
+ * pixels (REF_PX to the em), positive outside the glyph: its edge is at
+ * 1 - CUTOFF. When the image is full it starts again empty (`generation`
+ * counts the starts), and what was drawn from it is laid out again.
+ */
+
+const REF_PX = 56;
+const RADIUS = 10;
+const CUTOFF = 0.25;
+const BUFFER = 6;
+const INF = 1e20;
+
+/** One distance transform along a line (Felzenszwalb and Huttenlocher). */
+function edt1d(grid, offset, stride, length, f, v, z) {
+  v[0] = 0;
+  z[0] = -INF;
+  z[1] = INF;
+  f[0] = grid[offset];
+  for (let q = 1, k = 0, s = 0; q < length; q++) {
+    f[q] = grid[offset + q * stride];
+    const q2 = q * q;
+    do {
+      const r = v[k];
+      s = (f[q] - f[r] + q2 - r * r) / (q - r) / 2;
+    } while (s <= z[k] && --k > -1);
+    k++;
+    v[k] = q;
+    z[k] = s;
+    z[k + 1] = INF;
+  }
+  for (let q = 0, k = 0; q < length; q++) {
+    while (z[k + 1] < q) k++;
+    const r = v[k];
+    const qr = q - r;
+    grid[offset + q * stride] = f[r] + qr * qr;
+  }
+}
+
+function edt(grid, width, height, f, v, z) {
+  for (let x = 0; x < width; x++) edt1d(grid, x, width, height, f, v, z);
+  for (let y = 0; y < height; y++) edt1d(grid, y * width, 1, width, f, v, z);
+}
+
+/** The atlas: `glyph(font, char)` and the image's pixels to upload. */
+function createGlyphAtlas(size = 2048) {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const pixels = new Uint8Array(size * size);
+  const glyphs = new Map();
+  let shelf = { x: 0, y: 0, h: 0 };
+  let dirty = null;
+  let generation = 1;
+  let outer = new Float64Array(0);
+  let inner = new Float64Array(0);
+  let f = new Float64Array(0);
+  let v = new Uint16Array(0);
+  let z = new Float64Array(0);
+
+  const reset = () => {
+    pixels.fill(0);
+    glyphs.clear();
+    shelf = { x: 0, y: 0, h: 0 };
+    dirty = { y0: 0, y1: size };
+    generation += 1;
+  };
+
+  /** Room for a w by h cell, or null when the image is full. */
+  const place = (w, h) => {
+    if (shelf.x + w > size) shelf = { x: 0, y: shelf.y + shelf.h + 1, h: 0 };
+    if (shelf.y + h > size) return null;
+    const at = { x: shelf.x, y: shelf.y };
+    shelf.x += w + 1;
+    shelf.h = Math.max(shelf.h, h);
+    return at;
+  };
+
+  const draw = (font, char) => {
+    ctx.font = `${font.style} ${font.weight} ${REF_PX}px ${font.family}`;
+    const m = ctx.measureText(char);
+    const left = Math.ceil(Math.max(0, m.actualBoundingBoxLeft));
+    const right = Math.ceil(Math.max(0, m.actualBoundingBoxRight));
+    const ascent = Math.ceil(Math.max(0, m.actualBoundingBoxAscent));
+    const descent = Math.ceil(Math.max(0, m.actualBoundingBoxDescent));
+    const w = left + right + 2 * BUFFER;
+    const h = ascent + descent + 2 * BUFFER;
+    const metrics = {
+      advance: m.width / REF_PX,
+      ascent: (m.fontBoundingBoxAscent ?? REF_PX * 0.8) / REF_PX,
+      descent: (m.fontBoundingBoxDescent ?? REF_PX * 0.2) / REF_PX,
+      // The ink, from the pen on the baseline.
+      inkLeft: left / REF_PX, inkRight: right / REF_PX, inkAscent: ascent / REF_PX, inkDescent: descent / REF_PX,
+      // The cell from the pen on the baseline, in ems.
+      x: -(left + BUFFER) / REF_PX, y: -(ascent + BUFFER) / REF_PX, w: w / REF_PX, h: h / REF_PX,
+    };
+    if (left + right === 0 || ascent + descent === 0) return { ...metrics, empty: true };
+    const at = place(w, h);
+    if (!at) return null;
+    if (canvas.width < w || canvas.height < h) {
+      canvas.width = Math.max(canvas.width, w);
+      canvas.height = Math.max(canvas.height, h);
+    }
+    ctx.clearRect(0, 0, w, h);
+    ctx.font = `${font.style} ${font.weight} ${REF_PX}px ${font.family}`;
+    ctx.fillStyle = '#000';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(char, BUFFER + left, BUFFER + ascent);
+    const alpha = ctx.getImageData(0, 0, w, h).data;
+    const area = w * h;
+    if (outer.length < area) {
+      outer = new Float64Array(area);
+      inner = new Float64Array(area);
+    }
+    const longest = Math.max(w, h);
+    if (f.length < longest) {
+      f = new Float64Array(longest);
+      v = new Uint16Array(longest);
+      z = new Float64Array(longest + 1);
+    }
+    for (let i = 0; i < area; i++) {
+      const a = alpha[i * 4 + 3] / 255;
+      if (a === 1) {
+        outer[i] = 0;
+        inner[i] = INF;
+      } else if (a === 0) {
+        outer[i] = INF;
+        inner[i] = 0;
+      } else {
+        // Part covered: the edge lies within the pixel.
+        const d = 0.5 - a;
+        outer[i] = d > 0 ? d * d : 0;
+        inner[i] = d < 0 ? d * d : 0;
+      }
+    }
+    edt(outer, w, h, f, v, z);
+    edt(inner, w, h, f, v, z);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        const distance = Math.sqrt(outer[i]) - Math.sqrt(inner[i]);
+        pixels[(at.y + y) * size + at.x + x] = Math.max(0, Math.min(255, Math.round(255 - 255 * (distance / RADIUS + CUTOFF))));
+      }
+    }
+    dirty = dirty ? { y0: Math.min(dirty.y0, at.y), y1: Math.max(dirty.y1, at.y + h) } : { y0: at.y, y1: at.y + h };
+    return { ...metrics, u0: at.x / size, v0: at.y / size, u1: (at.x + w) / size, v1: (at.y + h) / size };
+  };
+
+  return {
+    size,
+    pixels,
+    get generation() { return generation; },
+    /** A glyph's cell and metrics (in ems), drawn now if new; null when the
+     *  image filled up and started again (lay the text out again). */
+    glyph(font, char) {
+      const key = `${font.style}|${font.weight}|${font.family}|${char}`;
+      let glyph = glyphs.get(key);
+      if (glyph) return glyph;
+      glyph = draw(font, char);
+      if (!glyph) {
+        reset();
+        return null;
+      }
+      glyphs.set(key, glyph);
+      return glyph;
+    },
+    /** The rows drawn since the last call: { y0, y1 }, or null. */
+    takeDirty() {
+      const rows = dirty;
+      dirty = null;
+      return rows;
+    },
+  };
+}
+
+let shared = null;
+
+/** The one atlas the desk draws its text from. */
+function glyphAtlas() {
+  shared ||= createGlyphAtlas();
+  return shared;
+}
+
+__exports.REF_PX = REF_PX;
+__exports.RADIUS = RADIUS;
+__exports.CUTOFF = CUTOFF;
+};
+
 __modules["src/web/atlas-ink.js"] = function (__require, __exports) {
 __exports.parseColor = parseColor;
 __exports.parseTransform = parseTransform;
@@ -55008,8 +55202,10 @@ function dashed(points, closed, pattern) {
 
 const CAPS = { butt: BUTT, square: SQUARE, round: ROUND };
 
-/** Read the export SVG. Returns { data: Float32Array, count, textSvg, box },
- *  `textSvg` null when the design has no text, math, or pictures. */
+/** Read the export SVG. Returns { data: Float32Array, count, textSvg,
+ *  picturesSvg, box }: `textSvg` the drawing less its ink, null when the
+ *  design has no text, math, or pictures; `picturesSvg` that less its text
+ *  too, null when it has no pictures. */
 function svgInk(svg) {
   const source = String(svg);
   const out = [];
@@ -55272,7 +55468,10 @@ function svgInk(svg) {
   }
   kept.push(source.slice(keptFrom));
   const textSvg = hasText ? kept.join('').replace(/\n{2,}/g, '\n') : null;
-  return { data: new Float32Array(out), count, textSvg, box };
+  const picturesSvg = textSvg && /<image\b/.test(textSvg)
+    ? textSvg.replace(/<text\b[\s\S]*?<\/text>/g, '').replace(/<foreignObject\b[\s\S]*?<\/foreignObject>/g, '')
+    : null;
+  return { data: new Float32Array(out), count, textSvg, picturesSvg, box };
 }
 
 __exports.INK_FLOATS = INK_FLOATS;
@@ -55987,12 +56186,14 @@ function createCanvasDesk(canvas) {
 __modules["src/web/atlas-paint-gpu.js"] = function (__require, __exports) {
 __exports.createGpuDesk = createGpuDesk;
 let DITHER, QUAD_VERTEX, ROUNDED_BOX, createQuad, createShapes, linkProgram, premultiplied, textMeasure; __bind(() => { ({ DITHER, QUAD_VERTEX, ROUNDED_BOX, createQuad, createShapes, linkProgram, premultiplied, textMeasure } = __require("src/web/gpu.js")); });
+let CUTOFF, RADIUS, glyphAtlas; __bind(() => { ({ CUTOFF, RADIUS, glyphAtlas } = __require("src/web/atlas-glyphs.js")); });
 /**
  * The Atlas desk in WebGL2: the same drawing operations as the 2D painter
  * (atlas-paint-2d.js). Each design is a mipmapped texture, which zooms
  * smoothly at any scale; the grid, shadows, glows, and beams are shaders.
  * Once uploaded, a design's bitmap is closed: the texture is its one copy.
  */
+
 
 
 
@@ -56143,6 +56344,56 @@ void main() {
   color = v_color * (cover * shown * u_alpha);
 }`;
 
+// A design's text (atlas-text.js): each glyph a quad over its cell in the
+// glyph atlas, a signed distance field, its edge smoothed over a pixel at
+// any size. A text stroke grows it by half its width.
+const GLYPH_VERTEX = `#version 300 es
+layout(location = 0) in vec2 a_corner;
+layout(location = 1) in vec4 a_a;
+layout(location = 2) in vec4 a_b;
+layout(location = 3) in vec4 a_uv;
+layout(location = 4) in vec4 a_color;
+uniform vec2 u_pane;
+uniform vec4 u_map;
+uniform float u_atlas;
+out vec2 v_uv;
+out vec2 v_p;
+flat out vec4 v_color;
+flat out float v_scale;
+flat out float v_grow;
+void main() {
+  float k = u_map.x;
+  vec2 x = a_a.zw * k, y = a_b.xy * k;
+  vec2 p = a_a.xy * k + u_map.zw + x * a_corner.x + y * a_corner.y;
+  v_uv = mix(a_uv.xy, a_uv.zw, a_corner);
+  v_p = p;
+  v_scale = length(x) / max((a_uv.z - a_uv.x) * u_atlas, 1e-6);
+  v_grow = a_b.z * k;
+  v_color = a_color;
+  vec2 clip = p / u_pane * 2.0 - 1.0;
+  gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
+}`;
+
+const GLYPH_FRAGMENT = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+in vec2 v_p;
+flat in vec4 v_color;
+flat in float v_scale;
+flat in float v_grow;
+uniform sampler2D u_glyphs;
+uniform vec4 u_rect;
+uniform float u_soft, u_alpha, u_reveal, u_seed;
+out vec4 color;
+${REVEAL}
+void main() {
+  float field = texture(u_glyphs, v_uv).r;
+  float d = (${(1 - CUTOFF).toFixed(4)} - field) * ${RADIUS.toFixed(1)} * v_scale - v_grow;
+  float cover = clamp(0.5 - d / u_soft, 0.0, 1.0);
+  if (cover <= 0.0) discard;
+  color = v_color * (cover * u_alpha * revealed((v_p - u_rect.xy) / u_rect.zw, u_reveal, u_seed));
+}`;
+
 // A faded design's ink, drawn whole into a layer first, laid on the desk at
 // once: where its shapes overlap it is no darker than elsewhere.
 const LAYER_FRAGMENT = `#version 300 es
@@ -56260,6 +56511,21 @@ function createGpuDesk(canvas, gl) {
   const mip = linkProgram(gl, MIP_VERTEX, MIP_FRAGMENT);
   const inkProgram = linkProgram(gl, INK_VERTEX, INK_FRAGMENT);
   const layerProgram = linkProgram(gl, QUAD_VERTEX, LAYER_FRAGMENT);
+  const glyphProgram = linkProgram(gl, GLYPH_VERTEX, GLYPH_FRAGMENT);
+  gl.useProgram(glyphProgram.handle);
+  gl.uniform1i(glyphProgram.u.u_glyphs, 2);
+  const atlas = glyphAtlas();
+  const glyphTexture = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE2);
+  gl.bindTexture(gl.TEXTURE_2D, glyphTexture);
+  gl.texStorage2D(gl.TEXTURE_2D, 1, gl.R8, atlas.size, atlas.size);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.activeTexture(gl.TEXTURE0);
+  // The atlas as uploaded: its generation (every row is sent on a new one).
+  let glyphsSent = 0;
   gl.useProgram(layerProgram.handle);
   gl.uniform1i(layerProgram.u.u_layer, 1);
   /** The screen-sized layer faded ink is drawn into: { frame, texture, width, height }. */
@@ -56398,7 +56664,24 @@ function createGpuDesk(canvas, gl) {
     return layer;
   };
 
-  /** Draw a design's shapes as they are, at `alpha`, revealed so far. */
+  /** Send the glyph atlas's new rows (all of it after it started again). */
+  const sendGlyphs = () => {
+    const rows = atlas.takeDirty();
+    const whole = glyphsSent !== atlas.generation;
+    if (!rows && !whole) return;
+    const y0 = whole ? 0 : rows.y0;
+    const y1 = whole ? atlas.size : rows.y1;
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, glyphTexture);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, y0, atlas.size, y1 - y0, gl.RED, gl.UNSIGNED_BYTE, atlas.pixels.subarray(y0 * atlas.size, y1 * atlas.size));
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    gl.activeTexture(gl.TEXTURE0);
+    glyphsSent = atlas.generation;
+  };
+
+  /** Draw a design's shapes as they are, at `alpha`, revealed so far, then its text. */
   const drawInk = (entry, box, rect, { alpha, blur, reveal, seed }) => {
     const k = rect.w / box.w;
     const px = 1 / pane.dpr;
@@ -56415,7 +56698,22 @@ function createGpuDesk(canvas, gl) {
     gl.uniform1f(u.u_alpha, alpha);
     gl.uniform1f(u.u_reveal, reveal);
     gl.uniform1f(u.u_seed, seed);
-    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, entry.count);
+    if (entry.count) gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, entry.count);
+    if (entry.glyphCount) {
+      sendGlyphs();
+      const g = glyphProgram.u;
+      gl.useProgram(glyphProgram.handle);
+      gl.bindVertexArray(entry.glyphArray);
+      gl.uniform2f(g.u_pane, pane.w, pane.h);
+      gl.uniform4f(g.u_map, k, k, rect.x - box.x * k, rect.y - box.y * k);
+      gl.uniform4f(g.u_rect, rect.x, rect.y, rect.w, rect.h);
+      gl.uniform1f(g.u_atlas, atlas.size);
+      gl.uniform1f(g.u_soft, px * Math.pow(2, blur * 1.5));
+      gl.uniform1f(g.u_alpha, alpha);
+      gl.uniform1f(g.u_reveal, reveal);
+      gl.uniform1f(g.u_seed, seed);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, entry.glyphCount);
+    }
     shapes.invalidate();
   };
 
@@ -56425,7 +56723,30 @@ function createGpuDesk(canvas, gl) {
       gl.deleteBuffer(entry.buffer);
       gl.deleteVertexArray(entry.array);
     }
+    if (entry?.glyphBuffer) {
+      gl.deleteBuffer(entry.glyphBuffer);
+      gl.deleteVertexArray(entry.glyphArray);
+    }
     inks.delete(key);
+  };
+
+  /** A vertex array of `data`, `floats` a shape in vec4s from location 1. */
+  const instances = (data, floats) => {
+    const array = gl.createVertexArray();
+    gl.bindVertexArray(array);
+    gl.bindBuffer(gl.ARRAY_BUFFER, corners);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    const buffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+    for (let i = 0; i < floats / 4; i++) {
+      gl.enableVertexAttribArray(1 + i);
+      gl.vertexAttribPointer(1 + i, 4, gl.FLOAT, false, floats * 4, 16 * i);
+      gl.vertexAttribDivisor(1 + i, 1);
+    }
+    gl.bindVertexArray(null);
+    return { array, buffer };
   };
 
   return {
@@ -56496,7 +56817,8 @@ function createGpuDesk(canvas, gl) {
 
     hasInk(key) { return inks.has(key); },
     /** Is this design's ink on the GPU, or can it go there this frame?
-     *  `build()` gives its shapes (atlas-ink.js `svgInk`), or null. */
+     *  `build()` gives its shapes (atlas-ink.js `svgInk`) and glyphs
+     *  (atlas-text.js `layoutText`: `glyphs`, `glyphCount`), or null. */
     inkReady(key, build) {
       if (inks.has(key)) return true;
       if (spent && spent > UPLOAD_BYTES_PER_FRAME) {
@@ -56505,27 +56827,18 @@ function createGpuDesk(canvas, gl) {
       }
       const mesh = build();
       if (!mesh) return false;
-      if (!mesh.count) {
-        inks.set(key, { count: 0 });
-        return true;
+      const entry = { count: mesh.count, glyphCount: mesh.glyphCount || 0 };
+      if (mesh.count) {
+        spent += mesh.data.byteLength;
+        Object.assign(entry, instances(mesh.data, 12));
       }
-      spent += mesh.data.byteLength;
-      const array = gl.createVertexArray();
-      gl.bindVertexArray(array);
-      gl.bindBuffer(gl.ARRAY_BUFFER, corners);
-      gl.enableVertexAttribArray(0);
-      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-      const buffer = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-      gl.bufferData(gl.ARRAY_BUFFER, mesh.data, gl.STATIC_DRAW);
-      for (let i = 0; i < 3; i++) {
-        gl.enableVertexAttribArray(1 + i);
-        gl.vertexAttribPointer(1 + i, 4, gl.FLOAT, false, 48, 16 * i);
-        gl.vertexAttribDivisor(1 + i, 1);
+      if (entry.glyphCount) {
+        spent += mesh.glyphs.byteLength;
+        const { array, buffer } = instances(mesh.glyphs, 16);
+        Object.assign(entry, { glyphArray: array, glyphBuffer: buffer });
       }
-      gl.bindVertexArray(null);
       shapes.invalidate();
-      inks.set(key, { array, buffer, count: mesh.count });
+      inks.set(key, entry);
       return true;
     },
     /** The same ink under a new key (a design just saved). */
@@ -56544,7 +56857,7 @@ function createGpuDesk(canvas, gl) {
      *  as for `image`: `blur` softens its edges by that many octaves. */
     ink(key, box, rect, alpha, { blur = 0, reveal = 1, seed = 0 } = {}) {
       const entry = inks.get(key);
-      if (!entry?.count || !(box?.w > 0) || alpha <= 0) return;
+      if (!(entry?.count || entry?.glyphCount) || !(box?.w > 0) || alpha <= 0) return;
       if (alpha >= 0.999 && reveal >= 1) {
         drawInk(entry, box, rect, { alpha: 1, blur, reveal: 1, seed });
         return;
@@ -56749,6 +57062,320 @@ function sheetCaption(name, tags = []) {
 __exports.MAX_SHEET_PX = MAX_SHEET_PX;
 };
 
+__modules["src/web/atlas-text.js"] = function (__require, __exports) {
+__exports.mathItalic = mathItalic;
+__exports.layoutText = layoutText;
+__exports.withRules = withRules;
+let BUTT, INK_FLOATS, SEGMENT, parseColor; __bind(() => { ({ BUTT, INK_FLOATS, SEGMENT, parseColor } = __require("src/web/atlas-ink.js")); });
+/**
+ * A design's text as the Atlas desk draws it on the GPU: laid out once by
+ * the browser (SVG text and the math in foreignObject alike), then read
+ * back as glyphs placed in the drawing's units, drawn from the glyph atlas
+ * (atlas-glyphs.js). Rules the layout draws itself (fraction bars, radical
+ * bars, table lines) come back as segments of ink.
+ *
+ * Glyphs are GLYPH_FLOATS floats each:
+ *   [ox, oy, xx, xy,  yx, yy, grow, 0,  u0, v0, u1, v1,  r, g, b, a]
+ * the cell's corner, its two sides, how far the glyph is grown (a text
+ * stroke, half its width), its place in the atlas, and its premultiplied color.
+ */
+
+
+
+const GLYPH_FLOATS = 16;
+
+/** Accents a math layout stretches across. */
+const WIDE = new Set([...'¯‾_^ˆ~˜→←↔⏞⏟︷︸']);
+/** Large operators, drawn bigger in display style. */
+const LARGE = new Set([...'∑∏∐∫∬∭∮⋃⋂⨁⨂']);
+
+/** A letter as math italic draws it (`text-transform: math-auto` on a
+ *  single-letter <mi>): the Mathematical Alphanumeric Symbols' italic. */
+function mathItalic(char) {
+  const code = char.codePointAt(0);
+  if (code === 0x68) return '\u210E';
+  if (code >= 0x41 && code <= 0x5a) return String.fromCodePoint(0x1d434 + code - 0x41);
+  if (code >= 0x61 && code <= 0x7a) return String.fromCodePoint(0x1d44e + code - 0x61);
+  if (code >= 0x391 && code <= 0x3a9 && code !== 0x3a2) return String.fromCodePoint(0x1d6e2 + code - 0x391);
+  if (code >= 0x3b1 && code <= 0x3c9) return String.fromCodePoint(0x1d6fc + code - 0x3b1);
+  const other = { 0x131: 0x1d6a4, 0x237: 0x1d6a5, 0x2207: 0x1d6fb, 0x2202: 0x1d715, 0x3f5: 0x1d716, 0x3d1: 0x1d717, 0x3f0: 0x1d718, 0x3d5: 0x1d719, 0x3f1: 0x1d71a, 0x3d6: 0x1d71b }[code];
+  return other ? String.fromCodePoint(other) : char;
+}
+
+let host = null;
+
+function hostEl() {
+  if (host?.isConnected) return host;
+  host = document.createElement('div');
+  host.setAttribute('aria-hidden', 'true');
+  host.style.cssText = 'position:fixed;left:-100000px;top:0;visibility:hidden;pointer-events:none;';
+  document.body.appendChild(host);
+  return host;
+}
+
+const fontOf = (style) => ({ style: style.fontStyle || 'normal', weight: style.fontWeight || '400', family: style.fontFamily || 'sans-serif' });
+
+/**
+ * Lay out `svg` (a design's text drawing, in the theme now) and read its
+ * glyphs from `atlas`. `box` is its view box. Returns
+ * `{ glyphs: Float32Array, glyphCount, rules: number[] (ink shapes) }`, or
+ * null when the atlas filled up meanwhile (lay it out again).
+ */
+function layoutText(svg, box, atlas) {
+  const root = hostEl();
+  root.innerHTML = svg;
+  const drawing = root.querySelector('svg');
+  if (!drawing) {
+    root.replaceChildren();
+    return { glyphs: new Float32Array(0), glyphCount: 0, rules: [] };
+  }
+  // One unit of the drawing to a pixel, so what is read back is in its units.
+  drawing.setAttribute('width', String(box.w));
+  drawing.setAttribute('height', String(box.h));
+  drawing.setAttribute('viewBox', `${box.x} ${box.y} ${box.w} ${box.h}`);
+  drawing.setAttribute('preserveAspectRatio', 'none');
+  // A fraction's bar is on the math axis, above its baseline: each fraction
+  // gets a probe of no size on its baseline (in a row with it, which lays
+  // out as it alone does).
+  const MATHML = 'http://www.w3.org/1998/Math/MathML';
+  const baselines = new Map();
+  for (const fraction of drawing.querySelectorAll('mfrac')) {
+    const row = document.createElementNS(MATHML, 'mrow');
+    const probe = document.createElementNS(MATHML, 'mspace');
+    fraction.replaceWith(row);
+    row.append(probe, fraction);
+    baselines.set(fraction, probe);
+  }
+  const origin = drawing.getBoundingClientRect();
+  const toX = (x) => box.x + x - origin.left;
+  const toY = (y) => box.y + y - origin.top;
+
+  const out = [];
+  const rules = [];
+  let count = 0;
+  let full = false;
+  const opacities = new Map();
+  const opacityOf = (el) => {
+    if (!el || el === drawing.parentNode) return 1;
+    let value = opacities.get(el);
+    if (value === undefined) {
+      const own = parseFloat(getComputedStyle(el).opacity);
+      value = (Number.isFinite(own) ? own : 1) * opacityOf(el.parentElement);
+      opacities.set(el, value);
+    }
+    return value;
+  };
+  const premultiplied = (color, alpha) => {
+    const c = parseColor(color);
+    if (!c) return null;
+    const a = c[3] * alpha;
+    return a > 0 ? [c[0] * a, c[1] * a, c[2] * a, a] : null;
+  };
+
+  /** One glyph, its pen on the baseline at (x, y), `size` the em, turned by `angle`. */
+  const place = (font, char, x, y, size, angle, color, { sx = 1, sy = 1, grow = 0 } = {}) => {
+    const glyph = atlas.glyph(font, char);
+    if (!glyph) {
+      full = true;
+      return null;
+    }
+    if (glyph.empty || !color) return glyph;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const w = glyph.w * size * sx;
+    const h = glyph.h * size * sy;
+    const gx = glyph.x * size * sx;
+    const gy = glyph.y * size * sy;
+    out.push(
+      x + cos * gx - sin * gy, y + sin * gx + cos * gy, cos * w, sin * w,
+      -sin * h, cos * h, grow, 0,
+      glyph.u0, glyph.v0, glyph.u1, glyph.v1,
+      ...color,
+    );
+    count += 1;
+    return glyph;
+  };
+
+  const rule = (x0, y0, x1, y1, width, color) => {
+    if (!color || !(width > 0)) return;
+    rules.push(x0, y0, x1, y1, width / 2, BUTT, BUTT, SEGMENT, ...color);
+  };
+
+  // SVG text: each character where the layout put it, turned with it.
+  for (const text of drawing.querySelectorAll('text')) {
+    const matrix = text.getScreenCTM();
+    if (!matrix) continue;
+    const total = text.getNumberOfChars();
+    const walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node);
+    // The characters the layout addresses are the text's, unless spaces
+    // collapsed: then each is found by its box instead.
+    const units = nodes.reduce((sum, node) => sum + node.data.length, 0);
+    const indexed = units === total;
+    const scale = Math.hypot(matrix.a, matrix.b);
+    const turn = Math.atan2(matrix.b, matrix.a);
+    let index = 0;
+    for (const node of nodes) {
+      const style = getComputedStyle(node.parentElement);
+      const font = fontOf(style);
+      const size = parseFloat(style.fontSize) * scale;
+      const fillOpacity = parseFloat(style.fillOpacity);
+      const color = premultiplied(style.fill, (Number.isFinite(fillOpacity) ? fillOpacity : 1) * opacityOf(node.parentElement));
+      const data = node.data;
+      for (let j = 0; j < data.length && !full;) {
+        const code = data.codePointAt(j);
+        const char = String.fromCodePoint(code);
+        const length = char.length;
+        if (!/\s/.test(char)) {
+          if (indexed) {
+            try {
+              const start = text.getStartPositionOfChar(index + j);
+              const angle = turn + (text.getRotationOfChar(index + j) * Math.PI) / 180;
+              const p = new DOMPoint(start.x, start.y).matrixTransform(matrix);
+              place(font, char, toX(p.x), toY(p.y), size, angle, color);
+            } catch { /* not drawn */ }
+          } else {
+            const range = document.createRange();
+            range.setStart(node, j);
+            range.setEnd(node, j + length);
+            const r = range.getBoundingClientRect();
+            const glyph = r.width ? atlas.glyph(font, char) : null;
+            if (glyph && !glyph.empty) place(font, char, toX(r.left), toY(r.top) + glyph.ascent * size, size, turn, color);
+          }
+        }
+        j += length;
+      }
+      index += data.length;
+    }
+  }
+
+  // HTML (the math in foreignObject): each character from its box.
+  for (const object of drawing.querySelectorAll('foreignObject')) {
+    const walker = document.createTreeWalker(object, NodeFilter.SHOW_TEXT);
+    const range = document.createRange();
+    for (let node = walker.nextNode(); node && !full; node = walker.nextNode()) {
+      const parent = node.parentElement;
+      const style = getComputedStyle(parent);
+      const font = fontOf(style);
+      const size = parseFloat(style.fontSize);
+      const color = premultiplied(style.color, opacityOf(parent));
+      const grow = (parseFloat(style.webkitTextStrokeWidth) || 0) / 2;
+      const data = node.data;
+      // A single letter in math is drawn in italic.
+      const italic = style.textTransform === 'math-auto' && [...data.trim()].length === 1;
+      for (let j = 0; j < data.length && !full;) {
+        const typed = String.fromCodePoint(data.codePointAt(j));
+        const char = italic ? mathItalic(typed) : typed;
+        const length = typed.length;
+        if (!/\s/.test(char)) {
+          range.setStart(node, j);
+          range.setEnd(node, j + length);
+          const r = range.getBoundingClientRect();
+          const glyph = r.width && r.height ? atlas.glyph(font, char) : null;
+          if (!glyph) {
+            if (r.width && r.height) full = true;
+          } else if (!glyph.empty) {
+            // An operator the layout stretched (a bracket, a norm, a large
+            // operator) fills its box, taller than its text: drawn to its ink.
+            const operator = parent.localName === 'mo' && [...data.trim()].length === 1 ? parent.getBoundingClientRect() : null;
+            const ink = (glyph.inkAscent + glyph.inkDescent) * size;
+            if (operator && ink > 0 && operator.height > (glyph.ascent + glyph.descent) * size * 1.15) {
+              const sy = operator.height / ink;
+              // A taller variant is wider too, as far as its box says.
+              const sx = LARGE.has(char) ? sy : Math.max(1, Math.min(sy, operator.width / Math.max(glyph.advance * size, 1e-6)));
+              place(font, char, toX(operator.left), toY(operator.top) + glyph.inkAscent * size * sy, size, 0, color, { sx, sy, grow });
+            } else {
+              const sx = WIDE.has(char) && r.width > glyph.advance * size * 1.2 ? r.width / (glyph.advance * size) : 1;
+              place(font, char, toX(r.left), toY(r.top) + glyph.ascent * size, size, 0, color, { sx, grow });
+            }
+          }
+        }
+        j += length;
+      }
+    }
+    // Lines the layout draws itself.
+    for (const el of object.querySelectorAll('*')) {
+      const style = getComputedStyle(el);
+      const r = el.getBoundingClientRect();
+      if (!r.width && !r.height) continue;
+      const alpha = opacityOf(el);
+      const x0 = toX(r.left);
+      const y0 = toY(r.top);
+      const x1 = toX(r.right);
+      const y1 = toY(r.bottom);
+      const background = premultiplied(style.backgroundColor, alpha);
+      if (background && r.width && r.height) {
+        if (r.width >= r.height) rule(x0, (y0 + y1) / 2, x1, (y0 + y1) / 2, y1 - y0, background);
+        else rule((x0 + x1) / 2, y0, (x0 + x1) / 2, y1, x1 - x0, background);
+      }
+      for (const [side, a, b, c, d, along] of [
+        ['Top', x0, y0, x1, y0, 'h'], ['Bottom', x0, y1, x1, y1, 'h'], ['Left', x0, y0, x0, y1, 'v'], ['Right', x1, y0, x1, y1, 'v'],
+      ]) {
+        const width = parseFloat(style[`border${side}Width`]);
+        if (!(width > 0) || style[`border${side}Style`] === 'none') continue;
+        const inward = side === 'Top' || side === 'Left' ? width / 2 : -width / 2;
+        const color = premultiplied(style[`border${side}Color`], alpha);
+        if (along === 'h') rule(a, b + inward, c, d + inward, width, color);
+        else rule(a + inward, b, c + inward, d, width, color);
+      }
+      const tag = el.localName;
+      const size = parseFloat(style.fontSize) || 16;
+      const ink = premultiplied(style.color, alpha);
+      const stroke = parseFloat(style.webkitTextStrokeWidth) || 0;
+      if (tag === 'mfrac' && el.children.length >= 2 && el.getAttribute('linethickness') !== '0') {
+        // The bar on the math axis (Latin Modern Math's: a quarter em above
+        // the baseline), as thick as its rule (0.04 em).
+        const probe = baselines.get(el);
+        const top = el.children[0].getBoundingClientRect();
+        const bottom = el.children[1].getBoundingClientRect();
+        const y = probe ? toY(probe.getBoundingClientRect().top) - 0.25 * size : toY((top.bottom + bottom.top) / 2);
+        const thick = parseFloat(el.getAttribute('linethickness')) || 0.04 * size;
+        rule(x0, y, x1, y, thick, ink);
+      } else if ((tag === 'msqrt' || tag === 'mroot') && el.children.length) {
+        // The layout paints the radical sign itself: drawn stretched to the
+        // root's height, left of the radicand, the bar on from its top.
+        const base = el.children[0].getBoundingClientRect();
+        const thick = 0.04 * size;
+        const font = fontOf(style);
+        const sign = atlas.glyph(font, '√');
+        if (!sign) {
+          full = true;
+          break;
+        }
+        let from = toX(base.left);
+        if (!sign.empty) {
+          const tall = (sign.inkAscent + sign.inkDescent) * size;
+          const sy = tall > 0 ? (y1 - y0) / tall : 1;
+          const width = (sign.inkLeft + sign.inkRight) * size;
+          const pen = from - width + sign.inkLeft * size;
+          place(font, '√', pen, y0 + sign.inkAscent * size * sy, size, 0, ink, { sy, grow: stroke / 2 });
+          from = pen + sign.inkRight * size - thick;
+        }
+        rule(from, y0 + thick / 2, x1, y0 + thick / 2, thick, ink);
+      }
+    }
+  }
+  root.replaceChildren();
+  if (full) return null;
+  return { glyphs: new Float32Array(out), glyphCount: count, rules };
+}
+
+/** The ink and the rules as one list of shapes. */
+function withRules(data, rules) {
+  if (!rules.length) return data;
+  const joined = new Float32Array(data.length + rules.length);
+  joined.set(data);
+  joined.set(rules, data.length);
+  return joined;
+}
+
+
+
+__exports.INK_FLOATS = INK_FLOATS;
+__exports.GLYPH_FLOATS = GLYPH_FLOATS;
+};
+
 __modules["src/web/atlas.js"] = function (__require, __exports) {
 __exports.atlasOpen = atlasOpen;
 __exports.atlasSnapshot = atlasSnapshot;
@@ -56801,7 +57428,9 @@ let appendContextItem, openMenuAt; __bind(() => { ({ appendContextItem, openMenu
 let onAccentChange; __bind(() => { ({ onAccentChange } = __require("src/web/accent.js")); });
 let gpuContext, onAccelerationChange; __bind(() => { ({ gpuContext, onAccelerationChange } = __require("src/web/gpu.js")); });
 let createGpuDesk; __bind(() => { ({ createGpuDesk } = __require("src/web/atlas-paint-gpu.js")); });
-let svgInk; __bind(() => { ({ svgInk } = __require("src/web/atlas-ink.js")); });
+let INK_FLOATS, svgInk; __bind(() => { ({ INK_FLOATS, svgInk } = __require("src/web/atlas-ink.js")); });
+let layoutText, withRules; __bind(() => { ({ layoutText, withRules } = __require("src/web/atlas-text.js")); });
+let glyphAtlas; __bind(() => { ({ glyphAtlas } = __require("src/web/atlas-glyphs.js")); });
 let createCanvasDesk; __bind(() => { ({ createCanvasDesk } = __require("src/web/atlas-paint-2d.js")); });
 /**
  * The Atlas view: every design in the workspace laid out at its real
@@ -56815,6 +57444,8 @@ let createCanvasDesk; __bind(() => { ({ createCanvasDesk } = __require("src/web/
  * leaving fly a design between the editor, at the screen, and its place on
  * the desk behind it (drawFlight).
  */
+
+
 
 
 
@@ -57285,10 +57916,10 @@ function colorsKey() {
   return `${theme()}|${document.documentElement.dataset.accent || ''}`;
 }
 
-/** What a design's images hold: on the GPU its text alone (its ink is drawn
- *  as vectors, inkOf), on the 2D canvas the whole drawing. */
+/** What a design's images hold: on the GPU its pictures alone (its ink and
+ *  text are drawn as vectors, inkOf), on the 2D canvas the whole drawing. */
 function imageLayer() {
-  return painter().vector ? 'text' : 'full';
+  return painter().vector ? 'pictures' : 'full';
 }
 
 function bitmapStem(entry, revision = entry.revision) {
@@ -57303,52 +57934,78 @@ function bitmapKey(entry, level) {
   return entry.bitmapKeys[level];
 }
 
-/** Ink read in one frame at most this long: the rest waits its turn. */
+/** Designs read in one frame for at most this long: the rest wait their turn. */
 const INK_READ_MS_PER_FRAME = 8;
 let inkStamp = 0;
 let inkReadSpent = 0;
 
+const MATH_FONT = "16px 'Latin Modern Math'";
+const usesMathFont = (svg) => svg.includes('schematic-math-label') || svg.includes('Latin Modern Math');
+let mathFontLoading = null;
+
+/** Whether the math font has loaded; if not, it is asked for, and the desk
+ *  drawn again once it has. */
+function mathFontReady() {
+  if (document.fonts.check(MATH_FONT)) return true;
+  mathFontLoading ||= document.fonts.load(MATH_FONT).catch(() => null).then(() => requestDraw());
+  return false;
+}
+
+/** A design's shapes and glyphs, read from its export SVG in `shade`. */
+function readDesign(entry, shade) {
+  const { data, count, textSvg, picturesSvg } = svgInk(shade === 'dark' ? applyExportDarkTheme(entry.svg) : entry.svg);
+  const atlas = glyphAtlas();
+  // The glyph atlas full, it starts again: laid out once more into the new one.
+  const text = textSvg ? layoutText(textSvg, entry.box, atlas) || layoutText(textSvg, entry.box, atlas) : null;
+  const rules = text?.rules || [];
+  return {
+    textSvg, picturesSvg, generation: atlas.generation,
+    mesh: { data: withRules(data, rules), count: count + rules.length / INK_FLOATS, glyphs: text?.glyphs, glyphCount: text?.glyphCount || 0 },
+  };
+}
+
 /**
- * A design as the GPU draws it (atlas-ink.js), read from its export SVG in
- * the theme now: `{ key, textSvg, mesh }`, `textSvg` null for a design with
- * no text. `mesh` is held only until it is on the GPU. Null when this frame
- * has read its share already (unless `now`).
+ * A design as the GPU draws it (atlas-ink.js, atlas-text.js), read from its
+ * export SVG in the theme now: `{ key, textSvg, picturesSvg, mesh }`.
+ * `mesh` is held only until it is on the GPU. Null when this frame has read
+ * its share already, or its math waits for its font (unless `now`).
  */
 function inkOf(entry, now = false) {
   const shade = theme();
   const ink = entry.ink;
-  if (ink?.shade === shade && ink.svg === entry.svg) return ink;
+  const generation = glyphAtlas().generation;
+  if (ink?.shade === shade && ink.svg === entry.svg && ink.generation === generation && !(ink.withoutFont && mathFontReady())) return ink;
   if (!now && inkReadSpent > INK_READ_MS_PER_FRAME) return null;
+  // Math laid out before its font has loaded would take another size.
+  const withoutFont = usesMathFont(entry.svg) && !mathFontReady();
+  if (withoutFont && !now) return null;
   const started = performance.now();
-  const { data, count, textSvg } = svgInk(shade === 'dark' ? applyExportDarkTheme(entry.svg) : entry.svg);
+  const read = readDesign(entry, shade);
   inkReadSpent += performance.now() - started;
   inkStamp += 1;
-  entry.ink = { shade, svg: entry.svg, key: `${entry.id}\n${inkStamp}`, textSvg, mesh: { data, count } };
+  entry.ink = { shade, svg: entry.svg, key: `${entry.id}\n${inkStamp}`, withoutFont, ...read };
   return entry.ink;
 }
 
-/** Its shapes for the GPU, read again if they were let go. */
+/** Its shapes and glyphs for the GPU, read again if they were let go. */
 function inkMesh(entry) {
   const ink = entry.ink;
-  if (!ink.mesh) {
-    const { data, count } = svgInk(ink.shade === 'dark' ? applyExportDarkTheme(entry.svg) : entry.svg);
-    return { data, count };
-  }
+  if (!ink.mesh) return readDesign(entry, ink.shade).mesh;
   const { mesh } = ink;
   ink.mesh = null;
   return mesh;
 }
 
 /** The SVG a design's images are drawn from, in the theme now; null when
- *  there is nothing to draw (a design with no text, on the GPU). */
+ *  there is nothing to draw (a design with no pictures, on the GPU). */
 function imageSvg(entry) {
-  if (imageLayer() === 'text') return inkOf(entry, true).textSvg;
+  if (imageLayer() === 'pictures') return inkOf(entry, true).picturesSvg;
   return theme() === 'dark' ? applyExportDarkTheme(entry.svg) : entry.svg;
 }
 
 /** Whether a design has images to draw at all. */
 function hasImages(entry) {
-  return imageLayer() === 'full' || !!inkOf(entry, true).textSvg;
+  return imageLayer() === 'full' || !!inkOf(entry, true).picturesSvg;
 }
 
 // Premultiplied, as the desk's shaders blend it.
@@ -57381,7 +58038,7 @@ async function rasterize(entry, level) {
 /** Decode (or bake and store) one image. */
 async function bake(entry, level) {
   if (!hasImages(entry)) throw new Error('nothing to draw');
-  const layer = imageLayer() === 'text' ? 'text-' : '';
+  const layer = imageLayer() === 'pictures' ? 'pictures-' : '';
   const cacheKey = entry.revision && renderingKey(entry.path, entry.revision, `${theme()}-${layer}${level}-${IMAGE_CACHE}`);
   const blob = cacheKey && await cacheGet(cacheKey);
   if (blob) return createImageBitmap(blob, BITMAP_OPTIONS);
@@ -57425,9 +58082,13 @@ async function warmSmallImages(generation, budget) {
 /** Startup has no editor drawing to bridge from: prepare the desk before revealing it. */
 async function prepareStartupImages(generation, target) {
   await document.fonts.ready;
-  // Each design's ink is read before the desk shows (it takes well under a
-  // millisecond a design): the desk assembles with all of it there.
-  if (painter().vector) for (const tile of state.tiles) inkOf(state.entries.get(tile.id), true);
+  // Each design is read before the desk shows (about a millisecond a
+  // design, its text laid out with the math font): the desk assembles with
+  // all of it there.
+  if (painter().vector) {
+    await document.fonts.load(MATH_FONT).catch(() => null);
+    for (const tile of state.tiles) inkOf(state.entries.get(tile.id), true);
+  }
   const k = paneSize().w / target.w * (window.devicePixelRatio || 1);
   await bakeTiles(state.tiles.map((tile) => ({ tile, entry: state.entries.get(tile.id) })), {
     levels: ({ tile, entry }) => (hasImages(entry) ? imageLevels(tileDetail(Math.max(tile.w, tile.h) * k)) : []),
@@ -57724,7 +58385,8 @@ function drawDesk() {
   // The tiles that fill the screen are drawn live; their images would only
   // blur the vector lines through the transparent paper. Not while the view
   // animates, though: a live SVG changing size is redrawn whole every frame.
-  const vector = moving ? [] : placed.filter((item) => item.detail === 'vector')
+  // On the GPU the text is vectors too: nothing is laid over it.
+  const vector = moving || paint.vector ? [] : placed.filter((item) => item.detail === 'vector')
     .sort((a, b) => b.rect.w * b.rect.h - a.rect.w * a.rect.h)
     .slice(0, MAX_VECTOR_TILES);
   const live = new Set(vector.map((item) => item.tile.id));
@@ -57755,8 +58417,8 @@ function drawDesk() {
     if (found?.hits.length && document.activeElement === searchEl) drawHits(paint, tile, entry, found.hits, palette, alpha);
     let imageAlpha = fade;
     const effects = { reveal: entry.current ? 1 : reveal, seed: tile.x * 0.013 + tile.y * 0.007, blur: state.flight ? deskBlur(state.flight.depth) : 0 };
-    // On the GPU the ink is drawn as vectors, sharp at any size; its images
-    // carry only its text. A design read since the desk showed fades in.
+    // On the GPU the ink and text are drawn as vectors, sharp at any size;
+    // its images carry only its pictures. A design read since the desk showed fades in.
     const ink = paint.vector ? inkOf(entry) : null;
     if (paint.vector && !ink) requestDraw();
     if (ink && !flying) {
@@ -57770,7 +58432,7 @@ function drawDesk() {
       }
     }
     const level = imageLevel(imageDetail);
-    const withImages = !paint.vector || !!ink?.textSvg;
+    const withImages = !paint.vector || !!ink?.picturesSvg;
     // Its own image, else the sharpest one there is.
     let imageKey = withImages ? bitmapKey(entry, level) : null;
     if (imageKey && !paint.ready(imageKey, state.bitmaps.get(imageKey))) {
@@ -59611,7 +60273,7 @@ function drawFlight(paint, palette, w, h) {
     // On the GPU its ink stays sharp all the way to the glass.
     const ink = paint.vector ? inkOf(entry, true) : null;
     if (ink && paint.inkReady(ink.key, () => inkMesh(entry))) paint.ink(ink.key, entry.box, design, 1);
-    const key = paint.vector && !ink?.textSvg ? null
+    const key = paint.vector && !ink?.picturesSvg ? null
       : IMAGE_LEVELS.slice().reverse().map((level) => bitmapKey(entry, level)).find((candidate) => paint.ready(candidate, state.bitmaps.get(candidate)));
     if (key) paint.image(key, design, 1);
   }

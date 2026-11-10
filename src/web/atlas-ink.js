@@ -420,8 +420,10 @@ function dashed(points, closed, pattern) {
 
 const CAPS = { butt: BUTT, square: SQUARE, round: ROUND };
 
-/** Read the export SVG. Returns { data: Float32Array, count, textSvg, box },
- *  `textSvg` null when the design has no text, math, or pictures. */
+/** Read the export SVG. Returns { data: Float32Array, count, textSvg,
+ *  picturesSvg, box }: `textSvg` the drawing less its ink, null when the
+ *  design has no text, math, or pictures; `picturesSvg` that less its text
+ *  too, null when it has no pictures. */
 export function svgInk(svg) {
   const source = String(svg);
   const out = [];
@@ -684,5 +686,8 @@ export function svgInk(svg) {
   }
   kept.push(source.slice(keptFrom));
   const textSvg = hasText ? kept.join('').replace(/\n{2,}/g, '\n') : null;
-  return { data: new Float32Array(out), count, textSvg, box };
+  const picturesSvg = textSvg && /<image\b/.test(textSvg)
+    ? textSvg.replace(/<text\b[\s\S]*?<\/text>/g, '').replace(/<foreignObject\b[\s\S]*?<\/foreignObject>/g, '')
+    : null;
+  return { data: new Float32Array(out), count, textSvg, picturesSvg, box };
 }

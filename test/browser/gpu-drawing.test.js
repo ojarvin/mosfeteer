@@ -144,7 +144,7 @@ describe('the two painters', { skip: browserSkip() }, () => {
         await pick(h, 'top');
         // The bottom of a headless capture is not the page's.
         shots.push(await pixels(h, { x: 0, y: 44, w: 1400, h: 800 }, true));
-        levels.push(Object.fromEntries((await snapshot(h)).tiles.map((t) => [t.name, t.image])));
+        levels.push(Object.fromEntries((await snapshot(h)).tiles.map((t) => [t.name, { image: t.image, ink: t.ink }])));
         assert.deepEqual(h.exceptions(), []);
       } finally {
         await h.stop();
@@ -153,10 +153,12 @@ describe('the two painters', { skip: browserSkip() }, () => {
     let total = 0;
     for (let i = 0; i < shots[0].length; i += 4) total += Math.abs(shots[0][i] - shots[1][i]) + Math.abs(shots[0][i + 1] - shots[1][i + 1]) + Math.abs(shots[0][i + 2] - shots[1][i + 2]);
     assert.ok(total / (shots[0].length / 4) < 3, `mean difference ${total / (shots[0].length / 4)}`);
-    // The GPU draws each design's text from a larger image: finer wherever there is a finer one.
-    const order = ['small', 'medium', 'large'];
-    for (const name of Object.keys(levels[0])) assert.ok(order.indexOf(levels[1][name]) >= order.indexOf(levels[0][name]), JSON.stringify(levels));
-    assert.ok(Object.keys(levels[0]).some((name) => order.indexOf(levels[1][name]) > order.indexOf(levels[0][name])), JSON.stringify(levels));
+    // The 2D canvas draws each design from an image; the GPU draws its ink
+    // and text as vectors, with no image at all (none has a picture).
+    for (const name of Object.keys(levels[0])) {
+      assert.ok(levels[0][name].image && !levels[0][name].ink, JSON.stringify(levels));
+      assert.ok(!levels[1][name].image && levels[1][name].ink, JSON.stringify(levels));
+    }
   });
 });
 
@@ -243,6 +245,18 @@ describe('the desk\'s effects, drawn directly', { skip: browserSkip() }, () => {
     const r = await scene(`${inked(svg, { x: 0, y: 0, w: 200, h: 200 }, 0.5)} return [at(100, 100), at(60, 100), at(100, 60)];`);
     assert.ok(r[1] > 110 && r[1] < 145, `half ink: ${r}`);
     assert.ok(Math.abs(r[0] - r[1]) <= 2 && Math.abs(r[2] - r[1]) <= 2, `the same at the crossing: ${r}`);
+  });
+
+  test('text is drawn as vectors too: zoomed in eight times, a letter\'s edges stay a pixel sharp', async () => {
+    const svg = drawing(25, 25, '<text x="4" y="20" font-family="sans-serif" font-size="20" fill="#000">I</text>');
+    const r = await scene(`const ink = (await ${h.module('atlas-ink.js')}).svgInk(${JSON.stringify(svg)});
+      const text = (await ${h.module('atlas-text.js')}).layoutText(ink.textSvg, ink.box, (await ${h.module('atlas-glyphs.js')}).glyphAtlas());
+      begin(); desk.inkReady('t', () => ({ data: ink.data, count: ink.count, ...text })); desk.ink('t', ink.box, { x: 0, y: 0, w: 200, h: 200 }, 1, {});
+      const row = Array.from({ length: 200 }, (_, x) => at(x, 100));
+      return { inked: row.filter((v) => v < 10).length, between: row.filter((v) => v >= 10 && v <= 245).length };`);
+    // The stem of an I, some 15 pixels wide here: solid, with an edge of a pixel or two each side.
+    assert.ok(r.inked > 8, JSON.stringify(r));
+    assert.ok(r.between <= 4, JSON.stringify(r));
   });
 
   test('a corner is mitered to its point, and a fill has no seams', async () => {
