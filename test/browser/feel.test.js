@@ -23,16 +23,16 @@ describe('editor feel', { skip: browserSkip() }, () => {
       canvas.dispatchEvent(new MouseEvent('mousedown', at(20, r.height - 20)));
       canvas.dispatchEvent(new MouseEvent('mousemove', at(120, r.height - 120)));
       const first = document.querySelector('#canvas .rubber-box');
-      const w1 = Number(first?.getAttribute('width'));
-      const shown = !!first && first.getAttribute('display') !== 'none';
+      const w1 = parseFloat(first?.style.width);
+      const shown = !!first && !first.hidden;
       canvas.dispatchEvent(new MouseEvent('mousemove', at(220, r.height - 220)));
-      const w2 = Number(document.querySelector('#canvas .rubber-box')?.getAttribute('width'));
+      const w2 = parseFloat(document.querySelector('#canvas .rubber-box')?.style.width);
       window.dispatchEvent(new MouseEvent('mouseup', at(220, r.height - 220)));
       return { w1, w2, shown };
     })()`);
     assert.ok(box.w1 > 0 && box.shown, JSON.stringify(box));
     assert.ok(Math.abs(box.w2 - 2 * box.w1) / box.w1 < 0.1, `twice as far, twice as wide: ${JSON.stringify(box)}`);
-    await h.until(`document.querySelector('#canvas .rubber-box')?.getAttribute('display') === 'none'`);
+    await h.until(`document.querySelector('#canvas .rubber-box')?.hidden === true`);
   });
 
   test('while a part is dragged the chrome steps back; a selection box leaves it; letting go brings it back', async () => {

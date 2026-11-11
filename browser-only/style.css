@@ -3016,8 +3016,30 @@ html.dark.invert-pictures .light-picture {
 }
 
 /* Math labels, drawn over the drawing in the same frame (main.js). */
+.canvas .rubber-box {
+  position: absolute;
+  left: 0;
+  top: 0;
+  box-sizing: border-box;
+  border: 1.4px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  pointer-events: none;
+  /* A layer of its own: moving it paints nothing of the drawing again. */
+  will-change: transform;
+}
+
+.canvas .rubber-box.neutral {
+  border-color: var(--svg-faint);
+  background: color-mix(in srgb, var(--svg-faint) 12%, transparent);
+}
+
+.canvas .rubber-box[hidden] {
+  display: none;
+}
+
 .canvas svg.math-layer,
-.canvas svg.wire-sweep {
+.canvas svg.wire-sweep,
+.canvas svg.landing-layer {
   position: absolute;
   inset: 0;
   background: none;
@@ -4982,16 +5004,17 @@ button.off {
    A short flash where an undoable edit landed (commit-feedback.js). The
    drawing itself never moves. The committed objects' own shapes are
    repainted as a thick green outline behind the drawing, a new wire's own
-   ink draws itself in from end to end (a mask uncovering it), each new
+   ink draws itself in from end to end (a stroke of the paper over it pulling
+   back, on a layer of its own over the drawing), each new
    connection gets a small ripple, and a new solder dot pops in. Deleted objects vanish at once and leave a
    brief red halo of their shape. */
 
-.commit-feedback,
+.landing-layer,
 .editor-underlay {
   pointer-events: none;
 }
 
-.commit-feedback > g > *,
+.landing-layer > g > *,
 .editor-underlay > g > * {
   /* --landing-at: when a wire drawing in reaches this point. */
   animation-delay: calc(var(--landing-elapsed, 0ms) + var(--landing-at, 0ms));
@@ -5026,17 +5049,17 @@ button.off {
   vector-effect: non-scaling-stroke !important;
 }
 
-/* Mask content over the wire ink: black hides the run, and the black dash
-   (pathLength="1", as long as the run) slides off it from its start. */
+/* The paper over a new run hides it, and its dash (pathLength="1", as long
+   as the run) slides off it from its start, uncovering the wire. */
 .landing-reveal {
   fill: none;
-  stroke: black;
-  /* As wide as a hover's or selection's glow around the wire. */
-  stroke-width: 28;
+  stroke: var(--paper);
+  /* A little wider than the wire (6). */
+  stroke-width: 12;
   stroke-linecap: butt;
   stroke-linejoin: miter;
   stroke-dasharray: 1 1;
-  animation: landing-reveal 340ms var(--ease-out) var(--landing-elapsed, 0ms) both;
+  animation: landing-reveal 240ms var(--ease-out) var(--landing-elapsed, 0ms) both;
 }
 
 /* A new solder dot (the drawing's own) hidden until its wire reaches it,

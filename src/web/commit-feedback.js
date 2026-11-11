@@ -237,7 +237,7 @@ function labelTrace(label, boxClass) {
 
 /** How long a run takes to draw in, and its pace: the CSS animation of
  *  `.landing-reveal` (set inline from here, so the two agree). */
-export const REVEAL_MS = 340;
+export const REVEAL_MS = 240;
 const REVEAL_EASE = EASE_OUT;
 
 /** The time (ms) the reveal reaches `share` (0..1) of a run's length: the

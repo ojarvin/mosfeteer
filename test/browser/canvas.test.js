@@ -348,3 +348,41 @@ describe('the sweep along a design\'s wires', { skip: browserSkip() }, () => {
     }
   });
 });
+
+describe('panning slides what is painted', { skip: browserSkip() }, () => {
+  test('a pan slides the drawing painted a margin beyond the pane, and paints it again only past the margin; let go, it is framed on the view', async () => {
+    const h = await start({ docs: { amp: amplifier() }, width: 1200, height: 800 });
+    try {
+      await h.open('amp');
+      const frame = () => h.evaluate(`(() => { const s = document.querySelector('#canvas > svg'); const m = document.querySelector('#canvas > svg.math-layer'); return { transform: s.style.transform, width: s.style.width, viewBox: s.getAttribute('viewBox'), mathSlid: !m || m.style.transform === s.style.transform }; })()`);
+      const view = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.view)`);
+      const x0 = 600;
+      const y0 = 400;
+      await h.mouse('mouseMoved', x0, y0, { button: 'none', buttons: 0 });
+      await h.mouse('mousePressed', x0, y0, { button: 'middle', buttons: 4, clickCount: 1 });
+      const painted = (await frame()).viewBox;
+      for (let i = 1; i <= 4; i++) await h.mouse('mouseMoved', x0 + i * 10, y0 + i * 5, { button: 'middle', buttons: 4 });
+      await h.settle();
+      let now = await frame();
+      // Painted half as large again (a quarter each side), and slid, not painted again.
+      assert.equal(now.width, '150%');
+      assert.equal(now.viewBox, painted);
+      assert.equal(now.transform, 'translate(40px, 20px)');
+      assert.ok(now.mathSlid, 'the math labels slide with it');
+      // Far past the margin it is painted again round the view.
+      for (let i = 1; i <= 6; i++) await h.mouse('mouseMoved', x0 + 40 + i * 80, y0 + 20, { button: 'middle', buttons: 4 });
+      await h.settle();
+      now = await frame();
+      assert.notEqual(now.viewBox, painted);
+      await h.mouse('mouseReleased', x0 + 520, y0 + 20, { button: 'middle', buttons: 0, clickCount: 1 });
+      await h.settle();
+      now = await frame();
+      const v = await view();
+      assert.deepEqual({ transform: now.transform, width: now.width }, { transform: '', width: '' });
+      assert.deepEqual(now.viewBox.split(' ').map(Number).map((n) => Math.round(n)), [v.x, v.y, v.w, v.h].map((n) => Math.round(n)));
+      assert.deepEqual(h.exceptions(), []);
+    } finally {
+      await h.stop();
+    }
+  });
+});

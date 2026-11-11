@@ -116,6 +116,17 @@ modules split out of it reach that state through the `editor` accessor
 loads. A module's `installX()` runs its load-time wiring where `main.js` calls
 it, so the call's position keeps the original load order.
 
+What moves while the pointer does paints as little of the drawing as it
+can, so it keeps up on a large or dense drawing at any display scale: a pan
+slides the drawing, painted a quarter of the view beyond the pane on every
+side while the pan lasts, and paints it again only when the view nears the
+margin's edge or zooms (`canvas-view.js` `paintedFrame`, `slideLayers`); the
+selection and zoom boxes are a layer of their own over the drawing; the
+editor overlay changes only the elements that changed (`patchChildren`);
+and a new wire draws itself in under a stroke of the paper pulling back,
+on a layer of its own (`svg.landing-layer`, commit-flash.js), never a mask
+over the drawing's wires.
+
 A design shown in the editor (opened, from the Atlas or a file) greets with
 one sweep of light along its wires, left to right (`src/web/wire-sweep.js`):
 the drawing's own wire ink drawn again in the accent on a layer of its own,

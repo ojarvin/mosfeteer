@@ -76,14 +76,14 @@ describe('wiring', { skip: browserSkip() }, () => {
     const now = await h.evaluate(`${h.module('editor-state.js')}.then((m) => ({
       draft: !!document.querySelector('#canvas path.wire-draft'),
       selected: m.editor.selectedNets.size,
-      reveal: document.querySelectorAll('#landing-reveal-mask .landing-reveal').length,
-      masked: [...document.querySelectorAll('#canvas :is(.wire-ink, .editor-overlay)')].every((el) => el.getAttribute('mask') === 'url(#landing-reveal-mask)'),
+      // The paper over the new run, pulling back, on the feedback's own layer.
+      reveal: document.querySelectorAll('#canvas svg.landing-layer .landing-reveal').length,
+      // Nothing of the drawing is masked or painted again for it.
+      masked: !!document.querySelector('#canvas [mask]'),
       glow: !!document.querySelector('#canvas .landing-wire'),
-      // Where nothing is being drawn in, the mask lets the ink through whole.
-      clear: (() => { const rect = document.querySelector('#landing-reveal-mask rect'); return !rect || getComputedStyle(rect).fill === 'rgb(255, 255, 255)'; })(),
     }))`);
-    assert.deepEqual(now, { draft: false, selected: 0, reveal: moving ? 1 : 0, masked: moving, glow: false, clear: true });
-    await h.until(`!document.querySelector('#landing-reveal-mask') && !document.querySelector('#canvas [mask]')`);
+    assert.deepEqual(now, { draft: false, selected: 0, reveal: moving ? 1 : 0, masked: false, glow: false });
+    await h.until(`!document.querySelector('#canvas svg.landing-layer')`);
     assert.ok(await netOf('R2.a'), 'wired');
     await h.key('Escape');
   };

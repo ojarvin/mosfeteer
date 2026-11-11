@@ -276,21 +276,78 @@ export function fittedView(bounds, rects = []) {
   };
 }
 
+// ----- the painted frame ------------------------------------------------------------
+//
+// While the view pans, the drawing is painted beyond the pane by a margin on
+// every side (PAN_MARGIN of the view), and moving the view only slides what
+// is painted (a compositor move, nothing painted again) until the view nears
+// the margin's edge: then it is painted again round the view. Every layer of
+// the drawing (the drawing, its math labels, the commit feedback, the wire
+// sweep: each an svg in the canvas) takes the same frame and the same slide.
+
+/** How far beyond the pane the drawing is painted while it pans, as a part of the view. */
+export const PAN_MARGIN = 0.25;
+let paintMargin = 0;
+
+/** Paint the drawing with a margin beyond the pane (`PAN_MARGIN`) or without (0). */
+export function setPaintMargin(margin) {
+  paintMargin = margin;
+}
+
+export function paintMarginNow() {
+  return paintMargin;
+}
+
+/** The world the drawing is painted over: the view, and the margin round it. */
+export function paintedFrame(view = editor.view) {
+  const m = paintMargin;
+  return { x: view.x - m * view.w, y: view.y - m * view.h, w: view.w * (1 + 2 * m), h: view.h * (1 + 2 * m) };
+}
+
+/** The drawing's layers: every svg in the canvas. */
+export function drawingLayers() {
+  return editor.canvasSvgEl?.parentNode ? [...editor.canvasSvgEl.parentNode.querySelectorAll(':scope > svg')] : [];
+}
+
+/** A layer laid over the pane and its margin. */
+export function placeLayer(layer) {
+  const m = paintMargin;
+  layer.style.position = m ? 'absolute' : '';
+  layer.style.left = m ? `${-m * 100}%` : '';
+  layer.style.top = m ? `${-m * 100}%` : '';
+  layer.style.width = m ? `${(1 + 2 * m) * 100}%` : '';
+  layer.style.height = m ? `${(1 + 2 * m) * 100}%` : '';
+}
+
+/** Slide every layer by `dx`, `dy` (CSS pixels), or put them back (null). */
+export function slideLayers(offset) {
+  for (const layer of drawingLayers()) {
+    layer.style.willChange = offset ? 'transform' : '';
+    layer.style.transform = offset ? `translate(${offset.dx}px, ${offset.dy}px)` : '';
+  }
+}
+
+/** Another layer (math labels, feedback) framed as the drawing is. */
+export function frameLike(layer) {
+  const drawing = editor.canvasSvgEl;
+  if (!drawing) return;
+  for (const name of ['width', 'height', 'viewBox']) layer.setAttribute(name, drawing.getAttribute(name));
+  placeLayer(layer);
+  layer.style.transform = drawing.style.transform;
+  layer.style.willChange = drawing.style.willChange;
+}
+
 /** Re-frame the committed drawing for the current view: root size, background,
  * and grid. Same output as a full svgString rebuild at this viewport. */
 export function applyCanvasViewport() {
-  const vp = { x: editor.view.x, y: editor.view.y, w: editor.view.w, h: editor.view.h };
+  const vp = paintedFrame();
   const frame = viewportFrame(vp);
   editor.canvasSvgEl.setAttribute('width', frame.width);
   editor.canvasSvgEl.setAttribute('height', frame.height);
   editor.canvasSvgEl.setAttribute('viewBox', frame.viewBox);
-  // The math labels' own layer (main.js) follows the drawing's frame.
-  const mathLayer = editor.canvasSvgEl.parentNode?.querySelector(':scope > .math-layer');
-  if (mathLayer) {
-    mathLayer.setAttribute('width', frame.width);
-    mathLayer.setAttribute('height', frame.height);
-    mathLayer.setAttribute('viewBox', frame.viewBox);
-  }
+  placeLayer(editor.canvasSvgEl);
+  // The other layers (math labels, feedback, the wire sweep) follow the drawing's frame.
+  for (const layer of drawingLayers()) if (layer !== editor.canvasSvgEl) frameLike(layer);
   const background = editor.canvasSvgEl.firstElementChild;
   if (background?.tagName !== 'rect') return;
   for (const [name, value] of Object.entries(frame.background)) background.setAttribute(name, value);

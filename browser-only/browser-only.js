@@ -64342,6 +64342,13 @@ __exports.refitIfFitted = refitIfFitted;
 __exports.fitView = fitView;
 __exports.fitTarget = fitTarget;
 __exports.fittedView = fittedView;
+__exports.setPaintMargin = setPaintMargin;
+__exports.paintMarginNow = paintMarginNow;
+__exports.paintedFrame = paintedFrame;
+__exports.drawingLayers = drawingLayers;
+__exports.placeLayer = placeLayer;
+__exports.slideLayers = slideLayers;
+__exports.frameLike = frameLike;
 __exports.applyCanvasViewport = applyCanvasViewport;
 __exports.clientToWorld = clientToWorld;
 __exports.worldToClient = worldToClient;
@@ -64636,21 +64643,78 @@ function fittedView(bounds, rects = []) {
   };
 }
 
+// ----- the painted frame ------------------------------------------------------------
+//
+// While the view pans, the drawing is painted beyond the pane by a margin on
+// every side (PAN_MARGIN of the view), and moving the view only slides what
+// is painted (a compositor move, nothing painted again) until the view nears
+// the margin's edge: then it is painted again round the view. Every layer of
+// the drawing (the drawing, its math labels, the commit feedback, the wire
+// sweep: each an svg in the canvas) takes the same frame and the same slide.
+
+/** How far beyond the pane the drawing is painted while it pans, as a part of the view. */
+const PAN_MARGIN = 0.25;
+let paintMargin = 0;
+
+/** Paint the drawing with a margin beyond the pane (`PAN_MARGIN`) or without (0). */
+function setPaintMargin(margin) {
+  paintMargin = margin;
+}
+
+function paintMarginNow() {
+  return paintMargin;
+}
+
+/** The world the drawing is painted over: the view, and the margin round it. */
+function paintedFrame(view = editor.view) {
+  const m = paintMargin;
+  return { x: view.x - m * view.w, y: view.y - m * view.h, w: view.w * (1 + 2 * m), h: view.h * (1 + 2 * m) };
+}
+
+/** The drawing's layers: every svg in the canvas. */
+function drawingLayers() {
+  return editor.canvasSvgEl?.parentNode ? [...editor.canvasSvgEl.parentNode.querySelectorAll(':scope > svg')] : [];
+}
+
+/** A layer laid over the pane and its margin. */
+function placeLayer(layer) {
+  const m = paintMargin;
+  layer.style.position = m ? 'absolute' : '';
+  layer.style.left = m ? `${-m * 100}%` : '';
+  layer.style.top = m ? `${-m * 100}%` : '';
+  layer.style.width = m ? `${(1 + 2 * m) * 100}%` : '';
+  layer.style.height = m ? `${(1 + 2 * m) * 100}%` : '';
+}
+
+/** Slide every layer by `dx`, `dy` (CSS pixels), or put them back (null). */
+function slideLayers(offset) {
+  for (const layer of drawingLayers()) {
+    layer.style.willChange = offset ? 'transform' : '';
+    layer.style.transform = offset ? `translate(${offset.dx}px, ${offset.dy}px)` : '';
+  }
+}
+
+/** Another layer (math labels, feedback) framed as the drawing is. */
+function frameLike(layer) {
+  const drawing = editor.canvasSvgEl;
+  if (!drawing) return;
+  for (const name of ['width', 'height', 'viewBox']) layer.setAttribute(name, drawing.getAttribute(name));
+  placeLayer(layer);
+  layer.style.transform = drawing.style.transform;
+  layer.style.willChange = drawing.style.willChange;
+}
+
 /** Re-frame the committed drawing for the current view: root size, background,
  * and grid. Same output as a full svgString rebuild at this viewport. */
 function applyCanvasViewport() {
-  const vp = { x: editor.view.x, y: editor.view.y, w: editor.view.w, h: editor.view.h };
+  const vp = paintedFrame();
   const frame = viewportFrame(vp);
   editor.canvasSvgEl.setAttribute('width', frame.width);
   editor.canvasSvgEl.setAttribute('height', frame.height);
   editor.canvasSvgEl.setAttribute('viewBox', frame.viewBox);
-  // The math labels' own layer (main.js) follows the drawing's frame.
-  const mathLayer = editor.canvasSvgEl.parentNode?.querySelector(':scope > .math-layer');
-  if (mathLayer) {
-    mathLayer.setAttribute('width', frame.width);
-    mathLayer.setAttribute('height', frame.height);
-    mathLayer.setAttribute('viewBox', frame.viewBox);
-  }
+  placeLayer(editor.canvasSvgEl);
+  // The other layers (math labels, feedback, the wire sweep) follow the drawing's frame.
+  for (const layer of drawingLayers()) if (layer !== editor.canvasSvgEl) frameLike(layer);
   const background = editor.canvasSvgEl.firstElementChild;
   if (background?.tagName !== 'rect') return;
   for (const [name, value] of Object.entries(frame.background)) background.setAttribute(name, value);
@@ -64698,6 +64762,7 @@ function zoomToWorldRect(r) {
   animateViewTo({ x: (r.x0 + r.x1) / 2 - tw / 2, y: (r.y0 + r.y1) / 2 - th / 2, w: tw, h: th });
 }
 
+__exports.PAN_MARGIN = PAN_MARGIN;
 };
 
 __modules["src/web/chrome-quiet.js"] = function (__require, __exports) {
@@ -65756,7 +65821,7 @@ function labelTrace(label, boxClass) {
 
 /** How long a run takes to draw in, and its pace: the CSS animation of
  *  `.landing-reveal` (set inline from here, so the two agree). */
-const REVEAL_MS = 340;
+const REVEAL_MS = 240;
 const REVEAL_EASE = EASE_OUT;
 
 /** The time (ms) the reveal reaches `share` (0..1) of a run's length: the
@@ -65843,13 +65908,18 @@ __exports.mountCommitFeedback = mountCommitFeedback;
 let Circuit; __bind(() => { ({ Circuit } = __require("src/core/model.js")); });
 let commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback; __bind(() => { ({ commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback } = __require("src/web/commit-feedback.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let frameLike; __bind(() => { ({ frameLike } = __require("src/web/canvas-view.js")); });
 let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion.js")); });
 /**
  * The brief flash over what an undoable edit changed. What changed is
  * worked out in commit-feedback.js; this queues and plays it. A new wire
- * draws itself in: a mask over the wire ink hides each new run and uncovers
- * it from end to end.
+ * draws itself in: a stroke of the paper over each new run (`.landing-reveal`)
+ * pulls back from end to end, uncovering it. That stroke, the ripples, and
+ * the dots are on a layer of their own over the drawing (`svg.landing-layer`,
+ * framed as the drawing is), so as they move nothing of the drawing is
+ * painted again.
  */
+
 
 
 
@@ -65903,8 +65973,9 @@ function playCommitFeedback(beforeSnapshot) {
   }
   setTimeout(() => {
     commitFeedbackBursts = commitFeedbackBursts.filter((b) => b !== burst);
-    for (const el of editor.canvasSvgEl?.querySelectorAll(`[data-burst="${burst.id}"]`) || []) el.remove();
-    syncRevealMask();
+    for (const el of editor.canvasSvgEl?.parentNode?.querySelectorAll(`[data-burst="${burst.id}"]`) || []) el.remove();
+    if (!commitFeedbackBursts.length) landingLayer(false)?.remove();
+    syncSolders();
   }, COMMIT_FEEDBACK_MS);
   mountCommitFeedback(true);
 }
@@ -65918,49 +65989,48 @@ function wireStart() {
   return { x: source.x, y: source.y };
 }
 
-function mountCommitFeedback(force = false) {
-  if (!editor.canvasSvgEl) return;
-  let layer = editor.canvasSvgEl.querySelector(':scope > .commit-feedback');
-  const underlay = editor.canvasSvgEl.querySelector(':scope > .editor-underlay');
-  if (layer && !force) {
-    // Keep it above the overlay, but never move it needlessly: re-inserting a
-    // node restarts its CSS animations, which flickered on every pointer move.
-    if (editor.canvasSvgEl.lastElementChild !== layer) editor.canvasSvgEl.appendChild(layer);
-    syncRevealMask();
-    return;
-  }
-  if (!commitFeedbackBursts.length) {
-    layer?.remove();
-    underlay?.replaceChildren();
-    syncRevealMask();
-    return;
-  }
-  if (!layer) {
-    layer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    layer.setAttribute('class', 'commit-feedback');
+/** The layer the feedback moves on, over the drawing (made when `make`). */
+function landingLayer(make = true) {
+  const canvas = editor.canvasSvgEl?.parentNode;
+  if (!canvas) return null;
+  let layer = canvas.querySelector(':scope > svg.landing-layer');
+  if (!layer && make) {
+    layer = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    layer.setAttribute('class', 'landing-layer');
     layer.setAttribute('aria-hidden', 'true');
+    canvas.appendChild(layer);
   }
-  // Negative delays resume each burst where it was if the canvas was rebuilt.
-  const now = performance.now();
-  const groups = (part) => commitFeedbackBursts
-    .map((b) => `<g data-burst="${b.id}" style="--landing-elapsed:${-Math.round(now - b.start)}ms">${b[part]}</g>`)
-    .join('');
-  layer.innerHTML = groups('over');
-  if (underlay) underlay.innerHTML = groups('under');
-  if (editor.canvasSvgEl.lastElementChild !== layer) editor.canvasSvgEl.appendChild(layer);
-  syncRevealMask();
+  if (layer) frameLike(layer);
+  return layer;
 }
 
-const REVEAL_MASK_ID = 'landing-reveal-mask';
-/** What the reveal hides along a new wire: the painted wires and pin
- *  leads, and the editor's own layers over and under them (a hover's or a
- *  selection's glow), so nothing shows the wire before it is drawn. */
-const WIRE_INK = '.wire-ink, .wire-managed:not([stroke-opacity="0"]), .wire-beat, .editor-overlay, .editor-underlay';
+function mountCommitFeedback(force = false) {
+  if (!editor.canvasSvgEl) return;
+  const underlay = editor.canvasSvgEl.querySelector(':scope > .editor-underlay');
+  if (!commitFeedbackBursts.length) {
+    landingLayer(false)?.remove();
+    underlay?.replaceChildren();
+    syncSolders();
+    return;
+  }
+  const layer = landingLayer();
+  // Kept above the drawing's other layers (the math labels), never moved
+  // needlessly: re-inserting a node restarts its CSS animations.
+  if (layer.parentNode.lastElementChild !== layer) layer.parentNode.appendChild(layer);
+  if (force || !layer.firstChild) {
+    // Negative delays resume each burst where it was if the canvas was rebuilt.
+    const now = performance.now();
+    const groups = (part) => commitFeedbackBursts
+      .map((b) => `<g data-burst="${b.id}" style="--landing-elapsed:${-Math.round(now - b.start)}ms">${part === 'over' ? `${b.reveal || ''}${b.over}` : b[part]}</g>`)
+      .join('');
+    layer.innerHTML = groups('over');
+    if (underlay) underlay.innerHTML = groups('under');
+  }
+  syncSolders();
+}
 
-/** The one mask every burst's new runs share (an element takes one mask),
- *  on the wire ink while any is drawing in, and gone once none is; and each
- *  new solder dot hidden until its wire reaches it, then popping in. */
-function syncRevealMask() {
+/** Each new solder dot hidden until its wire reaches it, then popping in. */
+function syncSolders() {
   const svg = editor.canvasSvgEl;
   if (!svg) return;
   const now = performance.now();
@@ -65974,32 +66044,6 @@ function syncRevealMask() {
     el.style.setProperty('--landing-solder-at', `${delay}ms`);
     el.classList.add('landing-solder');
   }
-  const runs = commitFeedbackBursts.filter((b) => b.reveal)
-    .map((b) => `<g style="--landing-elapsed:${-Math.round(now - b.start)}ms">${b.reveal}</g>`).join('');
-  let mask = svg.querySelector(`#${REVEAL_MASK_ID}`);
-  if (!runs) {
-    mask?.remove();
-    for (const el of svg.querySelectorAll(`[mask="url(#${REVEAL_MASK_ID})"]`)) el.removeAttribute('mask');
-    return;
-  }
-  if (!mask) {
-    mask = document.createElementNS('http://www.w3.org/2000/svg', 'mask');
-    mask.id = REVEAL_MASK_ID;
-    mask.setAttribute('maskUnits', 'userSpaceOnUse');
-    // The whole plane: a mask's default region is its element's box, which a
-    // straight wire's has no height.
-    for (const [name, value] of Object.entries({ x: -1e6, y: -1e6, width: 2e6, height: 2e6 })) mask.setAttribute(name, value);
-    svg.prepend(mask);
-  }
-  // Rewritten only when the bursts change, so their animations run on.
-  const key = commitFeedbackBursts.filter((b) => b.reveal).map((b) => b.id).join(',');
-  if (mask.dataset.bursts !== key) {
-    mask.dataset.bursts = key;
-    // White as a keyword: the theme repaints a canvas `#fff` fill as the
-    // paper, dark in the dark theme, which would fade every wire under it.
-    mask.innerHTML = `<rect x="-1000000" y="-1000000" width="2000000" height="2000000" fill="white"/>${runs}`;
-  }
-  for (const el of svg.querySelectorAll(WIRE_INK)) el.setAttribute('mask', `url(#${REVEAL_MASK_ID})`);
 }
 
 };
@@ -79305,7 +79349,7 @@ let openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu; __bind((
 let logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar; __bind(() => { ({ logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar } = __require("src/web/status-bar-ui.js")); });
 let resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi; __bind(() => { ({ resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi } = __require("src/web/design-check-ui.js")); });
 let partialVertexPicks, selectAllNetIds; __bind(() => { ({ partialVertexPicks, selectAllNetIds } = __require("src/core/selection.js")); });
-let paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, fitView, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect; __bind(() => { ({ paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, fitView, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect } = __require("src/web/canvas-view.js")); });
+let paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, fitView, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect, PAN_MARGIN, frameLike, paintMarginNow, paintedFrame, placeLayer, setPaintMargin, slideLayers; __bind(() => { ({ paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, fitView, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect, PAN_MARGIN, frameLike, paintMarginNow, paintedFrame, placeLayer, setPaintMargin, slideLayers } = __require("src/web/canvas-view.js")); });
 let adoptDrawing, patchChildren, patchDrawing; __bind(() => { ({ adoptDrawing, patchChildren, patchDrawing } = __require("src/web/svg-patch.js")); });
 let syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock; __bind(() => { ({ syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock } = __require("src/web/analysis-ui.js")); });
 let closeComponentContextMenu, openContextMenuAt, installContextMenu; __bind(() => { ({ closeComponentContextMenu, openContextMenuAt, installContextMenu } = __require("src/web/context-menu.js")); });
@@ -79991,6 +80035,48 @@ function recordHistoryEntry(startSnapshot, trim = true, feedback = 'now') {
 // redraws do not restart it; a canvas rebuild remounts it mid-animation.
 
 let pendingFeedbackSnapshot = null;
+// ----- a pan slides what is painted ------------------------------------------------
+// While the view pans, the drawing is painted a margin beyond the pane
+// (canvas-view.js PAN_MARGIN) and only slid as the pointer moves: no part of
+// it painted again until the view nears the margin's edge, or zooms. Then it
+// is painted round the view again, and the pan's end paints it as usual.
+
+/** The view the drawing was last painted round, while a pan slides it. */
+let paintedPan = null;
+
+function beginPaintedPan() {
+  paintedPan = { ...view };
+  setPaintMargin(PAN_MARGIN);
+  render();
+}
+
+/** The drawing painted round the view now: nothing slid. */
+function settlePaintedPan() {
+  paintedPan = { ...view };
+  slideLayers(null);
+}
+
+function slidePaintedPan() {
+  if (!paintedPan || !canvasSvgEl) {
+    scheduleInteractionRender();
+    return;
+  }
+  const reach = PAN_MARGIN * 0.8;
+  const zoomed = view.w !== paintedPan.w || view.h !== paintedPan.h;
+  if (zoomed || Math.abs(view.x - paintedPan.x) > reach * view.w || Math.abs(view.y - paintedPan.y) > reach * view.h) {
+    scheduleInteractionRender();
+    return;
+  }
+  const k = (paneSize()?.w || canvasEl.clientWidth) / view.w;
+  slideLayers({ dx: (paintedPan.x - view.x) * k, dy: (paintedPan.y - view.y) * k });
+}
+
+function endPaintedPan() {
+  paintedPan = null;
+  setPaintMargin(0);
+  slideLayers(null);
+}
+
 function scheduleInteractionRender() {
   // Routing the draft is the costly part of a wire-mode repaint; do it once
   // per painted frame rather than once per input event.
@@ -82200,7 +82286,7 @@ function syncMathLayer(parts) {
     canvasEl.appendChild(mathLayerEl);
     mathLayerMarkup = null;
   }
-  for (const name of ['width', 'height', 'viewBox']) mathLayerEl.setAttribute(name, canvasSvgEl.getAttribute(name));
+  frameLike(mathLayerEl);
   if (source === mathLayerMarkup) return;
   const first = mathLayerMarkup === null;
   mathLayerMarkup = source;
@@ -82292,15 +82378,21 @@ function renderCanvas(modelKey) {
   // The drawing is in world coordinates; only its frame depends on the view.
   // Pan and zoom therefore re-apply the frame and keep the drawing's DOM.
   const canvasKey = `${modelKey}|${showGrid}|${editingLabelId}|${beatView ? beatView.index : ''}|${[...ghostRefs].join(',')}|${[...ghostLabels].join(',')}|${[...ghostNets].join(',')}`;
-  const viewKey = `${view.x},${view.y},${view.w},${view.h}`;
+  // A pan the pointer has let go of without a release (a lost capture): the
+  // drawing is painted as usual again.
+  if (paintMarginNow() && drag?.mode !== 'pan') endPaintedPan();
+  const viewKey = `${view.x},${view.y},${view.w},${view.h},${paintMarginNow()}`;
   const canvasRebuilt = canvasKey !== committedCanvasKey || !canvasSvgEl;
   if (!canvasRebuilt && viewKey !== committedViewKey) {
     committedViewKey = viewKey;
     applyCanvasViewport();
+    // Painted again round the view: nothing left to slide.
+    if (paintedPan) settlePaintedPan();
   }
   if (canvasRebuilt) {
     committedCanvasKey = canvasKey;
     committedViewKey = viewKey;
+    if (paintedPan) settlePaintedPan();
     const mathParts = [];
     const markup = svgString(circuit, {
       mathSink: mathParts,
@@ -82311,7 +82403,7 @@ function renderCanvas(modelKey) {
       junctions: false,
       background: true,
       emptyHint: false,
-      viewport: { x: view.x, y: view.y, w: view.w, h: view.h },
+      viewport: paintedFrame(view),
       ghostRefs,
       ghostLabels,
       ghostNets,
@@ -82333,6 +82425,7 @@ function renderCanvas(modelKey) {
       canvasSvgEl = nextSvg;
       mountedDocumentPath = currentDocumentPath;
     }
+    placeLayer(canvasSvgEl);
     syncMathLayer(mathParts);
     if (syncRenderedLabelMetrics()) scheduleMeasuredLabelRender();
   }
@@ -82350,16 +82443,6 @@ function renderCanvas(modelKey) {
     snapLayerEl.setAttribute('pointer-events', 'none');
     canvasSvgEl.appendChild(snapLayerEl);
     snapPulseKey = '';
-    // The marquee and zoom box follow the pointer on their own, drawn from
-    // the pointer event itself (drawRubber), not from the next frame's
-    // overlay, which also works out what the box would select.
-    rubberEl = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    rubberEl.setAttribute('class', 'rubber-box');
-    rubberEl.setAttribute('pointer-events', 'none');
-    rubberEl.setAttribute('opacity', '0.12');
-    rubberEl.setAttribute('stroke-width', '1.4');
-    rubberEl.setAttribute('stroke-dasharray', '5 4');
-    canvasSvgEl.appendChild(rubberEl);
     rubberKey = '';
     mountLinkBubbles(canvasSvgEl, overlayEl);
   }
@@ -82500,7 +82583,20 @@ function renderCanvas(modelKey) {
     cursorCrosshair: crosshairVisible && cursorInCanvas ? view : null,
   });
   // Ghosts and previews use the same theme-aware ink as the committed drawing.
-  overlayEl.innerHTML = themeInkSvg((hoverMoves() ? HOVER_MOVE_AREA : '') + withGestureOverlay(overlay, ghost));
+  // Only what changed is written (the cursor's ring, as the pointer moves):
+  // rewritten whole, the overlay's whole area of the drawing -- under a
+  // selection's glow, most of it -- would be painted again every frame.
+  const overlayMarkup = themeInkSvg((hoverMoves() ? HOVER_MOVE_AREA : '') + withGestureOverlay(overlay, ghost));
+  if (overlayMarkup !== overlayWritten || !overlayEl.dataset.written) {
+    if (!overlayEl.dataset.written) overlayEl.innerHTML = overlayMarkup;
+    else {
+      const template = document.createElement('template');
+      template.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg">${overlayMarkup}</svg>`;
+      patchChildren(overlayEl, template.content.firstChild);
+    }
+    overlayWritten = overlayMarkup;
+    if (!overlayEl.dataset.written) overlayEl.dataset.written = '1';
+  }
   drawRubber();
   syncLinkBubbles();
   syncSnapPulse();
@@ -82537,26 +82633,40 @@ let hoverAnnotationId = null; // arrow/line whose vertex handles show in Select 
 let snapLayerEl = null;
 let rubberEl = null;
 let rubberKey = '';
+/** The overlay's markup as last written. */
+let overlayWritten = null;
 
-/** Draw the marquee or zoom box where the drag has it now, or hide it. */
+/** Draw the marquee or zoom box where the drag has it now, or hide it. It
+ *  follows the pointer on its own, drawn from the pointer event itself, not
+ *  from the next frame's overlay (which works out what the box would
+ *  select); and on a layer of its own over the drawing, so moving it paints
+ *  nothing of the drawing again. */
 function drawRubber() {
-  if (!rubberEl) return;
   const r = drag?.rubber;
-  const key = r ? `${r.x0},${r.y0},${r.x1},${r.y1},${r.color || ''}` : '';
+  if (!r && !rubberEl) return;
+  if (!rubberEl || rubberEl.parentNode !== canvasEl) {
+    rubberEl = document.createElement('div');
+    rubberEl.className = 'rubber-box';
+    rubberEl.setAttribute('aria-hidden', 'true');
+    canvasEl.appendChild(rubberEl);
+    rubberKey = '';
+  }
+  const key = r ? `${r.x0},${r.y0},${r.x1},${r.y1},${r.color || ''}|${view.x},${view.y},${view.w}` : '';
   if (key === rubberKey) return;
   rubberKey = key;
   if (!r) {
-    rubberEl.setAttribute('display', 'none');
+    rubberEl.hidden = true;
     return;
   }
-  const color = r.color === 'neutral' ? 'var(--svg-faint, #7a7d85)' : 'var(--accent, #0e7c7b)';
-  rubberEl.removeAttribute('display');
-  rubberEl.setAttribute('x', fmt(Math.min(r.x0, r.x1)));
-  rubberEl.setAttribute('y', fmt(Math.min(r.y0, r.y1)));
-  rubberEl.setAttribute('width', fmt(Math.abs(r.x1 - r.x0)));
-  rubberEl.setAttribute('height', fmt(Math.abs(r.y1 - r.y0)));
-  rubberEl.setAttribute('fill', color);
-  rubberEl.setAttribute('stroke', color);
+  const pane = paneSize() || { w: canvasEl.clientWidth, h: canvasEl.clientHeight };
+  const k = pane.w / view.w;
+  const x = (Math.min(r.x0, r.x1) - view.x) * k;
+  const y = (Math.min(r.y0, r.y1) - view.y) * k;
+  rubberEl.hidden = false;
+  rubberEl.classList.toggle('neutral', r.color === 'neutral');
+  rubberEl.style.transform = `translate(${x}px, ${y}px)`;
+  rubberEl.style.width = `${Math.abs(r.x1 - r.x0) * k}px`;
+  rubberEl.style.height = `${Math.abs(r.y1 - r.y0) * k}px`;
 }
 
 let snapPulseKey = '';
@@ -83824,6 +83934,7 @@ function canvasMouseDown(ev) {
       rubber: null,
       resume: drag,
     };
+    beginPaintedPan();
     return;
   }
   if (b === 2) {
@@ -85142,7 +85253,7 @@ function canvasMouseMove(ev) {
     const p = clientToWorld(ev.clientX, ev.clientY, drag.startView);
     view.x = drag.startView.x - (p.x - drag.startWorld.x);
     view.y = drag.startView.y - (p.y - drag.startWorld.y);
-    scheduleInteractionRender();
+    slidePaintedPan();
     return;
   }
 
@@ -85492,6 +85603,7 @@ function finishCanvasMouseUp(ev) {
   if (drag.mode === 'pan') {
     if (ev.button !== 1 && !(ev.button === 0 && drag.spacePan) && drag.pointerId !== ev.pointerId && ev.pointerType === 'mouse') return;
     drag = drag.resume || null;
+    endPaintedPan();
     render();
     return;
   }
@@ -85870,6 +85982,7 @@ canvasEl.addEventListener('pointerdown', (ev) => {
   if (shouldPanTouch({ pointerType: ev.pointerType, hasHit: hasSelectableObjectAt(clientToWorld(ev.clientX, ev.clientY)), mode })) {
     const startClient = { x: ev.clientX, y: ev.clientY };
     drag = { mode: 'pan', pointerId: ev.pointerId, startClient, startWorld: clientToWorld(ev.clientX, ev.clientY), startView: { ...view }, rubber: null, resume: drag };
+    beginPaintedPan();
     canvasEl.setPointerCapture?.(ev.pointerId);
     ev.preventDefault();
     return;

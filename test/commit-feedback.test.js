@@ -135,7 +135,7 @@ test('a new solder dot is the drawing\'s own, named with when its wire reaches i
   }, { from: { x: 0, y: 0 } });
   assert.deepEqual(svg.solders, [{ refdes: 'J1', at: REVEAL_MS }], 'the far end, reached last');
   assert.doesNotMatch(svg.over, /landing-pop|cx="80" cy="0" r="6"/, 'no stand-in dot over it');
-  assert.match(svg.over, /class="landing-ripple" cx="80" cy="0" r="18" style="--landing-at:340ms"/);
+  assert.match(svg.over, /class="landing-ripple" cx="80" cy="0" r="18" style="--landing-at:240ms"/);
   assert.match(svg.over, /class="landing-ripple" cx="0" cy="0" r="18"\/>/, 'the start lands at once');
   // Begun at the other end: the dot is there at once.
   const back = commitFeedbackSvg({ components: [], labels: [], removedComponents: [], removedLabels: [], removedPieces: [], pieces: [{ a: { x: 0, y: 0 }, b: { x: 80, y: 0 } }], points: [{ x: 80, y: 0, solder: 'J1' }] }, { from: { x: 80, y: 0 } });

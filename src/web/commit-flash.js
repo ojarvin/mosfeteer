@@ -1,13 +1,17 @@
 /**
  * The brief flash over what an undoable edit changed. What changed is
  * worked out in commit-feedback.js; this queues and plays it. A new wire
- * draws itself in: a mask over the wire ink hides each new run and uncovers
- * it from end to end.
+ * draws itself in: a stroke of the paper over each new run (`.landing-reveal`)
+ * pulls back from end to end, uncovering it. That stroke, the ripples, and
+ * the dots are on a layer of their own over the drawing (`svg.landing-layer`,
+ * framed as the drawing is), so as they move nothing of the drawing is
+ * painted again.
  */
 
 import { Circuit } from '../core/model.js';
 import { commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback } from './commit-feedback.js';
 import { editor } from './editor-state.js';
+import { frameLike } from './canvas-view.js';
 import { reducedMotion } from './motion.js';
 
 /** A burst's life: a wire drawing in, then the ripple where it lands. */
@@ -57,8 +61,9 @@ export function playCommitFeedback(beforeSnapshot) {
   }
   setTimeout(() => {
     commitFeedbackBursts = commitFeedbackBursts.filter((b) => b !== burst);
-    for (const el of editor.canvasSvgEl?.querySelectorAll(`[data-burst="${burst.id}"]`) || []) el.remove();
-    syncRevealMask();
+    for (const el of editor.canvasSvgEl?.parentNode?.querySelectorAll(`[data-burst="${burst.id}"]`) || []) el.remove();
+    if (!commitFeedbackBursts.length) landingLayer(false)?.remove();
+    syncSolders();
   }, COMMIT_FEEDBACK_MS);
   mountCommitFeedback(true);
 }
@@ -72,49 +77,48 @@ function wireStart() {
   return { x: source.x, y: source.y };
 }
 
-export function mountCommitFeedback(force = false) {
-  if (!editor.canvasSvgEl) return;
-  let layer = editor.canvasSvgEl.querySelector(':scope > .commit-feedback');
-  const underlay = editor.canvasSvgEl.querySelector(':scope > .editor-underlay');
-  if (layer && !force) {
-    // Keep it above the overlay, but never move it needlessly: re-inserting a
-    // node restarts its CSS animations, which flickered on every pointer move.
-    if (editor.canvasSvgEl.lastElementChild !== layer) editor.canvasSvgEl.appendChild(layer);
-    syncRevealMask();
-    return;
-  }
-  if (!commitFeedbackBursts.length) {
-    layer?.remove();
-    underlay?.replaceChildren();
-    syncRevealMask();
-    return;
-  }
-  if (!layer) {
-    layer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    layer.setAttribute('class', 'commit-feedback');
+/** The layer the feedback moves on, over the drawing (made when `make`). */
+function landingLayer(make = true) {
+  const canvas = editor.canvasSvgEl?.parentNode;
+  if (!canvas) return null;
+  let layer = canvas.querySelector(':scope > svg.landing-layer');
+  if (!layer && make) {
+    layer = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    layer.setAttribute('class', 'landing-layer');
     layer.setAttribute('aria-hidden', 'true');
+    canvas.appendChild(layer);
   }
-  // Negative delays resume each burst where it was if the canvas was rebuilt.
-  const now = performance.now();
-  const groups = (part) => commitFeedbackBursts
-    .map((b) => `<g data-burst="${b.id}" style="--landing-elapsed:${-Math.round(now - b.start)}ms">${b[part]}</g>`)
-    .join('');
-  layer.innerHTML = groups('over');
-  if (underlay) underlay.innerHTML = groups('under');
-  if (editor.canvasSvgEl.lastElementChild !== layer) editor.canvasSvgEl.appendChild(layer);
-  syncRevealMask();
+  if (layer) frameLike(layer);
+  return layer;
 }
 
-const REVEAL_MASK_ID = 'landing-reveal-mask';
-/** What the reveal hides along a new wire: the painted wires and pin
- *  leads, and the editor's own layers over and under them (a hover's or a
- *  selection's glow), so nothing shows the wire before it is drawn. */
-const WIRE_INK = '.wire-ink, .wire-managed:not([stroke-opacity="0"]), .wire-beat, .editor-overlay, .editor-underlay';
+export function mountCommitFeedback(force = false) {
+  if (!editor.canvasSvgEl) return;
+  const underlay = editor.canvasSvgEl.querySelector(':scope > .editor-underlay');
+  if (!commitFeedbackBursts.length) {
+    landingLayer(false)?.remove();
+    underlay?.replaceChildren();
+    syncSolders();
+    return;
+  }
+  const layer = landingLayer();
+  // Kept above the drawing's other layers (the math labels), never moved
+  // needlessly: re-inserting a node restarts its CSS animations.
+  if (layer.parentNode.lastElementChild !== layer) layer.parentNode.appendChild(layer);
+  if (force || !layer.firstChild) {
+    // Negative delays resume each burst where it was if the canvas was rebuilt.
+    const now = performance.now();
+    const groups = (part) => commitFeedbackBursts
+      .map((b) => `<g data-burst="${b.id}" style="--landing-elapsed:${-Math.round(now - b.start)}ms">${part === 'over' ? `${b.reveal || ''}${b.over}` : b[part]}</g>`)
+      .join('');
+    layer.innerHTML = groups('over');
+    if (underlay) underlay.innerHTML = groups('under');
+  }
+  syncSolders();
+}
 
-/** The one mask every burst's new runs share (an element takes one mask),
- *  on the wire ink while any is drawing in, and gone once none is; and each
- *  new solder dot hidden until its wire reaches it, then popping in. */
-function syncRevealMask() {
+/** Each new solder dot hidden until its wire reaches it, then popping in. */
+function syncSolders() {
   const svg = editor.canvasSvgEl;
   if (!svg) return;
   const now = performance.now();
@@ -128,30 +132,4 @@ function syncRevealMask() {
     el.style.setProperty('--landing-solder-at', `${delay}ms`);
     el.classList.add('landing-solder');
   }
-  const runs = commitFeedbackBursts.filter((b) => b.reveal)
-    .map((b) => `<g style="--landing-elapsed:${-Math.round(now - b.start)}ms">${b.reveal}</g>`).join('');
-  let mask = svg.querySelector(`#${REVEAL_MASK_ID}`);
-  if (!runs) {
-    mask?.remove();
-    for (const el of svg.querySelectorAll(`[mask="url(#${REVEAL_MASK_ID})"]`)) el.removeAttribute('mask');
-    return;
-  }
-  if (!mask) {
-    mask = document.createElementNS('http://www.w3.org/2000/svg', 'mask');
-    mask.id = REVEAL_MASK_ID;
-    mask.setAttribute('maskUnits', 'userSpaceOnUse');
-    // The whole plane: a mask's default region is its element's box, which a
-    // straight wire's has no height.
-    for (const [name, value] of Object.entries({ x: -1e6, y: -1e6, width: 2e6, height: 2e6 })) mask.setAttribute(name, value);
-    svg.prepend(mask);
-  }
-  // Rewritten only when the bursts change, so their animations run on.
-  const key = commitFeedbackBursts.filter((b) => b.reveal).map((b) => b.id).join(',');
-  if (mask.dataset.bursts !== key) {
-    mask.dataset.bursts = key;
-    // White as a keyword: the theme repaints a canvas `#fff` fill as the
-    // paper, dark in the dark theme, which would fade every wire under it.
-    mask.innerHTML = `<rect x="-1000000" y="-1000000" width="2000000" height="2000000" fill="white"/>${runs}`;
-  }
-  for (const el of svg.querySelectorAll(WIRE_INK)) el.setAttribute('mask', `url(#${REVEAL_MASK_ID})`);
 }
