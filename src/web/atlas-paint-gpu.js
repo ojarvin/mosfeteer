@@ -308,11 +308,7 @@ precision highp float;
 in vec2 v_p;
 uniform vec2 u_phase;
 uniform float u_height, u_spacing, u_width, u_px, u_clipRadius;
-uniform vec4 u_color, u_clip, u_rippleColor;
-// A ring running out from a click: x, y (device pixels), its radius, its
-// strength; and its width and how far it bends the lines (device pixels).
-uniform vec4 u_ripple;
-uniform vec2 u_rippleShape;
+uniform vec4 u_color, u_clip;
 out vec4 color;
 ${ROUNDED_BOX}
 float line(float p, float phase) {
@@ -322,19 +318,9 @@ float line(float p, float phase) {
 }
 void main() {
   vec2 pixel = vec2(floor(gl_FragCoord.x), floor(u_height - gl_FragCoord.y));
-  float wave = 0.0;
-  if (u_ripple.w > 0.0) {
-    // Where the ring is passing the lines bend out with it, and light up.
-    vec2 off = pixel - u_ripple.xy;
-    float r = length(off);
-    float band = (r - u_ripple.z) / u_rippleShape.x;
-    wave = exp(-band * band) * u_ripple.w;
-    pixel = floor(pixel - (r > 0.0 ? off / r : vec2(0.0)) * wave * u_rippleShape.y + 0.5);
-  }
   float on = max(line(pixel.x, u_phase.x), line(pixel.y, u_phase.y));
-  float clipped = u_clip.z > 0.0 ? clamp(0.5 - sdBox(v_p, u_clip, u_clipRadius) / u_px, 0.0, 1.0) : 1.0;
-  // The lines take the ring's color, and a faint band of it lies between them.
-  color = (mix(u_color, u_rippleColor, min(1.0, wave * 1.5)) * on + u_rippleColor * (wave * 0.12)) * clipped;
+  if (u_clip.z > 0.0) on *= clamp(0.5 - sdBox(v_p, u_clip, u_clipRadius) / u_px, 0.0, 1.0);
+  color = u_color * on;
 }`;
 
 const MIP_VERTEX = `#version 300 es
@@ -774,10 +760,7 @@ export function createGpuDesk(canvas, gl) {
       if (texture) drawTexture(texture, rect.x, rect.y, rect.w, rect.h, alpha, LOD_BIAS, effects);
     },
 
-    /** `ripple`: { x, y, reach, width, bend (CSS pixels), t (0 to 1 of its
-     *  run), color }: a ring running out through the lines, its light shown
-     *  however faint the lines are (`alpha`). */
-    grid({ x, y, k, spacing, color, alpha = 1, clip = null, ripple = null }) {
+    grid({ x, y, k, spacing, color, alpha = 1, clip = null }) {
       const { dpr, w, h } = pane;
       const width = Math.max(1, Math.round(k * dpr));
       const u = grid.u;
@@ -791,13 +774,6 @@ export function createGpuDesk(canvas, gl) {
       gl.uniform4fv(u.u_color, premultiplied(color, alpha * Math.min(1, (k * dpr) / width)));
       gl.uniform4f(u.u_clip, clip?.x ?? 0, clip?.y ?? 0, clip?.w ?? 0, clip?.h ?? 0);
       gl.uniform1f(u.u_clipRadius, clip?.radius ?? 0);
-      if (ripple && ripple.t < 1) {
-        gl.uniform4f(u.u_ripple, ripple.x * dpr, ripple.y * dpr, ripple.t * ripple.reach * dpr, 1 - ripple.t);
-        gl.uniform2f(u.u_rippleShape, ripple.width * dpr, ripple.bend * dpr);
-        gl.uniform4fv(u.u_rippleColor, premultiplied(ripple.color, 0.9));
-      } else {
-        gl.uniform4f(u.u_ripple, 0, 0, 0, 0);
-      }
       shapes.paintQuad();
     },
 

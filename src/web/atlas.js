@@ -177,8 +177,6 @@ export function atlasSnapshot() {
     baked: state.baked || 0,
     // Designs read for the GPU so far (once each, whatever the theme).
     reads: inkStamp,
-    // A click's ring running out through the grid: where it started.
-    ripple: state.ripple ? { x: state.ripple.x, y: state.ripple.y } : null,
     // M held: the loupe is shown.
     loupe: !!state.loupe,
     baking: !!state.baking || !!state.wanted?.length,
@@ -980,7 +978,7 @@ function drawDesk() {
     syncHint();
   }
   paint.begin({ w, h, dpr, paper: palette.paper, moving });
-  drawGrid(paint, palette, state.view, scale(), { ripple: rippleNow(palette) });
+  drawGrid(paint, palette);
 
   const screen = { x: state.view.x, y: state.view.y, w: state.view.w, h: state.view.h };
   // Mid-rearrangement, designs glide; those joining fade in, those leaving out.
@@ -2477,28 +2475,10 @@ function focusSearch() {
 
 /** The editor's grid: one-unit lines every cell, fading out as the cells
  *  shrink to a few pixels instead of turning into a gray wash. */
-/** How long a click's ring takes to run out through the grid. */
-const RIPPLE_MS = 900;
-
-/** The ring a click on the bare desk sent out, as far as it has run (paint.grid). */
-function rippleNow(palette) {
-  const ripple = state.ripple;
-  if (!ripple) return null;
-  const t = (performance.now() - ripple.at) / RIPPLE_MS;
-  if (t >= 1) {
-    state.ripple = null;
-    return null;
-  }
-  requestDraw();
-  // Its size is the desk's, in grid cells: from far out it is small.
-  const cell = GRID * scale();
-  return { x: ripple.x, y: ripple.y, t: easeOut(t), color: palette.accent, reach: 8 * cell, width: 0.8 * cell, bend: 0.3 * cell };
-}
-
 function drawGrid(paint, palette, { x, y } = state.view, k = scale(), options = {}) {
-  // A click's ring shows however faint (or hidden) the lines are.
-  const fade = editor.showGrid ? Math.max(0, Math.min(1, (GRID * k - 3) / 6)) : 0;
-  if (fade <= 0 && !options.ripple) return;
+  if (!editor.showGrid) return;
+  const fade = Math.min(1, (GRID * k - 3) / 6);
+  if (fade <= 0) return;
   paint.grid({ x, y, k, spacing: GRID, color: palette.grid, ...options, alpha: (options.alpha ?? 1) * fade });
 }
 
@@ -3858,11 +3838,6 @@ function onPointerUp(ev) {
   } else {
     state.picked = null;
     state.selected = hit?.id || null;
-    // A click on the bare desk sends a ring out through the grid.
-    if (!hit && !reducedMotion() && painter().vector) {
-      const box = rootEl.getBoundingClientRect();
-      state.ripple = { x: ev.clientX - box.left, y: ev.clientY - box.top, at: performance.now() };
-    }
   }
   requestDraw();
 }

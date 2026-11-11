@@ -108,26 +108,6 @@ describe('the Atlas desk on the GPU', { skip: browserSkip() }, () => {
     await stillDesk(h);
   });
 
-  test('a click on the bare desk sends a ring out through the grid', async () => {
-    await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
-    // Nothing picked: no card lifted larger than its place.
-    await h.key('Escape');
-    await stillDesk(h);
-    const tiles = (await snapshot(h)).tiles.map((t) => t.screen);
-    let at = null;
-    for (let y = 140; y < 800 && !at; y += 20) for (let x = 60; x < 1340 && !at; x += 20) if (!tiles.some((r) => x > r.x - 30 && x < r.x + r.w + 30 && y > r.y - 30 && y < r.y + r.h + 60)) at = { x, y };
-    assert.ok(at, 'a bare spot');
-    await h.mouse('mouseMoved', at.x, at.y, { button: 'none', buttons: 0 });
-    await h.mouse('mousePressed', at.x, at.y, { clickCount: 1 });
-    await h.mouse('mouseReleased', at.x, at.y, { clickCount: 1 });
-    const ripple = (await snapshot(h)).ripple;
-    await h.send('Emulation.setEmulatedMedia', { features: [] });
-    assert.ok(ripple, 'a ring');
-    const box = await h.evaluate(`(() => { const r = document.getElementById('atlas').getBoundingClientRect(); return { x: r.left, y: r.top }; })()`);
-    assert.deepEqual(ripple, { x: at.x - box.x, y: at.y - box.y });
-    await stillDesk(h);
-  });
-
   test('M held shows a loupe under the pointer, drawing the desk nearer; let go, it goes', async () => {
     await h.key('Escape');
     await stillDesk(h);
@@ -360,14 +340,6 @@ describe('the desk\'s effects, drawn directly', { skip: browserSkip() }, () => {
       return [Math.max(...row), at(100, 150)];`);
     assert.ok(f[0] < 6, `solid inside: ${f}`);
     assert.ok(f[1] > 245, `and hollow where it turns in: ${f}`);
-  });
-
-  test('a ring runs out through the grid: its lines take its color only where it is', async () => {
-    const r = await scene(`begin(); desk.grid({ x: 0, y: 0, k: 1, spacing: 40, color: '#000', ripple: { x: 0, y: 80, t: 0.5, reach: 200, width: 24, bend: 8, color: '#f00' } });
-      return [at(100, 80), at(30, 80), at(180, 80)];`);
-    // Along a grid line: red where the ring is (100 out), black before and past it.
-    assert.ok(r[0] > 100, `the ring: ${r}`);
-    assert.ok(r[1] < 10 && r[2] < 10, `not elsewhere: ${r}`);
   });
 
   test('the light on a rim is only where it has got to', async () => {
