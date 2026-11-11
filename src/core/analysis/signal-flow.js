@@ -1081,7 +1081,8 @@ function isMonomial(value) {
   return false;
 }
 
-export function transferTex(value, variable, { digits = 0, symbolicLead = false } = {}) {
+/** `delays`: written in delays, as z is (z^-1, z^-2; the default in z). */
+export function transferTex(value, variable, { digits = 0, symbolicLead = false, delays = variable === 'z' } = {}) {
   const numerator = coefficientList(value.numerator, variable);
   const denominator = coefficientList(value.denominator, variable);
   if (!numerator || !denominator) return `\\frac{${renderExpression(value.numerator, { variable })}}{${renderExpression(value.denominator, { variable })}}`;
@@ -1099,7 +1100,7 @@ export function transferTex(value, variable, { digits = 0, symbolicLead = false 
   // In z, every power is taken relative to the denominator's highest, so the
   // denominator runs 1, z^-1, z^-2 ... and the numerator keeps whatever
   // powers it has (a z^1 stays a z, rather than 1 over z^-1).
-  const shift = variable === 'z' ? (den[0]?.power ?? 0) : 0;
+  const shift = delays ? (den[0]?.power ?? 0) : 0;
   const powerText = (p) => {
     const e = p - shift;
     return e === 0 ? '' : e === 1 ? variable : `${variable}^{${e}}`;
@@ -1112,7 +1113,7 @@ export function transferTex(value, variable, { digits = 0, symbolicLead = false 
     if ((ea <= 0) !== (eb <= 0)) return ea <= 0 ? -1 : 1;
     return ea <= 0 ? eb - ea : ea - eb;
   };
-  const order = (list) => (variable === 'z' ? [...list].sort(zOrder) : list);
+  const order = (list) => (delays ? [...list].sort(zOrder) : list);
   const render = (list) => sumTex(order(list).map(({ power: p, coefficient }) => termTex(coefficient, powerText(p), digits)));
   const denominatorIsOne = den.length === 1 && den[0].power === shift && isPlainNumber(den[0].coefficient)
     && den[0].coefficient.numerator === 1n && den[0].coefficient.denominator === 1n;
@@ -1191,7 +1192,9 @@ function evaluate(dense, re, im) {
  * z result, s = j 2 pi f; in z over normalized frequency f/fs from 10^-4 to
  * 1/2, z = e^{j 2 pi f}. Null when a coefficient is symbolic.
  */
-export function responseCurve(value, variable, { pointsPerDecade = 40, sAxis = 'omega', at: extra = [] } = {}) {
+/** `steps`: in z, its steps a period of the axis's f_s (an SC circuit's
+ *  input sampled every slot: w, S a period): the curve then runs to S/2. */
+export function responseCurve(value, variable, { pointsPerDecade = 40, sAxis = 'omega', at: extra = [], steps = 1 } = {}) {
   if (!value) return null;
   // `at`: frequencies on the curve's own axis to land on exactly (a band's
   // edges and center), where a grid would step past a peak or a notch.
@@ -1219,12 +1222,14 @@ export function responseCurve(value, variable, { pointsPerDecade = 40, sAxis = '
     const curve = { variable, axis: 'relative', points: sketch.points.map(({ w, db, phase }) => ({ f: w, db, phase })) };
     return withPointsAt(curve, extra, (w) => ratioAt(0, w));
   }
-  // Over f/fs: z on the unit circle, or s up the imaginary axis.
-  const at = variable === 's' ? (w) => ({ re: 0, im: w }) : (w) => ({ re: Math.cos(w), im: Math.sin(w) });
+  // Over f/fs: z on the unit circle (a step a 1/steps of a period), or s up
+  // the imaginary axis.
+  const at = variable === 's' ? (w) => ({ re: 0, im: w }) : (w) => ({ re: Math.cos(w / steps), im: Math.sin(w / steps) });
+  const highest = variable === 's' ? 0.5 : steps / 2;
   const points = [];
   let previous = null;
-  for (let i = 0; i <= Math.round(Math.log10(0.5 / 1e-4) * pointsPerDecade); i++) {
-    const f = Math.min(0.5, 1e-4 * 10 ** (i / pointsPerDecade));
+  for (let i = 0; i <= Math.round(Math.log10(highest / 1e-4) * pointsPerDecade); i++) {
+    const f = Math.min(highest, 1e-4 * 10 ** (i / pointsPerDecade));
     const w = 2 * Math.PI * f;
     const point = at(w);
     const top = evaluate(num, point.re, point.im);
@@ -1241,7 +1246,7 @@ export function responseCurve(value, variable, { pointsPerDecade = 40, sAxis = '
   }
   return withPointsAt({ variable, axis: 'normalized', points }, extra, (f) => {
     const w = 2 * Math.PI * f;
-    return variable === 's' ? ratioAt(0, w) : ratioAt(Math.cos(w), Math.sin(w));
+    return variable === 's' ? ratioAt(0, w) : ratioAt(Math.cos(w / steps), Math.sin(w / steps));
   });
 }
 
@@ -1626,7 +1631,7 @@ export function responsePlot(traces, variable, { sAxis = 'omega', band = null, q
   const detailed = detail && detail[0] > 0 && detail[1] > detail[0] ? logGrid(detail[0], detail[1], 240) : [];
   const bandPoints = (variable) => [...bandFrequencies(band), ...bandGrid(band)].map((f) => (variable === 's' && axis !== 'normalized' ? 2 * Math.PI * f : f)).concat(detailed);
   const curves = withVariable
-    .map((trace) => ({ trace, curve: responseCurve(trace.value, trace.variable, { sAxis: axis, at: bandPoints(trace.variable) }) }))
+    .map((trace) => ({ trace, curve: responseCurve(trace.value, trace.variable, { sAxis: axis, at: bandPoints(trace.variable), steps: trace.steps || 1 }) }))
     .filter(({ curve }) => curve && curve.points.length > 1);
   // A simulated spectrum plots alone too, on f/fs, its curves all off.
   const alone = !curves.length && quantity !== 'phase' && background.some((trace) => trace.points?.length) ? background : [];
@@ -1634,8 +1639,9 @@ export function responsePlot(traces, variable, { sAxis = 'omega', band = null, q
   const all = curves.length ? curves.flatMap(({ curve }) => curve.points.map((point) => point.f)) : alone.flatMap((trace) => trace.points.map((point) => point.f)).filter((f) => f > 0 && f <= 0.5);
   const curveAxis = curves.length ? curves[0].curve.axis : 'normalized';
   const low = Math.floor(Math.log10(Math.min(...all)) + 1e-9);
-  // A sampled system's frequencies end at f_s/2, where its curves do.
-  const high = curveAxis === 'normalized' ? Math.log10(0.5) : Math.ceil(Math.log10(Math.max(...all)) - 1e-9);
+  // A sampled system's frequencies end at f_s/2, where its curves do (at
+  // S/2 for one stepping S times a period).
+  const high = curveAxis === 'normalized' ? Math.log10(Math.max(0.5, ...withVariable.map((trace) => (trace.steps || 1) / 2))) : Math.ceil(Math.log10(Math.max(...all)) - 1e-9);
   // The band's edges on this axis: f/fs as they are, or omega = 2 pi f with
   // s in units of 1/Ts.
   const edges = bandEdges(band).map((f) => (curveAxis === 'normalized' ? f : 2 * Math.PI * f));

@@ -17,9 +17,21 @@
  *
  * An op-amp is ideal: its inputs at one voltage (a virtual short), no
  * current into them; a fully differential one's outputs also average to
- * ground (an ideal common-mode feedback). The input is a sample held for a
- * whole period, u[n] (as a sample-and-hold drives it), and the output is
- * read at the end of one state of that period: H(z) = V_out(z) / U(z) solves
+ * ground (an ideal common-mode feedback). The input is sampled one of two
+ * ways (`sampling`):
+ *
+ * - **once a period** ('period', the default): a sample held for a whole
+ *   period, u[n], as a sample-and-hold drives it; every state sees the same
+ *   value. H(z), z one period's delay.
+ * - **every slot** ('slot'): the input moves within the period, and each
+ *   state takes it as it is at that state's end. For a tone that is u
+ *   delayed by the state's place in the period, w^(end) with w one slot's
+ *   delay (z = w^S, S slots a period); the output is read against the input
+ *   as it is at the readout's end. H(w): what the circuit does to an input
+ *   that changes within the period -- sampling at several phases averages,
+ *   and its notches show (at multiples of the period's rate).
+ *
+ * The output is read at the end of one state of that period, and H solves
  * every state's equations at once.
  *
  * A capacitor is its value when that is a coefficient (C_S, 2*C_u), else
@@ -37,13 +49,15 @@ import { integer, polynomialCoefficients, rational, rationalFunction, substitute
 import { expressionSymbols } from './bode.js';
 import { coefficientValue, numericRootsOf, transferTex } from './signal-flow.js';
 import { parseGain } from '../transfer-function.js';
-import { timingStates } from '../timing-diagram.js';
+import { timingStateEnds, timingStates } from '../timing-diagram.js';
 import { samePhase, switchGroupKey, switchState, switchStateAt } from '../beats.js';
 import { analyzedCircuit, isReferenceMarker } from '../model.js';
 import { opampModel } from './devices.js';
 import { switchedCapNoise } from './switched-cap-noise.js';
 
 const VARIABLE = 'z';
+/** One slot's delay, the variable of an every-slot result (z = w^S). */
+const SLOT_VARIABLE = 'w';
 // Drawn parts that carry no charge and no current of their own: ports and
 // solder dots (rails and ground are reference markers, isReferenceMarker).
 const PORTS = new Set(['input', 'output', 'inputoutput', 'port', 'solder']);
@@ -56,7 +70,9 @@ function failure(code, error, extra = {}) {
 /**
  * The clock's states, each with the switches closed in it: from the timing
  * diagram, else from the beats (one state a beat). Returns
- * `{ ok, states: [{ name, closed: Set of refdes }], source }` or a failure.
+ * `{ ok, states: [{ name, closed: Set of refdes, end }], source, slots }`
+ * or a failure: `end` the slot the state ends at, `slots` the slots in a
+ * period (a beat a slot, without a diagram).
  */
 export function switchedCapPhases(circuit) {
   circuit = analyzedCircuit(circuit);
@@ -64,12 +80,15 @@ export function switchedCapPhases(circuit) {
   if (!switches.length) return failure('no-switches', 'There are no switches: a switched-capacitor circuit switches its capacitors.');
   const states = timingStates(circuit);
   if (states?.length) {
+    const { ends, slots } = timingStateEnds(circuit);
     return {
       ok: true,
       source: 'timing',
-      states: states.map((state) => ({
+      slots,
+      states: states.map((state, index) => ({
         name: state.name,
         closed: new Set(switches.filter((s) => [...state.closed].some((key) => samePhase(key, switchGroupKey(s)))).map((s) => s.refdes)),
+        end: ends[index],
       })),
     };
   }
@@ -77,9 +96,11 @@ export function switchedCapPhases(circuit) {
     return {
       ok: true,
       source: 'beats',
+      slots: circuit.beats.length,
       states: circuit.beats.map((beat, index) => ({
         name: beat.name || `beat ${index + 1}`,
         closed: new Set(switches.filter((s) => switchStateAt(circuit, s.refdes, index) === 'closed').map((s) => s.refdes)),
+        end: index + 1,
       })),
     };
   }
@@ -103,8 +124,9 @@ function joiner() {
  * Analyze a drawn SC circuit. `options`: `input`, `output` (as the
  * small-signal analysis takes them; one of each is found when the drawing
  * has only one), `readout` (the state whose end the output is read at: its
- * index, or its name; the last by default). Returns `{ ok, variable: 'z',
- * value (H(z), exact), tex, equation, states, readout, zeros, poles,
+ * index, or its name; the last by default), `sampling` ('period' or 'slot',
+ * above). Returns `{ ok, variable ('z', or 'w' sampled every slot), slots,
+ * sampling, value (H, exact), tex, equation, states, readout, zeros, poles,
  * capacitors }` or a failure `{ ok: false, code, error }`.
  */
 export function analyzeSwitchedCap(circuit, options = {}) {
@@ -192,7 +214,9 @@ export function analyzeSwitchedCap(circuit, options = {}) {
   // capacitances only. It gives vc_k = M_k vc_(k-1) + n_k u; around the
   // period, the last phase's vc is s = z^-1 Phi s + gamma u, and only that
   // -- as large as the number of capacitors -- is solved in z.
-  const ops = createRationalOps({ variable: VARIABLE, maxOperations: options.maxOperations });
+  const perSlot = options.sampling === 'slot';
+  const variable = perSlot ? SLOT_VARIABLE : VARIABLE;
+  const ops = createRationalOps({ variable, maxOperations: options.maxOperations });
   // `numbers` puts numbers in for the capacitances and gains before solving
   // (the calculator's route: quick for any circuit).
   const numbers = options.numbers ? new Map(Object.entries(options.numbers).map(([name, number]) => [name, exactNumber(number)])) : null;
@@ -201,7 +225,11 @@ export function analyzeSwitchedCap(circuit, options = {}) {
   const width = 1 + n; // a node as [u, vc_1 .. vc_n] (before the phase)
   const values = capacitors.map((cap) => lift(cap.value));
 
+  const power = (base, count) => Array.from({ length: count }, () => base).reduce((product, factor) => ops.mul(product, factor), ops.one);
   const phaseMaps = [];
+  // Sampled every slot, a state takes the input as it is at its end: u
+  // ahead by w^end (the state's place in the period).
+  const ahead = (index) => (perSlot ? power(lift(symbol(SLOT_VARIABLE)), states[index].end) : ops.one);
   for (const layout of layouts) {
     const columns = new Map();
     for (const group of layout.groups) if (group.kind !== 'ground' && group.kind !== 'input') columns.set(group, columns.size);
@@ -280,10 +308,12 @@ export function analyzeSwitchedCap(circuit, options = {}) {
       return solved.values[columns.get(group)];
     };
     const vc = capacitors.map((cap) => nodeRow(cap.a).map((value, j) => ops.sub(value, nodeRow(cap.b)[j])));
+    const shift = ahead(phaseMaps.length);
+    const output = nodeRow(outputNode);
     phaseMaps.push({
       M: vc.map((row) => row.slice(1)),
-      gain: vc.map((row) => row[0]),
-      output: nodeRow(outputNode),
+      gain: vc.map((row) => ops.mul(row[0], shift)),
+      output: [ops.mul(output[0], shift), ...output.slice(1)],
     });
   }
   if (phaseMaps.some((map) => map.output?.some?.((value) => value?.budgetExceeded))) return failure('budget', 'The circuit is too large to solve exactly.');
@@ -303,7 +333,8 @@ export function analyzeSwitchedCap(circuit, options = {}) {
     Phi = matrixTimes(map.M, Phi);
     gamma = plus(times(map.M, gamma), map.gain);
   }
-  const zInverse = ops.div(ops.one, lift(symbol(VARIABLE)));
+  // One period back: z^-1, or w^-S sampled every slot.
+  const zInverse = ops.div(ops.one, perSlot ? power(lift(symbol(SLOT_VARIABLE)), phases.slots) : lift(symbol(VARIABLE)));
   const loop = identity.map((row, i) => row.map((value, j) => ops.sub(value, ops.mul(zInverse, Phi[i][j]))));
   const settled = n ? solveLinearSystem(loop, gamma.map((value) => [value]), { ops }) : { ok: true, values: [] };
   if (!settled.ok) return failure(/budget/i.test(settled.error || '') ? 'budget' : 'undetermined', /budget/i.test(settled.error || '') ? 'The circuit is too large to solve exactly.' : 'The phases\' equations have no single solution.');
@@ -313,18 +344,23 @@ export function analyzeSwitchedCap(circuit, options = {}) {
   let before = last.map((value) => ops.mul(zInverse, value));
   for (let k = 0; k < readout; k += 1) before = plus(times(phaseMaps[k].M, before), phaseMaps[k].gain);
   const out = phaseMaps[readout].output;
-  const raw = out.slice(1).reduce((sum, coefficient, j) => ops.add(sum, ops.mul(coefficient, before[j])), out[0]);
+  // Every slot, the output is read against the input as it is then.
+  const sampled = out.slice(1).reduce((sum, coefficient, j) => ops.add(sum, ops.mul(coefficient, before[j])), out[0]);
+  const raw = perSlot ? ops.div(sampled, ahead(readout)) : sampled;
   if (raw?.budgetExceeded) return failure('budget', 'The circuit is too large to solve exactly.');
   // A capacitor reset every period is a state the input never reaches: its
   // pole and zero cancel, and the result is as low an order as it really is.
   // A factor in the capacitances alone ((C_S + C_F)^2 over and under) goes
   // too: each capacitance in turn taken as the variable.
-  const value = cancelCapacitanceFactors(cancelCommonPolynomialFactor(raw, { variable: VARIABLE, maxWork: 400_000 }), capacitors, opamps.map((opamp) => opamp.gain).filter(Boolean));
+  const value = cancelCapacitanceFactors(cancelCommonPolynomialFactor(raw, { variable, maxWork: 400_000 }), capacitors, opamps.map((opamp) => opamp.gain).filter(Boolean));
 
   // kT/C noise, in the same symbols (over kT), when asked for (it is its
   // own, heavier work); its failure leaves H(z).
   let noise = null;
-  if (options.noise) try {
+  // kT/C noise is worked out per period: it is the circuit's own, whatever
+  // the input does within the period.
+  if (options.noise && perSlot) noise = { ok: false, error: 'The kT/C noise is worked out with the input sampled once a period: choose that to see it.' };
+  else if (options.noise) try {
     // Its own budget: the transfer function's may be spent.
     // In symbols it can grow past reading (unmatched halves): then it is
     // refused, quickly, and the calculator's numbers still come.
@@ -342,11 +378,13 @@ export function analyzeSwitchedCap(circuit, options = {}) {
   }
 
   // In the textbook form: the denominator's constant term 1 (C_F divided out).
-  const tex = transferTex(value, VARIABLE, { symbolicLead: true });
+  const tex = transferTex(value, variable, { symbolicLead: true, delays: true });
   const label = `\\frac{${texName(context.output.name)}}{${texName(context.input.name)}}`;
   return {
     ok: true,
-    variable: VARIABLE,
+    variable,
+    sampling: perSlot ? 'slot' : 'period',
+    slots: phases.slots,
     source: phases.source,
     states: states.map((state) => ({ name: state.name, closed: [...state.closed] })),
     readout,
@@ -356,7 +394,7 @@ export function analyzeSwitchedCap(circuit, options = {}) {
     // The op-amps' finite gains' symbols (A1), apart from the capacitances.
     gains: opamps.filter((opamp) => opamp.gain).map((opamp) => opamp.gain),
     // Every symbol a number can be given for: the capacitances, the gains.
-    symbols: [...new Set([...capacitors.flatMap((cap) => [...expressionSymbols(cap.value, VARIABLE)]), ...opamps.map((opamp) => opamp.gain).filter(Boolean)])].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    symbols: [...new Set([...capacitors.flatMap((cap) => [...expressionSymbols(cap.value, variable)]), ...opamps.map((opamp) => opamp.gain).filter(Boolean)])].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
     value,
     tex,
     label,

@@ -141,6 +141,18 @@ describe('switched-capacitor analysis', { skip: browserSkip() }, () => {
     assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.windows.holds?.['switched-cap'] ?? null)`), null);
   });
 
+  test('the input sampled every slot gives H(w), one slot a step, and says so; once a period, H(z)', async () => {
+    await h.open('integrator');
+    await openWindow();
+    const sampling = (value) => h.evaluate(`(() => { const s = document.getElementById('sc-sampling'); s.value = ${JSON.stringify(value)}; s.dispatchEvent(new Event('change', { bubbles: true })); document.querySelector('.sc-derive').click(); })()`);
+    await sampling('slot');
+    await h.until(`/w/.test(document.querySelector('.sc-equation')?.textContent || '')`);
+    assert.match(await h.evaluate(`document.querySelector('.sc-results .field-hint').textContent`), /sampled every slot/);
+    await sampling('');
+    await h.until(`!/w/.test(document.querySelector('.sc-equation')?.textContent || '') && /z/.test(document.querySelector('.sc-equation')?.textContent || '')`);
+    assert.match(await h.evaluate(`document.querySelector('.sc-results .field-hint').textContent`), /once a period/);
+  });
+
   test('kT/C noise: off until asked, then a row per sampling, and the calculator\'s numbers, saved with the design', async () => {
     await h.open('integrator');
     await openWindow();

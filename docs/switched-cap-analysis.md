@@ -44,9 +44,24 @@ in time within a phase, which charge from phase to phase does not see. The netli
 (`resolveAnalysisContext`): same-named nets are one node, every DC reference
 is the AC ground, and other input ports are held there.
 
-The input is a sample held for a whole period, u[n], as a sample-and-hold
-drives it, and the output is read at the end of one state of that period
-(**Read at**, the last by default): H(z) = V_out(z) / U(z). For the
+The output is read at the end of one state of the period (**Read at**, the
+last by default). The input is sampled one of two ways (**Input sampled**,
+`sampling`):
+
+- **once a period** (the default): a sample held for the whole period,
+  u[n], as a sample-and-hold drives it. Every state sees the same value:
+  H(z) = V_out(z) / U(z), z one period's delay. Sampling the input at several
+  phases and summing gives it back whole, as it is held.
+- **every slot** (`'slot'`): the input moves within the period, and each
+  state takes it as it is at that state's end -- for a tone, u ahead by the
+  state's place in the period, w^end, w one slot's delay of the timing
+  diagram (z = w^S, S slots a period; without a diagram, a beat a slot). The
+  output is read against the input as it is at the readout's end: H(w). Four
+  phases sampling the input and one summing it give the average of the four
+  samples, (w^-1 + w^-2 + w^-3 + w^-4)/4, with notches where they cancel
+  (multiples of the clock, here 1.25 f_s with five slots a period). Its curve
+  runs on the same f/f_s axis, to S/2. The kT/C noise is the period's own
+  and is worked out sampled once a period. For the
 stray-insensitive integrator (φ1 samples V_IN onto C_S, φ2 dumps it into the
 virtual ground) that is (C_S/C_F) z^-1 / (1 - z^-1) read at the end of φ1 and
 (C_S/C_F) / (1 - z^-1) at the end of φ2; the inverting one gives

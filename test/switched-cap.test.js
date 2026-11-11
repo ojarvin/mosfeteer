@@ -5,7 +5,7 @@ import { runCommand } from '../src/core/commands.js';
 import { removeTimingDiagram } from '../src/core/timing-diagram.js';
 import { analyzeSwitchedCap, switchedCapNoiseFigures, switchedCapPhases } from '../src/core/analysis/switched-cap.js';
 import { integer, rationalAt, substituteRational } from '../src/core/analysis/rational.js';
-import { transferTex } from '../src/core/analysis/signal-flow.js';
+import { responseCurve, transferTex } from '../src/core/analysis/signal-flow.js';
 
 /**
  * The stray-insensitive SC integrator: in φ1 S1 samples V_IN onto CS while
@@ -296,4 +296,60 @@ test('plate parasitics: none reach the stray-insensitive integrator; the sensiti
   const finite = switchedCapStrays(leaky, {});
   assert.equal(finite.ok, true, finite.error);
   assert.deepEqual(finite.nodes.filter((node) => node.sensitive).map((node) => node.parts), [['CS', 'S3', 'S4'], ['CF', 'S4', 'U1']]);
+});
+
+/** V_IN sampled onto C1..C4 in φ1..φ4, each to ground, and the four shared
+ *  onto V_OUT in φ5: five slots a period. */
+function fourPhaseAverage() {
+  const circuit = new Circuit();
+  const lines = ['add input VIN --at -1600 0', 'add output VOUT --at 800 0'];
+  for (let k = 1; k <= 4; k++) {
+    const y = (k - 1) * 800;
+    lines.push(
+      `add switch_open SA${k} --at -1200 ${y} --value "$\\varphi_${k}$"`, `add capacitor C${k} --at -800 ${y} --rot 90 --value C`,
+      `add ground G${k} --at -800 ${y + 400}`, `add switch_open SB${k} --at -400 ${y} --value "$\\varphi_5$"`,
+      `connect VIN.p SA${k}.a`, `connect SA${k}.b C${k}.a`, `connect C${k}.b G${k}.gnd`, `connect C${k}.a SB${k}.a`, `connect SB${k}.b VOUT.p`,
+    );
+  }
+  for (const line of lines) runCommand(circuit, line);
+  runCommand(circuit, 'timing φ1=10000 φ2=01000 φ3=00100 φ4=00010 φ5=00001');
+  return circuit;
+}
+
+test('sampled once a period, the input is the same in every phase: four phases summed give it back whole', () => {
+  const result = analyzeSwitchedCap(fourPhaseAverage());
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.sampling, 'period');
+  assert.equal(result.tex, '1');
+});
+
+test('sampled every slot, each phase takes the input at its end: four phases summed average it, in w (one slot)', () => {
+  const result = analyzeSwitchedCap(fourPhaseAverage(), { sampling: 'slot' });
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.sampling, 'slot');
+  assert.equal(result.variable, 'w');
+  assert.equal(result.slots, 5);
+  // The samples 1 to 4 slots before the readout's end.
+  assert.equal(result.tex, '\\frac{1}{4} w^{-1} + \\frac{1}{4} w^{-2} + \\frac{1}{4} w^{-3} + \\frac{1}{4} w^{-4}');
+  // On the clock's f/fs axis, a slot a fifth of a period: a notch at 1.25 fs, where the four cancel.
+  const curve = responseCurve(result.value, 'w', { steps: 5, at: [1.25, 0.1] });
+  const db = (f) => curve.points.find((point) => Math.abs(point.f - f) < 1e-12).db;
+  assert.ok(db(1.25) < -100, `${db(1.25)}`);
+  assert.ok(db(0.1) > -1, `${db(0.1)}`);
+  assert.equal(curve.points.at(-1).f, 2.5);
+});
+
+test('the integrator sampled every slot: its sample a slot before the readout, two slots a period', () => {
+  const result = analyzeSwitchedCap(integrator(), { sampling: 'slot' });
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.tex, '\\frac{\\frac{C_{S}}{C_{F}} w^{-1}}{1 - w^{-2}}');
+});
+
+test('a phase that wraps round the period ends where its first run does', () => {
+  const circuit = integrator({ timing: false });
+  runCommand(circuit, 'timing φ1=1001 φ2=0110');
+  const phases = switchedCapPhases(circuit);
+  assert.equal(phases.ok, true, phases.error);
+  assert.deepEqual(phases.states.map((state) => state.end), [1, 3]);
+  assert.equal(phases.slots, 4);
 });

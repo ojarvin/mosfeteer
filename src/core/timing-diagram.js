@@ -407,6 +407,24 @@ export function timingStates(circuit) {
   return stateRuns(circuit)?.map(({ name, closed }) => ({ name, closed })) ?? null;
 }
 
+/**
+ * Where in the period each of timingStates ends, in slots: `{ ends, slots }`,
+ * `ends[k]` the slot state k ends at (its last slot + 1; the period's first
+ * state may wrap round from its end), `slots` the slots in a period. Null
+ * without a diagram.
+ */
+export function timingStateEnds(circuit) {
+  const runs = stateRuns(circuit);
+  if (!runs?.length) return null;
+  const count = runs.reduce((sum, run) => sum + run.slots.length, 0);
+  const ends = runs.map((run) => {
+    const own = new Set(run.slots);
+    const last = run.slots.find((slot) => !own.has((slot + 1) % count));
+    return last + 1;
+  });
+  return { ends, slots: count };
+}
+
 /** timingStates, each with the slots it spans (`slots`, slot indices). */
 function stateRuns(circuit, { drawing = false } = {}) {
   if (!existingTimingDiagram(circuit, { drawing })) return null;

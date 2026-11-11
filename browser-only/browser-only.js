@@ -16139,7 +16139,8 @@ function isMonomial(value) {
   return false;
 }
 
-function transferTex(value, variable, { digits = 0, symbolicLead = false } = {}) {
+/** `delays`: written in delays, as z is (z^-1, z^-2; the default in z). */
+function transferTex(value, variable, { digits = 0, symbolicLead = false, delays = variable === 'z' } = {}) {
   const numerator = coefficientList(value.numerator, variable);
   const denominator = coefficientList(value.denominator, variable);
   if (!numerator || !denominator) return `\\frac{${renderExpression(value.numerator, { variable })}}{${renderExpression(value.denominator, { variable })}}`;
@@ -16157,7 +16158,7 @@ function transferTex(value, variable, { digits = 0, symbolicLead = false } = {})
   // In z, every power is taken relative to the denominator's highest, so the
   // denominator runs 1, z^-1, z^-2 ... and the numerator keeps whatever
   // powers it has (a z^1 stays a z, rather than 1 over z^-1).
-  const shift = variable === 'z' ? (den[0]?.power ?? 0) : 0;
+  const shift = delays ? (den[0]?.power ?? 0) : 0;
   const powerText = (p) => {
     const e = p - shift;
     return e === 0 ? '' : e === 1 ? variable : `${variable}^{${e}}`;
@@ -16170,7 +16171,7 @@ function transferTex(value, variable, { digits = 0, symbolicLead = false } = {})
     if ((ea <= 0) !== (eb <= 0)) return ea <= 0 ? -1 : 1;
     return ea <= 0 ? eb - ea : ea - eb;
   };
-  const order = (list) => (variable === 'z' ? [...list].sort(zOrder) : list);
+  const order = (list) => (delays ? [...list].sort(zOrder) : list);
   const render = (list) => sumTex(order(list).map(({ power: p, coefficient }) => termTex(coefficient, powerText(p), digits)));
   const denominatorIsOne = den.length === 1 && den[0].power === shift && isPlainNumber(den[0].coefficient)
     && den[0].coefficient.numerator === 1n && den[0].coefficient.denominator === 1n;
@@ -16249,7 +16250,9 @@ function evaluate(dense, re, im) {
  * z result, s = j 2 pi f; in z over normalized frequency f/fs from 10^-4 to
  * 1/2, z = e^{j 2 pi f}. Null when a coefficient is symbolic.
  */
-function responseCurve(value, variable, { pointsPerDecade = 40, sAxis = 'omega', at: extra = [] } = {}) {
+/** `steps`: in z, its steps a period of the axis's f_s (an SC circuit's
+ *  input sampled every slot: w, S a period): the curve then runs to S/2. */
+function responseCurve(value, variable, { pointsPerDecade = 40, sAxis = 'omega', at: extra = [], steps = 1 } = {}) {
   if (!value) return null;
   // `at`: frequencies on the curve's own axis to land on exactly (a band's
   // edges and center), where a grid would step past a peak or a notch.
@@ -16277,12 +16280,14 @@ function responseCurve(value, variable, { pointsPerDecade = 40, sAxis = 'omega',
     const curve = { variable, axis: 'relative', points: sketch.points.map(({ w, db, phase }) => ({ f: w, db, phase })) };
     return withPointsAt(curve, extra, (w) => ratioAt(0, w));
   }
-  // Over f/fs: z on the unit circle, or s up the imaginary axis.
-  const at = variable === 's' ? (w) => ({ re: 0, im: w }) : (w) => ({ re: Math.cos(w), im: Math.sin(w) });
+  // Over f/fs: z on the unit circle (a step a 1/steps of a period), or s up
+  // the imaginary axis.
+  const at = variable === 's' ? (w) => ({ re: 0, im: w }) : (w) => ({ re: Math.cos(w / steps), im: Math.sin(w / steps) });
+  const highest = variable === 's' ? 0.5 : steps / 2;
   const points = [];
   let previous = null;
-  for (let i = 0; i <= Math.round(Math.log10(0.5 / 1e-4) * pointsPerDecade); i++) {
-    const f = Math.min(0.5, 1e-4 * 10 ** (i / pointsPerDecade));
+  for (let i = 0; i <= Math.round(Math.log10(highest / 1e-4) * pointsPerDecade); i++) {
+    const f = Math.min(highest, 1e-4 * 10 ** (i / pointsPerDecade));
     const w = 2 * Math.PI * f;
     const point = at(w);
     const top = evaluate(num, point.re, point.im);
@@ -16299,7 +16304,7 @@ function responseCurve(value, variable, { pointsPerDecade = 40, sAxis = 'omega',
   }
   return withPointsAt({ variable, axis: 'normalized', points }, extra, (f) => {
     const w = 2 * Math.PI * f;
-    return variable === 's' ? ratioAt(0, w) : ratioAt(Math.cos(w), Math.sin(w));
+    return variable === 's' ? ratioAt(0, w) : ratioAt(Math.cos(w / steps), Math.sin(w / steps));
   });
 }
 
@@ -16684,7 +16689,7 @@ function responsePlot(traces, variable, { sAxis = 'omega', band = null, quantity
   const detailed = detail && detail[0] > 0 && detail[1] > detail[0] ? logGrid(detail[0], detail[1], 240) : [];
   const bandPoints = (variable) => [...bandFrequencies(band), ...bandGrid(band)].map((f) => (variable === 's' && axis !== 'normalized' ? 2 * Math.PI * f : f)).concat(detailed);
   const curves = withVariable
-    .map((trace) => ({ trace, curve: responseCurve(trace.value, trace.variable, { sAxis: axis, at: bandPoints(trace.variable) }) }))
+    .map((trace) => ({ trace, curve: responseCurve(trace.value, trace.variable, { sAxis: axis, at: bandPoints(trace.variable), steps: trace.steps || 1 }) }))
     .filter(({ curve }) => curve && curve.points.length > 1);
   // A simulated spectrum plots alone too, on f/fs, its curves all off.
   const alone = !curves.length && quantity !== 'phase' && background.some((trace) => trace.points?.length) ? background : [];
@@ -16692,8 +16697,9 @@ function responsePlot(traces, variable, { sAxis = 'omega', band = null, quantity
   const all = curves.length ? curves.flatMap(({ curve }) => curve.points.map((point) => point.f)) : alone.flatMap((trace) => trace.points.map((point) => point.f)).filter((f) => f > 0 && f <= 0.5);
   const curveAxis = curves.length ? curves[0].curve.axis : 'normalized';
   const low = Math.floor(Math.log10(Math.min(...all)) + 1e-9);
-  // A sampled system's frequencies end at f_s/2, where its curves do.
-  const high = curveAxis === 'normalized' ? Math.log10(0.5) : Math.ceil(Math.log10(Math.max(...all)) - 1e-9);
+  // A sampled system's frequencies end at f_s/2, where its curves do (at
+  // S/2 for one stepping S times a period).
+  const high = curveAxis === 'normalized' ? Math.log10(Math.max(0.5, ...withVariable.map((trace) => (trace.steps || 1) / 2))) : Math.ceil(Math.log10(Math.max(...all)) - 1e-9);
   // The band's edges on this axis: f/fs as they are, or omega = 2 pi f with
   // s in units of 1/Ts.
   const edges = bandEdges(band).map((f) => (curveAxis === 'normalized' ? f : 2 * Math.PI * f));
@@ -18744,7 +18750,7 @@ let integer, polynomialCoefficients, rational, rationalFunction, substitute, sym
 let expressionSymbols; __bind(() => { ({ expressionSymbols } = __require("src/core/analysis/bode.js")); });
 let coefficientValue, numericRootsOf, transferTex; __bind(() => { ({ coefficientValue, numericRootsOf, transferTex } = __require("src/core/analysis/signal-flow.js")); });
 let parseGain; __bind(() => { ({ parseGain } = __require("src/core/transfer-function.js")); });
-let timingStates; __bind(() => { ({ timingStates } = __require("src/core/timing-diagram.js")); });
+let timingStateEnds, timingStates; __bind(() => { ({ timingStateEnds, timingStates } = __require("src/core/timing-diagram.js")); });
 let samePhase, switchGroupKey, switchState, switchStateAt; __bind(() => { ({ samePhase, switchGroupKey, switchState, switchStateAt } = __require("src/core/beats.js")); });
 let analyzedCircuit, isReferenceMarker; __bind(() => { ({ analyzedCircuit, isReferenceMarker } = __require("src/core/model.js")); });
 let opampModel; __bind(() => { ({ opampModel } = __require("src/core/analysis/devices.js")); });
@@ -18768,9 +18774,21 @@ let switchedCapNoise; __bind(() => { ({ switchedCapNoise } = __require("src/core
  *
  * An op-amp is ideal: its inputs at one voltage (a virtual short), no
  * current into them; a fully differential one's outputs also average to
- * ground (an ideal common-mode feedback). The input is a sample held for a
- * whole period, u[n] (as a sample-and-hold drives it), and the output is
- * read at the end of one state of that period: H(z) = V_out(z) / U(z) solves
+ * ground (an ideal common-mode feedback). The input is sampled one of two
+ * ways (`sampling`):
+ *
+ * - **once a period** ('period', the default): a sample held for a whole
+ *   period, u[n], as a sample-and-hold drives it; every state sees the same
+ *   value. H(z), z one period's delay.
+ * - **every slot** ('slot'): the input moves within the period, and each
+ *   state takes it as it is at that state's end. For a tone that is u
+ *   delayed by the state's place in the period, w^(end) with w one slot's
+ *   delay (z = w^S, S slots a period); the output is read against the input
+ *   as it is at the readout's end. H(w): what the circuit does to an input
+ *   that changes within the period -- sampling at several phases averages,
+ *   and its notches show (at multiples of the period's rate).
+ *
+ * The output is read at the end of one state of that period, and H solves
  * every state's equations at once.
  *
  * A capacitor is its value when that is a coefficient (C_S, 2*C_u), else
@@ -18795,6 +18813,8 @@ let switchedCapNoise; __bind(() => { ({ switchedCapNoise } = __require("src/core
 
 
 const VARIABLE = 'z';
+/** One slot's delay, the variable of an every-slot result (z = w^S). */
+const SLOT_VARIABLE = 'w';
 // Drawn parts that carry no charge and no current of their own: ports and
 // solder dots (rails and ground are reference markers, isReferenceMarker).
 const PORTS = new Set(['input', 'output', 'inputoutput', 'port', 'solder']);
@@ -18807,7 +18827,9 @@ function failure(code, error, extra = {}) {
 /**
  * The clock's states, each with the switches closed in it: from the timing
  * diagram, else from the beats (one state a beat). Returns
- * `{ ok, states: [{ name, closed: Set of refdes }], source }` or a failure.
+ * `{ ok, states: [{ name, closed: Set of refdes, end }], source, slots }`
+ * or a failure: `end` the slot the state ends at, `slots` the slots in a
+ * period (a beat a slot, without a diagram).
  */
 function switchedCapPhases(circuit) {
   circuit = analyzedCircuit(circuit);
@@ -18815,12 +18837,15 @@ function switchedCapPhases(circuit) {
   if (!switches.length) return failure('no-switches', 'There are no switches: a switched-capacitor circuit switches its capacitors.');
   const states = timingStates(circuit);
   if (states?.length) {
+    const { ends, slots } = timingStateEnds(circuit);
     return {
       ok: true,
       source: 'timing',
-      states: states.map((state) => ({
+      slots,
+      states: states.map((state, index) => ({
         name: state.name,
         closed: new Set(switches.filter((s) => [...state.closed].some((key) => samePhase(key, switchGroupKey(s)))).map((s) => s.refdes)),
+        end: ends[index],
       })),
     };
   }
@@ -18828,9 +18853,11 @@ function switchedCapPhases(circuit) {
     return {
       ok: true,
       source: 'beats',
+      slots: circuit.beats.length,
       states: circuit.beats.map((beat, index) => ({
         name: beat.name || `beat ${index + 1}`,
         closed: new Set(switches.filter((s) => switchStateAt(circuit, s.refdes, index) === 'closed').map((s) => s.refdes)),
+        end: index + 1,
       })),
     };
   }
@@ -18854,8 +18881,9 @@ function joiner() {
  * Analyze a drawn SC circuit. `options`: `input`, `output` (as the
  * small-signal analysis takes them; one of each is found when the drawing
  * has only one), `readout` (the state whose end the output is read at: its
- * index, or its name; the last by default). Returns `{ ok, variable: 'z',
- * value (H(z), exact), tex, equation, states, readout, zeros, poles,
+ * index, or its name; the last by default), `sampling` ('period' or 'slot',
+ * above). Returns `{ ok, variable ('z', or 'w' sampled every slot), slots,
+ * sampling, value (H, exact), tex, equation, states, readout, zeros, poles,
  * capacitors }` or a failure `{ ok: false, code, error }`.
  */
 function analyzeSwitchedCap(circuit, options = {}) {
@@ -18943,7 +18971,9 @@ function analyzeSwitchedCap(circuit, options = {}) {
   // capacitances only. It gives vc_k = M_k vc_(k-1) + n_k u; around the
   // period, the last phase's vc is s = z^-1 Phi s + gamma u, and only that
   // -- as large as the number of capacitors -- is solved in z.
-  const ops = createRationalOps({ variable: VARIABLE, maxOperations: options.maxOperations });
+  const perSlot = options.sampling === 'slot';
+  const variable = perSlot ? SLOT_VARIABLE : VARIABLE;
+  const ops = createRationalOps({ variable, maxOperations: options.maxOperations });
   // `numbers` puts numbers in for the capacitances and gains before solving
   // (the calculator's route: quick for any circuit).
   const numbers = options.numbers ? new Map(Object.entries(options.numbers).map(([name, number]) => [name, exactNumber(number)])) : null;
@@ -18952,7 +18982,11 @@ function analyzeSwitchedCap(circuit, options = {}) {
   const width = 1 + n; // a node as [u, vc_1 .. vc_n] (before the phase)
   const values = capacitors.map((cap) => lift(cap.value));
 
+  const power = (base, count) => Array.from({ length: count }, () => base).reduce((product, factor) => ops.mul(product, factor), ops.one);
   const phaseMaps = [];
+  // Sampled every slot, a state takes the input as it is at its end: u
+  // ahead by w^end (the state's place in the period).
+  const ahead = (index) => (perSlot ? power(lift(symbol(SLOT_VARIABLE)), states[index].end) : ops.one);
   for (const layout of layouts) {
     const columns = new Map();
     for (const group of layout.groups) if (group.kind !== 'ground' && group.kind !== 'input') columns.set(group, columns.size);
@@ -19031,10 +19065,12 @@ function analyzeSwitchedCap(circuit, options = {}) {
       return solved.values[columns.get(group)];
     };
     const vc = capacitors.map((cap) => nodeRow(cap.a).map((value, j) => ops.sub(value, nodeRow(cap.b)[j])));
+    const shift = ahead(phaseMaps.length);
+    const output = nodeRow(outputNode);
     phaseMaps.push({
       M: vc.map((row) => row.slice(1)),
-      gain: vc.map((row) => row[0]),
-      output: nodeRow(outputNode),
+      gain: vc.map((row) => ops.mul(row[0], shift)),
+      output: [ops.mul(output[0], shift), ...output.slice(1)],
     });
   }
   if (phaseMaps.some((map) => map.output?.some?.((value) => value?.budgetExceeded))) return failure('budget', 'The circuit is too large to solve exactly.');
@@ -19054,7 +19090,8 @@ function analyzeSwitchedCap(circuit, options = {}) {
     Phi = matrixTimes(map.M, Phi);
     gamma = plus(times(map.M, gamma), map.gain);
   }
-  const zInverse = ops.div(ops.one, lift(symbol(VARIABLE)));
+  // One period back: z^-1, or w^-S sampled every slot.
+  const zInverse = ops.div(ops.one, perSlot ? power(lift(symbol(SLOT_VARIABLE)), phases.slots) : lift(symbol(VARIABLE)));
   const loop = identity.map((row, i) => row.map((value, j) => ops.sub(value, ops.mul(zInverse, Phi[i][j]))));
   const settled = n ? solveLinearSystem(loop, gamma.map((value) => [value]), { ops }) : { ok: true, values: [] };
   if (!settled.ok) return failure(/budget/i.test(settled.error || '') ? 'budget' : 'undetermined', /budget/i.test(settled.error || '') ? 'The circuit is too large to solve exactly.' : 'The phases\' equations have no single solution.');
@@ -19064,18 +19101,23 @@ function analyzeSwitchedCap(circuit, options = {}) {
   let before = last.map((value) => ops.mul(zInverse, value));
   for (let k = 0; k < readout; k += 1) before = plus(times(phaseMaps[k].M, before), phaseMaps[k].gain);
   const out = phaseMaps[readout].output;
-  const raw = out.slice(1).reduce((sum, coefficient, j) => ops.add(sum, ops.mul(coefficient, before[j])), out[0]);
+  // Every slot, the output is read against the input as it is then.
+  const sampled = out.slice(1).reduce((sum, coefficient, j) => ops.add(sum, ops.mul(coefficient, before[j])), out[0]);
+  const raw = perSlot ? ops.div(sampled, ahead(readout)) : sampled;
   if (raw?.budgetExceeded) return failure('budget', 'The circuit is too large to solve exactly.');
   // A capacitor reset every period is a state the input never reaches: its
   // pole and zero cancel, and the result is as low an order as it really is.
   // A factor in the capacitances alone ((C_S + C_F)^2 over and under) goes
   // too: each capacitance in turn taken as the variable.
-  const value = cancelCapacitanceFactors(cancelCommonPolynomialFactor(raw, { variable: VARIABLE, maxWork: 400_000 }), capacitors, opamps.map((opamp) => opamp.gain).filter(Boolean));
+  const value = cancelCapacitanceFactors(cancelCommonPolynomialFactor(raw, { variable, maxWork: 400_000 }), capacitors, opamps.map((opamp) => opamp.gain).filter(Boolean));
 
   // kT/C noise, in the same symbols (over kT), when asked for (it is its
   // own, heavier work); its failure leaves H(z).
   let noise = null;
-  if (options.noise) try {
+  // kT/C noise is worked out per period: it is the circuit's own, whatever
+  // the input does within the period.
+  if (options.noise && perSlot) noise = { ok: false, error: 'The kT/C noise is worked out with the input sampled once a period: choose that to see it.' };
+  else if (options.noise) try {
     // Its own budget: the transfer function's may be spent.
     // In symbols it can grow past reading (unmatched halves): then it is
     // refused, quickly, and the calculator's numbers still come.
@@ -19093,11 +19135,13 @@ function analyzeSwitchedCap(circuit, options = {}) {
   }
 
   // In the textbook form: the denominator's constant term 1 (C_F divided out).
-  const tex = transferTex(value, VARIABLE, { symbolicLead: true });
+  const tex = transferTex(value, variable, { symbolicLead: true, delays: true });
   const label = `\\frac{${texName(context.output.name)}}{${texName(context.input.name)}}`;
   return {
     ok: true,
-    variable: VARIABLE,
+    variable,
+    sampling: perSlot ? 'slot' : 'period',
+    slots: phases.slots,
     source: phases.source,
     states: states.map((state) => ({ name: state.name, closed: [...state.closed] })),
     readout,
@@ -19107,7 +19151,7 @@ function analyzeSwitchedCap(circuit, options = {}) {
     // The op-amps' finite gains' symbols (A1), apart from the capacitances.
     gains: opamps.filter((opamp) => opamp.gain).map((opamp) => opamp.gain),
     // Every symbol a number can be given for: the capacitances, the gains.
-    symbols: [...new Set([...capacitors.flatMap((cap) => [...expressionSymbols(cap.value, VARIABLE)]), ...opamps.map((opamp) => opamp.gain).filter(Boolean)])].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    symbols: [...new Set([...capacitors.flatMap((cap) => [...expressionSymbols(cap.value, variable)]), ...opamps.map((opamp) => opamp.gain).filter(Boolean)])].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
     value,
     tex,
     label,
@@ -47583,6 +47627,7 @@ __exports.analogRowGeometry = analogRowGeometry;
 __exports.busRowGeometry = busRowGeometry;
 __exports.busRowText = busRowText;
 __exports.timingStates = timingStates;
+__exports.timingStateEnds = timingStateEnds;
 __exports.timingBeatStates = timingBeatStates;
 __exports.timingBeatBands = timingBeatBands;
 __exports.timingPhaseNamed = timingPhaseNamed;
@@ -48007,6 +48052,24 @@ function stateName(sources) {
  */
 function timingStates(circuit) {
   return stateRuns(circuit)?.map(({ name, closed }) => ({ name, closed })) ?? null;
+}
+
+/**
+ * Where in the period each of timingStates ends, in slots: `{ ends, slots }`,
+ * `ends[k]` the slot state k ends at (its last slot + 1; the period's first
+ * state may wrap round from its end), `slots` the slots in a period. Null
+ * without a diagram.
+ */
+function timingStateEnds(circuit) {
+  const runs = stateRuns(circuit);
+  if (!runs?.length) return null;
+  const count = runs.reduce((sum, run) => sum + run.slots.length, 0);
+  const ends = runs.map((run) => {
+    const own = new Set(run.slots);
+    const last = run.slots.find((slot) => !own.has((slot + 1) % count));
+    return last + 1;
+  });
+  return { ends, slots: count };
 }
 
 /** timingStates, each with the slots it spans (`slots`, slot indices). */
@@ -99102,6 +99165,7 @@ function fillForm() {
     ...states.map((state) => el('option', { value: state.name, text: `end of ${plainTexText(state.name)}` })),
   );
   readout.value = states.some((state) => state.name === s.readout) ? s.readout : '';
+  section.querySelector('#sc-sampling').value = s.sampling === 'slot' ? 'slot' : '';
   const card = section.querySelector('.sc-phases');
   if (!phases.ok) {
     card.replaceChildren(el('p', { class: 'field-hint', text: phases.error }));
@@ -99130,7 +99194,7 @@ const capacitance = (name) => settings().values[name] ?? (gainSymbols().has(name
 /** Every capacitance the latest result and the graph's traces reach. */
 function shownSymbols() {
   const names = new Set();
-  const add = (value) => { for (const name of resultSymbols(value, 'z')) names.add(name); };
+  const add = (value) => { for (const name of resultSymbols(value, value?.variable || 'z')) names.add(name); };
   if (latest?.result.ok) add(latest.result.value);
   for (const trace of traces) add(trace.value);
   return [...names].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
@@ -99138,7 +99202,7 @@ function shownSymbols() {
 
 /** A result at the capacitances' numbers. */
 function numbered(value) {
-  return withCoefficients(value, Object.fromEntries(resultSymbols(value, 'z').map((name) => [name, capacitance(name)])));
+  return withCoefficients(value, Object.fromEntries(resultSymbols(value, value?.variable || 'z').map((name) => [name, capacitance(name)])));
 }
 
 /** Saved once a frame while a slider moves: one undo step a finished
@@ -99188,7 +99252,7 @@ function derive() {
 
 function deriveNow() {
   const s = settings();
-  const ports = { input: s.input || undefined, output: s.output || undefined, readout: s.readout || undefined };
+  const ports = { input: s.input || undefined, output: s.output || undefined, readout: s.readout || undefined, sampling: s.sampling === 'slot' ? 'slot' : undefined };
   const result = analyzeSwitchedCap(editor.circuit, { ...ports, noise: !!s.noise });
   // The plates' strays, when asked for: H(z) again per plate node.
   const strays = result.ok && s.strays ? switchedCapStrays(editor.circuit, ports) : null;
@@ -99205,15 +99269,15 @@ function deriveNow() {
  *  (V_OUT/V_IN), as the signal-flow graph's; the equation is its identity. */
 function addTrace(result) {
   const existing = traces.find((trace) => !trace.held && trace.equation === result.equation);
+  // In w (sampled every slot) a step is a slot: S a period on the graph's axis.
+  const stepping = { variable: result.variable, steps: result.sampling === 'slot' ? result.slots : 1 };
   if (existing) {
-    existing.value = result.value;
-    existing.gains = result.gains;
-    existing.on = true;
+    Object.assign(existing, { value: result.value, gains: result.gains, on: true }, stepping);
     return;
   }
   const used = new Set(traces.map((trace) => trace.color));
   const color = TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
-  traces.push({ id: `sc-${traces.length}-${result.equation}`, label: result.label, equation: result.equation, color, value: result.value, gains: result.gains, on: true });
+  traces.push({ id: `sc-${traces.length}-${result.equation}`, label: result.label, equation: result.equation, color, value: result.value, gains: result.gains, on: true, ...stepping });
   // Its held copies, saved with the design, come back with it.
   restoreHolds();
 }
@@ -99234,7 +99298,9 @@ function renderResult() {
   }
   host.replaceChildren(
     el('div', { class: 'sc-equation' }, [math(result.equation, true)]),
-    el('p', { class: 'field-hint' }, ['Read at the end of ', phaseName(result.states[result.readout].name), ', the input held through each period.']),
+    el('p', { class: 'field-hint' }, result.sampling === 'slot'
+      ? ['Read at the end of ', phaseName(result.states[result.readout].name), '. The input is sampled every slot, as it is at each phase\'s end: ', math(`w = z^{1/${result.slots}}`), ', one slot of the timing diagram.']
+      : ['Read at the end of ', phaseName(result.states[result.readout].name), '. The input is sampled once a period and held through every phase: ', math('z'), ', one period.']),
     el('div', { class: 'sc-roots' }),
   );
   renderRoots();
@@ -99245,7 +99311,8 @@ function renderRoots() {
   const host = section?.querySelector('.sc-roots');
   if (!host || !latest?.result.ok) return;
   const roots = numericRootsOf(numbered(latest.result.value));
-  const line = (label, items) => (items?.length ? el('p', { class: 'sc-root-line' }, [`${label}: `, items.map((root) => `z = ${complexText(root)}`).join(', ')]) : null);
+  const variable = latest.result.variable || 'z';
+  const line = (label, items) => (items?.length ? el('p', { class: 'sc-root-line' }, [`${label}: `, items.map((root) => `${variable} = ${complexText(root)}`).join(', ')]) : null);
   host.replaceChildren(...[line('Poles', roots.poles), line('Zeros', roots.zeros)].filter(Boolean));
 }
 
@@ -99515,7 +99582,7 @@ const holdsChanged = (records) => saveHolds('switched-cap', records);
 
 /** Hold a trace: a copy at the values now, in a color of its own. */
 function holdTrace(trace) {
-  const values = Object.fromEntries(resultSymbols(trace.value, 'z').map((name) => [name, capacitance(name)]));
+  const values = Object.fromEntries(resultSymbols(trace.value, trace.variable || 'z').map((name) => [name, capacitance(name)]));
   const used = new Set(traces.map((t) => t.color));
   const color = TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
   const record = { key: holdKey(), of: trace.equation, base: trace.label, color, values };
@@ -99542,7 +99609,7 @@ function restoreHolds() {
 function graphPlot(quantity = 'magnitude') {
   const shown = shownTraces();
   if (!shown.length) return null;
-  return responsePlot(shown.map((trace) => ({ ...trace, value: numbered(trace.value), variable: 'z' })), 'z', { quantity });
+  return responsePlot(shown.map((trace) => ({ ...trace, value: numbered(trace.value), variable: trace.variable || 'z' })), 'z', { quantity });
 }
 
 function stackedGraphs() {
@@ -99610,7 +99677,7 @@ function scPlotUpdate(plot) {
   if (!latest) return { error: 'derive the circuit first (Shift+S)' };
   const matched = plot.kind === 'response' ? matchPlotTraces(plot, traces.map((trace) => ({ ...trace, label: trace.held ? heldLabel(trace) : liveLabel(trace) }))) : null;
   if (!matched) return { error: 'its traces are no longer on the graph' };
-  const next = responsePlot(matched.map((trace) => ({ ...trace, value: numbered(trace.value), variable: 'z' })), 'z', { quantity: plot.quantity === 'phase' ? 'phase' : 'magnitude' });
+  const next = responsePlot(matched.map((trace) => ({ ...trace, value: numbered(trace.value), variable: trace.variable || 'z' })), 'z', { quantity: plot.quantity === 'phase' ? 'phase' : 'magnitude' });
   return next ? { plot: next, shown: matched } : { error: 'its traces are no longer on the graph' };
 }
 
@@ -99627,6 +99694,7 @@ function annotate() {
   const rows = [
     `\\text{Transfer function} & ${result.equation}`,
     `\\text{Read at the end of} & ${tex(result.states[result.readout].name)}`,
+    result.sampling === 'slot' ? `\\text{Input sampled} & \\text{every slot, } w = z^{1/${result.slots}}` : `\\text{Input sampled} & \\text{once a period}`,
   ];
   if (result.noise?.ok) rows.push(`\\text{kT/C noise} & \\frac{\\overline{v^2_{n,in}}}{kT} = ${transferTex(result.noise.total.input, 'z', { symbolicLead: true })}`);
   const { updated } = annotateMathFigure({ kind: 'equations', source: 'switched-cap', text: rows.join('\n'), columns: 'll' });
@@ -99646,6 +99714,12 @@ function installSwitchedCapUi() {
       row('Output', 'sc-output', select('sc-output', 'output')),
       row('Read at', 'sc-readout', select('sc-readout', 'readout')),
       el('p', { class: 'field-hint', text: 'A port of any kind, or any net.' }),
+      row('Input sampled', 'sc-sampling', el('select', { id: 'sc-sampling', onchange: (ev) => { settings().sampling = ev.target.value; changed(); } }, [
+        el('option', { value: '', text: 'once a period' }),
+        el('option', { value: 'slot', text: 'every slot' }),
+      ])),
+      el('p', { class: 'field-hint', text: 'Once a period: one sample a clock period, held through every phase, as a sample-and-hold drives the input. H(z), z one period.' }),
+      el('p', { class: 'field-hint', text: 'Every slot: the input as it is at each phase\'s end, moving within the period. H(w), w one slot of the timing diagram. Sampling at several phases then averages, with notches at multiples of the clock.' }),
     ]),
     el('fieldset', { class: 'analysis-approximations' }, [el('legend', { text: 'Phases' }), el('div', { class: 'sc-phases' })]),
     el('p', { class: 'analysis-stale sc-stale', hidden: true, text: 'The circuit changed since this was derived.' }),

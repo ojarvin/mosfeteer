@@ -133,6 +133,7 @@ function fillForm() {
     ...states.map((state) => el('option', { value: state.name, text: `end of ${plainTexText(state.name)}` })),
   );
   readout.value = states.some((state) => state.name === s.readout) ? s.readout : '';
+  section.querySelector('#sc-sampling').value = s.sampling === 'slot' ? 'slot' : '';
   const card = section.querySelector('.sc-phases');
   if (!phases.ok) {
     card.replaceChildren(el('p', { class: 'field-hint', text: phases.error }));
@@ -161,7 +162,7 @@ const capacitance = (name) => settings().values[name] ?? (gainSymbols().has(name
 /** Every capacitance the latest result and the graph's traces reach. */
 function shownSymbols() {
   const names = new Set();
-  const add = (value) => { for (const name of resultSymbols(value, 'z')) names.add(name); };
+  const add = (value) => { for (const name of resultSymbols(value, value?.variable || 'z')) names.add(name); };
   if (latest?.result.ok) add(latest.result.value);
   for (const trace of traces) add(trace.value);
   return [...names].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
@@ -169,7 +170,7 @@ function shownSymbols() {
 
 /** A result at the capacitances' numbers. */
 function numbered(value) {
-  return withCoefficients(value, Object.fromEntries(resultSymbols(value, 'z').map((name) => [name, capacitance(name)])));
+  return withCoefficients(value, Object.fromEntries(resultSymbols(value, value?.variable || 'z').map((name) => [name, capacitance(name)])));
 }
 
 /** Saved once a frame while a slider moves: one undo step a finished
@@ -219,7 +220,7 @@ function derive() {
 
 function deriveNow() {
   const s = settings();
-  const ports = { input: s.input || undefined, output: s.output || undefined, readout: s.readout || undefined };
+  const ports = { input: s.input || undefined, output: s.output || undefined, readout: s.readout || undefined, sampling: s.sampling === 'slot' ? 'slot' : undefined };
   const result = analyzeSwitchedCap(editor.circuit, { ...ports, noise: !!s.noise });
   // The plates' strays, when asked for: H(z) again per plate node.
   const strays = result.ok && s.strays ? switchedCapStrays(editor.circuit, ports) : null;
@@ -236,15 +237,15 @@ function deriveNow() {
  *  (V_OUT/V_IN), as the signal-flow graph's; the equation is its identity. */
 function addTrace(result) {
   const existing = traces.find((trace) => !trace.held && trace.equation === result.equation);
+  // In w (sampled every slot) a step is a slot: S a period on the graph's axis.
+  const stepping = { variable: result.variable, steps: result.sampling === 'slot' ? result.slots : 1 };
   if (existing) {
-    existing.value = result.value;
-    existing.gains = result.gains;
-    existing.on = true;
+    Object.assign(existing, { value: result.value, gains: result.gains, on: true }, stepping);
     return;
   }
   const used = new Set(traces.map((trace) => trace.color));
   const color = TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
-  traces.push({ id: `sc-${traces.length}-${result.equation}`, label: result.label, equation: result.equation, color, value: result.value, gains: result.gains, on: true });
+  traces.push({ id: `sc-${traces.length}-${result.equation}`, label: result.label, equation: result.equation, color, value: result.value, gains: result.gains, on: true, ...stepping });
   // Its held copies, saved with the design, come back with it.
   restoreHolds();
 }
@@ -265,7 +266,9 @@ function renderResult() {
   }
   host.replaceChildren(
     el('div', { class: 'sc-equation' }, [math(result.equation, true)]),
-    el('p', { class: 'field-hint' }, ['Read at the end of ', phaseName(result.states[result.readout].name), ', the input held through each period.']),
+    el('p', { class: 'field-hint' }, result.sampling === 'slot'
+      ? ['Read at the end of ', phaseName(result.states[result.readout].name), '. The input is sampled every slot, as it is at each phase\'s end: ', math(`w = z^{1/${result.slots}}`), ', one slot of the timing diagram.']
+      : ['Read at the end of ', phaseName(result.states[result.readout].name), '. The input is sampled once a period and held through every phase: ', math('z'), ', one period.']),
     el('div', { class: 'sc-roots' }),
   );
   renderRoots();
@@ -276,7 +279,8 @@ function renderRoots() {
   const host = section?.querySelector('.sc-roots');
   if (!host || !latest?.result.ok) return;
   const roots = numericRootsOf(numbered(latest.result.value));
-  const line = (label, items) => (items?.length ? el('p', { class: 'sc-root-line' }, [`${label}: `, items.map((root) => `z = ${complexText(root)}`).join(', ')]) : null);
+  const variable = latest.result.variable || 'z';
+  const line = (label, items) => (items?.length ? el('p', { class: 'sc-root-line' }, [`${label}: `, items.map((root) => `${variable} = ${complexText(root)}`).join(', ')]) : null);
   host.replaceChildren(...[line('Poles', roots.poles), line('Zeros', roots.zeros)].filter(Boolean));
 }
 
@@ -546,7 +550,7 @@ const holdsChanged = (records) => saveHolds('switched-cap', records);
 
 /** Hold a trace: a copy at the values now, in a color of its own. */
 function holdTrace(trace) {
-  const values = Object.fromEntries(resultSymbols(trace.value, 'z').map((name) => [name, capacitance(name)]));
+  const values = Object.fromEntries(resultSymbols(trace.value, trace.variable || 'z').map((name) => [name, capacitance(name)]));
   const used = new Set(traces.map((t) => t.color));
   const color = TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
   const record = { key: holdKey(), of: trace.equation, base: trace.label, color, values };
@@ -573,7 +577,7 @@ function restoreHolds() {
 function graphPlot(quantity = 'magnitude') {
   const shown = shownTraces();
   if (!shown.length) return null;
-  return responsePlot(shown.map((trace) => ({ ...trace, value: numbered(trace.value), variable: 'z' })), 'z', { quantity });
+  return responsePlot(shown.map((trace) => ({ ...trace, value: numbered(trace.value), variable: trace.variable || 'z' })), 'z', { quantity });
 }
 
 function stackedGraphs() {
@@ -641,7 +645,7 @@ function scPlotUpdate(plot) {
   if (!latest) return { error: 'derive the circuit first (Shift+S)' };
   const matched = plot.kind === 'response' ? matchPlotTraces(plot, traces.map((trace) => ({ ...trace, label: trace.held ? heldLabel(trace) : liveLabel(trace) }))) : null;
   if (!matched) return { error: 'its traces are no longer on the graph' };
-  const next = responsePlot(matched.map((trace) => ({ ...trace, value: numbered(trace.value), variable: 'z' })), 'z', { quantity: plot.quantity === 'phase' ? 'phase' : 'magnitude' });
+  const next = responsePlot(matched.map((trace) => ({ ...trace, value: numbered(trace.value), variable: trace.variable || 'z' })), 'z', { quantity: plot.quantity === 'phase' ? 'phase' : 'magnitude' });
   return next ? { plot: next, shown: matched } : { error: 'its traces are no longer on the graph' };
 }
 
@@ -658,6 +662,7 @@ function annotate() {
   const rows = [
     `\\text{Transfer function} & ${result.equation}`,
     `\\text{Read at the end of} & ${tex(result.states[result.readout].name)}`,
+    result.sampling === 'slot' ? `\\text{Input sampled} & \\text{every slot, } w = z^{1/${result.slots}}` : `\\text{Input sampled} & \\text{once a period}`,
   ];
   if (result.noise?.ok) rows.push(`\\text{kT/C noise} & \\frac{\\overline{v^2_{n,in}}}{kT} = ${transferTex(result.noise.total.input, 'z', { symbolicLead: true })}`);
   const { updated } = annotateMathFigure({ kind: 'equations', source: 'switched-cap', text: rows.join('\n'), columns: 'll' });
@@ -677,6 +682,12 @@ export function installSwitchedCapUi() {
       row('Output', 'sc-output', select('sc-output', 'output')),
       row('Read at', 'sc-readout', select('sc-readout', 'readout')),
       el('p', { class: 'field-hint', text: 'A port of any kind, or any net.' }),
+      row('Input sampled', 'sc-sampling', el('select', { id: 'sc-sampling', onchange: (ev) => { settings().sampling = ev.target.value; changed(); } }, [
+        el('option', { value: '', text: 'once a period' }),
+        el('option', { value: 'slot', text: 'every slot' }),
+      ])),
+      el('p', { class: 'field-hint', text: 'Once a period: one sample a clock period, held through every phase, as a sample-and-hold drives the input. H(z), z one period.' }),
+      el('p', { class: 'field-hint', text: 'Every slot: the input as it is at each phase\'s end, moving within the period. H(w), w one slot of the timing diagram. Sampling at several phases then averages, with notches at multiples of the clock.' }),
     ]),
     el('fieldset', { class: 'analysis-approximations' }, [el('legend', { text: 'Phases' }), el('div', { class: 'sc-phases' })]),
     el('p', { class: 'analysis-stale sc-stale', hidden: true, text: 'The circuit changed since this was derived.' }),
