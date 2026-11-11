@@ -584,6 +584,31 @@ export async function saveWindowState() {
 }
 
 /**
+ * The design's changes discarded, what its windows show is kept: the file's
+ * own drawing (as last saved) written again with the windows as they are
+ * now. Window state is no edit, so it is never discarded with the edits.
+ */
+async function keepWindowStateOnDiscard() {
+  const path = editor.currentDocumentPath;
+  if (!path || editor.saveInFlight || !editor.lastSavedSnapshot) return;
+  let saved;
+  let now;
+  try {
+    saved = JSON.parse(editor.lastSavedSnapshot);
+    now = JSON.parse(snapshot());
+  } catch { return; }
+  if (JSON.stringify(saved.windows ?? null) === JSON.stringify(now.windows ?? null)) return;
+  if (now.windows) saved.windows = now.windows;
+  else delete saved.windows;
+  try {
+    editor.syncGeneration += 1;
+    await persistence.save({ path }, saved, { overwrite: true, historyBase });
+  } catch { /* the windows' state is lost with the edits */ } finally {
+    editor.syncGeneration += 1;
+  }
+}
+
+/**
  * Write the drawing as it is into its file as the saved version, with no
  * save point of its own: a restored save point is in the history already.
  * `history`, stored against `base` (the file's drawing as read), goes in
@@ -1379,7 +1404,7 @@ export function installDocumentSession() {
     switchDialog.addEventListener('close', () => {
       const action = pendingDocumentAction;
       pendingDocumentAction = null;
-      if (switchDialog.returnValue === 'discard' && action) action.run();
+      if (switchDialog.returnValue === 'discard' && action) void keepWindowStateOnDiscard().then(() => action.run());
       else if (switchDialog.returnValue === 'save' && action) {
         // Saved first; a save that fails or is canceled keeps the design open.
         void saveCircuit().then((saved) => {

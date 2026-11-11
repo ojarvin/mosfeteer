@@ -233,7 +233,9 @@ nets and stimulus, the small-signal form, and the sizing window's order. It is n
 (`applyJson` replaces it only with `{ document: true }`), and it never makes
 the design unsaved -- it is written with the next save, or on its own
 (`saveWindowState`) when the design is left or the editor hidden with
-nothing else unsaved. Every window resets to the shown document's own state
+nothing else unsaved. Leaving it and discarding its edits keeps the windows'
+state too: the file's saved drawing is written with it
+(`keepWindowStateOnDiscard`). Every window resets to the shown document's own state
 through `onDocumentShown` (main.js, counted by document loads, not by
 circuit objects), so nothing of one design is left
 showing in another.
