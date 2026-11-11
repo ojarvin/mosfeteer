@@ -234,8 +234,9 @@ export function renderNets() {
       dot.title = `Highlighted ${highlight}`;
       ref.appendChild(dot);
     }
-    // A math name ($\varphi_1$) reads as its markup, as a switch's phase does.
-    appendMarkupText(ref, isTexSource(net.name) ? texToLabelMarkup(net.name) : (net.name || net.id));
+    // A name in math ($V_{\mathrm{out}}$, or words with inline $...$) reads as its markup.
+    appendMarkupText(ref, isTexSource(net.name) ? texToLabelMarkup(net.name)
+      : net.name ? net.name.replace(/\$[^$\n]+\$/g, (tex) => texToLabelMarkup(tex)) : net.id);
     ref.title = 'Double-click to rename';
 
     const meta = document.createElement('span');

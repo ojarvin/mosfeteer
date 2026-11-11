@@ -1606,9 +1606,9 @@ export class LabelInstance {
   /** Drawn as math: made so (an equation), or a free label's text mixing
    *  words and inline `$...$`. */
   get math() {
-    // A net named wholly in TeX ($\varphi_1$, as a switch's phase is
-    // written) is drawn as math too.
-    if (this.netId) return isTexSource(this.text);
+    // A net's name may be math as any label's text: wholly in TeX
+    // ($V_{\mathrm{out}}$), or words and inline TeX mixed.
+    if (this.netId) return isTexSource(this.text) || hasInlineMath(this.text);
     return this._math || (!this.owner && this.kind === 'label' && hasInlineMath(this._text));
   }
 

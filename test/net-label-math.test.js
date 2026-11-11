@@ -1,4 +1,4 @@
-/** A net named as math ($\varphi_1$, as a switch's phase is written) is drawn as math. */
+/** A net's name may be math, as any label's text: its labels draw it so. */
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,7 +14,7 @@ function named(name) {
   return { circuit, label: [...circuit.labels.values()].find((label) => label.netId === net.id) };
 }
 
-test('a net label named wholly in $...$ is drawn as math, as a switch\'s phase is', () => {
+test('a net named wholly in $...$ is drawn as math', () => {
   const { circuit, label } = named('$\\varphi_1$');
   assert.equal(label.math, true);
   assert.equal(label.mathSource(), '\\varphi_1');
@@ -23,7 +23,13 @@ test('a net label named wholly in $...$ is drawn as math, as a switch\'s phase i
   assert.doesNotMatch(svg, /<text[^>]*>\$\\varphi_1\$<\/text>/);
 });
 
-test('a net label with a plain name stays the net label\'s text', () => {
+test('a net named in words with inline $...$ is drawn as math too', () => {
+  const { circuit, label } = named('clk $\\varphi_1$');
+  assert.equal(label.math, true);
+  assert.match(svgString(circuit, {}), /schematic-math-label/);
+});
+
+test('a net with a plain name stays the net label\'s text', () => {
   const { circuit, label } = named('V_{OUT}');
   assert.equal(label.math, false);
   assert.doesNotMatch(svgString(circuit, {}), /schematic-math-label/);
