@@ -5,7 +5,7 @@
  */
 
 import { INTERFACE_PIN_TYPES, componentLabelText, isReferenceMarker, componentNameIdentity, parseLabelRuns, applyMarkup } from '../core/model.js';
-import { switchPhase } from '../core/beats.js';
+import { isTexSource, switchPhase } from '../core/beats.js';
 import { resolveColor } from '../core/style.js';
 import { texToLabelMarkup } from '../core/render.js';
 import { GRID } from '../core/grid.js';
@@ -234,7 +234,8 @@ export function renderNets() {
       dot.title = `Highlighted ${highlight}`;
       ref.appendChild(dot);
     }
-    appendMarkupText(ref, net.name || net.id);
+    // A math name ($\varphi_1$) reads as its markup, as a switch's phase does.
+    appendMarkupText(ref, isTexSource(net.name) ? texToLabelMarkup(net.name) : (net.name || net.id));
     ref.title = 'Double-click to rename';
 
     const meta = document.createElement('span');

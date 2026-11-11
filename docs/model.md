@@ -66,7 +66,9 @@ Labels do not create connectivity. Physical net IDs remain separate even when
 equal names create a deliberate virtual electrical connection. Use
 `addNetLabel`, `renameNet`, and `renameNetLabel`; editor code must not assign
 `net.name` directly. Net-label text is derived from the net, and removing one
-label occurrence does not remove the net or its name. A net label never
+label occurrence does not remove the net or its name. A net named wholly in
+TeX (`$\varphi_1$`, as a switch's phase is written) is drawn as math, and
+the panel lists it as its markup. A net label never
 becomes free text: copied with its wire it travels with it; copied alone it
 carries only the name, and pasting it on a wire names that net (an unnamed net
 takes it, a differently named one is renamed only after confirmation).

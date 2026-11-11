@@ -31632,7 +31632,10 @@ class LabelInstance {
   /** Drawn as math: made so (an equation), or a free label's text mixing
    *  words and inline `$...$`. */
   get math() {
-    return this._math || (!this.netId && !this.owner && this.kind === 'label' && hasInlineMath(this._text));
+    // A net named wholly in TeX ($\varphi_1$, as a switch's phase is
+    // written) is drawn as math too.
+    if (this.netId) return isTexSource(this.text);
+    return this._math || (!this.owner && this.kind === 'label' && hasInlineMath(this._text));
   }
 
   set math(value) {
@@ -93498,7 +93501,7 @@ __exports.setSidePanelVisible = setSidePanelVisible;
 __exports.toggleSidePanel = toggleSidePanel;
 __exports.installSidePanel = installSidePanel;
 let INTERFACE_PIN_TYPES, componentLabelText, isReferenceMarker, componentNameIdentity, parseLabelRuns, applyMarkup; __bind(() => { ({ INTERFACE_PIN_TYPES, componentLabelText, isReferenceMarker, componentNameIdentity, parseLabelRuns, applyMarkup } = __require("src/core/model.js")); });
-let switchPhase; __bind(() => { ({ switchPhase } = __require("src/core/beats.js")); });
+let isTexSource, switchPhase; __bind(() => { ({ isTexSource, switchPhase } = __require("src/core/beats.js")); });
 let resolveColor; __bind(() => { ({ resolveColor } = __require("src/core/style.js")); });
 let texToLabelMarkup; __bind(() => { ({ texToLabelMarkup } = __require("src/core/render.js")); });
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
@@ -93754,7 +93757,8 @@ function renderNets() {
       dot.title = `Highlighted ${highlight}`;
       ref.appendChild(dot);
     }
-    appendMarkupText(ref, net.name || net.id);
+    // A math name ($\varphi_1$) reads as its markup, as a switch's phase does.
+    appendMarkupText(ref, isTexSource(net.name) ? texToLabelMarkup(net.name) : (net.name || net.id));
     ref.title = 'Double-click to rename';
 
     const meta = document.createElement('span');
