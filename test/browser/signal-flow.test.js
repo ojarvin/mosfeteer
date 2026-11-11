@@ -260,6 +260,9 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     await h.evaluate(`(() => { document.querySelector('.data-plot-dialog .data-plot-curve input[type=checkbox]').click(); [...document.querySelectorAll('.data-plot-dialog button')].find((b) => b.textContent === 'Apply').click(); })()`);
     await h.until(`${box}.then((b) => !b.plot.traces[0].hidden)`);
     assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.plotLegend([...m.editor.circuit.labels.values()].find((l) => l.plot?.units === 'dBFS')).length)`), entries);
+    // Held traces are kept with the design (a discard keeps them too): let
+    // go of them, so the tests after this one start without them.
+    await h.evaluate(`${h.module('editor-state.js')}.then((m) => { delete m.editor.circuit.windows.holds; })`);
   });
 
   test('the sweep steps a coefficient, simulating each point off the page\'s thread, and plots what each run measures', async () => {
