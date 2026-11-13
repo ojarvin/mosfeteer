@@ -58201,7 +58201,7 @@ let wheelIntent, lerpView; __bind(() => { ({ wheelIntent, lerpView } = __require
 let easeInOut, easeOut, easeSpring; __bind(() => { ({ easeInOut, easeOut, easeSpring } = __require("src/web/easing.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let addDocumentFiles, allowFolderAccess, renameDesign, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, saveCircuit, startNewDocument, deleteDocuments; __bind(() => { ({ addDocumentFiles, allowFolderAccess, renameDesign, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, saveCircuit, startNewDocument, deleteDocuments } = __require("src/web/document-session.js")); });
-let fittedView; __bind(() => { ({ fittedView } = __require("src/web/canvas-view.js")); });
+let fittedView, holdViewMoving; __bind(() => { ({ fittedView, holdViewMoving } = __require("src/web/canvas-view.js")); });
 let closeToolbarMenu, scheduleToolbarFit, toggleTheme, toolbarMenus; __bind(() => { ({ closeToolbarMenu, scheduleToolbarFit, toggleTheme, toolbarMenus } = __require("src/web/toolbar-ui.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
@@ -62007,6 +62007,7 @@ function onPointerMove(ev) {
   const dx = ev.clientX - drag.startX;
   const dy = ev.clientY - drag.startY;
   if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+  if (!drag.moved) holdViewMoving(true);
   drag.moved = true;
   rootEl.classList.add('panning');
   const k = paneSize().w / drag.view.w;
@@ -62046,6 +62047,7 @@ function onPointerUp(ev) {
   }
   state.drag = null;
   rootEl.classList.remove('panning');
+  if (drag?.moved) holdViewMoving(false);
   if (!drag || drag.moved || ev.button !== 0) return;
   const hit = tileUnder(clientToWorld(ev.clientX, ev.clientY));
   // Ctrl- or Shift-click adds a design to the pick or takes it out; a plain
@@ -64867,6 +64869,7 @@ __exports.syncViewToPane = syncViewToPane;
 __exports.minViewW = minViewW;
 __exports.maxViewW = maxViewW;
 __exports.followCursor = followCursor;
+__exports.holdViewMoving = holdViewMoving;
 __exports.cancelViewAnimation = cancelViewAnimation;
 __exports.finishViewAnimation = finishViewAnimation;
 __exports.animateViewTo = animateViewTo;
@@ -65011,6 +65014,25 @@ function followCursor() {
 
 // Fit, zoom-to-box, and jump-to-issue ease the view over a few frames so the
 // eye can follow where the drawing went. Any direct pan/zoom cancels it.
+// While a pan is held, press to release, the root carries
+// data-view-moving and the glass over the drawing drops its blur
+// (style.css): blurring what moves behind it every frame is what makes a
+// pan lag. The pan dims that chrome too (chrome-quiet.js), which hides the
+// change, and at the release both come back over one transition. A wheel
+// or a view animation leaves the blur alone: undimmed, its return would
+// show.
+let viewHeld = false;
+
+/** A pan pressed (true) or released (false). */
+function holdViewMoving(held) {
+  viewHeld = held;
+  globalThis.document?.documentElement?.toggleAttribute('data-view-moving', held);
+}
+// A release that never reaches the pan (the Atlas gone mid-drag, the
+// button let go outside the window) still ends the hold.
+globalThis.window?.addEventListener('pointerup', (ev) => { if (viewHeld && !ev.buttons) holdViewMoving(false); }, true);
+globalThis.window?.addEventListener('blur', () => { if (viewHeld) holdViewMoving(false); });
+
 let viewAnimation = 0;
 // Where the view animation under way lands, and what follows its landing.
 let viewLanding = null;
@@ -65317,18 +65339,20 @@ __exports.chromeQuiet = chromeQuiet;
 __exports.syncChromeQuiet = syncChromeQuiet;
 /**
  * The chrome steps back while the hand is on the drawing: while a part, a
- * label, or a wire is being moved, or a wire is being drawn, the root
- * element carries `data-chrome-quiet` and the stylesheet dims the toolbar,
- * the tool rail, and the floating windows. Panning, zooming, and a
- * selection box leave them as they are.
+ * label, or a wire is being moved, a wire is being drawn, or the view is
+ * being panned, the root element carries `data-chrome-quiet` and the
+ * stylesheet dims the toolbar, the tool rail, and the floating windows. A
+ * zoom box and a selection box leave them as they are.
  */
 
-/** Drags that look around or pick rather than change the drawing. */
-const LOOKING = new Set(['pan', 'zoom', 'marquee', 'deletemarquee', 'radialpending', 'wirepick']);
+/** Drags that pick rather than change the drawing or move the view. */
+const LOOKING = new Set(['zoom', 'marquee', 'deletemarquee', 'radialpending', 'wirepick']);
 
-/** Whether the chrome steps back for this drag and wire in progress. */
+/** Whether the chrome steps back for this drag and wire in progress. A pan
+ *  does from its press to its release. */
 function chromeQuiet(drag, wire) {
   if (wire?.source || wire?.points?.length) return true;
+  if (drag?.mode === 'pan') return true;
   return !!drag?.moved && !LOOKING.has(drag.mode);
 }
 
@@ -79962,7 +79986,7 @@ let openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu; __bind((
 let logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar; __bind(() => { ({ logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar } = __require("src/web/status-bar-ui.js")); });
 let resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi; __bind(() => { ({ resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi } = __require("src/web/design-check-ui.js")); });
 let partialVertexPicks, selectAllNetIds; __bind(() => { ({ partialVertexPicks, selectAllNetIds } = __require("src/core/selection.js")); });
-let paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, finishViewAnimation, fitView, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect, PAN_MARGIN, frameLike, paintMarginNow, paintedFrame, placeLayer, setPaintMargin, slideLayers; __bind(() => { ({ paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, finishViewAnimation, fitView, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect, PAN_MARGIN, frameLike, paintMarginNow, paintedFrame, placeLayer, setPaintMargin, slideLayers } = __require("src/web/canvas-view.js")); });
+let paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, finishViewAnimation, holdViewMoving, fitView, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect, PAN_MARGIN, frameLike, paintMarginNow, paintedFrame, placeLayer, setPaintMargin, slideLayers; __bind(() => { ({ paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, finishViewAnimation, holdViewMoving, fitView, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect, PAN_MARGIN, frameLike, paintMarginNow, paintedFrame, placeLayer, setPaintMargin, slideLayers } = __require("src/web/canvas-view.js")); });
 let adoptDrawing, patchChildren, patchDrawing; __bind(() => { ({ adoptDrawing, patchChildren, patchDrawing } = __require("src/web/svg-patch.js")); });
 let syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock; __bind(() => { ({ syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock } = __require("src/web/analysis-ui.js")); });
 let closeComponentContextMenu, openContextMenuAt, installContextMenu; __bind(() => { ({ closeComponentContextMenu, openContextMenuAt, installContextMenu } = __require("src/web/context-menu.js")); });
@@ -80662,6 +80686,7 @@ let pendingFeedbackSnapshot = null;
 let paintedPan = null;
 
 function beginPaintedPan() {
+  holdViewMoving(true);
   paintedPan = { ...view };
   setPaintMargin(PAN_MARGIN);
   render();
@@ -80689,6 +80714,7 @@ function slidePaintedPan() {
 }
 
 function endPaintedPan() {
+  holdViewMoving(false);
   paintedPan = null;
   setPaintMargin(0);
   slideLayers(null);

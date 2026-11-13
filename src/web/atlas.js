@@ -36,7 +36,7 @@ import {
   addDocumentFiles, allowFolderAccess, renameDesign, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, saveCircuit, startNewDocument,
   deleteDocuments,
 } from './document-session.js';
-import { fittedView } from './canvas-view.js';
+import { fittedView, holdViewMoving } from './canvas-view.js';
 import { closeToolbarMenu, scheduleToolbarFit, toggleTheme, toolbarMenus } from './toolbar-ui.js';
 import { logLine } from './status-bar-ui.js';
 import { canvasEl } from './elements.js';
@@ -3785,6 +3785,7 @@ function onPointerMove(ev) {
   const dx = ev.clientX - drag.startX;
   const dy = ev.clientY - drag.startY;
   if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+  if (!drag.moved) holdViewMoving(true);
   drag.moved = true;
   rootEl.classList.add('panning');
   const k = paneSize().w / drag.view.w;
@@ -3824,6 +3825,7 @@ function onPointerUp(ev) {
   }
   state.drag = null;
   rootEl.classList.remove('panning');
+  if (drag?.moved) holdViewMoving(false);
   if (!drag || drag.moved || ev.button !== 0) return;
   const hit = tileUnder(clientToWorld(ev.clientX, ev.clientY));
   // Ctrl- or Shift-click adds a design to the pick or takes it out; a plain

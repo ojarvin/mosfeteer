@@ -75,8 +75,8 @@ puts it back in its default place, keeping its size. The window with the
 keyboard focus in it has an accent border and ring and its title at full
 strength; the other windows' titles are dim. While a part, label, or wire is
 moved, or a wire is drawn, the toolbar, tool rail, and floating windows dim
-until it is let go (`src/web/chrome-quiet.js`); panning, zooming, and a
-selection box leave them. Pressing
+until it is let go (`src/web/chrome-quiet.js`), and so does a pan, from its
+press to its release; a zoom box and a selection box leave them. Pressing
 a window gives it the focus (the control pressed, else the window itself),
 and keys go to it rather than the drawing until the drawing is pressed;
 Escape on a window holding the focus itself closes it, and so does the
@@ -147,6 +147,15 @@ press or key (`finishViewAnimation`, canvas-view.js); a wheel stops it where
 it is, to zoom on from there. Opening a linked design reads its file while
 the view zooms in, and lets it in as the zoom lands. Results that rise in
 (the derived equations, the optimizer's result) are all in within 250 ms.
+While a pan is held, press to release, in the editor or the Atlas, the
+root carries `data-view-moving` (canvas-view.js `holdViewMoving`): the
+glass over the drawing drops its backdrop blur, a little more opaque
+instead, since blurring what moves behind it every frame is what makes a
+pan lag. The pan dims that chrome too, which hides the change, and at the
+release the blur, its saturation, and its tint fade back in over the same
+transition as the dimmed chrome (`--motion`; registered properties in
+style.css). A wheel or a view animation leaves the blur as it is: without
+the dimming, its return would show.
 
 Settings → Display → Accent color picks the interface's accent (selection,
 the active tool, focus) from the drawing's palette, or the default teal

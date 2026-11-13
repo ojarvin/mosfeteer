@@ -1,3 +1,21 @@
+/* The glass's blur, saturation, and tint, typed so they can be animated
+   (--glass-filter, --glass-bg). */
+@property --glass-blur { syntax: '<length>'; inherits: true; initial-value: 14px; }
+@property --glass-saturate { syntax: '<number>'; inherits: true; initial-value: 1.4; }
+@property --glass-tint { syntax: '<percentage>'; inherits: true; initial-value: 88%; }
+
+/* While a pan is held (canvas-view.js holdViewMoving), the glass drops its
+   blur: redrawing a blur of what moves behind it every frame is what makes a
+   pan lag. A little more tint keeps it looking the same, and the pan dims
+   the chrome too; at the release the blur fades back in with it. */
+:root[data-view-moving] {
+  --glass-blur: 0px;
+  --glass-saturate: 1;
+  --glass-tint: 96%;
+  --glass-filter: none;
+  transition: none;
+}
+
 /* Mosfeteer — light scientific theme */
 
 [hidden] { display: none !important; }
@@ -35,10 +53,17 @@
   --logo-blade: var(--text);
   --logo-sheen: #8e8e93;
   /* One translucent surface for everything that floats over the drawing:
-     tool rail, menus, the log drawer, the radial menu. */
-  --glass-bg: color-mix(in srgb, var(--bg-panel) 88%, transparent);
+     tool rail, menus, the log drawer, the radial menu. Its blur, saturation,
+     and tint are registered (below), so they fade back in rather than
+     switch on when the view comes to rest. */
+  --glass-blur: 14px;
+  --glass-saturate: 1.4;
+  --glass-tint: 88%;
+  --glass-bg: color-mix(in srgb, var(--bg-panel) var(--glass-tint), transparent);
   --glass-border: color-mix(in srgb, var(--border) 80%, transparent);
-  --glass-filter: blur(14px) saturate(1.4);
+  --glass-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  /* As the dimmed chrome comes back (chrome-quiet), so the two arrive together. */
+  transition: --glass-blur var(--motion) var(--ease-out), --glass-saturate var(--motion) var(--ease-out), --glass-tint var(--motion) var(--ease-out);
   --glass-shadow: 0 8px 28px rgba(20, 24, 34, 0.16), 0 1px 3px rgba(20, 24, 34, 0.08);
   /* A hairline inside a glass surface: under a title bar, between menu
      groups. */

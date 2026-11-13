@@ -112,6 +112,25 @@ export function followCursor() {
 
 // Fit, zoom-to-box, and jump-to-issue ease the view over a few frames so the
 // eye can follow where the drawing went. Any direct pan/zoom cancels it.
+// While a pan is held, press to release, the root carries
+// data-view-moving and the glass over the drawing drops its blur
+// (style.css): blurring what moves behind it every frame is what makes a
+// pan lag. The pan dims that chrome too (chrome-quiet.js), which hides the
+// change, and at the release both come back over one transition. A wheel
+// or a view animation leaves the blur alone: undimmed, its return would
+// show.
+let viewHeld = false;
+
+/** A pan pressed (true) or released (false). */
+export function holdViewMoving(held) {
+  viewHeld = held;
+  globalThis.document?.documentElement?.toggleAttribute('data-view-moving', held);
+}
+// A release that never reaches the pan (the Atlas gone mid-drag, the
+// button let go outside the window) still ends the hold.
+globalThis.window?.addEventListener('pointerup', (ev) => { if (viewHeld && !ev.buttons) holdViewMoving(false); }, true);
+globalThis.window?.addEventListener('blur', () => { if (viewHeld) holdViewMoving(false); });
+
 let viewAnimation = 0;
 // Where the view animation under way lands, and what follows its landing.
 let viewLanding = null;
