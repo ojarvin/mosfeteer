@@ -670,6 +670,16 @@ function settlePaintedPan() {
   slideLayers(null);
 }
 
+/** Pan so the world point pressed is under client point (x, y): mapped
+ *  against the press's view (startView), so the pan equals the pointer's
+ *  movement, with no feedback from earlier moves. */
+function panTo(pan, x, y) {
+  const p = clientToWorld(x, y, pan.startView);
+  view.x = pan.startView.x - (p.x - pan.startWorld.x);
+  view.y = pan.startView.y - (p.y - pan.startWorld.y);
+  slidePaintedPan();
+}
+
 function slidePaintedPan() {
   if (!paintedPan || !canvasSvgEl) {
     scheduleInteractionRender();
@@ -5873,12 +5883,7 @@ export function canvasMouseMove(ev) {
   }
 
   if (drag.mode === 'pan') {
-    // Map the pointer back against the mousedown view (startView) so the pan
-    // delta equals the raw pointer movement — no feedback from prior moves.
-    const p = clientToWorld(ev.clientX, ev.clientY, drag.startView);
-    view.x = drag.startView.x - (p.x - drag.startWorld.x);
-    view.y = drag.startView.y - (p.y - drag.startWorld.y);
-    slidePaintedPan();
+    panTo(drag, ev.clientX, ev.clientY);
     return;
   }
 

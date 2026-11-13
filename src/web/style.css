@@ -1,6 +1,6 @@
 /* The glass's blur, saturation, and tint, typed so they can be animated
    (--glass-filter, --glass-bg). */
-@property --glass-blur { syntax: '<length>'; inherits: true; initial-value: 14px; }
+@property --glass-blur { syntax: '<length>'; inherits: true; initial-value: 8px; }
 @property --glass-saturate { syntax: '<number>'; inherits: true; initial-value: 1.4; }
 @property --glass-tint { syntax: '<percentage>'; inherits: true; initial-value: 88%; }
 
@@ -70,7 +70,9 @@
      tool rail, menus, the log drawer, the radial menu. Its blur, saturation,
      and tint are registered (below), so they fade back in rather than
      switch on when the view comes to rest. */
-  --glass-blur: 14px;
+  /* 8 px, not more: through the tint it reads the same, and a backdrop blur
+     costs more the wider it is. */
+  --glass-blur: 8px;
   --glass-saturate: 1.4;
   --glass-tint: 88%;
   --glass-bg: color-mix(in srgb, var(--bg-panel) var(--glass-tint), transparent);

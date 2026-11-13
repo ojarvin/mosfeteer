@@ -65,13 +65,13 @@ describe('motion that never waits', { skip: browserSkip() }, () => {
     assert.equal((await glass()).moving, true, 'held: still moving');
     await h.mouse('mouseReleased', at.x + 60, at.y + 20, { button: 'middle', buttons: 0 });
     // At rest the mark goes; the blur then rises through values between,
-    // a fade rather than a switch, to its full 14 px.
+    // a fade rather than a switch, to its full 8 px.
     // At the release, with the dimmed chrome: no rest to wait out.
     assert.equal((await glass()).moving, false, 'released: at once');
     assert.equal(await h.evaluate(`document.documentElement.hasAttribute('data-chrome-quiet')`), false, 'back after the release');
     const seen = await h.evaluate(`new Promise((resolve) => { const values = []; const start = performance.now(); const step = () => { values.push(parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--glass-blur'))); if (performance.now() - start < 400) requestAnimationFrame(step); else resolve(values); }; step(); })`);
-    assert.ok(seen.some((v) => v > 0.5 && v < 13.5), `in between: ${seen.map((v) => v.toFixed(1)).join(' ')}`);
-    assert.equal(seen.at(-1), 14);
+    assert.ok(seen.some((v) => v > 0.5 && v < 7.5), `in between: ${seen.map((v) => v.toFixed(1)).join(' ')}`);
+    assert.equal(seen.at(-1), 8);
     for (let i = 1; i < seen.length; i++) assert.ok(seen[i] >= seen[i - 1] - 1e-6, 'it only rises');
   });
   test('a wheel zoom leaves the glass blur as it is: nothing to pop back', async () => {
