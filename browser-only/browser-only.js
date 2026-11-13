@@ -31487,8 +31487,8 @@ const MAX_SWEEP_RUNS = 8;
  * from, to, points, log, input, amplitude, frequency, samples, values? }] }`
  * -- the coefficient swept, the measures shown, how many of the plot's
  * traces are the sweep's (the first ones), and each sweep drawn, the held
- * ones at their coefficients (`values`), the last the live one, at the
- * coefficients now.
+ * ones with the coefficients they differ from the last in (`values`), the
+ * last the live one, at the coefficients now.
  */
 function sweepOf(sweep) {
   if (!sweep || typeof sweep !== 'object' || typeof sweep.name !== 'string' || !/^[A-Za-z][\w]{0,40}$/.test(sweep.name)) return {};
@@ -98427,8 +98427,8 @@ let createPlotView; __bind(() => { ({ createPlotView } = __require("src/web/plot
  * ones of the same coefficient and named by what differs since (the
  * window's, not saved). Annotate puts the measures shown on the drawing as
  * a data plot, with what each sweep drawn ran at (`plot.sweep`), so the
- * plot runs them again later (sweepPlotUpdate): the held ones at the
- * coefficients they ran at, the last at the coefficients then.
+ * plot runs them again later (sweepPlotUpdate): each at the coefficients
+ * then, a held one but the coefficients it differed from the last in.
  */
 
 
@@ -98525,6 +98525,14 @@ function heldChanges(h, live) {
   const now = live.values;
   const names = Object.entries(h.values).filter(([name, value]) => name !== h.name && Math.abs(value - (now[name] ?? 1)) > 1e-12 * Math.max(1, Math.abs(value))).map(([name]) => name);
   return h.amplitude !== live.amplitude ? [...names, AMPLITUDE] : names;
+}
+
+/** The coefficients a held sweep keeps on the drawing: those it differs
+ *  from the live one in (heldChanges). Run again, it takes the others at
+ *  the numbers then, as the live one does, so that the legend still names
+ *  what tells the traces apart. */
+function heldValues(h, live) {
+  return Object.fromEntries(heldChanges(h, live).filter((name) => name !== AMPLITUDE).map((name) => [name, h.values[name]]));
 }
 
 /** A held sweep's notes: the coefficients (but the swept one) and the
@@ -98947,7 +98955,7 @@ function annotate() {
   let plot = sweepPlot();
   if (!plot) return;
   const same = held.filter((h) => h.name === result.name);
-  plot = normalizePlot({ ...plot, sweep: { name: result.name, measures: shownMeasures(state()), count: plot.traces.length, runs: [...same.map((h) => ({ ...keptRun(h), values: h.values })), keptRun(result)] } });
+  plot = normalizePlot({ ...plot, sweep: { name: result.name, measures: shownMeasures(state()), count: plot.traces.length, runs: [...same.map((h) => ({ ...keptRun(h), values: heldValues(h, result) })), keptRun(result)] } });
   let placed = null;
   commit(() => { placed = placeDataPlot(editor.circuit, plot, { math: true }); });
   if (!placed) return;
@@ -99007,8 +99015,8 @@ function sweepTraces(plot, results, measures = plot.sweep.measures) {
 
 /**
  * A sweep plot (`plot.sweep`) run again: each of its sweeps in turn, the
- * held ones at the coefficients they ran at, the live one at those now,
- * over the same range with the same sine. `onPoint(progress)` hears each
+ * live one at the coefficients now, a held one too but those it differs
+ * in (`values`), over the same range with the same sine. `onPoint(progress)` hears each
  * point (runSweeps's, with `plot`: the plot so far). Returns `{ done, stop()
  * }`; `done` resolves to `{ traces, y?, count }` (sweepTraces), `{ error }`,
  * or `{ stopped }`.
@@ -99093,7 +99101,7 @@ function sweepPlotEditor(plot, { onPlot = () => {}, onDone = () => {} } = {}) {
   const note = el('p', { class: 'field-hint sweep-held-note' });
   function hint() {
     const count = heldRuns().length;
-    note.textContent = count ? `Sweep runs its ${count} held sweep${count > 1 ? 's' : ''} again first, each at the coefficients it ran at.` : '';
+    note.textContent = count ? `Sweep runs its ${count} held sweep${count > 1 ? 's' : ''} again first, each with the coefficients it differs in.` : '';
     note.hidden = !count;
     if (!controls?.running()) controls?.say(JSON.stringify(fields) === ran.fields ? 'Sweep runs it again at the coefficients now.' : 'Changed: Apply sweeps first.');
   }

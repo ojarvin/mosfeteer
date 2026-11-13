@@ -306,7 +306,8 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     const sweepBox = `${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].find((l) => l.plot?.kind === 'data' && l.plot.sweep))`;
     const spec = await h.evaluate(`${sweepBox}.then((b) => b.plot.sweep)`);
     assert.equal(spec.runs.length, 2);
-    assert.equal(spec.runs[0].values.k_2, 2);
+    // The held one keeps only what it differs in: the rest follows the numbers then.
+    assert.deepEqual(spec.runs[0].values, { k_2: 2 });
     assert.deepEqual(spec.measures, ['sndr', 'noise']);
     const before = await h.evaluate(`${sweepBox}.then((b) => JSON.stringify(b.plot.traces))`);
     await h.evaluate(`${h.module('editor-state.js')}.then((m) => { m.editor.circuit.analysisValues.coefficients.k_2 = 1.2; })`);

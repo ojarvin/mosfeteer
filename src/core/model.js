@@ -1461,8 +1461,8 @@ const MAX_SWEEP_RUNS = 8;
  * from, to, points, log, input, amplitude, frequency, samples, values? }] }`
  * -- the coefficient swept, the measures shown, how many of the plot's
  * traces are the sweep's (the first ones), and each sweep drawn, the held
- * ones at their coefficients (`values`), the last the live one, at the
- * coefficients now.
+ * ones with the coefficients they differ from the last in (`values`), the
+ * last the live one, at the coefficients now.
  */
 function sweepOf(sweep) {
   if (!sweep || typeof sweep !== 'object' || typeof sweep.name !== 'string' || !/^[A-Za-z][\w]{0,40}$/.test(sweep.name)) return {};

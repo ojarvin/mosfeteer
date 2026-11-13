@@ -343,7 +343,7 @@ coefficients and amplitude that differ since (the window's, not saved;
 Clear held drops them); Annotate puts the measures shown on the drawing as
 a data plot, with what each sweep on it ran at (`plot.sweep`: the
 coefficient, the measures, and per sweep its range, its sine, and for a
-held one its coefficients). A unit the measures shown share goes on the y
+held one the coefficients it differs from the live one in). A unit the measures shown share goes on the y
 axis, and a lone measure's name with it; the traces are then named by the
 measure, or by what their sweep ran at (`spectrum-run.js` `sweepLabels`).
 
@@ -351,8 +351,8 @@ The sweep's controls are one editor (`sweepEditor`) in two places: the
 Sweep view, on `Circuit#windows.sweep`, and a sweep plot's **Plot
 settings…**, on that plot's `plot.sweep`, over the plot's own editor.
 There the fields read what the plot last ran; Sweep runs it again -- its
-held sweeps first, at the coefficients they ran at (another coefficient
-drops them), the live one at those now -- its traces filling the plot
+held sweeps first, at the coefficients now but those they differ in
+(another coefficient drops them), the live one at those now -- its traces filling the plot
 editor as the points come, colored as they were while as many. A field
 changed, Apply sweeps first and applies once the sweep is done; a measure
 the last sweep there measured shows at once. Cancel or Stop leaves the
@@ -506,8 +506,9 @@ broken at; a root locus over its coefficient and range (`plot.source`); a
 swing plot from a fresh sweep of the nets it shows (no Derive needed); a small-signal or
 switched-cap Bode plot from its analysis's traces at its Values
 (`registerPlotUpdater`, by the figure's source); a sweep plot from its
-sweeps run again in turn (the held ones at their coefficients, the live one
-at those now, the same range and sine; the axes, zoom and traces added from
+sweeps run again in turn (each at the coefficients now, a held one but
+those it differs in, so the legend names only what tells the traces apart;
+the same range and sine; the axes, zoom and traces added from
 files stay; a y axis of the old `dB` takes its new name). Each keeps its
 colors and limits. Sweeps run in the run window (`optimize-window.js`): the
 plot as its points come, a progress bar across every sweep, "Plot 1 of 2:
