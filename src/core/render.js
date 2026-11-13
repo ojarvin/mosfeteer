@@ -2,7 +2,7 @@ import { applyTransform, fmt, transformRect, transformToSvg } from './geometry.j
 import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute } from './router.js';
 import { TABLE_RULE_ROOM_EM, escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } from './style.js';
-import { GREEK_LOWER, GREEK_UPPER, plainTexText, plotTextMarkup, texToLabelMarkup } from './tex-markup.js';
+import { GREEK_LOWER, GREEK_UPPER, TEX_SYMBOLS, plainTexText, plotTextMarkup, texToLabelMarkup } from './tex-markup.js';
 import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, hasInlineMath, plotLegendCurves, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } from './model.js';
 import { TIMING_ARROWHEAD, arrowheadEnds, curvedArrowGeometry, defaultArrowhead, polylineArrowheads } from './line-style.js';
 import { hiddenSupplyBarLabels, supplyBars } from './supply-bars.js';
@@ -388,12 +388,6 @@ export function texToMathML(source) {
   const text = stripMathDelimiters(source).replace(/\s+/g, ' ').trim();
   const hasFraction = /\\frac\b/.test(text);
   let index = 0;
-  const commandSymbols = {
-    parallel: '∥', cdot: '·', times: '×', pm: '±', mp: '∓',
-    infty: '∞', approx: '≈', le: '≤', ge: '≥', leq: '≤', geq: '≥', neq: '≠', ne: '≠', to: '→', gg: '≫',
-    ll: '≪', equiv: '≡', propto: '∝', partial: '∂', sim: '∼', lesssim: '≲', gtrsim: '≳',
-    rightarrow: '→', leftarrow: '←', uparrow: '↑', downarrow: '↓',
-  };
   let requestedParallelSize = null;
   const skipSpaces = () => { while (text[index] === ' ') index += 1; };
   const parseSequence = (stop = null) => {
@@ -500,7 +494,7 @@ export function texToMathML(source) {
     if (name === 'sqrt') return `<msqrt>${parseArgument()}</msqrt>`;
     // A mean-square bar, as in the noise density `\overline{v_n^2}`. Browsers
     // do not stretch an accent glyph across a group, so the bar is a border.
-    if (name === 'overline') return `<mrow style="border-top:0.05em solid currentColor;padding-top:0.15em">${parseArgument()}</mrow>`;
+    if (name === 'overline' || name === 'bar') return `<mrow style="border-top:0.05em solid currentColor;padding-top:0.15em">${parseArgument()}</mrow>`;
     if (name === 'pv') {
       // Provenance marker from `present.js`: the first group is the AST node
       // id, the second is the sub-expression rendered from it. The wrapper is
@@ -552,7 +546,8 @@ export function texToMathML(source) {
     if (name === '>') return mathMlAtom('>', 'mo');
     if (GREEK_LOWER[name]) return mathMlAtom(GREEK_LOWER[name], 'mi');
     if (GREEK_UPPER[name]) return mathMlAtom(GREEK_UPPER[name], 'mi', 'mathvariant="normal"');
-    if (commandSymbols[name]) return mathMlAtom(commandSymbols[name], 'mo');
+    // The symbols the plots' markup draws too (tex-markup.js): one table.
+    if (Object.hasOwn(TEX_SYMBOLS, name)) return mathMlAtom(TEX_SYMBOLS[name], 'mo');
     // TeX's spaces: a word space between a number and its unit (`2\ \text{dBFS}`), thin and medium ones.
     if (name === ' ') return '<mspace width="0.25em"/>';
     if (name === ',') return '<mspace width="0.1667em"/>';

@@ -61,4 +61,28 @@ describe('Learn\'s guides', { skip: browserSkip() }, () => {
     await h.untilDiscarding(`${h.module('editor-state.js')}.then((m) => m.editor.tutorial?.id === 'sdm')`);
     assert.equal(await h.evaluate(`document.getElementById('help-dialog').open`), false);
   });
+  test('the Math tab lists the TeX the labels take, each drawn beside what is typed', async () => {
+    if (!await h.evaluate(`document.getElementById('help-dialog').open`)) {
+      await h.click('#btn-help');
+      await h.until(`document.getElementById('help-dialog').open`);
+    }
+    await h.click('[data-help-tab="math"]');
+    await h.until(`!document.getElementById('help-panel-math').hidden && document.querySelectorAll('#help-math .help-math-tile').length > 0`);
+    const shown = await h.evaluate(`(() => {
+      const tiles = [...document.querySelectorAll('#help-math .help-math-tile')];
+      const tile = tiles.find((t) => t.querySelector('code').textContent === '\\\\downarrow');
+      return {
+        headings: [...document.querySelectorAll('#help-math h3')].map((h) => h.textContent),
+        rows: document.querySelectorAll('#help-math .help-math-table tr').length,
+        tiles: tiles.length,
+        arrow: tile?.querySelector('math')?.textContent,
+      };
+    })()`);
+    const { GREEK_LOWER, GREEK_UPPER, TEX_STRUCTURES, TEX_SYMBOLS } = await import('../../src/core/tex-markup.js');
+    assert.deepEqual(shown.headings, ['Structures', 'Greek', 'Symbols']);
+    assert.equal(shown.rows, TEX_STRUCTURES.length);
+    // Every Greek letter and symbol but \sqrt, a structure here.
+    assert.equal(shown.tiles, Object.keys({ ...GREEK_LOWER, ...GREEK_UPPER }).length + Object.keys(TEX_SYMBOLS).length - 1);
+    assert.equal(shown.arrow, '↓');
+  });
 });

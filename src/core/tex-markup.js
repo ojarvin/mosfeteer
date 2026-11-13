@@ -40,6 +40,25 @@ export const TEX_SYMBOLS = {
 
 const symbol = (name) => GREEK_LOWER[name] || GREEK_UPPER[name] || TEX_SYMBOLS[name] || name;
 
+/**
+ * The TeX the math labels take beyond letters, Greek, and TEX_SYMBOLS:
+ * each `{ tex, note }`, `tex` an example as typed between `$...$`. Learn's
+ * Math tab lists them with the Greek and the symbols, each drawn.
+ */
+export const TEX_STRUCTURES = Object.freeze([
+  { tex: 'V_{out}', note: 'subscript' },
+  { tex: 'x^{2}', note: 'superscript' },
+  { tex: '\\frac{g_m}{C_L}', note: 'fraction' },
+  { tex: '\\sqrt{4kT\\gamma}', note: 'square root' },
+  { tex: '\\text{dB}', note: 'upright words' },
+  { tex: '\\mathrm{d}t', note: 'upright letters' },
+  { tex: '\\operatorname{sinc}', note: 'upright name' },
+  { tex: '\\overline{Q}', note: 'overbar (also \\bar)' },
+  { tex: '\\left(1 + \\frac{1}{s}\\right)', note: 'brackets that fit' },
+  { tex: 'R_1 \\| R_2', note: 'in parallel (also ||)' },
+  { tex: 'a\\,b\\;c\\ d\\quad e', note: 'spaces: thin, medium, word, quad' },
+]);
+
 /** A short TeX phrase as label markup, for places that draw labels but not
  * math: $\phi_1$ becomes ϕ_{1}, $2\cdot f_s$ 2·f_{s}. Anything else is
  * returned as it is. */

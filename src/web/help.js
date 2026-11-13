@@ -2,8 +2,8 @@
  * Learn (?): the one place to learn the editor. Its tabs are the keymap and
  * command reference (searchable, with the guides that match), the guides
  * (src/web/guides.js), the tutorials, every symbol (to look at:
- * hovering one names its type and pins), and every tip. Settings holds
- * preferences only.
+ * hovering one names its type and pins), the TeX the labels take, and
+ * every tip. Settings holds preferences only.
  */
 
 import { commandHelp } from '../core/commands.js';
@@ -15,6 +15,8 @@ import { symbolPreviewSvg } from './insert-menu.js';
 import { offerTutorial, openReportExample, tipStates, tipsOn } from './onboarding.js';
 import { TUTORIALS } from './tutorial.js';
 import { GUIDES, guideDocUrl, guideRuns, searchGuides } from './guides.js';
+import { GREEK_LOWER, GREEK_UPPER, TEX_STRUCTURES, TEX_SYMBOLS } from '../core/tex-markup.js';
+import { texToMathML } from '../core/render.js';
 
 let helpCommandText = '';
 let shownGuide = GUIDES[0].id;
@@ -144,6 +146,48 @@ function renderSymbols() {
   }
 }
 
+/** The TeX the labels take: the structures with an example each, then
+ *  the Greek and the symbols, each drawn as a label draws it beside what
+ *  is typed. From the tables the renderer reads, so it lists what works. */
+function renderMath() {
+  const host = document.getElementById('help-math');
+  if (!host || host.childElementCount) return;
+  const drawn = (tex) => Object.assign(document.createElement('span'), { className: 'help-math-drawn', innerHTML: texToMathML(`$${tex}$`) });
+  const typed = (tex) => Object.assign(document.createElement('code'), { textContent: tex });
+  const section = (title, body) => {
+    const node = document.createElement('section');
+    node.className = 'help-symbol-group';
+    node.append(Object.assign(document.createElement('h3'), { textContent: title }), body);
+    return node;
+  };
+  const table = document.createElement('table');
+  table.className = 'help-math-table';
+  for (const { tex, note } of TEX_STRUCTURES) {
+    const row = table.insertRow();
+    row.insertCell().append(typed(tex));
+    row.insertCell().append(drawn(tex));
+    row.insertCell().textContent = note;
+  }
+  const grid = (names) => {
+    const node = document.createElement('div');
+    node.className = 'help-symbol-grid help-math-grid';
+    node.setAttribute('role', 'list');
+    for (const name of names) {
+      const tile = document.createElement('div');
+      tile.className = 'help-symbol help-math-tile';
+      tile.setAttribute('role', 'listitem');
+      tile.append(drawn(`\\${name}`), typed(`\\${name}`));
+      node.append(tile);
+    }
+    return node;
+  };
+  host.append(
+    section('Structures', table),
+    section('Greek', grid([...Object.keys(GREEK_LOWER), ...Object.keys(GREEK_UPPER)])),
+    section('Symbols', grid(Object.keys(TEX_SYMBOLS).filter((name) => name !== 'sqrt'))),
+  );
+}
+
 function renderTips() {
   const list = document.getElementById('help-tips');
   if (!list) return;
@@ -250,6 +294,7 @@ function showTab(name) {
   }
   for (const panel of helpDialog.querySelectorAll('[data-help-panel]')) panel.hidden = panel.dataset.helpPanel !== name;
   if (name === 'symbols') renderSymbols();
+  if (name === 'math') renderMath();
   if (name === 'tips') renderTips();
   if (name === 'guides') renderGuides();
   if (name === 'keys') helpSearch?.focus();
@@ -257,7 +302,7 @@ function showTab(name) {
   else helpDialog.querySelector(`[data-help-tab="${name}"]`)?.focus();
 }
 
-/** Open Learn on a tab: keys (the default), guides, tutorial, symbols, or tips. */
+/** Open Learn on a tab: keys (the default), guides, tutorial, symbols, math, or tips. */
 export function showHelp(tab = 'keys') {
   if (!helpDialog) return;
   try {

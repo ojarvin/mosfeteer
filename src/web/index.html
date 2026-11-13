@@ -286,6 +286,7 @@
           <button type="button" class="icon-label" role="tab" data-help-tab="guides" data-icon="list" aria-selected="false" aria-controls="help-panel-guides">Guides</button>
           <button type="button" class="icon-label" role="tab" data-help-tab="tutorial" data-icon="graduation" aria-selected="false" aria-controls="help-panel-tutorial">Tutorial</button>
           <button type="button" class="icon-label" role="tab" data-help-tab="symbols" data-icon="symbols" aria-selected="false" aria-controls="help-panel-symbols">Symbols</button>
+          <button type="button" class="icon-label" role="tab" data-help-tab="math" data-icon="text" aria-selected="false" aria-controls="help-panel-math">Math</button>
           <button type="button" class="icon-label" role="tab" data-help-tab="tips" data-icon="lightbulb" aria-selected="false" aria-controls="help-panel-tips">Tips</button>
         </div>
         <button value="cancel" class="floating-window-close" aria-label="Close" title="Close (Esc)">×</button>
@@ -310,6 +311,11 @@
       <section id="help-panel-symbols" class="help-panel" role="tabpanel" data-help-panel="symbols" hidden>
         <p class="help-panel-lead">All symbols, drawn from the registry; hover one for its type and pins (<kbd>i</kbd> inserts one). <button id="btn-symbols" type="button" class="help-link" title="Symbols">Open the full symbol sheet</button> · <button id="btn-built-in-drawings" type="button" class="help-link" title="Built-in drawings">Built-in drawings</button> (<kbd>Shift+Q</kbd> arranges parts like them)</p>
         <div id="help-symbols" class="help-content help-symbols"></div>
+      </section>
+      <section id="help-panel-math" class="help-panel" role="tabpanel" data-help-panel="math" hidden>
+        <p class="help-panel-lead">Labels and names take TeX between <code>$...$</code>: a subset, listed here. A label wholly in <code>$...$</code> is one formula (<code>$V_{out}$</code>); a free label mixes words and formulas (<code>Edge after $f_s/2$</code>), a part's or net's name does not. <code>\$</code> is a dollar sign. A command not listed draws as its name. Plot axes take sub- and superscripts, Greek, and the symbols.</p>
+        <!-- Built by help.js from tex-markup.js's tables, each drawn as a label is. -->
+        <div id="help-math" class="help-content help-math"></div>
       </section>
       <section id="help-panel-tips" class="help-panel" role="tabpanel" data-help-panel="tips" hidden>
         <p class="help-panel-lead">Tips appear in the corner when there is a faster way.</p>

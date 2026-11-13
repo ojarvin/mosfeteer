@@ -268,7 +268,11 @@ hover glows) in that color without changing their own styles.
   custom guide (Settings → Custom page guide…) takes a width in in, cm, mm,
   or pt and a text size, kept beside the choice. A report sizes every
   figure with it ([`notes-and-history.md`](notes-and-history.md)).
-- Labels support `_{...}` and `^{...}`. Math uses the vendored Latin Modern
+- Labels support `_{...}` and `^{...}`. TeX in labels is a subset: the
+  structures `TEX_STRUCTURES` lists, Greek, and the symbols `TEX_SYMBOLS`
+  (`src/core/tex-markup.js`), one table for the drawing's math
+  (`texToMathML`) and the plots' markup (`texToLabelMarkup`); Learn → Math
+  lists them, and a command not listed draws as its name. Math uses the vendored Latin Modern
   Math face in `src/web/fonts/`; so do plots, on the drawing and in the
   windows: lone letters in its math italic, words, units, and numbers
   upright, minus signs true (`src/core/math-text.js`). Exports embed the

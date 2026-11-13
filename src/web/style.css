@@ -2074,6 +2074,31 @@ html.dark.invert-pictures .light-picture {
   height: 100%;
 }
 
+.help-math-table {
+  margin-bottom: 16px;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.help-math-table td {
+  padding: 4px 16px 4px 0;
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--border);
+}
+
+.help-math-table td:last-child {
+  color: var(--text-dim);
+}
+
+.help-math-drawn math {
+  font-size: 1.15rem;
+}
+
+.help-math-tile code {
+  color: var(--text-dim);
+}
+
 .help-tips {
   margin: 0;
   padding: 0;

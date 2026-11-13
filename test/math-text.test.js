@@ -49,3 +49,26 @@ test('a plot text takes TeX between $ signs: letters, symbols, scripts', async (
   assert.deepEqual(runs.map((r) => !!r.sub), [false, true]);
   assert.equal(runs.map((r) => r.text).join(''), `2·${mathItalic('f')}${mathItalic('s')}`);
 });
+
+import { GREEK_LOWER, GREEK_UPPER, TEX_STRUCTURES, TEX_SYMBOLS, texToLabelMarkup } from '../src/core/tex-markup.js';
+import { texToMathML } from '../src/core/render.js';
+
+test('every symbol Learn lists draws as its character on the drawing and in the plots alike', () => {
+  const visible = (mathml) => mathml.replace(/<[^>]+>/g, '');
+  for (const table of [GREEK_LOWER, GREEK_UPPER, TEX_SYMBOLS]) {
+    for (const [name, char] of Object.entries(table)) {
+      if (name === 'sqrt') continue; // a root on the drawing, its sign in a plot's text
+      assert.equal(visible(texToMathML(`$\\${name}$`)), char, `\\${name} on the drawing`);
+      assert.equal(texToLabelMarkup(`$\\${name}$`), char, `\\${name} in a plot`);
+    }
+  }
+  // \bar is \overline on the drawing, as in the plots' markup.
+  assert.equal(texToMathML('$\\bar{Q}$'), texToMathML('$\\overline{Q}$'));
+});
+
+test('every structure Learn lists draws with no command left as text', () => {
+  for (const { tex } of TEX_STRUCTURES) {
+    const text = texToMathML(`$${tex}$`).replace(/<[^>]+>/g, '');
+    assert.doesNotMatch(text, /\\|frac|sqrt|mathrm|operatorname|overline|left|right|quad/, tex);
+  }
+});
