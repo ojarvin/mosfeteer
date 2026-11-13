@@ -33,6 +33,8 @@ function strokePoints(graphics) {
   return points;
 }
 
+// How near a stroke's end is to a point for it to meet it there.
+const TOUCH = 5;
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const nearest = (point, points) => Math.min(Infinity, ...points.map((p) => distance(point, p)));
 const scaleAbout = (p, about, k) => ({ x: about.x + (p.x - about.x) * k, y: about.y + (p.y - about.y) * k });
@@ -58,14 +60,19 @@ function scaledBar(points, reach, k) {
   return points.map((p) => (across === 'x' ? { x: p.x === low ? a : b, y: p.y } : { x: p.x, y: p.y === low ? a : b }));
 }
 
-/** An arrowhead scaled by `k` about its tip, or about its base's middle
- *  where a stroke ends nearer that. */
+/** An arrowhead scaled by `k`: about its tip where a stroke ends there,
+ *  about its base's middle where one ends there instead (the sampler's
+ *  arc), and narrowed across alone, its tip and base kept, where strokes
+ *  end at both (a BJT's emitter: the lead at its tip, the diagonal at its
+ *  base). A stroke ends at a point within a cell's eighth of it. */
 function scaledArrow(points, reach, k) {
   const edges = points.map((p, i) => ({ i, length: distance(points[(i + 1) % 3], points[(i + 2) % 3]) }));
   const tip = points[edges.reduce((a, b) => (b.length < a.length ? b : a)).i];
   const base = points.filter((p) => p !== tip);
   const middle = { x: (base[0].x + base[1].x) / 2, y: (base[0].y + base[1].y) / 2 };
-  const about = nearest(tip, reach) <= nearest(middle, reach) ? tip : middle;
+  const meets = (point) => nearest(point, reach) <= TOUCH;
+  if (meets(tip) && meets(middle)) return points.map((p) => (p === tip ? p : scaleAbout(p, middle, k)));
+  const about = !meets(tip) && meets(middle) ? middle : nearest(tip, reach) <= nearest(middle, reach) ? tip : middle;
   return points.map((p) => scaleAbout(p, about, k));
 }
 
