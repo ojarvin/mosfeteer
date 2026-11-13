@@ -2082,6 +2082,17 @@ html.dark.invert-pictures .light-picture {
   line-height: 1.5;
 }
 
+.help-panel-lead code,
+.help-math-rules code {
+  padding: 1px 5px;
+  color: var(--text);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font: 0.92em var(--font-mono);
+  white-space: nowrap;
+}
+
 .help-math-table {
   margin-bottom: 16px;
   border-collapse: collapse;
@@ -2101,6 +2112,11 @@ html.dark.invert-pictures .light-picture {
 
 .help-math-drawn math {
   font-size: 1.15rem;
+}
+
+/* Left-aligned, so a wider space moves what follows it. */
+.help-math-table .help-math-drawn math {
+  display: inline math;
 }
 
 .help-math-tile code {

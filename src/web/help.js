@@ -15,7 +15,7 @@ import { symbolPreviewSvg } from './insert-menu.js';
 import { offerTutorial, openReportExample, tipStates, tipsOn } from './onboarding.js';
 import { TUTORIALS } from './tutorial.js';
 import { GUIDES, guideDocUrl, guideRuns, searchGuides } from './guides.js';
-import { GREEK_LOWER, GREEK_UPPER, TEX_STRUCTURES, TEX_SYMBOLS } from '../core/tex-markup.js';
+import { GREEK_LOWER, GREEK_UPPER, TEX_SPACES, TEX_STRUCTURES, TEX_SYMBOLS } from '../core/tex-markup.js';
 import { texToMathML } from '../core/render.js';
 
 let helpCommandText = '';
@@ -146,8 +146,8 @@ function renderSymbols() {
   }
 }
 
-/** The TeX the labels take: the structures with an example each, then
- *  the Greek and the symbols, each drawn as a label draws it beside what
+/** The TeX the labels take: the structures and the spaces with an
+ *  example each, then the Greek and the symbols, each drawn as a label draws it beside what
  *  is typed. From the tables the renderer reads, so it lists what works. */
 function renderMath() {
   const host = document.getElementById('help-math');
@@ -160,14 +160,17 @@ function renderMath() {
     node.append(Object.assign(document.createElement('h3'), { textContent: title }), body);
     return node;
   };
-  const table = document.createElement('table');
-  table.className = 'help-math-table';
-  for (const { tex, note } of TEX_STRUCTURES) {
-    const row = table.insertRow();
-    row.insertCell().append(typed(tex));
-    row.insertCell().append(drawn(tex));
-    row.insertCell().textContent = note;
-  }
+  const table = (entries) => {
+    const node = document.createElement('table');
+    node.className = 'help-math-table';
+    for (const { tex, note } of entries) {
+      const row = node.insertRow();
+      row.insertCell().append(typed(tex));
+      row.insertCell().append(drawn(tex));
+      row.insertCell().textContent = note;
+    }
+    return node;
+  };
   const grid = (names) => {
     const node = document.createElement('div');
     node.className = 'help-symbol-grid help-math-grid';
@@ -182,7 +185,8 @@ function renderMath() {
     return node;
   };
   host.append(
-    section('Structures', table),
+    section('Structures', table(TEX_STRUCTURES)),
+    section('Spaces', table(TEX_SPACES)),
     section('Greek', grid([...Object.keys(GREEK_LOWER), ...Object.keys(GREEK_UPPER)])),
     section('Symbols', grid(Object.keys(TEX_SYMBOLS).filter((name) => name !== 'sqrt'))),
   );

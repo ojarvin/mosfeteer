@@ -2,7 +2,7 @@ import { applyTransform, fmt, transformRect, transformToSvg } from './geometry.j
 import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute } from './router.js';
 import { TABLE_RULE_ROOM_EM, escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } from './style.js';
-import { GREEK_LOWER, GREEK_UPPER, TEX_SYMBOLS, plainTexText, plotTextMarkup, texToLabelMarkup } from './tex-markup.js';
+import { GREEK_LOWER, GREEK_UPPER, TEX_SPACE_WIDTHS, TEX_SYMBOLS, plainTexText, plotTextMarkup, texToLabelMarkup } from './tex-markup.js';
 import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, hasInlineMath, plotLegendCurves, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } from './model.js';
 import { TIMING_ARROWHEAD, arrowheadEnds, curvedArrowGeometry, defaultArrowhead, polylineArrowheads } from './line-style.js';
 import { hiddenSupplyBarLabels, supplyBars } from './supply-bars.js';
@@ -548,10 +548,9 @@ export function texToMathML(source) {
     if (GREEK_UPPER[name]) return mathMlAtom(GREEK_UPPER[name], 'mi', 'mathvariant="normal"');
     // The symbols the plots' markup draws too (tex-markup.js): one table.
     if (Object.hasOwn(TEX_SYMBOLS, name)) return mathMlAtom(TEX_SYMBOLS[name], 'mo');
-    // TeX's spaces: a word space between a number and its unit (`2\ \text{dBFS}`), thin and medium ones.
-    if (name === ' ') return '<mspace width="0.25em"/>';
-    if (name === ',') return '<mspace width="0.1667em"/>';
-    if (name === ';') return '<mspace width="0.2778em"/>';
+    // TeX's spaces (TEX_SPACES): thin, medium, thick, and a word space
+    // between a number and its unit (`2\ \text{dBFS}`).
+    if (Object.hasOwn(TEX_SPACE_WIDTHS, name)) return `<mspace width="${TEX_SPACE_WIDTHS[name]}"/>`;
     if (name === '!') return '';
     return mathMlAtom(name, 'mi');
   };

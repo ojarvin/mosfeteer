@@ -41246,7 +41246,7 @@ let applyTransform, fmt, transformRect, transformToSvg; __bind(() => { ({ applyT
 let ceilGrid, floorGrid, GRID; __bind(() => { ({ ceilGrid, floorGrid, GRID } = __require("src/core/grid.js")); });
 let autoRoute; __bind(() => { ({ autoRoute } = __require("src/core/router.js")); });
 let TABLE_RULE_ROOM_EM, escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg; __bind(() => { ({ TABLE_RULE_ROOM_EM, escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } = __require("src/core/style.js")); });
-let GREEK_LOWER, GREEK_UPPER, TEX_SYMBOLS, plainTexText, plotTextMarkup, texToLabelMarkup; __bind(() => { ({ GREEK_LOWER, GREEK_UPPER, TEX_SYMBOLS, plainTexText, plotTextMarkup, texToLabelMarkup } = __require("src/core/tex-markup.js")); });
+let GREEK_LOWER, GREEK_UPPER, TEX_SPACE_WIDTHS, TEX_SYMBOLS, plainTexText, plotTextMarkup, texToLabelMarkup; __bind(() => { ({ GREEK_LOWER, GREEK_UPPER, TEX_SPACE_WIDTHS, TEX_SYMBOLS, plainTexText, plotTextMarkup, texToLabelMarkup } = __require("src/core/tex-markup.js")); });
 let INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, hasInlineMath, plotLegendCurves, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters; __bind(() => { ({ INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, hasInlineMath, plotLegendCurves, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } = __require("src/core/model.js")); });
 let TIMING_ARROWHEAD, arrowheadEnds, curvedArrowGeometry, defaultArrowhead, polylineArrowheads; __bind(() => { ({ TIMING_ARROWHEAD, arrowheadEnds, curvedArrowGeometry, defaultArrowhead, polylineArrowheads } = __require("src/core/line-style.js")); });
 let hiddenSupplyBarLabels, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js")); });
@@ -41811,10 +41811,9 @@ function texToMathML(source) {
     if (GREEK_UPPER[name]) return mathMlAtom(GREEK_UPPER[name], 'mi', 'mathvariant="normal"');
     // The symbols the plots' markup draws too (tex-markup.js): one table.
     if (Object.hasOwn(TEX_SYMBOLS, name)) return mathMlAtom(TEX_SYMBOLS[name], 'mo');
-    // TeX's spaces: a word space between a number and its unit (`2\ \text{dBFS}`), thin and medium ones.
-    if (name === ' ') return '<mspace width="0.25em"/>';
-    if (name === ',') return '<mspace width="0.1667em"/>';
-    if (name === ';') return '<mspace width="0.2778em"/>';
+    // TeX's spaces (TEX_SPACES): thin, medium, thick, and a word space
+    // between a number and its unit (`2\ \text{dBFS}`).
+    if (Object.hasOwn(TEX_SPACE_WIDTHS, name)) return `<mspace width="${TEX_SPACE_WIDTHS[name]}"/>`;
     if (name === '!') return '';
     return mathMlAtom(name, 'mi');
   };
@@ -47686,7 +47685,20 @@ const TEX_STRUCTURES = Object.freeze([
   { tex: '\\overline{Q}', note: 'a bar over the letters; \\bar also works' },
   { tex: '\\left(1 + \\frac{1}{s}\\right)', note: 'brackets that grow to fit' },
   { tex: 'R_1 \\| R_2', note: 'the parallel sign; || also works' },
-  { tex: 'a\\,b\\;c\\ d\\quad e', note: 'spaces, from narrow to wide' },
+]);
+
+/** TeX's spaces as widths in em, by command: thin, medium, thick,
+ *  a word space. `\\quad` and `\\qquad` are 1 and 2 em. */
+const TEX_SPACE_WIDTHS = Object.freeze({ ',': '0.1667em', ':': '0.2222em', ';': '0.2778em', ' ': '0.3333em' });
+
+/** The spaces as Learn lists them: each `{ tex, note }`, narrow to wide. */
+const TEX_SPACES = Object.freeze([
+  { tex: 'a\\,b', note: 'thin space, 1/6 em' },
+  { tex: 'a\\:b', note: 'medium space, 2/9 em' },
+  { tex: 'a\\;b', note: 'thick space, 5/18 em' },
+  { tex: 'a\\ b', note: 'word space, 1/3 em' },
+  { tex: 'a\\quad b', note: 'quad, 1 em' },
+  { tex: 'a\\qquad b', note: 'two quads, 2 em' },
 ]);
 
 /** A short TeX phrase as label markup, for places that draw labels but not
@@ -47733,6 +47745,8 @@ __exports.GREEK_LOWER = GREEK_LOWER;
 __exports.GREEK_UPPER = GREEK_UPPER;
 __exports.TEX_SYMBOLS = TEX_SYMBOLS;
 __exports.TEX_STRUCTURES = TEX_STRUCTURES;
+__exports.TEX_SPACE_WIDTHS = TEX_SPACE_WIDTHS;
+__exports.TEX_SPACES = TEX_SPACES;
 };
 
 __modules["src/core/tidy.js"] = function (__require, __exports) {
@@ -75017,7 +75031,7 @@ let symbolPreviewSvg; __bind(() => { ({ symbolPreviewSvg } = __require("src/web/
 let offerTutorial, openReportExample, tipStates, tipsOn; __bind(() => { ({ offerTutorial, openReportExample, tipStates, tipsOn } = __require("src/web/onboarding.js")); });
 let TUTORIALS; __bind(() => { ({ TUTORIALS } = __require("src/web/tutorial.js")); });
 let GUIDES, guideDocUrl, guideRuns, searchGuides; __bind(() => { ({ GUIDES, guideDocUrl, guideRuns, searchGuides } = __require("src/web/guides.js")); });
-let GREEK_LOWER, GREEK_UPPER, TEX_STRUCTURES, TEX_SYMBOLS; __bind(() => { ({ GREEK_LOWER, GREEK_UPPER, TEX_STRUCTURES, TEX_SYMBOLS } = __require("src/core/tex-markup.js")); });
+let GREEK_LOWER, GREEK_UPPER, TEX_SPACES, TEX_STRUCTURES, TEX_SYMBOLS; __bind(() => { ({ GREEK_LOWER, GREEK_UPPER, TEX_SPACES, TEX_STRUCTURES, TEX_SYMBOLS } = __require("src/core/tex-markup.js")); });
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
 /**
  * Learn (?): the one place to learn the editor. Its tabs are the keymap and
@@ -75167,8 +75181,8 @@ function renderSymbols() {
   }
 }
 
-/** The TeX the labels take: the structures with an example each, then
- *  the Greek and the symbols, each drawn as a label draws it beside what
+/** The TeX the labels take: the structures and the spaces with an
+ *  example each, then the Greek and the symbols, each drawn as a label draws it beside what
  *  is typed. From the tables the renderer reads, so it lists what works. */
 function renderMath() {
   const host = document.getElementById('help-math');
@@ -75181,14 +75195,17 @@ function renderMath() {
     node.append(Object.assign(document.createElement('h3'), { textContent: title }), body);
     return node;
   };
-  const table = document.createElement('table');
-  table.className = 'help-math-table';
-  for (const { tex, note } of TEX_STRUCTURES) {
-    const row = table.insertRow();
-    row.insertCell().append(typed(tex));
-    row.insertCell().append(drawn(tex));
-    row.insertCell().textContent = note;
-  }
+  const table = (entries) => {
+    const node = document.createElement('table');
+    node.className = 'help-math-table';
+    for (const { tex, note } of entries) {
+      const row = node.insertRow();
+      row.insertCell().append(typed(tex));
+      row.insertCell().append(drawn(tex));
+      row.insertCell().textContent = note;
+    }
+    return node;
+  };
   const grid = (names) => {
     const node = document.createElement('div');
     node.className = 'help-symbol-grid help-math-grid';
@@ -75203,7 +75220,8 @@ function renderMath() {
     return node;
   };
   host.append(
-    section('Structures', table),
+    section('Structures', table(TEX_STRUCTURES)),
+    section('Spaces', table(TEX_SPACES)),
     section('Greek', grid([...Object.keys(GREEK_LOWER), ...Object.keys(GREEK_UPPER)])),
     section('Symbols', grid(Object.keys(TEX_SYMBOLS).filter((name) => name !== 'sqrt'))),
   );

@@ -56,7 +56,20 @@ export const TEX_STRUCTURES = Object.freeze([
   { tex: '\\overline{Q}', note: 'a bar over the letters; \\bar also works' },
   { tex: '\\left(1 + \\frac{1}{s}\\right)', note: 'brackets that grow to fit' },
   { tex: 'R_1 \\| R_2', note: 'the parallel sign; || also works' },
-  { tex: 'a\\,b\\;c\\ d\\quad e', note: 'spaces, from narrow to wide' },
+]);
+
+/** TeX's spaces as widths in em, by command: thin, medium, thick,
+ *  a word space. `\\quad` and `\\qquad` are 1 and 2 em. */
+export const TEX_SPACE_WIDTHS = Object.freeze({ ',': '0.1667em', ':': '0.2222em', ';': '0.2778em', ' ': '0.3333em' });
+
+/** The spaces as Learn lists them: each `{ tex, note }`, narrow to wide. */
+export const TEX_SPACES = Object.freeze([
+  { tex: 'a\\,b', note: 'thin space, 1/6 em' },
+  { tex: 'a\\:b', note: 'medium space, 2/9 em' },
+  { tex: 'a\\;b', note: 'thick space, 5/18 em' },
+  { tex: 'a\\ b', note: 'word space, 1/3 em' },
+  { tex: 'a\\quad b', note: 'quad, 1 em' },
+  { tex: 'a\\qquad b', note: 'two quads, 2 em' },
 ]);
 
 /** A short TeX phrase as label markup, for places that draw labels but not

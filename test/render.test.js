@@ -1085,9 +1085,9 @@ test('a label mixing words and $...$ draws as math, its words as text, while its
   assert.equal(label.math, false);
 });
 
-test('TeX spaces in math are drawn: a word space between a number and its unit, thin and medium ones', () => {
+test('TeX spaces in math are drawn: a word space between a number and its unit (1/3 em, as in TeX), thin and thick ones', () => {
   const markup = texToMathML('-2\\ \\text{dBFS}, 5\\,\\text{pF}, a\\;b');
-  assert.match(markup, /<mn>2<\/mn><mspace width="0.25em"\/><mtext>dBFS<\/mtext>/);
+  assert.match(markup, /<mn>2<\/mn><mspace width="0.3333em"\/><mtext>dBFS<\/mtext>/);
   assert.match(markup, /<mn>5<\/mn><mspace width="0.1667em"\/><mtext>pF<\/mtext>/);
   assert.match(markup, /<mi>a<\/mi><mspace width="0.2778em"\/><mi>b<\/mi>/);
   assert.doesNotMatch(markup, /<mi> <\/mi>/);

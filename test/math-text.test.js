@@ -50,7 +50,7 @@ test('a plot text takes TeX between $ signs: letters, symbols, scripts', async (
   assert.equal(runs.map((r) => r.text).join(''), `2·${mathItalic('f')}${mathItalic('s')}`);
 });
 
-import { GREEK_LOWER, GREEK_UPPER, TEX_STRUCTURES, TEX_SYMBOLS, texToLabelMarkup } from '../src/core/tex-markup.js';
+import { GREEK_LOWER, GREEK_UPPER, TEX_SPACES, TEX_STRUCTURES, TEX_SYMBOLS, texToLabelMarkup } from '../src/core/tex-markup.js';
 import { texToMathML } from '../src/core/render.js';
 
 test('every symbol Learn lists draws as its character on the drawing and in the plots alike', () => {
@@ -71,4 +71,15 @@ test('every structure Learn lists draws with no command left as text', () => {
     const text = texToMathML(`$${tex}$`).replace(/<[^>]+>/g, '');
     assert.doesNotMatch(text, /\\|frac|sqrt|mathrm|operatorname|overline|left|right|quad/, tex);
   }
+});
+
+test('the spaces Learn lists have the TeX widths, each wider than the one before', () => {
+  const widths = TEX_SPACES.map(({ tex }) => {
+    const found = texToMathML(`$${tex}$`).match(/<mspace width="([\d.]+)em"\/>/);
+    assert.ok(found, tex);
+    return Number(found[1]);
+  });
+  assert.deepEqual(widths, [0.1667, 0.2222, 0.2778, 0.3333, 1, 2]);
+  // In a plot's text, each is a space.
+  assert.equal(texToLabelMarkup('$a\\:b$'), 'a b');
 });

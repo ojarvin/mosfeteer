@@ -78,9 +78,9 @@ describe('Learn\'s guides', { skip: browserSkip() }, () => {
         arrow: tile?.querySelector('math')?.textContent,
       };
     })()`);
-    const { GREEK_LOWER, GREEK_UPPER, TEX_STRUCTURES, TEX_SYMBOLS } = await import('../../src/core/tex-markup.js');
-    assert.deepEqual(shown.headings, ['Structures', 'Greek', 'Symbols']);
-    assert.equal(shown.rows, TEX_STRUCTURES.length);
+    const { GREEK_LOWER, GREEK_UPPER, TEX_SPACES, TEX_STRUCTURES, TEX_SYMBOLS } = await import('../../src/core/tex-markup.js');
+    assert.deepEqual(shown.headings, ['Structures', 'Spaces', 'Greek', 'Symbols']);
+    assert.equal(shown.rows, TEX_STRUCTURES.length + TEX_SPACES.length);
     // Every Greek letter and symbol but \sqrt, a structure here.
     assert.equal(shown.tiles, Object.keys({ ...GREEK_LOWER, ...GREEK_UPPER }).length + Object.keys(TEX_SYMBOLS).length - 1);
     assert.equal(shown.arrow, '↓');
