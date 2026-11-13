@@ -343,7 +343,9 @@ coefficients and amplitude that differ since (the window's, not saved;
 Clear held drops them); Annotate puts the measures shown on the drawing as
 a data plot, with what each sweep on it ran at (`plot.sweep`: the
 coefficient, the measures, and per sweep its range, its sine, and for a
-held one the coefficients it differs from the live one in). A unit the measures shown share goes on the y
+held one the coefficients it differs from the live one in; a plot from
+before, which kept every coefficient, keeps those its legend names as
+`name = number`). A unit the measures shown share goes on the y
 axis, and a lone measure's name with it; the traces are then named by the
 measure, or by what their sweep ran at (`spectrum-run.js` `sweepLabels`).
 

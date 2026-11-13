@@ -247,7 +247,7 @@ test('a held spectrum draws gray and dashed in black, apart from the live one', 
 test('a sweep plot keeps what it ran (plot.sweep) through saving and its edits; its traces replaced, its own entries are TeX', () => {
   const { circuit, box } = plotted();
   const run = { from: 0.5, to: 1.5, points: 5, log: false, input: 'U1', amplitude: -20, frequency: 1 / 256, samples: 4096 };
-  const sweep = { name: 'k_1', measures: ['sndr'], count: 2, runs: [{ ...run, values: { k_1: 1, k_2: 2 } }, run] };
+  const sweep = { name: 'k_1', measures: ['sndr'], count: 2, runs: [{ ...run, values: { k_2: 2 } }, run] };
   box.plot = { ...box.plot, sweep };
   replaceDataPlotTraces(circuit, box, { traces: box.plot.traces });
   assert.deepEqual(box.plot.sweep, sweep);
@@ -262,4 +262,25 @@ test('a sweep plot keeps what it ran (plot.sweep) through saving and its edits; 
   box.plot = { ...box.plot, sweep: { ...sweep, runs: [{ ...run, points: 1 }] } };
   const bad = loadDocument(JSON.parse(JSON.stringify(circuit.toJSON())));
   assert.equal([...bad.labels.values()].find((l) => l.plot?.kind === 'data').plot.sweep, undefined);
+});
+
+test('a sweep plot from before keeps, for a held sweep, only the coefficients its legend names', () => {
+  const { circuit, box } = plotted();
+  const run = { from: 0.5, to: 1.5, points: 5, log: false, input: 'U1', amplitude: -20, frequency: 1 / 256, samples: 4096 };
+  const points = [[0, 1], [1, 2]];
+  const traces = [
+    { label: 'k_2 = 2', color: '#3b74e0', points },
+    { label: 'k_2 = 1.5,\\ c = 3', color: '#df4d59', points },
+    { label: 'k_2 = 1.2,\\ c = 1', color: '#888888', points },
+  ];
+  const load = () => [...loadDocument(JSON.parse(JSON.stringify(circuit.toJSON()))).labels.values()].find((l) => l.plot?.kind === 'data').plot.sweep;
+  box.plot = { ...box.plot, traces, sweep: { name: 'k_1', measures: ['sndr'], count: 3, runs: [
+    { ...run, values: { k_1: 1, k_2: 2, c: 1, d: 4 } },
+    { ...run, values: { k_1: 1, k_2: 1.5, c: 3, d: 4 } },
+    run,
+  ] } };
+  assert.deepEqual(load().runs.map((r) => r.values), [{ k_2: 2 }, { k_2: 1.5, c: 3 }, undefined]);
+  // One its legend names nothing for ("(held)") keeps none.
+  box.plot = { ...box.plot, traces: [{ ...traces[0], label: '\\text{SNDR}\\ \\text{(held)}' }, traces[2]], sweep: { name: 'k_1', measures: ['sndr'], count: 2, runs: [{ ...run, values: { k_1: 1, k_2: 2 } }, run] } };
+  assert.deepEqual(load().runs[0].values, {});
 });

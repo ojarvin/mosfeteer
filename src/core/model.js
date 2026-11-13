@@ -1449,7 +1449,7 @@ function normalizeDataPlot(plot) {
   const x = axis(plot.x);
   const y = axis(plot.y);
   const file = text(plot.file, 200);
-  return { kind: 'data', ...(file ? { file } : {}), x, y, traces, ...viewOf(plot, { positiveX: x.scale === 'log', positiveY: y.scale === 'log' }), ...cursorsOf(plot), ...sweepOf(plot.sweep) };
+  return { kind: 'data', ...(file ? { file } : {}), x, y, traces, ...viewOf(plot, { positiveX: x.scale === 'log', positiveY: y.scale === 'log' }), ...cursorsOf(plot), ...sweepOf(plot.sweep, traces) };
 }
 
 /** The most sweeps a sweep plot names (the held ones and the live one). */
@@ -1462,9 +1462,10 @@ const MAX_SWEEP_RUNS = 8;
  * -- the coefficient swept, the measures shown, how many of the plot's
  * traces are the sweep's (the first ones), and each sweep drawn, the held
  * ones with the coefficients they differ from the last in (`values`), the
- * last the live one, at the coefficients now.
+ * last the live one, at the coefficients now. `traces` are the plot's
+ * (heldDifferences).
  */
-function sweepOf(sweep) {
+function sweepOf(sweep, traces = []) {
   if (!sweep || typeof sweep !== 'object' || typeof sweep.name !== 'string' || !/^[A-Za-z][\w]{0,40}$/.test(sweep.name)) return {};
   const runs = (Array.isArray(sweep.runs) ? sweep.runs : []).slice(-MAX_SWEEP_RUNS).map((run) => {
     const values = {};
@@ -1483,7 +1484,26 @@ function sweepOf(sweep) {
   const measures = (Array.isArray(sweep.measures) ? sweep.measures : []).filter((key) => typeof key === 'string' && key.length <= 200).slice(0, 40);
   const count = Math.round(Number(sweep.count));
   if (!measures.length || !(count >= 1 && count <= 8)) return {};
-  return { sweep: { name: sweep.name, measures, count, runs } };
+  return { sweep: { name: sweep.name, measures, count, runs: heldDifferences(sweep.name, runs, measures.length, traces.slice(0, count)) } };
+}
+
+/**
+ * The held runs of a sweep plot annotated before a held run kept only the
+ * coefficients it differs in: those kept every coefficient, the swept one
+ * too. Each keeps the ones its traces' names give as `name = number` at
+ * its number (`k_2 = 2`, sweep-plot.js heldNotes). The traces are the
+ * runs' in turn, `perRun` each, where there are as many; else any trace
+ * naming the number counts.
+ */
+function heldDifferences(name, runs, perRun, traces) {
+  const notes = (trace) => String(trace.label).split(',\\ ');
+  const whole = traces.length === runs.length * perRun;
+  return runs.map((run, r) => {
+    if (!run.values || !Object.hasOwn(run.values, name) || r === runs.length - 1) return run;
+    const named = new Set((whole ? traces.slice(r * perRun, (r + 1) * perRun) : traces).flatMap(notes));
+    const values = Object.fromEntries(Object.entries(run.values).filter(([key, number]) => key !== name && named.has(`${key} = ${Number(number.toPrecision(4))}`)));
+    return { ...run, values };
+  });
 }
 
 /** A swing plot (signal-flow simulation): colored traces of each net's
