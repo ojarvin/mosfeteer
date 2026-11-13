@@ -35,7 +35,7 @@ import { openPlotExport } from './plot-export-ui.js';
 import { busWidth, netNamesConnect } from '../core/bus.js';
 import { STACK_DEFAULT, fanStacks } from '../core/box-stack.js';
 import { handleStyleControlClick, selectionStyleState, styleDefaults, syncStyleControls, wireStyleValue } from './style-controls.js';
-import { activateCopy, activateMove, annotationGeometryAt, commit, deleteSelection, namedGroupNets, pickAt, pickLabel, pickWire, render, restackSelected, selectedComps, selectedTransform, setLabelSelection, setSelection, supplyBarGroup, supplyBarHit, syncSelectedWire } from './main.js';
+import { activateCopy, activateMove, annotationGeometryAt, commit, deleteSelection, namedGroupNets, pickAt, pickLabel, pickWire, render, restackSelected, selectedComps, selectedLabels, selectedTransform, setLabelSelection, setSelection, supplyBarGroup, supplyBarHit, syncSelectedWire } from './main.js';
 import { noteTip } from './onboarding.js';
 
 function contextStyleValue(target, field) {
@@ -857,14 +857,18 @@ function appendDrawingOnlyItem(group, comp) {
   }, { active: on === parts.length, mixed: on > 0 && on < parts.length });
 }
 
-/** Colored traces: a plot's traces in their colors, or in black told
- *  apart by dash. */
+/** Colored traces: the selected plots' traces in their colors, or in
+ *  black told apart by dash (the plot right-clicked, outside the selection). */
 function appendPlotColorsItem(group, box) {
-  const colored = !box.style.blackTraces;
+  const selected = selectedLabels().filter((label) => label.plot);
+  const plots = selected.includes(box) ? selected : [box];
+  const on = plots.filter((plot) => !plot.style.blackTraces).length;
   appendContextItem(group, 'Colored traces', () => {
-    commit(() => editor.circuit.setPlotTraceColors(box, !colored));
-    logLine(colored ? 'the plot\'s traces in black, told apart by dash' : 'the plot\'s traces in their colors', 'status');
-  }, { active: colored });
+    const next = on < plots.length;
+    commit(() => { for (const plot of plots) editor.circuit.setPlotTraceColors(plot, next); });
+    const which = plots.length === 1 ? 'the plot\'s' : `${plots.length} plots'`;
+    logLine(next ? `${which} traces in their colors` : `${which} traces in black, told apart by dash`, 'status');
+  }, { active: on === plots.length, mixed: on > 0 && on < plots.length });
 }
 
 /** Stack: copies of a plain box's outline behind it (box-stack.js), and

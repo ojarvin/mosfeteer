@@ -546,6 +546,35 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     await h.until(`!document.querySelector('#canvas .plot-legend-sample')`);
   });
 
+  test('Colored traces on one of the plots selected colors them all', async () => {
+    await openAnalysis('modulator');
+    await derive();
+    await h.evaluate(`${h.module('editor-state.js')}.then((m) => { const c = m.editor.circuit; for (const l of [...c.labels.values()]) if (l.plot) c.removeLabel(l.id); })`);
+    await annotate('Graph');
+    await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some((l) => l.plot))`);
+    // A second plot in black beside it; both selected.
+    const ids = await h.evaluate(`Promise.all([${h.module('editor-state.js')}, ${h.module('main.js')}]).then(([s, main]) => {
+      const c = s.editor.circuit;
+      const first = [...c.labels.values()].find((l) => l.plot);
+      const b = first.bbox();
+      const second = c.addAnnotation('box', { x: b.x, y: b.y + b.h + 400, end: { x: b.x + b.w, y: b.y + 2 * b.h + 400 }, plot: first.plot, style: { lineStyle: 'solid', blackTraces: true } });
+      main.setLabelSelection([first.id, second.id]);
+      main.render();
+      return [first.id, second.id];
+    })`);
+    const black = `${h.module('editor-state.js')}.then((m) => ${JSON.stringify(ids)}.map((id) => !!m.editor.circuit.labels.get(id).style.blackTraces))`;
+    assert.deepEqual(await h.evaluate(black), [true, true]);
+    await h.evaluate(`Promise.all([${h.module('editor-state.js')}, ${h.module('canvas-view.js')}, ${h.module('context-menu.js')}]).then(([s, v, menu]) => {
+      const b = s.editor.circuit.labels.get(${JSON.stringify(ids[1])}).bbox();
+      const p = v.worldToClient(b.x + b.w / 2, b.y + 2);
+      menu.openContextMenuAt(p.x, p.y);
+    })`);
+    await h.until(`[...document.querySelectorAll('.component-context-menu:not([hidden]) button')].some((b) => b.textContent.startsWith('Colored traces'))`);
+    await h.evaluate(`[...document.querySelectorAll('.component-context-menu:not([hidden]) button')].find((b) => b.textContent.startsWith('Colored traces')).click()`);
+    await h.until(`${black}.then((b) => b.every((on) => !on))`);
+    assert.match(await h.evaluate(`[...document.querySelectorAll('#log > *')].map((n) => n.textContent).at(-1)`), /2 plots' traces in their colors/);
+  });
+
   test('the coefficients are a table of their own, the plot legend only its traces; Update all plots moves an older plot\'s numbers to the table', async () => {
     await openAnalysis('modulator');
     await derive();
