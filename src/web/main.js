@@ -82,6 +82,8 @@ import { atlasOpen, installAtlas, onAtlasKey, openAtlas } from './atlas.js';
 import { revealStartup } from './startup.js';
 import { toggleSelectedLabelFont, updateStyleControls, installStyleControls } from './style-controls.js';
 import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd, openSwapPicker } from './insert-menu.js';
+import { editValues } from './value-edit.js';
+import { beginPorts, installPortTool } from './port-tool.js';
 import { noteSelectionForTips, openArrangePicker } from './arrange-ui.js';
 import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } from './toolbar-ui.js';
 import { installNetBeams, mountNetBeams, syncNetBeams } from './net-beams.js';
@@ -1035,7 +1037,7 @@ function exactWireTargetAt(w, excludeNetId = null, sourceEndpoint = null) {
   return candidates[0];
 }
 
-function compUnderCursor() {
+export function compUnderCursor() {
   const hit = matchAt(cursor.x, cursor.y);
   return hit && circuit.components.has(hit.refdes) ? circuit.components.get(hit.refdes) : null;
 }
@@ -2044,7 +2046,6 @@ export function stubSelection() {
   }
   const out = commit(() => addTerminalStubs(circuit, refs));
   if (!out) return;
-  rememberAction('wire stubs', stubSelection);
   const added = out.stubs.length ? `added ${out.stubs.length} wire stub${out.stubs.length === 1 ? '' : 's'}` : 'no unconnected terminals to stub';
   logLine(`${added}${out.skipped.length ? `; skipped ${out.skipped.join(', ')} (would short)` : ''}`);
   render();
@@ -2394,6 +2395,13 @@ export function splicePreviewTarget(ghost) {
   return null;
 }
 
+// What follows each placement, in its commit (`handler(parts)`): a port
+// placed by p takes its name (port-tool.js).
+const placedHandlers = [];
+export function onPartsPlaced(handler) {
+  placedHandlers.push(handler);
+}
+
 export function placePending() {
   if (!pendingPlace) return;
   if (pendingPlace.kind === 'label') {
@@ -2427,6 +2435,7 @@ export function placePending() {
     // A pin dropped on the middle of a wire tees into it.
     circuit.teeTerminalsOntoWires(placed.map((comp) => comp.refdes));
     circuit.ensureUniqueTerminals(placed.map((comp) => comp.refdes));
+    for (const handler of placedHandlers) handler(placed);
     // A solder dot placed on a crossing shorts the nets there. With several
     // given names the dot waits (unsynced) for the user's name choice.
     const awaitingName = placed.some((comp) => comp.type === 'solder' && shortNetsAtPlacedSolder(comp));
@@ -4692,6 +4701,9 @@ function canvasMouseDown(ev) {
     return;
   }
 
+  // The placing tools stay armed while what they placed is being typed into:
+  // a press then closes that editor, and places nothing.
+  if (inlineInput && ['net', 'annotation', 'equation', 'line', 'arrow', 'box'].includes(labelMode)) return;
   if (labelMode === 'line') {
     cursor = draftPointAt(startWorld, ev.shiftKey);
     drag = { mode: 'annotationlineplace', startClient, startWorld, moved: false, previewEnd: { ...cursor }, rubber: null };
@@ -6644,6 +6656,7 @@ installContextMenu();
 installHierarchy();
 installReferenceWindows();
 installCalculator();
+installPortTool();
 installNotes();
 installAccent();
 onDocumentShown(notesDocumentShown);
@@ -6859,23 +6872,6 @@ function viewKey(key, shiftKey = false) {
   return true;
 }
 
-// The last repeatable edit, for `.`: how to do it again to whatever is
-// selected (or pointed at) now. Session state; never part of a document.
-let lastAction = null; // { label, run }
-
-export function rememberAction(label, run) {
-  lastAction = { label, run };
-}
-
-export function repeatLastAction() {
-  if (!lastAction) {
-    logLine('. repeats the last rotate, mirror, swap, rail, stubs, or tidy; nothing to repeat yet');
-    return;
-  }
-  hintLine(`repeat: ${lastAction.label}`);
-  lastAction.run();
-}
-
 /** t / = / F2: edit the text of what is selected -- a label, a part's name
  *  (a switch's phase, a rail's name), a net's label -- else of what the
  *  cursor points at. Several switches or rails take the same edit. */
@@ -6892,7 +6888,7 @@ export function editSelectionText() {
   if (netId) {
     const netLabel = circuit.nets.has(netId) && circuit.netLabels(netId)[0];
     if (netLabel) return inlineEditLabel(netLabel);
-    hintLine('this net has no label to edit; Shift+L places one to name it');
+    hintLine('this net has no label to edit; l places one to name it');
     return;
   }
   const pointed = pickLabel(cursor);
@@ -6908,7 +6904,6 @@ export function tidyNow() {
   const refs = selectedComps().map((c) => c.refdes);
   const netIds = [...selectedNets, ...(selectedWire ? [selectedWire.netId] : []), ...[...selectedWires].map((key) => keyToWire(key).netId)];
   const labelIds = selectedLabels().map((label) => label.id);
-  rememberAction('tidy', tidyNow);
   if (!refs.length && !netIds.length && !labelIds.length) {
     hintLine('Shift+T tidies the selection: select parts, wires, or labels first');
     return;
@@ -6937,7 +6932,7 @@ export function selectAll() {
   render();
 }
 
-/** The parts q swaps: the selected ones, else the one under the cursor. */
+/** The parts z swaps: the selected ones, else the one under the cursor. */
 export function swapTargets() {
   const comps = selectedComps();
   if (comps.length) return comps;
@@ -6951,12 +6946,11 @@ function pinUnderCursor() {
 }
 
 /** What the footer's key strip needs to know that the editor state does not
- *  say directly: the edit `.` repeats and what the pointer rests on. */
+ *  say directly: what the pointer rests on. */
 export function keyHintContext() {
   const pin = pinUnderCursor();
   const part = pin ? null : compUnderCursor();
   return {
-    repeat: lastAction?.label || null,
     hover: {
       pin: pin ? { connected: !!circuit.netOfTerminal({ comp: pin.refdes, term: pin.term }) } : null,
       part: part && part.type !== 'solder' ? part.type : null,
@@ -6968,7 +6962,6 @@ export function keyHintContext() {
  *  cursor (core/pin-rails.js). */
 function railAtPointedPin(type) {
   const key = type === 'ground' ? 'g' : 'v';
-  rememberAction(`${type} on a pin`, () => railAtPointedPin(type));
   const hit = pinUnderCursor();
   if (!hit) {
     hintLine(`${key}: point at an unconnected pin to wire a ${type} to it`);
@@ -6989,6 +6982,28 @@ function railAtPointedPin(type) {
     applyJson(before);
     logLine(`Could not wire a ${type} to ${hit.refdes}.${hit.term}: ${err.message || err}`, 'error');
   }
+  render();
+}
+
+/** -: flip the sign of the sum's or multiplier's input under the cursor
+ *  (Input polarity in its menu), one undo step. */
+function flipSignalInputAtCursor() {
+  const hit = pinUnderCursor();
+  const part = hit && circuit.components.get(hit.refdes);
+  const input = part && (part.type === 'signal_sum' || part.type === 'signal_multiply')
+    && part.terminalDefs.some((terminal) => terminal.name === hit.term && terminal.signalRole === 'input');
+  if (!input) {
+    hintLine('-: point at an input of a sum or multiply junction to flip its sign');
+    return;
+  }
+  // The sign is drawn beside a wired input only, as its menu offers it.
+  if (!circuit.netOfTerminal({ comp: hit.refdes, term: hit.term })) {
+    hintLine(`${hit.refdes}.${hit.term} is not wired: wire it first, then - flips its sign`);
+    return;
+  }
+  const negative = !part.negativeInputs?.has(hit.term);
+  commit(() => circuit.setSignalInputNegative(hit.refdes, hit.term, negative));
+  logLine(`${hit.refdes}.${hit.term}: ${negative ? 'negative' : 'positive'}`);
   render();
 }
 
@@ -7087,12 +7102,12 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
-  if (key === '.') {
-    repeatLastAction();
+  // q: the value of what is selected or pointed at (value-edit.js); z: its type.
+  if (key === 'q') {
+    void editValues();
     return;
   }
-
-  if (key === 'q') {
+  if (key === 'z') {
     openSwapPicker(swapTargets());
     return;
   }
@@ -7109,7 +7124,7 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
-  // Shift+Q: arrange the selection like another drawing of it (q changes a
+  // Shift+Q: arrange the selection like another drawing of it (z changes a
   // part's type; Shift+Q changes how a group is drawn).
   if (key === 'Q') {
     void openArrangePicker();
@@ -7174,6 +7189,17 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
+  if (key === '-') {
+    flipSignalInputAtCursor();
+    return;
+  }
+
+  // p: ports by name, as l places net labels (port-tool.js).
+  if (key === 'p') {
+    beginPorts();
+    return;
+  }
+
   // g and v over an unconnected pin wire a ground or supply to it.
   if (key === 'g' || (key === 'v' && pinUnderCursor())) {
     railAtPointedPin(key === 'g' ? 'ground' : 'supply');
@@ -7222,7 +7248,6 @@ function onNormalKey(key, shiftKey = false) {
       logLine('nothing selected to rotate');
     } else {
       rotateSelectionAbout(90);
-      rememberAction('rotate', () => onNormalKey('r'));
       const primary = selectedComp() || selectedComps()[0];
       if (drag?.mode !== 'copyghost' && primary) cursor = { x: primary.transform.x, y: primary.transform.y };
       render();
@@ -7706,7 +7731,6 @@ export function selectedTransform(action) {
   }
   if (action === 'rotate') rotateSelectionAbout(90);
   else mirrorSelectionAbout(action === 'mirror-x' ? 'x' : 'y');
-  rememberAction(action === 'rotate' ? 'rotate' : `mirror ${action === 'mirror-x' ? 'horizontally' : 'vertically'}`, () => selectedTransform(action));
   render();
 }
 

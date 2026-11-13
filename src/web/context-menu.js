@@ -797,7 +797,7 @@ function appendContextActions(menu, target) {
     appendContextItem(group, 'Mirror horizontally', () => selectedTransform('mirror-x'), { shortcut: 'Shift+R' });
     appendContextItem(group, 'Mirror vertically', () => selectedTransform('mirror-y'), { shortcut: 'Ctrl/Cmd+R' });
     if (swapCandidates(comp.type).length) {
-      appendContextItem(group, 'Change type…', later(() => openSwapPicker(selectedComps().length ? selectedComps() : [comp])), { shortcut: 'q' });
+      appendContextItem(group, 'Change type…', later(() => openSwapPicker(selectedComps().length ? selectedComps() : [comp])), { shortcut: 'z' });
     }
     if (selectedComps().length > 1 && selectedComps().includes(comp)) {
       appendContextItem(group, 'Arrange like…', later(() => void openArrangePicker()), { shortcut: 'Shift+Q' });

@@ -19,7 +19,8 @@ import { hintLine, logLine } from './status-bar-ui.js';
 import { worldToClient } from './canvas-view.js';
 import { editor } from './editor-state.js';
 import { placeNetLabelAt } from './annotation-tools.js';
-import { activatePlace, applyJson, clearSymmetry, commit, rememberAction, setSelection, swapTargets, commitWireAtCursor, connectWireToTerminal, draftRoutePath, endGestureWire, markModelChanged, moveCursor, placePending, recordHistoryEntry, render, setSymmetry, snapshot, transformPendingComponent, redo, undo } from './main.js';
+import { activatePlace, applyJson, clearSymmetry, commit, setSelection, commitWireAtCursor, connectWireToTerminal, draftRoutePath, endGestureWire, markModelChanged, moveCursor, placePending, recordHistoryEntry, render, setSymmetry, snapshot, transformPendingComponent, redo, undo } from './main.js';
+import { cyclePortKind, endPortSequence } from './port-tool.js';
 
 // Human-facing names keep the picker useful at a glance. Aliases stay out of
 // the menu while the underlying type remains the stable placement value.
@@ -124,6 +125,9 @@ export function onInsertKey(key, shiftKey = false) {
     return;
   }
 
+  // p steps a port's kind while placing ports (port-tool.js).
+  if (key === 'p' && cyclePortKind()) return;
+
   // A placement ghost is pending: Enter/click commits it; Esc drops it back to
   // the search picker so a different component can be typed.
   if (editor.pendingPlace) {
@@ -131,6 +135,7 @@ export function onInsertKey(key, shiftKey = false) {
       commit(() => placePending());
       render();
     } else if (key === 'Escape' || key === 'Backspace') {
+      endPortSequence();
       editor.pendingPlace = null;
       clearSymmetry();
       editor.insertQuery = '';
@@ -503,7 +508,7 @@ function pickQuickAdd(type) {
 }
 
 /**
- * Change the type of parts in place (q): a picker of the types each can
+ * Change the type of parts in place (z): a picker of the types each can
  * become, the complementary part first. Every listed part that shares a
  * terminal with the chosen type swaps, as one undo entry.
  */
@@ -511,7 +516,7 @@ export function openSwapPicker(components) {
   const primary = components[0];
   const candidates = primary ? swapCandidates(primary.type) : [];
   if (!candidates.length) {
-    hintLine(primary ? `${primary.refdes} (${PLACEMENT_LABELS[primary.type] || primary.type}) has no other type to swap to` : 'q changes a part\'s type: select one, or point at it');
+    hintLine(primary ? `${primary.refdes} (${PLACEMENT_LABELS[primary.type] || primary.type}) has no other type to swap to` : 'z changes a part\'s type: select one, or point at it');
     return false;
   }
   const origin = { x: primary.transform.x, y: primary.transform.y };
@@ -546,11 +551,6 @@ export function swapParts(refs, type) {
   }
   recordHistoryEntry(before, true);
   markModelChanged();
-  rememberAction(`swap to ${PLACEMENT_LABELS[type] || type}`, () => {
-    const targets = swapTargets();
-    if (targets.length) swapParts(targets.map((c) => c.refdes), type);
-    else logLine('select a part (or point at one) to swap it');
-  });
   const renamed = new Map(swapped);
   const selection = refs.map((refdes) => renamed.get(refdes) || refdes).filter((refdes) => editor.circuit.components.has(refdes));
   setSelection(selection);

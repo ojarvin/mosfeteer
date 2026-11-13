@@ -53490,6 +53490,7 @@ function openAnnotateMenu(button) {
 __modules["src/web/annotation-tools.js"] = function (__require, __exports) {
 __exports.moveLabelSafely = moveLabelSafely;
 __exports.placeAnnotationAt = placeAnnotationAt;
+__exports.promptText = promptText;
 __exports.askAnnotationText = askAnnotationText;
 __exports.askNetLabelNames = askNetLabelNames;
 __exports.placeEquationAt = placeEquationAt;
@@ -53612,18 +53613,21 @@ function placeAnnotationAt(world) {
   commit(() => { label = editor.circuit.addLabel({ text: text || 'label', x: point.x, y: point.y, align: 'center', ...(math ? { math } : {}) }); });
   setSelection([]);
   setLabelSelection([label.id]);
-  editor.labelMode = null;
   logLine(`placed annotation${text ? ` "${text}"` : ''} @ (${point.x},${point.y})`);
   render();
-  if (!text) inlineEditLabel(label);
+  // The tool stays armed: text typed first asks for the next text; a label
+  // typed into after placing leaves the next click placing another.
+  if (text) askAnnotationText();
+  else inlineEditLabel(label);
 }
 
 /**
- * Ask for a label's text before it is placed, in a small field by the
- * cursor. Resolves the text typed (Enter), '' for none (Enter on an empty
- * field: type it after placing), or null when dismissed (Esc).
+ * Ask for a text in a small field by the cursor, `value` in it to start
+ * (a label's text before it is placed; a value q sets). Resolves the text
+ * typed (Enter), '' for none (Enter on an empty field, or a press
+ * elsewhere: type it after placing), or null on Esc.
  */
-function promptLabelText({ title, placeholder = '' }) {
+function promptText({ title, placeholder = '', value = '' }) {
   document.querySelector('.label-prompt')?.remove();
   const box = document.createElement('div');
   box.className = 'label-prompt glass';
@@ -53635,6 +53639,7 @@ function promptLabelText({ title, placeholder = '' }) {
   input.spellcheck = false;
   input.autocomplete = 'off';
   input.placeholder = placeholder;
+  input.value = value;
   input.setAttribute('aria-label', title);
   box.append(heading, input);
   const at = worldToClient(editor.cursor.x, editor.cursor.y);
@@ -53643,7 +53648,7 @@ function promptLabelText({ title, placeholder = '' }) {
   document.body.append(box);
   // Focus once the key that opened it is done: the editor puts focus back on
   // the canvas as it handles that key.
-  setTimeout(() => input.focus(), 0);
+  setTimeout(() => { input.focus(); input.select(); }, 0);
   return new Promise((resolve) => {
     const finish = (value) => {
       if (!box.isConnected) return;
@@ -53651,8 +53656,9 @@ function promptLabelText({ title, placeholder = '' }) {
       window.removeEventListener('pointerdown', outside, true);
       resolve(value);
     };
-    // A press anywhere else dismisses it.
-    const outside = (event) => { if (!box.contains(event.target)) finish(null); };
+    // A press anywhere else closes it as Enter on an empty field does: the
+    // tool stays armed, to type after placing. Only Esc leaves the tool.
+    const outside = (event) => { if (!box.contains(event.target)) finish(''); };
     window.addEventListener('pointerdown', outside, true);
     input.addEventListener('keydown', (event) => {
       event.stopPropagation();
@@ -53666,7 +53672,7 @@ function promptLabelText({ title, placeholder = '' }) {
  *  Enter on an empty field places a label to type into. */
 function askAnnotationText() {
   pendingAnnotationText = null;
-  promptLabelText({ title: 'Free text', placeholder: 'text, or $TeX$; Enter alone: type it after placing' }).then((text) => {
+  promptText({ title: 'Free text', placeholder: 'text, or $TeX$; Enter alone: type it after placing' }).then((text) => {
     if (editor.labelMode !== 'annotation') return;
     if (text === null) {
       activateSelect();
@@ -53684,7 +53690,7 @@ function askAnnotationText() {
  *  then each click on a wire places the next. Esc leaves the tool; Enter on an empty field names each
  *  wire after it is clicked, as before. */
 function askNetLabelNames() {
-  promptLabelText({ title: 'Net label', placeholder: 'name(s): CLK DOUT[3:0] A,B … Enter alone: name each after placing' }).then((text) => {
+  promptText({ title: 'Net label', placeholder: 'name(s): CLK DOUT[3:0] A,B … Enter alone: name each after placing' }).then((text) => {
     if (editor.labelMode !== 'net') return;
     if (text === null) {
       activateSelect();
@@ -53705,7 +53711,6 @@ function placeEquationAt(world) {
   commit(() => { label = editor.circuit.addLabel({ text: '$$', x: point.x, y: point.y, align: 'center', math: true }); });
   setSelection([]);
   setLabelSelection([label.id]);
-  editor.labelMode = null;
   logLine(`placed equation @ (${point.x},${point.y})`);
   render();
   inlineEditLabel(label, { equationDraft: true });
@@ -53740,8 +53745,7 @@ function commitLineAnnotation(includeCursor = true) {
   logLine(`placed line annotation with ${points.length} points`);
   editor.annotationPoints = [];
   editor.lastLineClick = null;
-  // Like every annotation tool, a line is placed once, then back to selection.
-  editor.labelMode = null;
+  // Like every tool, the line tool stays armed until Esc.
   render();
   return true;
 }
@@ -53757,7 +53761,6 @@ function commitArrowAnnotation(includeCursor = true) {
   logLine(`placed arrow with ${points.length} points`);
   editor.annotationPoints = [];
   editor.annotationStart = null;
-  editor.labelMode = null;
   render();
   const annotationLabel = [...editor.circuit.labels.values()].find((label) => label.parent === annotation.id);
   inlineEditLabel(annotationLabel, { removeOnEmpty: true });
@@ -53801,10 +53804,11 @@ function placeShapeAnnotation(world, endOverride = null) {
     annotationLabel = [...editor.circuit.labels.values()].find((label) => label.parent === annotation.id);
   });
   setSelection([]);
-  setLabelSelection([annotation.id]);
+  // The box tool picks what to box by selection: a box placed leaves none,
+  // so the next one starts afresh.
+  setLabelSelection(editor.labelMode === 'box' ? [] : [annotation.id]);
   logLine(`placed ${editor.labelMode} from (${editor.annotationStart.x},${editor.annotationStart.y}) to (${end.x},${end.y})`);
   editor.annotationStart = null;
-  editor.labelMode = null;
   render();
   inlineEditLabel(annotationLabel, { removeOnEmpty: true });
   return true;
@@ -53979,8 +53983,10 @@ function placeNetLabelAt(world, placement = null) {
       } else if (placed && !queue.repeat && pastedNetName === queue) {
         queue.index += 1;
         if (queue.index >= queue.names.length) {
-          activateSelect();
           logLine(`placed ${queue.names.length} net label${queue.names.length === 1 ? '' : 's'}`);
+          // The tool stays armed: the next names, or Esc to leave it.
+          pastedNetName = null;
+          askNetLabelNames();
         } else sequenceHint();
       }
       render();
@@ -54304,7 +54310,7 @@ let loadDesign; __bind(() => { ({ loadDesign } = __require("src/web/example-desi
 let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
-let applyJson, recordHistoryEntry, rememberAction, render, selectedComps, setSelection, snapshot; __bind(() => { ({ applyJson, recordHistoryEntry, rememberAction, render, selectedComps, setSelection, snapshot } = __require("src/web/main.js")); });
+let applyJson, recordHistoryEntry, render, selectedComps, setSelection, snapshot; __bind(() => { ({ applyJson, recordHistoryEntry, render, selectedComps, setSelection, snapshot } = __require("src/web/main.js")); });
 let revisionTime; __bind(() => { ({ revisionTime } = __require("src/web/modified-time.js")); });
 let hintLine, logLine; __bind(() => { ({ hintLine, logLine } = __require("src/web/status-bar-ui.js")); });
 /**
@@ -54444,7 +54450,6 @@ function choose(index = picker?.index) {
   close();
   recordHistoryEntry(before, true);
   setSelection(refs);
-  rememberAction('arrange like', () => void openArrangePicker());
   noteTip('arrange');
   logLine(chosen.cells
     ? `${refs.join(', ')} arranged by cells: ${chosen.cells.map((cell) => `${cell.refs.join(', ')} like ${cell.like.parts.join(', ')} in ${cell.like.source.current ? 'this design' : cell.like.source.name}`).join('; ')}`
@@ -65278,7 +65283,7 @@ let showHelp; __bind(() => { ({ showHelp } = __require("src/web/help.js")); });
 let runCheck; __bind(() => { ({ runCheck } = __require("src/web/design-check-ui.js")); });
 let openFind, openReplace; __bind(() => { ({ openFind, openReplace } = __require("src/web/find-replace-ui.js")); });
 let toggleAtlas, toggleBuiltInDrawings, toggleSymbolSheet; __bind(() => { ({ toggleAtlas, toggleBuiltInDrawings, toggleSymbolSheet } = __require("src/web/atlas.js")); });
-let activateAlign, activateAnnotation, activateCopy, activateEquation, activateHighlight, activateMove, activateNetLabel, activatePlace, activateShapeAnnotation, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render, repeatLastAction, restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, tidyNow, undo; __bind(() => { ({ activateAlign, activateAnnotation, activateCopy, activateEquation, activateHighlight, activateMove, activateNetLabel, activatePlace, activateShapeAnnotation, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render, repeatLastAction, restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, tidyNow, undo } = __require("src/web/main.js")); });
+let activateAlign, activateAnnotation, activateCopy, activateEquation, activateHighlight, activateMove, activateNetLabel, activatePlace, activateShapeAnnotation, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render, restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, tidyNow, undo; __bind(() => { ({ activateAlign, activateAnnotation, activateCopy, activateEquation, activateHighlight, activateMove, activateNetLabel, activatePlace, activateShapeAnnotation, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render, restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, tidyNow, undo } = __require("src/web/main.js")); });
 let joinSelectedLines, removeAllNetHighlights; __bind(() => { ({ joinSelectedLines, removeAllNetHighlights } = __require("src/web/annotation-tools.js")); });
 let enterLinkedDesign, leaveLinkedDesign, toggleAllLinkBubbles, toggleLinkBubbles; __bind(() => { ({ enterLinkedDesign, leaveLinkedDesign, toggleAllLinkBubbles, toggleLinkBubbles } = __require("src/web/hierarchy.js")); });
 let copyAsImage; __bind(() => { ({ copyAsImage } = __require("src/web/export-ui.js")); });
@@ -65430,7 +65435,6 @@ const ACTIONS = {
   swap: () => openSwapPicker(swapTargets()),
   'arrange-like': () => void openArrangePicker(),
   'symmetry-axis': (direction) => setSymmetryAxis(/^off/i.test(direction || '') || (!direction && symmetryAxis()) ? null : /^h/i.test(direction || '') ? 'mirrorY' : 'mirrorX'),
-  repeat: () => repeatLastAction(),
   tidy: () => tidyNow(),
   edit: () => editSelectionText(),
   'add-beat': () => addBeatHere(),
@@ -65717,11 +65721,10 @@ const EDITOR_COMMANDS = [
   { name: 'highlight', aliases: ['color-net', 'net-color', 'colour'], canvas: true, help: 'color whole nets, click by click (9)' },
   { name: 'clear-highlights', aliases: ['uncolor', 'remove-highlights'], canvas: true, help: 'remove all net highlights (8)' },
   { name: 'stubs', aliases: ['wire-stubs'], canvas: true, help: 'labeled wire stubs on the selected parts\' unconnected pins (Space)' },
-  { name: 'swap', aliases: ['change-type', 'replace-part'], canvas: true, help: 'change the selected parts\' type, keeping their wiring (q)' },
+  { name: 'swap', aliases: ['change-type', 'replace-part'], canvas: true, help: 'change the selected parts\' type, keeping their wiring (z)' },
   { name: 'symmetry-axis', aliases: ['axis', 'mirror-axis', 'symmetric'], canvas: true, help: 'symmetry-axis [vertical|horizontal|off]: hold an axis through the selection; what is drawn on one side is drawn on the other (k)' },
   { name: 'arrange-like', aliases: ['arrange-as', 'draw-like', 'redraw-like'], canvas: true, help: 'draw the selected parts as another drawing of them does (Shift+Q)' },
   { name: 'tidy', aliases: ['clean-up', 'cleanup', 'neaten', 'straighten'], canvas: true, help: 're-lay the selection\'s nets and move its crowded labels clear (Shift+T)' },
-  { name: 'repeat', aliases: ['again'], canvas: true, help: 'repeat the last rotate, mirror, swap, rail, or stubs (.)' },
   { name: 'edit', aliases: ['edit-text', 'rename-selection'], canvas: true, help: 'edit the selected label or part name (t, =, F2)' },
   { name: 'add-beat', aliases: ['new-beat'], canvas: true, help: 'add a beat after the one on screen (+)' },
   { name: 'next-beat', canvas: true, help: 'step to the next beat (Alt+→)' },
@@ -67283,7 +67286,7 @@ function appendContextActions(menu, target) {
     appendContextItem(group, 'Mirror horizontally', () => selectedTransform('mirror-x'), { shortcut: 'Shift+R' });
     appendContextItem(group, 'Mirror vertically', () => selectedTransform('mirror-y'), { shortcut: 'Ctrl/Cmd+R' });
     if (swapCandidates(comp.type).length) {
-      appendContextItem(group, 'Change type…', later(() => openSwapPicker(selectedComps().length ? selectedComps() : [comp])), { shortcut: 'q' });
+      appendContextItem(group, 'Change type…', later(() => openSwapPicker(selectedComps().length ? selectedComps() : [comp])), { shortcut: 'z' });
     }
     if (selectedComps().length > 1 && selectedComps().includes(comp)) {
       appendContextItem(group, 'Arrange like…', later(() => void openArrangePicker()), { shortcut: 'Shift+Q' });
@@ -77117,12 +77120,14 @@ let hintLine, logLine; __bind(() => { ({ hintLine, logLine } = __require("src/we
 let worldToClient; __bind(() => { ({ worldToClient } = __require("src/web/canvas-view.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let placeNetLabelAt; __bind(() => { ({ placeNetLabelAt } = __require("src/web/annotation-tools.js")); });
-let activatePlace, applyJson, clearSymmetry, commit, rememberAction, setSelection, swapTargets, commitWireAtCursor, connectWireToTerminal, draftRoutePath, endGestureWire, markModelChanged, moveCursor, placePending, recordHistoryEntry, render, setSymmetry, snapshot, transformPendingComponent, redo, undo; __bind(() => { ({ activatePlace, applyJson, clearSymmetry, commit, rememberAction, setSelection, swapTargets, commitWireAtCursor, connectWireToTerminal, draftRoutePath, endGestureWire, markModelChanged, moveCursor, placePending, recordHistoryEntry, render, setSymmetry, snapshot, transformPendingComponent, redo, undo } = __require("src/web/main.js")); });
+let activatePlace, applyJson, clearSymmetry, commit, setSelection, commitWireAtCursor, connectWireToTerminal, draftRoutePath, endGestureWire, markModelChanged, moveCursor, placePending, recordHistoryEntry, render, setSymmetry, snapshot, transformPendingComponent, redo, undo; __bind(() => { ({ activatePlace, applyJson, clearSymmetry, commit, setSelection, commitWireAtCursor, connectWireToTerminal, draftRoutePath, endGestureWire, markModelChanged, moveCursor, placePending, recordHistoryEntry, render, setSymmetry, snapshot, transformPendingComponent, redo, undo } = __require("src/web/main.js")); });
+let cyclePortKind, endPortSequence; __bind(() => { ({ cyclePortKind, endPortSequence } = __require("src/web/port-tool.js")); });
 /**
  * Choosing a part to place: the insert menu (i) with its fuzzy search,
  * categories, and recent placements, and the quick-add menu a pin drag or a
  * double-click opens in empty space.
  */
+
 
 
 
@@ -77244,6 +77249,9 @@ function onInsertKey(key, shiftKey = false) {
     return;
   }
 
+  // p steps a port's kind while placing ports (port-tool.js).
+  if (key === 'p' && cyclePortKind()) return;
+
   // A placement ghost is pending: Enter/click commits it; Esc drops it back to
   // the search picker so a different component can be typed.
   if (editor.pendingPlace) {
@@ -77251,6 +77259,7 @@ function onInsertKey(key, shiftKey = false) {
       commit(() => placePending());
       render();
     } else if (key === 'Escape' || key === 'Backspace') {
+      endPortSequence();
       editor.pendingPlace = null;
       clearSymmetry();
       editor.insertQuery = '';
@@ -77623,7 +77632,7 @@ function pickQuickAdd(type) {
 }
 
 /**
- * Change the type of parts in place (q): a picker of the types each can
+ * Change the type of parts in place (z): a picker of the types each can
  * become, the complementary part first. Every listed part that shares a
  * terminal with the chosen type swaps, as one undo entry.
  */
@@ -77631,7 +77640,7 @@ function openSwapPicker(components) {
   const primary = components[0];
   const candidates = primary ? swapCandidates(primary.type) : [];
   if (!candidates.length) {
-    hintLine(primary ? `${primary.refdes} (${PLACEMENT_LABELS[primary.type] || primary.type}) has no other type to swap to` : 'q changes a part\'s type: select one, or point at it');
+    hintLine(primary ? `${primary.refdes} (${PLACEMENT_LABELS[primary.type] || primary.type}) has no other type to swap to` : 'z changes a part\'s type: select one, or point at it');
     return false;
   }
   const origin = { x: primary.transform.x, y: primary.transform.y };
@@ -77666,11 +77675,6 @@ function swapParts(refs, type) {
   }
   recordHistoryEntry(before, true);
   markModelChanged();
-  rememberAction(`swap to ${PLACEMENT_LABELS[type] || type}`, () => {
-    const targets = swapTargets();
-    if (targets.length) swapParts(targets.map((c) => c.refdes), type);
-    else logLine('select a part (or point at one) to swap it');
-  });
   const renamed = new Map(swapped);
   const selection = refs.map((refdes) => renamed.get(refdes) || refdes).filter((refdes) => editor.circuit.components.has(refdes));
   setSelection(selection);
@@ -79678,6 +79682,7 @@ __exports.namedGroupNets = namedGroupNets;
 __exports.visibleNets = visibleNets;
 __exports.rangeValues = rangeValues;
 __exports.nearestTerminal = nearestTerminal;
+__exports.compUnderCursor = compUnderCursor;
 __exports.selectedComp = selectedComp;
 __exports.setSelection = setSelection;
 __exports.setLabelSelection = setLabelSelection;
@@ -79711,6 +79716,7 @@ __exports.clearSymmetry = clearSymmetry;
 __exports.setSymmetry = setSymmetry;
 __exports.spliceIfOnWire = spliceIfOnWire;
 __exports.splicePreviewTarget = splicePreviewTarget;
+__exports.onPartsPlaced = onPartsPlaced;
 __exports.placePending = placePending;
 __exports.onDocumentShown = onDocumentShown;
 __exports.afterRender = afterRender;
@@ -79736,8 +79742,6 @@ __exports.snappedWorld = snappedWorld;
 __exports.canvasMouseMove = canvasMouseMove;
 __exports.canvasMouseUp = canvasMouseUp;
 __exports.transformPendingComponent = transformPendingComponent;
-__exports.rememberAction = rememberAction;
-__exports.repeatLastAction = repeatLastAction;
 __exports.editSelectionText = editSelectionText;
 __exports.tidyNow = tidyNow;
 __exports.selectAll = selectAll;
@@ -79824,6 +79828,8 @@ let atlasOpen, installAtlas, onAtlasKey, openAtlas; __bind(() => { ({ atlasOpen,
 let revealStartup; __bind(() => { ({ revealStartup } = __require("src/web/startup.js")); });
 let toggleSelectedLabelFont, updateStyleControls, installStyleControls; __bind(() => { ({ toggleSelectedLabelFont, updateStyleControls, installStyleControls } = __require("src/web/style-controls.js")); });
 let onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd, openSwapPicker; __bind(() => { ({ onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd, openSwapPicker } = __require("src/web/insert-menu.js")); });
+let editValues; __bind(() => { ({ editValues } = __require("src/web/value-edit.js")); });
+let beginPorts, installPortTool; __bind(() => { ({ beginPorts, installPortTool } = __require("src/web/port-tool.js")); });
 let noteSelectionForTips, openArrangePicker; __bind(() => { ({ noteSelectionForTips, openArrangePicker } = __require("src/web/arrange-ui.js")); });
 let toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi; __bind(() => { ({ toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } = __require("src/web/toolbar-ui.js")); });
 let installNetBeams, mountNetBeams, syncNetBeams; __bind(() => { ({ installNetBeams, mountNetBeams, syncNetBeams } = __require("src/web/net-beams.js")); });
@@ -79863,6 +79869,8 @@ let setHidden; __bind(() => { ({ setHidden } = __require("src/web/dom.js")); });
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
+
 
 
 
@@ -81890,7 +81898,6 @@ function stubSelection() {
   }
   const out = commit(() => addTerminalStubs(circuit, refs));
   if (!out) return;
-  rememberAction('wire stubs', stubSelection);
   const added = out.stubs.length ? `added ${out.stubs.length} wire stub${out.stubs.length === 1 ? '' : 's'}` : 'no unconnected terminals to stub';
   logLine(`${added}${out.skipped.length ? `; skipped ${out.skipped.join(', ')} (would short)` : ''}`);
   render();
@@ -82240,6 +82247,13 @@ function splicePreviewTarget(ghost) {
   return null;
 }
 
+// What follows each placement, in its commit (`handler(parts)`): a port
+// placed by p takes its name (port-tool.js).
+const placedHandlers = [];
+function onPartsPlaced(handler) {
+  placedHandlers.push(handler);
+}
+
 function placePending() {
   if (!pendingPlace) return;
   if (pendingPlace.kind === 'label') {
@@ -82273,6 +82287,7 @@ function placePending() {
     // A pin dropped on the middle of a wire tees into it.
     circuit.teeTerminalsOntoWires(placed.map((comp) => comp.refdes));
     circuit.ensureUniqueTerminals(placed.map((comp) => comp.refdes));
+    for (const handler of placedHandlers) handler(placed);
     // A solder dot placed on a crossing shorts the nets there. With several
     // given names the dot waits (unsynced) for the user's name choice.
     const awaitingName = placed.some((comp) => comp.type === 'solder' && shortNetsAtPlacedSolder(comp));
@@ -84538,6 +84553,9 @@ function canvasMouseDown(ev) {
     return;
   }
 
+  // The placing tools stay armed while what they placed is being typed into:
+  // a press then closes that editor, and places nothing.
+  if (inlineInput && ['net', 'annotation', 'equation', 'line', 'arrow', 'box'].includes(labelMode)) return;
   if (labelMode === 'line') {
     cursor = draftPointAt(startWorld, ev.shiftKey);
     drag = { mode: 'annotationlineplace', startClient, startWorld, moved: false, previewEnd: { ...cursor }, rubber: null };
@@ -86490,6 +86508,7 @@ installContextMenu();
 installHierarchy();
 installReferenceWindows();
 installCalculator();
+installPortTool();
 installNotes();
 installAccent();
 onDocumentShown(notesDocumentShown);
@@ -86705,23 +86724,6 @@ function viewKey(key, shiftKey = false) {
   return true;
 }
 
-// The last repeatable edit, for `.`: how to do it again to whatever is
-// selected (or pointed at) now. Session state; never part of a document.
-let lastAction = null; // { label, run }
-
-function rememberAction(label, run) {
-  lastAction = { label, run };
-}
-
-function repeatLastAction() {
-  if (!lastAction) {
-    logLine('. repeats the last rotate, mirror, swap, rail, stubs, or tidy; nothing to repeat yet');
-    return;
-  }
-  hintLine(`repeat: ${lastAction.label}`);
-  lastAction.run();
-}
-
 /** t / = / F2: edit the text of what is selected -- a label, a part's name
  *  (a switch's phase, a rail's name), a net's label -- else of what the
  *  cursor points at. Several switches or rails take the same edit. */
@@ -86738,7 +86740,7 @@ function editSelectionText() {
   if (netId) {
     const netLabel = circuit.nets.has(netId) && circuit.netLabels(netId)[0];
     if (netLabel) return inlineEditLabel(netLabel);
-    hintLine('this net has no label to edit; Shift+L places one to name it');
+    hintLine('this net has no label to edit; l places one to name it');
     return;
   }
   const pointed = pickLabel(cursor);
@@ -86754,7 +86756,6 @@ function tidyNow() {
   const refs = selectedComps().map((c) => c.refdes);
   const netIds = [...selectedNets, ...(selectedWire ? [selectedWire.netId] : []), ...[...selectedWires].map((key) => keyToWire(key).netId)];
   const labelIds = selectedLabels().map((label) => label.id);
-  rememberAction('tidy', tidyNow);
   if (!refs.length && !netIds.length && !labelIds.length) {
     hintLine('Shift+T tidies the selection: select parts, wires, or labels first');
     return;
@@ -86783,7 +86784,7 @@ function selectAll() {
   render();
 }
 
-/** The parts q swaps: the selected ones, else the one under the cursor. */
+/** The parts z swaps: the selected ones, else the one under the cursor. */
 function swapTargets() {
   const comps = selectedComps();
   if (comps.length) return comps;
@@ -86797,12 +86798,11 @@ function pinUnderCursor() {
 }
 
 /** What the footer's key strip needs to know that the editor state does not
- *  say directly: the edit `.` repeats and what the pointer rests on. */
+ *  say directly: what the pointer rests on. */
 function keyHintContext() {
   const pin = pinUnderCursor();
   const part = pin ? null : compUnderCursor();
   return {
-    repeat: lastAction?.label || null,
     hover: {
       pin: pin ? { connected: !!circuit.netOfTerminal({ comp: pin.refdes, term: pin.term }) } : null,
       part: part && part.type !== 'solder' ? part.type : null,
@@ -86814,7 +86814,6 @@ function keyHintContext() {
  *  cursor (core/pin-rails.js). */
 function railAtPointedPin(type) {
   const key = type === 'ground' ? 'g' : 'v';
-  rememberAction(`${type} on a pin`, () => railAtPointedPin(type));
   const hit = pinUnderCursor();
   if (!hit) {
     hintLine(`${key}: point at an unconnected pin to wire a ${type} to it`);
@@ -86835,6 +86834,28 @@ function railAtPointedPin(type) {
     applyJson(before);
     logLine(`Could not wire a ${type} to ${hit.refdes}.${hit.term}: ${err.message || err}`, 'error');
   }
+  render();
+}
+
+/** -: flip the sign of the sum's or multiplier's input under the cursor
+ *  (Input polarity in its menu), one undo step. */
+function flipSignalInputAtCursor() {
+  const hit = pinUnderCursor();
+  const part = hit && circuit.components.get(hit.refdes);
+  const input = part && (part.type === 'signal_sum' || part.type === 'signal_multiply')
+    && part.terminalDefs.some((terminal) => terminal.name === hit.term && terminal.signalRole === 'input');
+  if (!input) {
+    hintLine('-: point at an input of a sum or multiply junction to flip its sign');
+    return;
+  }
+  // The sign is drawn beside a wired input only, as its menu offers it.
+  if (!circuit.netOfTerminal({ comp: hit.refdes, term: hit.term })) {
+    hintLine(`${hit.refdes}.${hit.term} is not wired: wire it first, then - flips its sign`);
+    return;
+  }
+  const negative = !part.negativeInputs?.has(hit.term);
+  commit(() => circuit.setSignalInputNegative(hit.refdes, hit.term, negative));
+  logLine(`${hit.refdes}.${hit.term}: ${negative ? 'negative' : 'positive'}`);
   render();
 }
 
@@ -86933,12 +86954,12 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
-  if (key === '.') {
-    repeatLastAction();
+  // q: the value of what is selected or pointed at (value-edit.js); z: its type.
+  if (key === 'q') {
+    void editValues();
     return;
   }
-
-  if (key === 'q') {
+  if (key === 'z') {
     openSwapPicker(swapTargets());
     return;
   }
@@ -86955,7 +86976,7 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
-  // Shift+Q: arrange the selection like another drawing of it (q changes a
+  // Shift+Q: arrange the selection like another drawing of it (z changes a
   // part's type; Shift+Q changes how a group is drawn).
   if (key === 'Q') {
     void openArrangePicker();
@@ -87020,6 +87041,17 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
+  if (key === '-') {
+    flipSignalInputAtCursor();
+    return;
+  }
+
+  // p: ports by name, as l places net labels (port-tool.js).
+  if (key === 'p') {
+    beginPorts();
+    return;
+  }
+
   // g and v over an unconnected pin wire a ground or supply to it.
   if (key === 'g' || (key === 'v' && pinUnderCursor())) {
     railAtPointedPin(key === 'g' ? 'ground' : 'supply');
@@ -87068,7 +87100,6 @@ function onNormalKey(key, shiftKey = false) {
       logLine('nothing selected to rotate');
     } else {
       rotateSelectionAbout(90);
-      rememberAction('rotate', () => onNormalKey('r'));
       const primary = selectedComp() || selectedComps()[0];
       if (drag?.mode !== 'copyghost' && primary) cursor = { x: primary.transform.x, y: primary.transform.y };
       render();
@@ -87552,7 +87583,6 @@ function selectedTransform(action) {
   }
   if (action === 'rotate') rotateSelectionAbout(90);
   else mirrorSelectionAbout(action === 'mirror-x' ? 'x' : 'y');
-  rememberAction(action === 'rotate' ? 'rotate' : `mirror ${action === 'mirror-x' ? 'horizontally' : 'vertically'}`, () => selectedTransform(action));
   render();
 }
 
@@ -88404,6 +88434,7 @@ function translateNetGeometry(net, saved, dx, dy) {
 __modules["src/web/net-names.js"] = function (__require, __exports) {
 __exports.renameLabelThroughModel = renameLabelThroughModel;
 __exports.interfacePortNet = interfacePortNet;
+__exports.partsBetween = partsBetween;
 __exports.shortedPartsWarning = shortedPartsWarning;
 __exports.namedConnectionConflicts = namedConnectionConflicts;
 __exports.portNameConflict = portNameConflict;
@@ -92570,6 +92601,120 @@ function setPlotsMode(next) {
 }
 
 __exports.plotsBusy = plotsBusy;
+};
+
+__modules["src/web/port-tool.js"] = function (__require, __exports) {
+__exports.beginPorts = beginPorts;
+__exports.cyclePortKind = cyclePortKind;
+__exports.endPortSequence = endPortSequence;
+__exports.installPortTool = installPortTool;
+let componentNameIdentity; __bind(() => { ({ componentNameIdentity } = __require("src/core/model.js")); });
+let promptText; __bind(() => { ({ promptText } = __require("src/web/annotation-tools.js")); });
+let renameLabelThroughModel; __bind(() => { ({ renameLabelThroughModel } = __require("src/web/net-names.js")); });
+let logLine, hintLine; __bind(() => { ({ logLine, hintLine } = __require("src/web/status-bar-ui.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let activateSelect, onPartsPlaced, render; __bind(() => { ({ activateSelect, onPartsPlaced, render } = __require("src/web/main.js")); });
+let beginPlacing; __bind(() => { ({ beginPlacing } = __require("src/web/insert-menu.js")); });
+/**
+ * p: ports by name, as l places net labels. The names first -- several,
+ * separated by spaces or commas -- then each click places the next port,
+ * named. While placing, p steps the port's kind: input, output, inout.
+ * Once the names are used, it asks for the next; Esc leaves the tool.
+ */
+
+
+
+
+
+
+
+
+
+const PORT_KINDS = ['input', 'output', 'inputoutput'];
+const KIND_NAMES = { input: 'input', output: 'output', inputoutput: 'inout' };
+
+// The names still to place, `{ names, index }`, or null: placed ports keep
+// their own names. The kind placed last is the next one's too.
+let sequence = null;
+let kind = 'input';
+
+const placingPort = () => editor.mode === 'insert' && PORT_KINDS.includes(editor.pendingPlace?.type);
+
+function sequenceHint() {
+  const what = KIND_NAMES[editor.pendingPlace?.type || kind];
+  if (!sequence) {
+    hintLine(`PORT (${what}): click to place; p: input, output, inout; Esc ends`);
+    return;
+  }
+  const { names, index } = sequence;
+  const rest = names.length - index - 1;
+  hintLine(`PORT (${what}): click to place ${names[index]}${rest ? ` (then ${names[index + 1]}${rest > 1 ? ` and ${rest - 1} more` : ''})` : ''}; p: input, output, inout; Esc ends`);
+}
+
+/** p: ask for the names, then place them. Esc in the field leaves the tool;
+ *  Enter on an empty one places ports with names of their own. */
+function beginPorts() {
+  promptText({ title: 'Ports', placeholder: 'name(s): VIN VOUT CLK … Enter alone: their own names' }).then((text) => {
+    if (text === null) {
+      sequence = null;
+      activateSelect();
+      return;
+    }
+    const names = text.split(/[\s,]+/).filter(Boolean);
+    sequence = names.length ? { names, index: 0 } : null;
+    beginPlacing(kind);
+    sequenceHint();
+  });
+}
+
+/** p while placing a port: the next kind, keeping its turn and mirror. */
+function cyclePortKind() {
+  if (!placingPort()) return false;
+  kind = PORT_KINDS[(PORT_KINDS.indexOf(editor.pendingPlace.type) + 1) % PORT_KINDS.length];
+  editor.pendingPlace.type = kind;
+  sequenceHint();
+  render();
+  return true;
+}
+
+/** Esc out of placing ports drops the names left. */
+function endPortSequence() {
+  sequence = null;
+}
+
+/** Name each port placed from the names typed, in the placement's commit. */
+function namePlacedPorts(placed) {
+  const ports = placed.filter((part) => PORT_KINDS.includes(part.type));
+  if (!ports.length) return;
+  kind = ports[0].type;
+  if (!sequence) return;
+  for (const part of ports) {
+    const name = sequence.names[sequence.index];
+    if (!name) break;
+    const canonical = componentNameIdentity(name);
+    const label = editor.circuit.labelOf(part.refdes);
+    if (canonical !== part.refdes && editor.circuit.components.has(canonical)) {
+      logLine(`the name ${name} is already in use: ${part.refdes} keeps its own`, 'error');
+    } else if (label) {
+      renameLabelThroughModel(label, name);
+    }
+    sequence.index += 1;
+  }
+  if (sequence.index < sequence.names.length) {
+    sequenceHint();
+    return;
+  }
+  // The names used: ask for the next ones, still placing ports.
+  logLine(`placed ${sequence.names.length} port${sequence.names.length === 1 ? '' : 's'}`);
+  sequence = null;
+  setTimeout(() => { if (placingPort()) beginPorts(); }, 0);
+}
+
+function installPortTool() {
+  onPartsPlaced(namePlacedPorts);
+}
+
+__exports.PORT_KINDS = PORT_KINDS;
 };
 
 __modules["src/web/radial-menu.js"] = function (__require, __exports) {
@@ -98293,10 +98438,9 @@ function statusFields({ mode, selection, cursor, hints = [] }) {
  *   tool: 'move' | 'copy' | 'delete' | null   (armed tools without a hint)
  *   selection: { parts: [type...], labels, nets }
  *   hover: { pin: { connected } | null, part: type | null }
- *   repeat: label of the edit `.` repeats, or null
  *   empty: the drawing has nothing in it
  */
-function contextKeyHints({ tool = null, selection = {}, hover = {}, repeat = null, empty = false } = {}) {
+function contextKeyHints({ tool = null, selection = {}, hover = {}, empty = false } = {}) {
   const hints = [];
   const add = (keys, action) => { if (hints.length < 3) hints.push([keys, action]); };
   if (tool === 'move') {
@@ -98319,12 +98463,11 @@ function contextKeyHints({ tool = null, selection = {}, hover = {}, repeat = nul
   }
   const parts = selection.parts || [];
   const selected = parts.length + (selection.labels || 0) + (selection.nets || 0);
-  if (selected && repeat) add('.', `repeat ${repeat}`);
   if (parts.length === 1 && !selection.labels && !selection.nets) {
     if (/^switch_/.test(parts[0])) add('s', 'open / close its phase');
-    add('q', 'change type');
+    add('q', 'edit value');
+    add('z', 'change type');
     add('r', 'rotate');
-    add('Space', 'wire stubs');
     return hints;
   }
   if (parts.length > 1) {
@@ -98334,7 +98477,7 @@ function contextKeyHints({ tool = null, selection = {}, hover = {}, repeat = nul
     return hints;
   }
   if (selection.labels) {
-    add('t', 'edit text');
+    add('q', 'edit text');
     add('Shift+←/→', 'align text');
     add('arrows', 'nudge');
     return hints;
@@ -98352,8 +98495,8 @@ function contextKeyHints({ tool = null, selection = {}, hover = {}, repeat = nul
     return hints;
   }
   if (hover.part) {
-    add('t', 'edit its label');
-    add('q', 'change type');
+    add('q', 'edit value');
+    add('z', 'change type');
     add('right-drag', 'quick actions');
     return hints;
   }
@@ -102288,11 +102431,12 @@ const EDITOR_KEYMAP = Object.freeze([
     ['terminal letters', 'pick or complete a terminal connection while wiring'],
     ['Backspace (wire)', 'remove the latest uncommitted wire vertex'],
     ['l', 'type net label names (a bus DOUT[3:0] spells out its bits), then click wires to place each'],
-    ['n', 'type free text, then click to place it once'],
-    ['e', 'place a LaTeX equation label; starts with $$ and opens the inline editor'],
-    ['a', 'place a multi-point arrow; click vertices and press Enter'],
-    ['b', 'place a box; with a selection, box it'],
-    ['Shift+L', 'persistent multi-point line annotation placement'],
+    ['p', 'type port names, then click to place each; p while placing steps input, output, inout'],
+    ['n', 'type free text, then click to place it; asks for the next until Esc'],
+    ['e', 'place LaTeX equation labels; each starts with $$ and opens the inline editor'],
+    ['a', 'place multi-point arrows; click vertices and press Enter'],
+    ['b', 'place boxes; with a selection, box it'],
+    ['Shift+L', 'place multi-point line annotations; double-click or Enter ends one'],
   ]],
   ['edit', [
     ['Ctrl/Cmd+Z / u', 'undo; insert search keeps u as text'],
@@ -102312,7 +102456,9 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Ctrl/Cmd+Shift+V', 'paste style from one copied object'],
     ['Delete', 'persistent delete; click objects while armed'],
     ['dd', 'delete the selected object set'],
-    ['q', 'change the type of the selected parts (nmos to pmos, R to C); wiring stays'],
+    ['q', 'type a value for the selected or pointed-at parts and labels: a value, size, name, or text; all of them take it'],
+    ['z', 'change the type of the selected parts (nmos to pmos, R to C); wiring stays'],
+    ['- (on a sum input)', 'flip the sign of the sum or multiply input under the cursor'],
     ['g / v (on a pin)', 'wire a ground / supply to the unconnected pin under the cursor'],
     ['k', 'hold a vertical symmetry axis through the selection or the cursor; again turns it horizontal, again releases it: what is drawn on one side is drawn on the other'],
     ['Shift+Q', 'arrange the selected parts like another drawing of them: this design, the workspace, or a built-in one'],
@@ -102323,7 +102469,6 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Shift+J', 'join the selected line annotations into one continuous line (they meet end to end or share a stretch)'],
     ['Shift+K', 'show or hide the timing diagram of the switch phases and signals'],
     ['Box over vertices', 'pick vertices of lines or arrows; Shift+box or Shift/Ctrl-click adds more; drag moves them, Delete removes them'],
-    ['.', 'repeat the last rotate, mirror, swap, rail, or stubs on the current selection'],
     ['Shift+Up / Shift+Down', 'bring selected objects to front / send to back'],
     ['Ctrl/Cmd+Shift+Arrows', 'align selected edges; repeat to center that axis'],
     ['Shift+A', 'align to: click an edge or point of the selection, then a matching one of another object; the set moves as one'],
@@ -103048,6 +103193,185 @@ function tutorialRuns(text) {
 __exports.TUTORIAL_TARGETS = TUTORIAL_TARGETS;
 __exports.TUTORIAL_STEPS = TUTORIAL_STEPS;
 __exports.TUTORIALS = TUTORIALS;
+};
+
+__modules["src/web/value-edit.js"] = function (__require, __exports) {
+__exports.editValues = editValues;
+let INTERFACE_PIN_TYPES, componentNameIdentity, isReferenceMarker; __bind(() => { ({ INTERFACE_PIN_TYPES, componentNameIdentity, isReferenceMarker } = __require("src/core/model.js")); });
+let partKind; __bind(() => { ({ partKind } = __require("src/core/parts-table.js")); });
+let setPartValue; __bind(() => { ({ setPartValue } = __require("src/core/part-moves.js")); });
+let TRANSFER_FUNCTION_ROLE, isSignalBlock; __bind(() => { ({ TRANSFER_FUNCTION_ROLE, isSignalBlock } = __require("src/core/transfer-function.js")); });
+let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js")); });
+let PART_VALUE_ROLE; __bind(() => { ({ PART_VALUE_ROLE } = __require("src/core/part-value.js")); });
+let MOS_SIZE_ROLE, formatMosSize; __bind(() => { ({ MOS_SIZE_ROLE, formatMosSize } = __require("src/core/mos-size.js")); });
+let confirmChoice; __bind(() => { ({ confirmChoice } = __require("src/web/file-dialog.js")); });
+let promptText; __bind(() => { ({ promptText } = __require("src/web/annotation-tools.js")); });
+let interfacePortNet, namedConnectionConflicts, partsBetween, renameLabelThroughModel, shortedPartsWarning; __bind(() => { ({ interfacePortNet, namedConnectionConflicts, partsBetween, renameLabelThroughModel, shortedPartsWarning } = __require("src/web/net-names.js")); });
+let logLine, hintLine; __bind(() => { ({ logLine, hintLine } = __require("src/web/status-bar-ui.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let applyJson, compUnderCursor, markModelChanged, pickLabel, recordHistoryEntry, render, selectedComps, selectedLabels, snapshot; __bind(() => { ({ applyJson, compUnderCursor, markModelChanged, pickLabel, recordHistoryEntry, render, selectedComps, selectedLabels, snapshot } = __require("src/web/main.js")); });
+/**
+ * q: one field for the value of what is selected, else of what the cursor
+ * points at, applied to all of it as one undo step. A part's value is its
+ * value (10k, a gain's coefficient, a block's transfer function), a
+ * transistor's its size (2u/180n x4), and a port's, rail's, or switch's its
+ * name or phase; a label's is its text: a net label's names its net, a
+ * part's name label renames the part, a value or size label sets the
+ * part's. A name that joins nets asks first, saying what it would short.
+ */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/** What a part's q edits: `{ kind, text, apply(v), refdes?, net? }`, or null. */
+function partItem(part) {
+  if (!part || part.type === 'solder') return null;
+  const circuit = editor.circuit;
+  if (partKind(part) === 'size') {
+    return { kind: 'size', text: part.size ? formatMosSize(part.size) : '', apply: (v) => circuit.setComponentSize(part.refdes, v) };
+  }
+  if (partKind(part) === 'value' || isSignalBlock(part) || part.type === 'block') {
+    return { kind: 'value', text: part.value || '', apply: (v) => setPartValue(circuit, part.refdes, v) };
+  }
+  // A port, a rail, or a switch: its name label is what it says.
+  if (INTERFACE_PIN_TYPES.has(part.type) || isReferenceMarker(part) || switchState(part)) {
+    const label = circuit.labelOf(part.refdes);
+    return label ? labelItem(label) : null;
+  }
+  return null;
+}
+
+/** What a label's q edits, by what the label is; null for one it cannot. */
+function labelItem(label) {
+  const circuit = editor.circuit;
+  if (!label || label.role === 'signal-input-sign' || label.figure || label.plot || label.table || label.image) return null;
+  // A box's or an arrow's text is its child label.
+  if (label.kind && label.kind !== 'label') {
+    const child = [...circuit.labels.values()].find((candidate) => candidate.parent === label.id);
+    return child ? labelItem(child) : null;
+  }
+  const owner = label.owner ? circuit.components.get(label.owner) : null;
+  if (owner && (label.role === PART_VALUE_ROLE || label.role === TRANSFER_FUNCTION_ROLE || label.role === MOS_SIZE_ROLE)) return partItem(owner);
+  if (label.isNetLabel?.()) return { kind: 'net', text: label.text, net: circuit.nets.get(label.netId), apply: (v) => renameLabelThroughModel(label, v) };
+  if (owner && INTERFACE_PIN_TYPES.has(owner.type)) return { kind: 'port', text: label.text, refdes: owner.refdes, net: interfacePortNet(owner), apply: (v) => renameLabelThroughModel(label, v) };
+  // A part's name: its identity, one per part.
+  if (owner && !label.role && !isReferenceMarker(owner) && !switchState(owner) && !label.math) {
+    return { kind: 'name', text: label.text, refdes: owner.refdes, apply: (v) => renameLabelThroughModel(label, v) };
+  }
+  return { kind: 'text', text: label.text, apply: (v) => renameLabelThroughModel(label, v) };
+}
+
+/** The items q edits: the selection's, else what the cursor points at. */
+function editItems() {
+  const items = [];
+  const seen = new Set();
+  const add = (item, key) => { if (item && !seen.has(key)) { seen.add(key); items.push(item); } };
+  for (const part of selectedComps()) add(partItem(part), `part:${part.refdes}`);
+  for (const label of selectedLabels()) {
+    const item = labelItem(label);
+    add(item, item?.refdes ? `part:${item.refdes}` : `label:${label.id}`);
+  }
+  // A selected net with no label selected: its first label.
+  if (!items.length) {
+    for (const netId of editor.selectedNets) {
+      const label = editor.circuit.netLabels(netId)[0];
+      if (label) add(labelItem(label), `label:${label.id}`);
+    }
+  }
+  if (items.length || selectedComps().length || selectedLabels().length) return items;
+  const pointed = pickLabel(editor.cursor);
+  if (pointed) return [labelItem(pointed)].filter(Boolean);
+  return [partItem(compUnderCursor())].filter(Boolean);
+}
+
+const TITLES = { value: 'Value', size: 'Size', net: 'Net name', port: 'Port name', name: 'Name', text: 'Text' };
+
+/** Why `v` cannot go to these items, or null. Names are identities: two
+ *  parts or two ports never share one. */
+function nameProblem(items, v) {
+  const named = items.filter((item) => item.kind === 'name' || item.kind === 'port');
+  if (named.length > 1) return `${named.map((item) => item.refdes).join(', ')} cannot share the name ${v}: each part's name is its own`;
+  const [item] = named;
+  if (!item) return null;
+  const canonical = componentNameIdentity(v);
+  if (item.kind === 'name' && !/^[A-Za-z][A-Za-z0-9_]*$/.test(canonical)) return `"${v}" is not a part name`;
+  if (canonical !== item.refdes && editor.circuit.components.has(canonical)) return `the name ${canonical} is already in use`;
+  if (item.kind === 'port') {
+    const port = namedConnectionConflicts(v, { ownerRefdes: item.refdes }).find((conflict) => conflict.kind === 'port');
+    if (port) return `port ${port.component.refdes} is already named ${v}: name the net with a stub instead`;
+  }
+  return null;
+}
+
+/** The nets that naming these items `v` joins: the items' own nets, when
+ *  more than one, and nets already named so. Asks; resolves whether to go on. */
+async function confirmJoins(items, v) {
+  const owned = items.filter((item) => (item.kind === 'net' || item.kind === 'port') && item.net);
+  if (!owned.length) return true;
+  const nets = [...new Map(owned.map((item) => [item.net.id, item.net])).values()];
+  const ids = new Set(nets.map((net) => net.id));
+  const outside = owned.flatMap((item) => namedConnectionConflicts(v, { netId: item.net.id, ownerRefdes: item.kind === 'port' ? item.refdes : null }))
+    .filter((conflict) => !conflict.net || !ids.has(conflict.net.id));
+  const shorts = [];
+  for (let i = 0; i < nets.length; i++) for (let j = i + 1; j < nets.length; j++) shorts.push({ shorts: partsBetween(nets[i], nets[j]) });
+  if (nets.length < 2 && !outside.length) return true;
+  const count = nets.length + new Set(outside.map((conflict) => conflict.net?.id).filter(Boolean)).size;
+  return confirmChoice({
+    title: 'Connect named nets?',
+    message: `Naming ${nets.length > 1 ? `these ${nets.length} nets` : 'this net'} ${v} connects ${count} nets virtually${outside.length ? `, ${outside.length === 1 ? 'one' : 'some'} already named ${v}` : ''}.${shortedPartsWarning([...shorts, ...outside])}`,
+    confirmLabel: 'Connect',
+    cancelLabel: 'Keep separate',
+  });
+}
+
+/** q: ask for the value, then set it on every item as one undo step. */
+async function editValues() {
+  const items = editItems();
+  if (!items.length) {
+    hintLine('q edits a value or a label: select parts or labels, or point at one');
+    return;
+  }
+  const kinds = new Set(items.map((item) => item.kind));
+  const texts = new Set(items.map((item) => item.text));
+  const title = `${kinds.size === 1 ? TITLES[[...kinds][0]] : 'Value'}${items.length > 1 ? ` (${items.length})` : ''}`;
+  const v = await promptText({ title, value: texts.size === 1 ? [...texts][0] : '', placeholder: texts.size === 1 ? '' : 'they differ: type one for all' });
+  // Esc, an empty field, or a press elsewhere: nothing changes.
+  if (!v) return;
+  const problem = nameProblem(items, v);
+  if (problem) {
+    logLine(problem, 'error');
+    return;
+  }
+  if (!await confirmJoins(items, v)) return;
+  const before = snapshot();
+  try {
+    for (const item of items) if (item.text !== v) item.apply(v);
+  } catch (err) {
+    // All or none: one that does not take it leaves every item as it was.
+    applyJson(before);
+    logLine(`${v}: ${err.message || err}`, 'error');
+    render();
+    return;
+  }
+  if (snapshot() !== before) {
+    recordHistoryEntry(before, true);
+    markModelChanged();
+    logLine(`${items.length === 1 ? TITLES[items[0].kind].toLowerCase() : `${items.length} values`} set to ${v}`);
+  }
+  render();
+}
+
 };
 
 __modules["src/web/value-row.js"] = function (__require, __exports) {

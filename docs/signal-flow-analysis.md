@@ -32,8 +32,9 @@ Each wire is one signal. The parts are:
   triangle the signal crosses horizontally and to the right of a vertical
   one, kept so through rotations (`gainFitsInside`).
 - **Sum junctions** `signal_sum`: `e = ± n ± s ± w` over the connected
-  inputs, the signs from the junction's negative inputs (right-click →
-  **Input polarity → w input → Positive/Negative**).
+  inputs, the signs from the junction's negative inputs (`-` with the
+  cursor on a wired input flips its sign; or right-click → **Input
+  polarity → w input → Positive/Negative**).
 - **Multiply junctions** `signal_multiply`: a gain. All inputs but one must
   be constants (a source set to *zero* or *constant*, wired straight to the
   junction); two signals multiplied have no transfer function and are

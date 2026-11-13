@@ -88,18 +88,21 @@ export function placeAnnotationAt(world) {
   commit(() => { label = editor.circuit.addLabel({ text: text || 'label', x: point.x, y: point.y, align: 'center', ...(math ? { math } : {}) }); });
   setSelection([]);
   setLabelSelection([label.id]);
-  editor.labelMode = null;
   logLine(`placed annotation${text ? ` "${text}"` : ''} @ (${point.x},${point.y})`);
   render();
-  if (!text) inlineEditLabel(label);
+  // The tool stays armed: text typed first asks for the next text; a label
+  // typed into after placing leaves the next click placing another.
+  if (text) askAnnotationText();
+  else inlineEditLabel(label);
 }
 
 /**
- * Ask for a label's text before it is placed, in a small field by the
- * cursor. Resolves the text typed (Enter), '' for none (Enter on an empty
- * field: type it after placing), or null when dismissed (Esc).
+ * Ask for a text in a small field by the cursor, `value` in it to start
+ * (a label's text before it is placed; a value q sets). Resolves the text
+ * typed (Enter), '' for none (Enter on an empty field, or a press
+ * elsewhere: type it after placing), or null on Esc.
  */
-function promptLabelText({ title, placeholder = '' }) {
+export function promptText({ title, placeholder = '', value = '' }) {
   document.querySelector('.label-prompt')?.remove();
   const box = document.createElement('div');
   box.className = 'label-prompt glass';
@@ -111,6 +114,7 @@ function promptLabelText({ title, placeholder = '' }) {
   input.spellcheck = false;
   input.autocomplete = 'off';
   input.placeholder = placeholder;
+  input.value = value;
   input.setAttribute('aria-label', title);
   box.append(heading, input);
   const at = worldToClient(editor.cursor.x, editor.cursor.y);
@@ -119,7 +123,7 @@ function promptLabelText({ title, placeholder = '' }) {
   document.body.append(box);
   // Focus once the key that opened it is done: the editor puts focus back on
   // the canvas as it handles that key.
-  setTimeout(() => input.focus(), 0);
+  setTimeout(() => { input.focus(); input.select(); }, 0);
   return new Promise((resolve) => {
     const finish = (value) => {
       if (!box.isConnected) return;
@@ -127,8 +131,9 @@ function promptLabelText({ title, placeholder = '' }) {
       window.removeEventListener('pointerdown', outside, true);
       resolve(value);
     };
-    // A press anywhere else dismisses it.
-    const outside = (event) => { if (!box.contains(event.target)) finish(null); };
+    // A press anywhere else closes it as Enter on an empty field does: the
+    // tool stays armed, to type after placing. Only Esc leaves the tool.
+    const outside = (event) => { if (!box.contains(event.target)) finish(''); };
     window.addEventListener('pointerdown', outside, true);
     input.addEventListener('keydown', (event) => {
       event.stopPropagation();
@@ -142,7 +147,7 @@ function promptLabelText({ title, placeholder = '' }) {
  *  Enter on an empty field places a label to type into. */
 export function askAnnotationText() {
   pendingAnnotationText = null;
-  promptLabelText({ title: 'Free text', placeholder: 'text, or $TeX$; Enter alone: type it after placing' }).then((text) => {
+  promptText({ title: 'Free text', placeholder: 'text, or $TeX$; Enter alone: type it after placing' }).then((text) => {
     if (editor.labelMode !== 'annotation') return;
     if (text === null) {
       activateSelect();
@@ -160,7 +165,7 @@ export function askAnnotationText() {
  *  then each click on a wire places the next. Esc leaves the tool; Enter on an empty field names each
  *  wire after it is clicked, as before. */
 export function askNetLabelNames() {
-  promptLabelText({ title: 'Net label', placeholder: 'name(s): CLK DOUT[3:0] A,B … Enter alone: name each after placing' }).then((text) => {
+  promptText({ title: 'Net label', placeholder: 'name(s): CLK DOUT[3:0] A,B … Enter alone: name each after placing' }).then((text) => {
     if (editor.labelMode !== 'net') return;
     if (text === null) {
       activateSelect();
@@ -181,7 +186,6 @@ export function placeEquationAt(world) {
   commit(() => { label = editor.circuit.addLabel({ text: '$$', x: point.x, y: point.y, align: 'center', math: true }); });
   setSelection([]);
   setLabelSelection([label.id]);
-  editor.labelMode = null;
   logLine(`placed equation @ (${point.x},${point.y})`);
   render();
   inlineEditLabel(label, { equationDraft: true });
@@ -216,8 +220,7 @@ export function commitLineAnnotation(includeCursor = true) {
   logLine(`placed line annotation with ${points.length} points`);
   editor.annotationPoints = [];
   editor.lastLineClick = null;
-  // Like every annotation tool, a line is placed once, then back to selection.
-  editor.labelMode = null;
+  // Like every tool, the line tool stays armed until Esc.
   render();
   return true;
 }
@@ -233,7 +236,6 @@ export function commitArrowAnnotation(includeCursor = true) {
   logLine(`placed arrow with ${points.length} points`);
   editor.annotationPoints = [];
   editor.annotationStart = null;
-  editor.labelMode = null;
   render();
   const annotationLabel = [...editor.circuit.labels.values()].find((label) => label.parent === annotation.id);
   inlineEditLabel(annotationLabel, { removeOnEmpty: true });
@@ -277,10 +279,11 @@ export function placeShapeAnnotation(world, endOverride = null) {
     annotationLabel = [...editor.circuit.labels.values()].find((label) => label.parent === annotation.id);
   });
   setSelection([]);
-  setLabelSelection([annotation.id]);
+  // The box tool picks what to box by selection: a box placed leaves none,
+  // so the next one starts afresh.
+  setLabelSelection(editor.labelMode === 'box' ? [] : [annotation.id]);
   logLine(`placed ${editor.labelMode} from (${editor.annotationStart.x},${editor.annotationStart.y}) to (${end.x},${end.y})`);
   editor.annotationStart = null;
-  editor.labelMode = null;
   render();
   inlineEditLabel(annotationLabel, { removeOnEmpty: true });
   return true;
@@ -455,8 +458,10 @@ export function placeNetLabelAt(world, placement = null) {
       } else if (placed && !queue.repeat && pastedNetName === queue) {
         queue.index += 1;
         if (queue.index >= queue.names.length) {
-          activateSelect();
           logLine(`placed ${queue.names.length} net label${queue.names.length === 1 ? '' : 's'}`);
+          // The tool stays armed: the next names, or Esc to leave it.
+          pastedNetName = null;
+          askNetLabelNames();
         } else sequenceHint();
       }
       render();

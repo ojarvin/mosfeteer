@@ -38,7 +38,7 @@ function sameNamedConnection(left, right) {
 }
 
 /** The parts with terminals on both nets: joining the nets shorts them. */
-function partsBetween(a, b) {
+export function partsBetween(a, b) {
   if (!a || !b) return [];
   const onA = new Set(a.terminals.map((terminal) => terminal.comp));
   return [...new Set(b.terminals.map((terminal) => terminal.comp).filter((comp) => onA.has(comp)))];

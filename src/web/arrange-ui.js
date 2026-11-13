@@ -19,7 +19,7 @@ import { loadDesign } from './example-designs.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { editor } from './editor-state.js';
 import { canvasEl } from './elements.js';
-import { applyJson, recordHistoryEntry, rememberAction, render, selectedComps, setSelection, snapshot } from './main.js';
+import { applyJson, recordHistoryEntry, render, selectedComps, setSelection, snapshot } from './main.js';
 import { revisionTime } from './modified-time.js';
 import { hintLine, logLine } from './status-bar-ui.js';
 
@@ -135,7 +135,6 @@ function choose(index = picker?.index) {
   close();
   recordHistoryEntry(before, true);
   setSelection(refs);
-  rememberAction('arrange like', () => void openArrangePicker());
   noteTip('arrange');
   logLine(chosen.cells
     ? `${refs.join(', ')} arranged by cells: ${chosen.cells.map((cell) => `${cell.refs.join(', ')} like ${cell.like.parts.join(', ')} in ${cell.like.source.current ? 'this design' : cell.like.source.name}`).join('; ')}`

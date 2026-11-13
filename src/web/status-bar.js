@@ -86,10 +86,9 @@ export function statusFields({ mode, selection, cursor, hints = [] }) {
  *   tool: 'move' | 'copy' | 'delete' | null   (armed tools without a hint)
  *   selection: { parts: [type...], labels, nets }
  *   hover: { pin: { connected } | null, part: type | null }
- *   repeat: label of the edit `.` repeats, or null
  *   empty: the drawing has nothing in it
  */
-export function contextKeyHints({ tool = null, selection = {}, hover = {}, repeat = null, empty = false } = {}) {
+export function contextKeyHints({ tool = null, selection = {}, hover = {}, empty = false } = {}) {
   const hints = [];
   const add = (keys, action) => { if (hints.length < 3) hints.push([keys, action]); };
   if (tool === 'move') {
@@ -112,12 +111,11 @@ export function contextKeyHints({ tool = null, selection = {}, hover = {}, repea
   }
   const parts = selection.parts || [];
   const selected = parts.length + (selection.labels || 0) + (selection.nets || 0);
-  if (selected && repeat) add('.', `repeat ${repeat}`);
   if (parts.length === 1 && !selection.labels && !selection.nets) {
     if (/^switch_/.test(parts[0])) add('s', 'open / close its phase');
-    add('q', 'change type');
+    add('q', 'edit value');
+    add('z', 'change type');
     add('r', 'rotate');
-    add('Space', 'wire stubs');
     return hints;
   }
   if (parts.length > 1) {
@@ -127,7 +125,7 @@ export function contextKeyHints({ tool = null, selection = {}, hover = {}, repea
     return hints;
   }
   if (selection.labels) {
-    add('t', 'edit text');
+    add('q', 'edit text');
     add('Shift+←/→', 'align text');
     add('arrows', 'nudge');
     return hints;
@@ -145,8 +143,8 @@ export function contextKeyHints({ tool = null, selection = {}, hover = {}, repea
     return hints;
   }
   if (hover.part) {
-    add('t', 'edit its label');
-    add('q', 'change type');
+    add('q', 'edit value');
+    add('z', 'change type');
     add('right-drag', 'quick actions');
     return hints;
   }

@@ -24,7 +24,7 @@ import { openFind, openReplace } from './find-replace-ui.js';
 import { toggleAtlas, toggleBuiltInDrawings, toggleSymbolSheet } from './atlas.js';
 import { activateAlign, activateAnnotation, activateCopy, activateEquation, activateHighlight, activateMove, activateNetLabel, activatePlace,
   activateShapeAnnotation, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render,
-  repeatLastAction, restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, tidyNow, undo } from './main.js';
+  restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, tidyNow, undo } from './main.js';
 import { joinSelectedLines, removeAllNetHighlights } from './annotation-tools.js';
 import { enterLinkedDesign, leaveLinkedDesign, toggleAllLinkBubbles, toggleLinkBubbles } from './hierarchy.js';
 import { copyAsImage } from './export-ui.js';
@@ -138,7 +138,6 @@ export const ACTIONS = {
   swap: () => openSwapPicker(swapTargets()),
   'arrange-like': () => void openArrangePicker(),
   'symmetry-axis': (direction) => setSymmetryAxis(/^off/i.test(direction || '') || (!direction && symmetryAxis()) ? null : /^h/i.test(direction || '') ? 'mirrorY' : 'mirrorX'),
-  repeat: () => repeatLastAction(),
   tidy: () => tidyNow(),
   edit: () => editSelectionText(),
   'add-beat': () => addBeatHere(),
