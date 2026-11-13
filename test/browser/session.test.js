@@ -167,6 +167,33 @@ describe('documents and sessions', { skip: browserSkip() }, () => {
     assert.equal(await results(), 0, 'another document has its own');
   });
 
+  test('a sync that asked for a design before another was opened leaves the one opened alone', async () => {
+    await h.open('amp');
+    await synced();
+    // amp's drawing changes on disk: the next sync reloads it ...
+    const path = join(h.workspace, 'amp.json');
+    const original = readFileSync(path, 'utf8');
+    const data = JSON.parse(original);
+    writeFileSync(path, JSON.stringify({ ...data, components: [...data.components, { ...data.components[0], refdes: 'M77', transform: { ...data.components[0].transform, x: data.components[0].transform.x + 2400 } }] }));
+    // ... but its answer for amp is held back until other is open.
+    await h.evaluate(`${h.module('document-session.js')}.then((m) => {
+      const load = m.persistence.load;
+      const held = new Promise((resolve) => { window.__release = resolve; });
+      m.persistence.load = async (file, options) => {
+        const answer = await load(file, options);
+        if (/amp\\.json$/.test(file) && !options?.open) { m.persistence.load = load; await held; }
+        return answer;
+      };
+      window.__sync = m.syncActiveCircuit();
+    })`);
+    await h.open('other');
+    await h.evaluate(`(async () => { window.__release(); await window.__sync; return true; })()`);
+    const shown = await h.evaluate(`${h.module('editor-state.js')}.then((m) => ({ path: m.editor.currentDocumentPath, m77: m.editor.circuit.components.has('M77') }))`);
+    writeFileSync(path, original);
+    assert.equal(shown.path, join(h.workspace, 'other.json'));
+    assert.equal(shown.m77, false, 'amp\'s drawing is not loaded into other');
+  });
+
   test('a new design saved at once stays open, though the CLI made another active earlier', async () => {
     // amp open, the CLI changes it: amp is the server's active document,
     // and the editor reloads it.

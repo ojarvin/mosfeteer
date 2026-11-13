@@ -469,6 +469,8 @@ async function loadCircuit(path, quiet = false, options = {}) {
     editor.history = [];
     editor.future = [];
     applyJson(JSON.stringify(data.state), { document: true });
+    // A sync that started before this load answers for what was shown then.
+    editor.syncGeneration += 1;
     historyBase = historyText(data.state);
     clearLatestAnalysisResult();
     setSelection([]);
@@ -1205,8 +1207,12 @@ async function syncActiveCircuitOnce() {
   // Avoid a document GET and model parse when the active revision is unchanged.
   if (active === editor.currentDocumentPath && activeRevision && activeRevision === editor.lastSeenRevision) return;
   try {
-    const data = await persistence.load(editor.currentDocumentPath, { ifNoneMatch: editor.lastCircuitTag });
-    if (editor.saveInFlight || generation !== editor.syncGeneration) return;
+    // The answer is for the design asked about: dropped when another was
+    // opened while it came (applying it would put that drawing under the
+    // other's path, for its next save to write there).
+    const asked = editor.currentDocumentPath;
+    const data = await persistence.load(asked, { ifNoneMatch: editor.lastCircuitTag });
+    if (editor.saveInFlight || generation !== editor.syncGeneration || editor.currentDocumentPath !== asked) return;
     if (data.notModified) {
       if (data.revision) editor.lastSeenRevision = data.revision;
       if (data.etag) editor.lastCircuitTag = data.etag;
