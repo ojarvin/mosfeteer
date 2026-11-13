@@ -78263,8 +78263,9 @@ function alignToDelta(source, target, grid = GRID) {
 // anchors and the position the guide points at, never between an anchor and
 // wherever the object happens to be sitting -- so a guide that is still a
 // suggestion says the same thing as the one that confirms the landing.
-const MAX_SPACING_CELLS = 24; // beyond this two objects are not "a spacing"
-const MAX_INTERVAL_CELLS = 12; // a pitch longer than this is rarely a pattern
+const MAX_SPACING_CELLS = 48; // beyond this two objects are not "a spacing"
+const MAX_INTERVAL_CELLS = 24; // a pitch longer than this is rarely a pattern (block diagrams space blocks far apart)
+const NEAR_ALIGN_CELLS = 24; // alignment tries peers this near before the far reach
 const MIN_INTERVAL_CELLS = 3; // a shorter interval is judged by eye without help
 const ALIGN_REACH_CELLS = 256; // far alignment is exactly what the eye cannot judge: a bias part or rail lined up across a whole drawing
 const MAX_HINT_CELLS = 10; // how far off a target may be and still be offered
@@ -78520,8 +78521,8 @@ function placementGuides(items, moving, grid = GRID) {
     if (spacing) guides.push(spacing);
     // Nearby neighbors first, like parts before any part; only then the
     // longer reach, so a distant peer never displaces a local one.
-    const align = alignGuide(alike, moving, axis, grid, MAX_SPACING_CELLS)
-      || alignGuide(others, moving, axis, grid, MAX_SPACING_CELLS)
+    const align = alignGuide(alike, moving, axis, grid, NEAR_ALIGN_CELLS)
+      || alignGuide(others, moving, axis, grid, NEAR_ALIGN_CELLS)
       || alignGuide(alike, moving, axis, grid, ALIGN_REACH_CELLS)
       || alignGuide(others, moving, axis, grid, ALIGN_REACH_CELLS);
     if (align) {

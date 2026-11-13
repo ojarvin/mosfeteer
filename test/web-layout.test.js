@@ -230,15 +230,25 @@ test('alignment reaches far, where the eye cannot judge it, without a long ruler
   assert.deepEqual(near.points.map((point) => point.id), ['R1', '__ghost__']);
 });
 
-test('a long pitch is not continued, though it can still be centered', () => {
-  // Twenty cells is a pair to center between, not a pitch to repeat.
-  const pair = [item('A', 0, 0), item('B', 800, 0)];
-  assert.equal(placementGuides(pair, item('__ghost__', 1600, 0)).some((guide) => guide.kind === 'spacing'), false);
-  const middle = placementGuides(pair, item('__ghost__', 400, 0)).find((guide) => guide.kind === 'spacing');
+test('a block diagram\'s pitch is continued; a longer one only centered', () => {
+  // Twenty cells, as blocks are spaced in a block diagram, is a pitch to repeat.
+  const row = [item('A', 0, 0), item('B', 800, 0)];
+  const next = placementGuides(row, item('__ghost__', 1600, 0)).find((guide) => guide.kind === 'spacing');
+  assert.deepEqual([next.cells, next.points.map((point) => point.id)], [20, ['A', 'B', '__ghost__']]);
+  // A second pitch along, the one between drawn as it would stand.
+  const twice = placementGuides(row, item('__ghost__', 2400, 0)).find((guide) => guide.kind === 'spacing');
+  assert.deepEqual(twice.points.map((point) => [point.x, !!point.synthetic]), [[0, false], [800, false], [1600, true], [2400, false]]);
+  // Thirty cells is a pair to center between, not a pitch to repeat.
+  const pair = [item('A', 0, 0), item('B', 1200, 0)];
+  assert.equal(placementGuides(pair, item('__ghost__', 2400, 0)).some((guide) => guide.kind === 'spacing'), false);
+  const middle = placementGuides(pair, item('__ghost__', 600, 0)).find((guide) => guide.kind === 'spacing');
   assert.deepEqual(middle.points.map((point) => point.id), ['A', '__ghost__', 'B']);
   // Repeats stop where a spacing stops reaching.
-  assert.equal(placementGuides([item('A', 0, 0), item('B', 480, 0)], item('__ghost__', 1920, 0))
-    .some((guide) => guide.kind === 'spacing'), false);
+  assert.equal(placementGuides(row, item('__ghost__', 3200, 0)).some((guide) => guide.kind === 'spacing'), false);
+  // One block twenty cells off in a row has its gap dimensioned; thirty has none.
+  const lone = (x) => placementGuides([item('A', 0, 0)], item('__ghost__', x, 0)).find((guide) => guide.kind === 'spacing');
+  assert.equal(lone(800).cells, 20);
+  assert.equal(lone(1200), undefined);
 });
 
 test('an interval under three cells is not dimensioned', () => {
