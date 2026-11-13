@@ -2933,7 +2933,8 @@ function flightRatio(flight) {
 }
 
 /** A flight takes longer the farther it goes, so a long one does not rush. */
-const flightMs = (flight) => Math.round(Math.min(460, 280 + 45 * Math.log2(flightRatio(flight))));
+// Short, so a flight decorates the change rather than delaying it.
+const flightMs = (flight) => Math.round(Math.min(300, 180 + 30 * Math.log2(flightRatio(flight))));
 
 /** The design has landed: it lies picked on the desk, and the desk rings. */
 function landFlight() {
@@ -3272,13 +3273,13 @@ function focusNamed(generation, name) {
 async function openDesk(generation, source, animate, startup) {
   if (source === 'workspace' && animate && !startup) {
     showOpenDesign();
-    await Promise.race([bakeOpenDesign(250), hurried()]);
+    await Promise.race([bakeOpenDesign(120), hurried()]);
     if (!state || state.generation !== generation) return;
     // Now the desk can fade in over the editor: the same design, in place.
     rootEl.classList.remove('preparing');
     rootEl.style.animation = '';
     draw();
-    // The editor's toolbars slide off over it; the flight waits for them.
+    // The editor's toolbars slide off over it, as the flight sets out.
     state.editorAway = slideChrome(document.body, true);
   }
   let ready = false;
@@ -3335,8 +3336,9 @@ async function openDesk(generation, source, animate, startup) {
     state.view = pushedView(flight.rest, 1, flight.about);
     draw();
     // Decode the small images first, while the page still covers the desk:
-    // decoding in the middle of the flight would stall its frames.
-    await Promise.race([Promise.all([warmSmallImages(generation, 400), state.editorAway]), hurried()]);
+    // decoding in the middle of the flight would stall its frames. The
+    // editor's toolbars slide on while it flies.
+    await Promise.race([warmSmallImages(generation, 160), hurried()]);
     if (!state || state.generation !== generation) return;
     state.revealFrom = flight.about;
     state.revealAt = performance.now() + 140;
@@ -3406,7 +3408,8 @@ export async function closeAtlas({ animate = true } = {}) {
   if (back) {
     state.quiet = true;
     requestDraw();
-    await Promise.race([slideChrome(rootEl, true), hurried()]);
+    // The toolbars slide while the design flies.
+    void slideChrome(rootEl, true);
     if (!state) return;
     if (state.turnBack) {
       stayOnDesk();
@@ -3524,7 +3527,8 @@ async function openTile(tile, { select = null } = {}) {
       if (exact) {
         state.quiet = true;
         requestDraw();
-        await Promise.race([slideChrome(rootEl, true), hurried()]);
+        // The toolbars slide while the design flies.
+        void slideChrome(rootEl, true);
         startFlight(tile, rectInView(tile, exact));
         await flyTo(1);
       }
@@ -3546,7 +3550,8 @@ async function openTile(tile, { select = null } = {}) {
     if (predicted) {
       state.quiet = true;
       requestDraw();
-      await Promise.race([slideChrome(rootEl, true), hurried()]);
+      // The toolbars slide while the design flies.
+      void slideChrome(rootEl, true);
       if (landed() && !state.turnBack) {
         startFlight(tile, rectInView(tile, predicted));
         reached = await flyTo(1);
@@ -3570,7 +3575,7 @@ async function openTile(tile, { select = null } = {}) {
         const flight = state.flight;
         const from = flight.screen;
         const to = rectInView(tile, exact);
-        await animate(200, (t) => {
+        await animate(120, (t) => {
           const e = easeOut(t);
           flight.screen = { x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e, w: from.w + (to.w - from.w) * e, h: from.h + (to.h - from.h) * e };
         });

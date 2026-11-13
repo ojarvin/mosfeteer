@@ -9071,8 +9071,8 @@ body.chrome-away [data-editor-edge="right"] {
 .signal-flow-results.arriving > *,
 #analysis-equation.arriving > .analysis-equation-group,
 .signal-flow-optimize-result.arriving > * {
-  animation: rise-in var(--motion-slow) var(--ease-out) backwards;
-  animation-delay: calc(var(--i, 0) * 40ms);
+  animation: rise-in var(--motion) var(--ease-out) backwards;
+  animation-delay: calc(var(--i, 0) * 20ms);
 }
 
 :is(.signal-flow-results, #analysis-equation, .signal-flow-optimize-result) > :nth-child(2) { --i: 1; }

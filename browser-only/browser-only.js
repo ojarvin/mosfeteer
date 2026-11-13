@@ -61026,7 +61026,8 @@ function flightRatio(flight) {
 }
 
 /** A flight takes longer the farther it goes, so a long one does not rush. */
-const flightMs = (flight) => Math.round(Math.min(460, 280 + 45 * Math.log2(flightRatio(flight))));
+// Short, so a flight decorates the change rather than delaying it.
+const flightMs = (flight) => Math.round(Math.min(300, 180 + 30 * Math.log2(flightRatio(flight))));
 
 /** The design has landed: it lies picked on the desk, and the desk rings. */
 function landFlight() {
@@ -61365,13 +61366,13 @@ function focusNamed(generation, name) {
 async function openDesk(generation, source, animate, startup) {
   if (source === 'workspace' && animate && !startup) {
     showOpenDesign();
-    await Promise.race([bakeOpenDesign(250), hurried()]);
+    await Promise.race([bakeOpenDesign(120), hurried()]);
     if (!state || state.generation !== generation) return;
     // Now the desk can fade in over the editor: the same design, in place.
     rootEl.classList.remove('preparing');
     rootEl.style.animation = '';
     draw();
-    // The editor's toolbars slide off over it; the flight waits for them.
+    // The editor's toolbars slide off over it, as the flight sets out.
     state.editorAway = slideChrome(document.body, true);
   }
   let ready = false;
@@ -61428,8 +61429,9 @@ async function openDesk(generation, source, animate, startup) {
     state.view = pushedView(flight.rest, 1, flight.about);
     draw();
     // Decode the small images first, while the page still covers the desk:
-    // decoding in the middle of the flight would stall its frames.
-    await Promise.race([Promise.all([warmSmallImages(generation, 400), state.editorAway]), hurried()]);
+    // decoding in the middle of the flight would stall its frames. The
+    // editor's toolbars slide on while it flies.
+    await Promise.race([warmSmallImages(generation, 160), hurried()]);
     if (!state || state.generation !== generation) return;
     state.revealFrom = flight.about;
     state.revealAt = performance.now() + 140;
@@ -61499,7 +61501,8 @@ async function closeAtlas({ animate = true } = {}) {
   if (back) {
     state.quiet = true;
     requestDraw();
-    await Promise.race([slideChrome(rootEl, true), hurried()]);
+    // The toolbars slide while the design flies.
+    void slideChrome(rootEl, true);
     if (!state) return;
     if (state.turnBack) {
       stayOnDesk();
@@ -61617,7 +61620,8 @@ async function openTile(tile, { select = null } = {}) {
       if (exact) {
         state.quiet = true;
         requestDraw();
-        await Promise.race([slideChrome(rootEl, true), hurried()]);
+        // The toolbars slide while the design flies.
+        void slideChrome(rootEl, true);
         startFlight(tile, rectInView(tile, exact));
         await flyTo(1);
       }
@@ -61639,7 +61643,8 @@ async function openTile(tile, { select = null } = {}) {
     if (predicted) {
       state.quiet = true;
       requestDraw();
-      await Promise.race([slideChrome(rootEl, true), hurried()]);
+      // The toolbars slide while the design flies.
+      void slideChrome(rootEl, true);
       if (landed() && !state.turnBack) {
         startFlight(tile, rectInView(tile, predicted));
         reached = await flyTo(1);
@@ -61663,7 +61668,7 @@ async function openTile(tile, { select = null } = {}) {
         const flight = state.flight;
         const from = flight.screen;
         const to = rectInView(tile, exact);
-        await animate(200, (t) => {
+        await animate(120, (t) => {
           const e = easeOut(t);
           flight.screen = { x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e, w: from.w + (to.w - from.w) * e, h: from.h + (to.h - from.h) * e };
         });
@@ -64734,6 +64739,7 @@ __exports.minViewW = minViewW;
 __exports.maxViewW = maxViewW;
 __exports.followCursor = followCursor;
 __exports.cancelViewAnimation = cancelViewAnimation;
+__exports.finishViewAnimation = finishViewAnimation;
 __exports.animateViewTo = animateViewTo;
 __exports.refitIfFitted = refitIfFitted;
 __exports.fitView = fitView;
@@ -64877,16 +64883,31 @@ function followCursor() {
 // Fit, zoom-to-box, and jump-to-issue ease the view over a few frames so the
 // eye can follow where the drawing went. Any direct pan/zoom cancels it.
 let viewAnimation = 0;
+// Where the view animation under way lands, and what follows its landing.
+let viewLanding = null;
 
+/** Stop the view where it is (a wheel zooms on from there). */
 function cancelViewAnimation() {
   if (viewAnimation) cancelAnimationFrame(viewAnimation);
   viewAnimation = 0;
+  viewLanding = null;
 }
 
-function animateViewTo(target, ms = 200, landed = () => {}) {
+/** A press or a key never waits for the view: it lands at once. */
+function finishViewAnimation() {
+  if (!viewAnimation || !viewLanding) return;
+  const { to, landed } = viewLanding;
+  cancelViewAnimation();
+  Object.assign(editor.view, to);
+  landed();
+  render();
+}
+
+function animateViewTo(target, ms = 120, landed = () => {}) {
   cancelViewAnimation();
   const from = { ...editor.view };
   const to = { x: target.x, y: target.y, w: target.w, h: target.h };
+  viewLanding = { to, landed };
   if (reducedMotion() || document.hidden) {
     Object.assign(editor.view, to);
     landed();
@@ -64898,7 +64919,7 @@ function animateViewTo(target, ms = 200, landed = () => {}) {
     const t = (now - start) / ms;
     Object.assign(editor.view, lerpView(from, to, t));
     viewAnimation = t < 1 ? requestAnimationFrame(step) : 0;
-    if (t >= 1) landed();
+    if (t >= 1) { viewLanding = null; landed(); }
     render();
   };
   viewAnimation = requestAnimationFrame(step);
@@ -75499,7 +75520,7 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 const OPEN_KEY = 'mosfeteer.linkBubbles:';
 const SPOTS_KEY = 'mosfeteer.linkBubbleSpots:';
 const CLOSE_MS = 180;
-const UP_MS = 380;
+const UP_MS = 240;
 
 // refdes -> { name, path, status: 'loading'|'ready'|'missing'|'error', message, box, href: { light, dark } }
 const bubbles = new Map();
@@ -76053,13 +76074,15 @@ async function enterLinkedDesign(component = linkTargets()[0]) {
   // where it was seen.
   const bubble = layoutEntry(component.refdes);
   const pane = paneRect();
-  if (bubble && bubbles.get(component.refdes)?.status === 'ready' && pane) {
-    animateViewTo(viewFitting(bubble.image, pane.width, pane.height, 0.05), 240);
-    await new Promise((resolve) => setTimeout(resolve, 250));
+  // The file is read while the view zooms in, and let in once it lands.
+  let gate = null;
+  if (bubble && bubbles.get(component.refdes)?.status === 'ready' && pane && !reducedMotion()) {
+    animateViewTo(viewFitting(bubble.image, pane.width, pane.height, 0.05), 140);
+    gate = new Promise((resolve) => setTimeout(() => resolve(true), 150));
   }
   navigating = true;
   let opened;
-  try { opened = await openDocumentPath(doc.path); } finally { navigating = false; }
+  try { opened = await openDocumentPath(doc.path, gate ? { gate } : {}); } finally { navigating = false; }
   if (!opened) {
     Object.assign(editor.view, entry.view);
     render();
@@ -79810,7 +79833,7 @@ let openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu; __bind((
 let logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar; __bind(() => { ({ logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar } = __require("src/web/status-bar-ui.js")); });
 let resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi; __bind(() => { ({ resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi } = __require("src/web/design-check-ui.js")); });
 let partialVertexPicks, selectAllNetIds; __bind(() => { ({ partialVertexPicks, selectAllNetIds } = __require("src/core/selection.js")); });
-let paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, fitView, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect, PAN_MARGIN, frameLike, paintMarginNow, paintedFrame, placeLayer, setPaintMargin, slideLayers; __bind(() => { ({ paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, fitView, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect, PAN_MARGIN, frameLike, paintMarginNow, paintedFrame, placeLayer, setPaintMargin, slideLayers } = __require("src/web/canvas-view.js")); });
+let paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, finishViewAnimation, fitView, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect, PAN_MARGIN, frameLike, paintMarginNow, paintedFrame, placeLayer, setPaintMargin, slideLayers; __bind(() => { ({ paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, finishViewAnimation, fitView, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect, PAN_MARGIN, frameLike, paintMarginNow, paintedFrame, placeLayer, setPaintMargin, slideLayers } = __require("src/web/canvas-view.js")); });
 let adoptDrawing, patchChildren, patchDrawing; __bind(() => { ({ adoptDrawing, patchChildren, patchDrawing } = __require("src/web/svg-patch.js")); });
 let syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock; __bind(() => { ({ syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock } = __require("src/web/analysis-ui.js")); });
 let closeComponentContextMenu, openContextMenuAt, installContextMenu; __bind(() => { ({ closeComponentContextMenu, openContextMenuAt, installContextMenu } = __require("src/web/context-menu.js")); });
@@ -86452,6 +86475,8 @@ canvasEl.addEventListener('keydown', (ev) => {
 // Pointer Events provide capture and cancellation for pen/touch.  Mouse
 // compatibility events continue to support existing automation and browsers.
 canvasEl.addEventListener('pointerdown', (ev) => {
+  // A press acts on the view it lands on, never on one still moving.
+  finishViewAnimation();
   beatStripActive = false;
   if (ev.pointerType === 'mouse' || !isPrimaryPointerEvent(ev)) return;
   if (shouldPanTouch({ pointerType: ev.pointerType, hasHit: hasSelectableObjectAt(clientToWorld(ev.clientX, ev.clientY)), mode })) {
@@ -87640,6 +87665,7 @@ document.getElementById('btn-help').addEventListener('click', () => {
 // ----- keyboard -------------------------------------------------------------
 
 window.addEventListener('keydown', (ev) => {
+  finishViewAnimation();
   // Presenting owns the keyboard until it ends; so does the Atlas view.
   if (presenter) {
     onPresenterKey(ev);
@@ -103743,8 +103769,8 @@ let easeInOut; __bind(() => { ({ easeInOut } = __require("src/web/easing.js")); 
  * A design shown in the editor greets with one sweep of light along its
  * wires, left to right: its wires (the drawing's own wire ink) drawn again in
  * the accent, soft, seen only through a band that runs across the drawing.
- * Its own layer over the drawing, following its frame, gone when it is done.
- * Reduced motion skips it.
+ * Its own layer over the drawing, following its frame, gone when it is done
+ * or when anything is pressed, typed, or scrolled. Reduced motion skips it.
  */
 
 
@@ -103762,12 +103788,18 @@ const BAND = 0.18;
 
 let sweep = null;
 
-function stop() {
+function stop({ fade = false } = {}) {
   if (!sweep) return;
   cancelAnimationFrame(sweep.frame);
   clearTimeout(sweep.timer);
-  sweep.layer?.remove();
+  const layer = sweep.layer;
+  if (layer && fade) {
+    layer.style.transition = 'opacity 120ms ease-out';
+    layer.style.opacity = '0';
+    setTimeout(() => layer.remove(), 120);
+  } else layer?.remove();
   sweep.unwatch?.();
+  sweep.unlisten?.();
   sweep = null;
 }
 
@@ -103830,6 +103862,11 @@ function sweepWires() {
   stop();
   if (reducedMotion()) return;
   sweep = { layer: null, frame: 0, timer: 0, unwatch: afterRender(follow) };
+  // A decoration, never in the way: any press, key, or wheel ends it.
+  const end = () => stop({ fade: true });
+  const events = ['pointerdown', 'keydown', 'wheel'];
+  for (const type of events) window.addEventListener(type, end, { capture: true, passive: true });
+  sweep.unlisten = () => { for (const type of events) window.removeEventListener(type, end, { capture: true }); };
   sweep.timer = setTimeout(begin, SWEEP_DELAY_MS);
 }
 

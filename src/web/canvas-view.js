@@ -113,16 +113,31 @@ export function followCursor() {
 // Fit, zoom-to-box, and jump-to-issue ease the view over a few frames so the
 // eye can follow where the drawing went. Any direct pan/zoom cancels it.
 let viewAnimation = 0;
+// Where the view animation under way lands, and what follows its landing.
+let viewLanding = null;
 
+/** Stop the view where it is (a wheel zooms on from there). */
 export function cancelViewAnimation() {
   if (viewAnimation) cancelAnimationFrame(viewAnimation);
   viewAnimation = 0;
+  viewLanding = null;
 }
 
-export function animateViewTo(target, ms = 200, landed = () => {}) {
+/** A press or a key never waits for the view: it lands at once. */
+export function finishViewAnimation() {
+  if (!viewAnimation || !viewLanding) return;
+  const { to, landed } = viewLanding;
+  cancelViewAnimation();
+  Object.assign(editor.view, to);
+  landed();
+  render();
+}
+
+export function animateViewTo(target, ms = 120, landed = () => {}) {
   cancelViewAnimation();
   const from = { ...editor.view };
   const to = { x: target.x, y: target.y, w: target.w, h: target.h };
+  viewLanding = { to, landed };
   if (reducedMotion() || document.hidden) {
     Object.assign(editor.view, to);
     landed();
@@ -134,7 +149,7 @@ export function animateViewTo(target, ms = 200, landed = () => {}) {
     const t = (now - start) / ms;
     Object.assign(editor.view, lerpView(from, to, t));
     viewAnimation = t < 1 ? requestAnimationFrame(step) : 0;
-    if (t >= 1) landed();
+    if (t >= 1) { viewLanding = null; landed(); }
     render();
   };
   viewAnimation = requestAnimationFrame(step);

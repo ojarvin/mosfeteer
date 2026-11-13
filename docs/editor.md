@@ -138,8 +138,15 @@ over the drawing's wires.
 A design shown in the editor (opened, from the Atlas or a file) greets with
 one sweep of light along its wires, left to right (`src/web/wire-sweep.js`):
 the drawing's own wire ink drawn again in the accent on a layer of its own,
-seen through a band that crosses the drawing, gone when it has. Reduced
-motion skips it.
+seen through a band that crosses the drawing, gone when it has, or at the
+first press, key, or wheel (a short fade). Reduced motion skips it.
+
+Motion decorates a change and never holds its result back. A view move
+(`f`, a zoom into a linked design's bubble) lands at once at the first
+press or key (`finishViewAnimation`, canvas-view.js); a wheel stops it where
+it is, to zoom on from there. Opening a linked design reads its file while
+the view zooms in, and lets it in as the zoom lands. Results that rise in
+(the derived equations, the optimizer's result) are all in within 250 ms.
 
 Settings → Display → Accent color picks the interface's accent (selection,
 the active tool, focus) from the drawing's palette, or the default teal

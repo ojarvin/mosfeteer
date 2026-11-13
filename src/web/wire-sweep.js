@@ -2,8 +2,8 @@
  * A design shown in the editor greets with one sweep of light along its
  * wires, left to right: its wires (the drawing's own wire ink) drawn again in
  * the accent, soft, seen only through a band that runs across the drawing.
- * Its own layer over the drawing, following its frame, gone when it is done.
- * Reduced motion skips it.
+ * Its own layer over the drawing, following its frame, gone when it is done
+ * or when anything is pressed, typed, or scrolled. Reduced motion skips it.
  */
 
 import { canvasEl } from './elements.js';
@@ -21,12 +21,18 @@ const BAND = 0.18;
 
 let sweep = null;
 
-function stop() {
+function stop({ fade = false } = {}) {
   if (!sweep) return;
   cancelAnimationFrame(sweep.frame);
   clearTimeout(sweep.timer);
-  sweep.layer?.remove();
+  const layer = sweep.layer;
+  if (layer && fade) {
+    layer.style.transition = 'opacity 120ms ease-out';
+    layer.style.opacity = '0';
+    setTimeout(() => layer.remove(), 120);
+  } else layer?.remove();
   sweep.unwatch?.();
+  sweep.unlisten?.();
   sweep = null;
 }
 
@@ -89,6 +95,11 @@ export function sweepWires() {
   stop();
   if (reducedMotion()) return;
   sweep = { layer: null, frame: 0, timer: 0, unwatch: afterRender(follow) };
+  // A decoration, never in the way: any press, key, or wheel ends it.
+  const end = () => stop({ fade: true });
+  const events = ['pointerdown', 'keydown', 'wheel'];
+  for (const type of events) window.addEventListener(type, end, { capture: true, passive: true });
+  sweep.unlisten = () => { for (const type of events) window.removeEventListener(type, end, { capture: true }); };
   sweep.timer = setTimeout(begin, SWEEP_DELAY_MS);
 }
 

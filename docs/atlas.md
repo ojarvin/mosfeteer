@@ -86,9 +86,11 @@ The other designs appear around the landing one, nearest first. The desk
 rests as it was last left in this page (the whole desk the first time),
 moved only as far as it takes to show the landing design.
 
-Each move runs in three steps (`src/web/chrome-slide.js`): the toolbars on
-screen slide off toward their edges, the design flies, and the next view's
-toolbars slide in. Leaving the editor, its focus hairline and selection go
+Each move runs in three parts (`src/web/chrome-slide.js`): the toolbars on
+screen slide off toward their edges as the design flies (the flight does not
+wait for them), and the next view's toolbars slide in. A flight takes 180 to
+300 ms by how far it goes, so it decorates the change rather than delaying
+it; the image warm-ups before it take at most 120 and 160 ms. Leaving the editor, its focus hairline and selection go
 first and the desk takes the drawing's place unseen, so the toolbars and
 panels (side panel included) slide off over paper and grid; the desk's
 names and picks show only once the design has landed, and go first when it

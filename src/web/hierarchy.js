@@ -39,7 +39,7 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 const OPEN_KEY = 'mosfeteer.linkBubbles:';
 const SPOTS_KEY = 'mosfeteer.linkBubbleSpots:';
 const CLOSE_MS = 180;
-const UP_MS = 380;
+const UP_MS = 240;
 
 // refdes -> { name, path, status: 'loading'|'ready'|'missing'|'error', message, box, href: { light, dark } }
 const bubbles = new Map();
@@ -593,13 +593,15 @@ export async function enterLinkedDesign(component = linkTargets()[0]) {
   // where it was seen.
   const bubble = layoutEntry(component.refdes);
   const pane = paneRect();
-  if (bubble && bubbles.get(component.refdes)?.status === 'ready' && pane) {
-    animateViewTo(viewFitting(bubble.image, pane.width, pane.height, 0.05), 240);
-    await new Promise((resolve) => setTimeout(resolve, 250));
+  // The file is read while the view zooms in, and let in once it lands.
+  let gate = null;
+  if (bubble && bubbles.get(component.refdes)?.status === 'ready' && pane && !reducedMotion()) {
+    animateViewTo(viewFitting(bubble.image, pane.width, pane.height, 0.05), 140);
+    gate = new Promise((resolve) => setTimeout(() => resolve(true), 150));
   }
   navigating = true;
   let opened;
-  try { opened = await openDocumentPath(doc.path); } finally { navigating = false; }
+  try { opened = await openDocumentPath(doc.path, gate ? { gate } : {}); } finally { navigating = false; }
   if (!opened) {
     Object.assign(editor.view, entry.view);
     render();
