@@ -314,7 +314,14 @@
         <div id="help-symbols" class="help-content help-symbols"></div>
       </section>
       <section id="help-panel-math" class="help-panel" role="tabpanel" data-help-panel="math" hidden>
-        <p class="help-panel-lead">Labels and names take TeX between <code>$...$</code>: a subset, listed here. A label wholly in <code>$...$</code> is one formula (<code>$V_{out}$</code>); a free label mixes words and formulas (<code>Edge after $f_s/2$</code>), a part's or net's name does not. <code>\$</code> is a dollar sign. A command not listed draws as its name. Plot axes take sub- and superscripts, Greek, and the symbols.</p>
+        <p class="help-panel-lead">Text between <code>$</code> signs is drawn as math. Only the commands listed on this page work.</p>
+        <ul class="help-math-rules">
+          <li>A label written entirely between <code>$</code> signs is one formula: <code>$V_{out}$</code>.</li>
+          <li>A free label can mix words and formulas: <code>Edge after $f_s/2$</code>. Part names and net names cannot mix them.</li>
+          <li>Type <code>\$</code> for a dollar sign.</li>
+          <li>A command that is not listed is drawn as its name.</li>
+          <li>Plot axis names take subscripts, superscripts, Greek letters, and symbols, but not fractions or roots.</li>
+        </ul>
         <!-- Built by help.js from tex-markup.js's tables, each drawn as a label is. -->
         <div id="help-math" class="help-content help-math"></div>
       </section>

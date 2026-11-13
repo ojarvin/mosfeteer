@@ -2060,6 +2060,14 @@ html.dark.invert-pictures .light-picture {
   height: 100%;
 }
 
+.help-math-rules {
+  margin: 0 0 14px;
+  padding-left: 1.2em;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
 .help-math-table {
   margin-bottom: 16px;
   border-collapse: collapse;

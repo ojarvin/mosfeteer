@@ -50,13 +50,13 @@ export const TEX_STRUCTURES = Object.freeze([
   { tex: 'x^{2}', note: 'superscript' },
   { tex: '\\frac{g_m}{C_L}', note: 'fraction' },
   { tex: '\\sqrt{4kT\\gamma}', note: 'square root' },
-  { tex: '\\text{dB}', note: 'upright words' },
-  { tex: '\\mathrm{d}t', note: 'upright letters' },
-  { tex: '\\operatorname{sinc}', note: 'upright name' },
-  { tex: '\\overline{Q}', note: 'overbar (also \\bar)' },
-  { tex: '\\left(1 + \\frac{1}{s}\\right)', note: 'brackets that fit' },
-  { tex: 'R_1 \\| R_2', note: 'in parallel (also ||)' },
-  { tex: 'a\\,b\\;c\\ d\\quad e', note: 'spaces: thin, medium, word, quad' },
+  { tex: '\\text{dB}', note: 'upright text, for words and units' },
+  { tex: '\\mathrm{d}t', note: 'upright letters inside a formula' },
+  { tex: '\\operatorname{sinc}', note: 'a function name, upright' },
+  { tex: '\\overline{Q}', note: 'a bar over the letters; \\bar also works' },
+  { tex: '\\left(1 + \\frac{1}{s}\\right)', note: 'brackets that grow to fit' },
+  { tex: 'R_1 \\| R_2', note: 'the parallel sign; || also works' },
+  { tex: 'a\\,b\\;c\\ d\\quad e', note: 'spaces, from narrow to wide' },
 ]);
 
 /** A short TeX phrase as label markup, for places that draw labels but not
