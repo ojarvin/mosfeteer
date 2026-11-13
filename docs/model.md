@@ -52,6 +52,16 @@ All symbol linework is textbook style: butt-ended normal symbol strokes,
 mitered geometry, filled polygon bars/arrows/slabs, and one-cell terminal
 clearance. Variable passives compose the plain symbol plus their adjustment
 arrow. `solder` is a terminal-less annotation dot, not an electrical symbol.
+A part's line width keeps its proportions (`src/core/stroke-weight.js`):
+thin halves each stroke role's width and thick takes 1.5 times it
+(`widthFactor`, style.js), so a gate's heavier bar stays heavier; filled
+bars scale their thickness by 0.5 or 1.25 and arrowheads their size by the
+square root, each about where its strokes meet it (a bar's edge its leads
+reach, an arrowhead's tip on its line, or its base where a stroke ends
+there). A ring keeps its outer edge, its radius taking up what its stroke
+gives, so a switch's arm still meets its pivot and contact and a lead ending
+on the ring's line still reaches it; a solder dot's radius scales as an
+arrowhead's size does, by the square root.
 Use the component definition and its tests for exact path coordinates.
 
 ## Labels, ports, and nets

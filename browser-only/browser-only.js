@@ -41243,9 +41243,10 @@ __exports.svgString = svgString;
 __exports.signalDirectionSvg = signalDirectionSvg;
 __exports.editorOverlay = editorOverlay;
 let applyTransform, fmt, transformRect, transformToSvg; __bind(() => { ({ applyTransform, fmt, transformRect, transformToSvg } = __require("src/core/geometry.js")); });
+let weightedGraphics; __bind(() => { ({ weightedGraphics } = __require("src/core/stroke-weight.js")); });
 let ceilGrid, floorGrid, GRID; __bind(() => { ({ ceilGrid, floorGrid, GRID } = __require("src/core/grid.js")); });
 let autoRoute; __bind(() => { ({ autoRoute } = __require("src/core/router.js")); });
-let TABLE_RULE_ROOM_EM, escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg; __bind(() => { ({ TABLE_RULE_ROOM_EM, escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } = __require("src/core/style.js")); });
+let TABLE_RULE_ROOM_EM, escapeSvg, fontAttrs, labelFontSize, resolveColor, roleWidth, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg; __bind(() => { ({ TABLE_RULE_ROOM_EM, escapeSvg, fontAttrs, labelFontSize, resolveColor, roleWidth, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } = __require("src/core/style.js")); });
 let GREEK_LOWER, GREEK_UPPER, TEX_SPACE_WIDTHS, TEX_SYMBOLS, plainTexText, plotTextMarkup, texToLabelMarkup; __bind(() => { ({ GREEK_LOWER, GREEK_UPPER, TEX_SPACE_WIDTHS, TEX_SYMBOLS, plainTexText, plotTextMarkup, texToLabelMarkup } = __require("src/core/tex-markup.js")); });
 let INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, hasInlineMath, plotLegendCurves, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters; __bind(() => { ({ INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, hasInlineMath, plotLegendCurves, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } = __require("src/core/model.js")); });
 let TIMING_ARROWHEAD, arrowheadEnds, curvedArrowGeometry, defaultArrowhead, polylineArrowheads; __bind(() => { ({ TIMING_ARROWHEAD, arrowheadEnds, curvedArrowGeometry, defaultArrowhead, polylineArrowheads } = __require("src/core/line-style.js")); });
@@ -41261,6 +41262,7 @@ let cursorLayout; __bind(() => { ({ cursorLayout } = __require("src/core/plot-cu
 let plotSpec; __bind(() => { ({ plotSpec } = __require("src/core/plot-spec.js")); });
 let mathRuns; __bind(() => { ({ mathRuns } = __require("src/core/math-text.js")); });
 let joinSegments, stackOutline, stackedBoxes, wireEchoes; __bind(() => { ({ joinSegments, stackOutline, stackedBoxes, wireEchoes } = __require("src/core/box-stack.js")); });
+
 
 
 
@@ -41372,7 +41374,10 @@ function bodyEdgePinInsets(circuit) {
   const insets = new Map();
   for (const component of circuit.components.values()) {
     if (!BODY_EDGE_PIN_TYPES.has(component.type)) continue;
-    const inset = strokeWidthOf(component.style, 'emph') / 2;
+    // A ring keeps its outer edge at any line width (stroke-weight.js);
+    // a box's edge moves with its stroke.
+    const ring = component.type === 'signal_sum' || component.type === 'signal_multiply';
+    const inset = (ring ? roleWidth('emph') : strokeWidthOf(component.style, 'emph')) / 2;
     for (const terminal of component.terminalDefs) {
       const world = component.terminalWorld(terminal.name);
       const key = `${world.x},${world.y}`;
@@ -42267,7 +42272,7 @@ function componentShapeSvg(c, def = c.def) {
   const size = c.bodySize;
   const body = size
     ? `<rect x="${fmt(-size.w / 2)}" y="${fmt(-size.h / 2)}" width="${fmt(size.w)}" height="${fmt(size.h)}" fill="#fff" ${styleAttrs(c.style, 'emph')}/>`
-    : [...def.graphics.filter((g) => g.kind !== 'text'), ...waveformGraphics(c)].map((g) => graphicsToSvg(g, '', c.style)).join('');
+    : [...weightedGraphics(def.graphics, c.style?.width).filter((g) => g.kind !== 'text'), ...waveformGraphics(c)].map((g) => graphicsToSvg(g, '', c.style)).join('');
   // A sized body's text is its own (a block's caption, a transfer function's math label).
   const text = size ? '' : def.graphics.filter((g) => g.kind === 'text').map((g) => symbolTextSvg(g, t, c.style?.color || '#111')).join('');
   return `<g transform="${transformToSvg(t)}">${body}</g>${text}`;
@@ -42649,7 +42654,7 @@ function svgString(circuit, opts = {}) {
     // A sized body (a block, a transfer function) draws its own outline and text.
     const sizedBody = c.bodySize;
     const textGraphics = sizedBody ? [] : defOf(c).graphics.filter((g) => g.kind === 'text');
-    const bodyGraphics = [...defOf(c).graphics.filter((g) => g.kind !== 'text'), ...waveformGraphics(c)];
+    const bodyGraphics = [...weightedGraphics(defOf(c).graphics, compStyle(c)?.width).filter((g) => g.kind !== 'text'), ...waveformGraphics(c)];
     out.push(`<g transform="${transformToSvg(t)}"${opacity} data-ref="${escapeSvg(c.refdes)}" role="button" tabindex="0" aria-label="${escapeSvg(`Component ${c.refdes}, ${c.type}`)}"><g class="sym" data-ref="${escapeSvg(c.refdes)}">`);
     if (sizedBody) {
       const r = sizedBody;
@@ -45946,6 +45951,112 @@ function setSharedLabel(circuit, refdes, text) {
 
 };
 
+__modules["src/core/stroke-weight.js"] = function (__require, __exports) {
+__exports.weightedGraphics = weightedGraphics;
+let roleWidth, widthFactor; __bind(() => { ({ roleWidth, widthFactor } = __require("src/core/style.js")); });
+/**
+ * A part drawn thin or thick keeps its proportions: its strokes scale by
+ * role (style.js widthFactor), and so do its filled shapes -- the bars of a
+ * MOSFET's gate and channel, a supply's slab, the arrowheads. Each shape
+ * scales about where its strokes meet it, so no lead comes loose: a bar
+ * keeps the long edge its leads reach, an arrowhead its tip on the line it
+ * rides (or its base, where a stroke ends there, as the sampler's arc does).
+ * A ring keeps its outer edge, its radius taking up what its stroke gives,
+ * so what touches it from outside (a switch's arm at its pivot and on its
+ * contact) still does, and a lead ending on its line still reaches it. A
+ * dot (a solder dot) scales its radius as an arrowhead its size.
+ */
+
+
+
+// A bar's thickness grows less than its strokes when thick, so a gate's
+// gap between its two bars stays open; an arrowhead's size goes as the
+// square root, readable thin and not heavy thick.
+const BAR_FACTOR = { thin: 0.5, thick: 1.25 };
+const arrowFactor = (width) => Math.sqrt(widthFactor(width));
+
+/** Every point a symbol's strokes reach: their paths' vertices and ends. */
+function strokePoints(graphics) {
+  const points = [];
+  for (const g of graphics) {
+    if (g.kind !== 'path' || typeof g.d !== 'string') continue;
+    for (const [, command, args] of g.d.matchAll(/([MLA])([^MLAZz]*)/gi)) {
+      const numbers = (args.match(/-?\d*\.?\d+(?:e[-+]?\d+)?/gi) || []).map(Number);
+      const step = command.toUpperCase() === 'A' ? 7 : 2;
+      for (let i = step - 2; i + 1 < numbers.length; i += step) points.push({ x: numbers[i], y: numbers[i + 1] });
+    }
+  }
+  return points;
+}
+
+const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const nearest = (point, points) => Math.min(Infinity, ...points.map((p) => distance(point, p)));
+const scaleAbout = (p, about, k) => ({ x: about.x + (p.x - about.x) * k, y: about.y + (p.y - about.y) * k });
+
+/** An axis-aligned bar's thickness scaled by `k`, keeping its long edge
+ *  nearer the strokes. */
+function scaledBar(points, reach, k) {
+  const xs = points.map((p) => p.x);
+  const ys = points.map((p) => p.y);
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  const across = x1 - x0 < y1 - y0 ? 'x' : 'y';
+  const [low, high] = across === 'x' ? [x0, x1] : [y0, y1];
+  // The long edge a stroke reaches stays; the other moves. A lead meets an
+  // edge anywhere along it (a channel's drain and source near its ends).
+  const [from, to] = across === 'x' ? [y0, y1] : [x0, x1];
+  const toEdge = (value) => Math.min(Infinity, ...reach.map((p) => {
+    const [a, b] = across === 'x' ? [p.x, p.y] : [p.y, p.x];
+    return Math.hypot(a - value, Math.max(from - b, 0, b - to));
+  }));
+  const keepLow = toEdge(low) <= toEdge(high);
+  const thickness = (high - low) * k;
+  const [a, b] = keepLow ? [low, low + thickness] : [high - thickness, high];
+  return points.map((p) => (across === 'x' ? { x: p.x === low ? a : b, y: p.y } : { x: p.x, y: p.y === low ? a : b }));
+}
+
+/** An arrowhead scaled by `k` about its tip, or about its base's middle
+ *  where a stroke ends nearer that. */
+function scaledArrow(points, reach, k) {
+  const edges = points.map((p, i) => ({ i, length: distance(points[(i + 1) % 3], points[(i + 2) % 3]) }));
+  const tip = points[edges.reduce((a, b) => (b.length < a.length ? b : a)).i];
+  const base = points.filter((p) => p !== tip);
+  const middle = { x: (base[0].x + base[1].x) / 2, y: (base[0].y + base[1].y) / 2 };
+  const about = nearest(tip, reach) <= nearest(middle, reach) ? tip : middle;
+  return points.map((p) => scaleAbout(p, about, k));
+}
+
+const cache = new WeakMap();
+
+/** `graphics` as a part of line width `width` ('thin', 'thick', or
+ *  normal) draws them: the filled shapes scaled; the rest as they are. */
+function weightedGraphics(graphics, width) {
+  if (width !== 'thin' && width !== 'thick') return graphics;
+  let byWidth = cache.get(graphics);
+  if (!byWidth) cache.set(graphics, (byWidth = {}));
+  if (byWidth[width]) return byWidth[width];
+  const reach = strokePoints(graphics);
+  const factor = widthFactor(width);
+  byWidth[width] = graphics.map((g) => {
+    if (g.kind === 'circle' && Number.isFinite(g.r)) {
+      const stroke = roleWidth(g.style || 'symbol');
+      return { ...g, r: g.r + (stroke - stroke * factor) / 2 };
+    }
+    // A dot marks a junction: it keeps more of its weight thin, as an arrowhead does.
+    if (g.kind === 'dot' && Number.isFinite(g.r)) return { ...g, r: g.r * arrowFactor(width) };
+    if (g.kind !== 'polygon' || g.fill !== 'foreground' || !Array.isArray(g.points)) return g;
+    if (g.points.length === 4) {
+      const xs = new Set(g.points.map((p) => p.x));
+      const ys = new Set(g.points.map((p) => p.y));
+      if (xs.size === 2 && ys.size === 2) return { ...g, points: scaledBar(g.points, reach, BAR_FACTOR[width]) };
+    }
+    if (g.points.length === 3) return { ...g, points: scaledArrow(g.points, reach, arrowFactor(width)) };
+    return g;
+  });
+  return byWidth[width];
+}
+
+};
+
 __modules["src/core/stroke-wiring.js"] = function (__require, __exports) {
 __exports.planStroke = planStroke;
 __exports.applyStrokePlan = applyStrokePlan;
@@ -46522,6 +46633,7 @@ __exports.themeInkSvg = themeInkSvg;
 __exports.setColorToken = setColorToken;
 __exports.escapeSvg = escapeSvg;
 __exports.strokeAttrs = strokeAttrs;
+__exports.widthFactor = widthFactor;
 __exports.strokeWidth = strokeWidth;
 __exports.fontAttrs = fontAttrs;
 __exports.styleAttrs = styleAttrs;
@@ -46653,13 +46765,21 @@ function strokeAttrs(styleName, miterLimit) {
   return strokeParts(styleName, miterLimit);
 }
 
+/** A stroke role's width at normal line width. */
+const roleWidth = (base) => STROKES[base]?.width ?? STROKES.line.width;
+
+/** How a line width scales a role's stroke: thin halves it, thick takes
+ *  half as much again, so a part keeps its proportions (a gate's heavier
+ *  bar stays heavier); a plain line or wire is 3 thin and 9 thick. */
+function widthFactor(width) {
+  return width === 'thin' ? 0.5 : width === 'thick' ? 1.5 : 1;
+}
+
 /** Resolve the painted stroke width for a style role, including explicit
  * thin/thick overrides. Consumers that position filled geometry next to a
  * stroked body should use this instead of duplicating the role table. */
 function strokeWidth(style = {}, base = 'line') {
-  if (style.width === 'thin') return 3;
-  if (style.width === 'thick') return 9;
-  return STROKES[base]?.width ?? STROKES.line.width;
+  return (STROKES[base]?.width ?? STROKES.line.width) * widthFactor(style.width);
 }
 
 /** Label text size (world units) by label `style.width`. A capital with a
@@ -46683,7 +46803,8 @@ function fontAttrs(kind) {
 }
 
 function styleAttrs(style = {}, base = 'symbol', miterLimit) {
-  const width = style.width === 'thin' ? 3 : style.width === 'thick' ? 9 : undefined;
+  const factor = widthFactor(style.width);
+  const width = factor === 1 ? undefined : Math.round((STROKES[base]?.width ?? STROKES.line.width) * factor * 100) / 100;
   const attrs = strokeParts(base, miterLimit, resolveColor(style.color || DEFAULT_INK), width);
   const dash = style.lineStyle && style.lineStyle !== 'solid'
     ? { dashed: '12 12', 'dash-dot': '14 10 3 10', dotted: '2 10' }[style.lineStyle]
@@ -46697,6 +46818,7 @@ function styleAttrs(style = {}, base = 'symbol', miterLimit) {
 const TABLE_RULE_ROOM_EM = 0.4;
 
 __exports.COLOR_PALETTE = COLOR_PALETTE;
+__exports.roleWidth = roleWidth;
 __exports.LABEL_FONT_SIZES = LABEL_FONT_SIZES;
 __exports.labelFontSize = labelFontSize;
 __exports.TABLE_RULE_ROOM_EM = TABLE_RULE_ROOM_EM;

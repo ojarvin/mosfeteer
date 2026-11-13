@@ -1,7 +1,8 @@
 import { applyTransform, fmt, transformRect, transformToSvg } from './geometry.js';
+import { weightedGraphics } from './stroke-weight.js';
 import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute } from './router.js';
-import { TABLE_RULE_ROOM_EM, escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } from './style.js';
+import { TABLE_RULE_ROOM_EM, escapeSvg, fontAttrs, labelFontSize, resolveColor, roleWidth, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } from './style.js';
 import { GREEK_LOWER, GREEK_UPPER, TEX_SPACE_WIDTHS, TEX_SYMBOLS, plainTexText, plotTextMarkup, texToLabelMarkup } from './tex-markup.js';
 import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, hasInlineMath, plotLegendCurves, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } from './model.js';
 import { TIMING_ARROWHEAD, arrowheadEnds, curvedArrowGeometry, defaultArrowhead, polylineArrowheads } from './line-style.js';
@@ -109,7 +110,10 @@ function bodyEdgePinInsets(circuit) {
   const insets = new Map();
   for (const component of circuit.components.values()) {
     if (!BODY_EDGE_PIN_TYPES.has(component.type)) continue;
-    const inset = strokeWidthOf(component.style, 'emph') / 2;
+    // A ring keeps its outer edge at any line width (stroke-weight.js);
+    // a box's edge moves with its stroke.
+    const ring = component.type === 'signal_sum' || component.type === 'signal_multiply';
+    const inset = (ring ? roleWidth('emph') : strokeWidthOf(component.style, 'emph')) / 2;
     for (const terminal of component.terminalDefs) {
       const world = component.terminalWorld(terminal.name);
       const key = `${world.x},${world.y}`;
@@ -1004,7 +1008,7 @@ export function componentShapeSvg(c, def = c.def) {
   const size = c.bodySize;
   const body = size
     ? `<rect x="${fmt(-size.w / 2)}" y="${fmt(-size.h / 2)}" width="${fmt(size.w)}" height="${fmt(size.h)}" fill="#fff" ${styleAttrs(c.style, 'emph')}/>`
-    : [...def.graphics.filter((g) => g.kind !== 'text'), ...waveformGraphics(c)].map((g) => graphicsToSvg(g, '', c.style)).join('');
+    : [...weightedGraphics(def.graphics, c.style?.width).filter((g) => g.kind !== 'text'), ...waveformGraphics(c)].map((g) => graphicsToSvg(g, '', c.style)).join('');
   // A sized body's text is its own (a block's caption, a transfer function's math label).
   const text = size ? '' : def.graphics.filter((g) => g.kind === 'text').map((g) => symbolTextSvg(g, t, c.style?.color || '#111')).join('');
   return `<g transform="${transformToSvg(t)}">${body}</g>${text}`;
@@ -1386,7 +1390,7 @@ export function svgString(circuit, opts = {}) {
     // A sized body (a block, a transfer function) draws its own outline and text.
     const sizedBody = c.bodySize;
     const textGraphics = sizedBody ? [] : defOf(c).graphics.filter((g) => g.kind === 'text');
-    const bodyGraphics = [...defOf(c).graphics.filter((g) => g.kind !== 'text'), ...waveformGraphics(c)];
+    const bodyGraphics = [...weightedGraphics(defOf(c).graphics, compStyle(c)?.width).filter((g) => g.kind !== 'text'), ...waveformGraphics(c)];
     out.push(`<g transform="${transformToSvg(t)}"${opacity} data-ref="${escapeSvg(c.refdes)}" role="button" tabindex="0" aria-label="${escapeSvg(`Component ${c.refdes}, ${c.type}`)}"><g class="sym" data-ref="${escapeSvg(c.refdes)}">`);
     if (sizedBody) {
       const r = sizedBody;

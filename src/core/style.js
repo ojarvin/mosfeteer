@@ -126,13 +126,21 @@ export function strokeAttrs(styleName, miterLimit) {
   return strokeParts(styleName, miterLimit);
 }
 
+/** A stroke role's width at normal line width. */
+export const roleWidth = (base) => STROKES[base]?.width ?? STROKES.line.width;
+
+/** How a line width scales a role's stroke: thin halves it, thick takes
+ *  half as much again, so a part keeps its proportions (a gate's heavier
+ *  bar stays heavier); a plain line or wire is 3 thin and 9 thick. */
+export function widthFactor(width) {
+  return width === 'thin' ? 0.5 : width === 'thick' ? 1.5 : 1;
+}
+
 /** Resolve the painted stroke width for a style role, including explicit
  * thin/thick overrides. Consumers that position filled geometry next to a
  * stroked body should use this instead of duplicating the role table. */
 export function strokeWidth(style = {}, base = 'line') {
-  if (style.width === 'thin') return 3;
-  if (style.width === 'thick') return 9;
-  return STROKES[base]?.width ?? STROKES.line.width;
+  return (STROKES[base]?.width ?? STROKES.line.width) * widthFactor(style.width);
 }
 
 /** Label text size (world units) by label `style.width`. A capital with a
@@ -156,7 +164,8 @@ export function fontAttrs(kind) {
 }
 
 export function styleAttrs(style = {}, base = 'symbol', miterLimit) {
-  const width = style.width === 'thin' ? 3 : style.width === 'thick' ? 9 : undefined;
+  const factor = widthFactor(style.width);
+  const width = factor === 1 ? undefined : Math.round((STROKES[base]?.width ?? STROKES.line.width) * factor * 100) / 100;
   const attrs = strokeParts(base, miterLimit, resolveColor(style.color || DEFAULT_INK), width);
   const dash = style.lineStyle && style.lineStyle !== 'solid'
     ? { dashed: '12 12', 'dash-dot': '14 10 3 10', dotted: '2 10' }[style.lineStyle]
