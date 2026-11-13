@@ -21,7 +21,7 @@ import { createRationalOps } from './algebra-ops.js';
 import { cancelCommonPolynomialFactor } from './polynomial-gcd.js';
 import { renderExpression } from './present.js';
 import { bodeSketch, evaluateExpression, expressionSymbols, polynomialRoots } from './bode.js';
-import { TRANSFER_FUNCTION_TYPES, isBlockIn, parseGain, readTransferFunction, sourceNames } from '../transfer-function.js';
+import { TRANSFER_FUNCTION_TYPES, isBlockIn, isRateChanger, parseGain, parseRate, readTransferFunction, sourceNames } from '../transfer-function.js';
 import { analyzedCircuit, canonicalNetName } from '../model.js';
 import { COLOR_PALETTE } from '../style.js';
 import { samplePath } from './sampling.js';
@@ -39,7 +39,7 @@ const PASSIVE_TYPES = new Set(['solder', 'output', 'port', 'inputoutput', 'chopp
 const PASS_THROUGH = new Set([...JUNCTIONS, 'quantizer']);
 
 function isSignalPart(component) {
-  return PASS_THROUGH.has(component.type) || Object.hasOwn(TRANSFER_FUNCTION_TYPES, component.type) || component.type === 'sampler';
+  return PASS_THROUGH.has(component.type) || Object.hasOwn(TRANSFER_FUNCTION_TYPES, component.type) || component.type === 'sampler' || isRateChanger(component);
 }
 
 /** A quantizer's error source: a gain of 1 plus this, in the linear model. */
@@ -300,7 +300,18 @@ export function analyzeSignalFlow(circuit, options = {}, graph = signalFlowGraph
     const blocks = (variable) => parts.filter((component) => TRANSFER_FUNCTION_TYPES[component.type] === variable).map((component) => component.refdes);
     return failure('mixed-domains', `the diagram mixes H(s) blocks (${blocks('s').join(', ')}, continuous) and H(z) blocks (${blocks('z').join(', ')}, sampled) with no sampler: put one where the continuous signal is sampled (an H(s) block reading a sampled signal is the DAC)`);
   }
-  const variable = domains.has('z') ? 'z' : 's';
+  const changers = parts.filter(isRateChanger);
+  if (changers.length && domains.has('s')) {
+    return failure('mixed-domains', `${changers[0].refdes} changes the rate of a sampled signal, but the diagram has H(s) blocks (${parts.filter((component) => isBlockIn(component, 's')).map((component) => component.refdes).join(', ')}, continuous) and no sampler: put one where the continuous signal is sampled`);
+  }
+  const variable = domains.has('z') || changers.length ? 'z' : 's';
+  let decimation = 1;
+  if (variable === 'z') {
+    const rates = signalRates(context);
+    if (!rates.ok) return rates;
+    context.rates = rates.rate;
+    decimation = rates.rate.get(output.key) || 1;
+  }
 
   // Unknowns: every signal a block or junction drives.
   const unknowns = [...signals.values()].filter((signal) => signal.driver && !signal.driver.source);
@@ -320,7 +331,13 @@ export function analyzeSignalFlow(circuit, options = {}, graph = signalFlowGraph
   }
 
   const entries = inputs.map((source, column) => present(columns[column], variable, source, output));
-  return { ok: true, variable, output: { key: output.key, name: output.display }, entries, issues: [] };
+  return { ok: true, variable, output: outputOf(output, decimation), entries, issues: [] };
+}
+
+/** A result's output: its signal, and (a downsampled one) how many ticks
+ *  of the fastest rate it takes a sample, `decimation`. */
+function outputOf(output, decimation = 1) {
+  return { key: output.key, name: output.display, ...(decimation > 1 ? { decimation } : {}) };
 }
 
 /** The keys of the signals on a feedback loop: those from which a path
@@ -438,6 +455,14 @@ export function loopMargins(curve) {
   };
 }
 
+/** A rational in z with z^ticks in place of z. */
+function atTicks(value, ticks) {
+  const z = symbol('z');
+  const replacements = new Map([['z', power(z, ticks)]]);
+  const rational = value?.kind === 'rational' ? value : rationalFunction(value, integer(1), { variable: 'z' });
+  return rationalFunction(substitute(rational.numerator, replacements), substitute(rational.denominator, replacements), { variable: 'z' });
+}
+
 /**
  * The equations `x - sum G x = sum S u` of `unknowns` (signals), in
  * `variable`: `A` over the unknowns, `B` over `inputKeys` (signals whose
@@ -446,7 +471,7 @@ export function loopMargins(curve) {
  * superposition). `extra(signal, row, feed)` builds a row the usual parts
  * do not (a sampler's).
  */
-function linearSystem({ circuit, signals, sourceBySignal, quantizerGains = {} }, unknowns, inputKeys, variable, extra = null) {
+function linearSystem({ circuit, signals, sourceBySignal, quantizerGains = {}, rates = null }, unknowns, inputKeys, variable, extra = null) {
   const index = new Map(unknowns.map((signal, i) => [signal.key, i]));
   // A big diagram's exact algebra is big: give it room, the elimination
   // keeps it as small as the diagram allows.
@@ -482,7 +507,14 @@ function linearSystem({ circuit, signals, sourceBySignal, quantizerGains = {} },
       } catch (err) {
         return failure('bad-transfer-function', `${component.refdes}: ${err.message}`);
       }
+      // An H(z) running at M ticks a sample, referred to the tick: H(z^M).
+      const ticks = variable === 'z' ? rates?.get(signal.key) || 1 : 1;
+      if (ticks > 1) h = atTicks(h, ticks);
       feed(row, h, signalAt(component, 'in'));
+    } else if (isRateChanger(component)) {
+      // Referred to the fastest rate, a rate change passes the samples on
+      // (what a downsampler drops aliases; what an upsampler adds images).
+      feed(row, ops.one, signalAt(component, 'in'));
     } else if (component.type === 'gain') {
       let k;
       try {
@@ -552,7 +584,7 @@ export function signalDomains({ circuit, signals }) {
     if (!signal.driver || signal.driver.source || domain.has(signal.key)) continue;
     const type = circuit.components.get(signal.driver.comp)?.type;
     const at = { comp: signal.driver.comp, kind: 'drives' };
-    if (type === 'sampler' || TRANSFER_FUNCTION_TYPES[type] === 'z') { domain.set(signal.key, 'z'); origin.set(signal.key, at); }
+    if (type === 'sampler' || TRANSFER_FUNCTION_TYPES[type] === 'z' || isRateChanger({ type })) { domain.set(signal.key, 'z'); origin.set(signal.key, at); }
     else if (TRANSFER_FUNCTION_TYPES[type] === 's') { domain.set(signal.key, 's'); origin.set(signal.key, at); }
   }
   for (let changed = true; changed;) {
@@ -577,7 +609,7 @@ export function signalDomains({ circuit, signals }) {
       if (domain.has(signal.key)) continue;
       for (const { component } of readersOf(signal)) {
         if (component?.type === 'sampler' || isBlockIn(component, 's')) set(signal, 's', { comp: component.refdes, kind: 'reads' });
-        else if (isBlockIn(component, 'z')) set(signal, 'z', { comp: component.refdes, kind: 'reads' });
+        else if (isBlockIn(component, 'z') || isRateChanger(component)) set(signal, 'z', { comp: component.refdes, kind: 'reads' });
       }
     }
   }
@@ -595,7 +627,7 @@ export function signalDomains({ circuit, signals }) {
   };
   const partKind = (refdes) => {
     const type = circuit.components.get(refdes)?.type;
-    return type === 'sampler' ? 'a sampler' : TRANSFER_FUNCTION_TYPES[type] === 'z' ? 'an H(z) block' : TRANSFER_FUNCTION_TYPES[type] === 's' ? 'an H(s) block' : 'a part';
+    return type === 'sampler' ? 'a sampler' : isRateChanger({ type }) ? 'a rate changer' : TRANSFER_FUNCTION_TYPES[type] === 'z' ? 'an H(z) block' : TRANSFER_FUNCTION_TYPES[type] === 's' ? 'an H(s) block' : 'a part';
   };
   const describe = (signal) => {
     const sampled = domain.get(signal.key) === 'z';
@@ -607,12 +639,14 @@ export function signalDomains({ circuit, signals }) {
   };
   // Where the domains meet, only a sampler (s to z) or an H(s) block (z to s) may stand.
   for (const component of circuit.components.values()) {
-    if (component.type === 'sampler' || isBlockIn(component, 'z')) {
+    if (component.type === 'sampler' || isBlockIn(component, 'z') || isRateChanger(component)) {
       const input = [...signals.values()].find((signal) => signal.readers.some((reader) => reader.comp === component.refdes));
       if (input && domain.get(input.key) !== (component.type === 'sampler' ? 's' : 'z')) {
         return failure('mixed-domains', component.type === 'sampler'
           ? `${component.refdes} samples a signal that is already sampled: ${describe(input)}`
-          : `${component.refdes} is an H(z) block reading a continuous signal: ${describe(input)}; sample it first (a sampler)`, [{ code: 'mixed-domains', refs: [component.refdes] }]);
+          : isRateChanger(component)
+            ? `${component.refdes} changes the rate of a continuous signal: ${describe(input)}; sample it first (a sampler)`
+            : `${component.refdes} is an H(z) block reading a continuous signal: ${describe(input)}; sample it first (a sampler)`, [{ code: 'mixed-domains', refs: [component.refdes] }]);
       }
     } else if (PASS_THROUGH.has(component.type)) {
       // Inputs first: the signals the message names are then the ones that meet.
@@ -626,6 +660,136 @@ export function signalDomains({ circuit, signals }) {
     }
   }
   return { ok: true, domain };
+}
+
+const gcd = (a, b) => (b ? gcd(b, a % b) : Math.abs(a));
+
+/**
+ * Each sampled signal's period, in ticks of the fastest rate: 1 for a
+ * diagram of one rate. A downsampler's output is M times its input's
+ * period, an upsampler's 1/L of it; every other part's signals share one
+ * rate. With a sampler, its outputs and the signals a DAC (an H(s) block)
+ * reads run at its period, the tick, and nothing runs faster. A part
+ * joining signals of two rates, a rate changer on a feedback loop, or an
+ * upsampler after a downsampler is refused: a chain of rates is solved by
+ * referring every block to the fastest rate (an H(z) at M ticks a sample
+ * is H(z^M)), which holds only there. `domain` is signalDomains's (every
+ * signal sampled when left out). Returns `{ ok, rate: Map key -> ticks,
+ * multirate }` or a failure.
+ */
+export function signalRates({ circuit, signals }, domain = null) {
+  const sampled = (signal) => signal && (!domain || domain.get(signal.key) === 'z');
+  const rate = new Map();
+  const changers = [...circuit.components.values()].filter(isRateChanger);
+  const set = () => {
+    for (const signal of signals.values()) if (sampled(signal)) rate.set(signal.key, 1);
+    for (const component of circuit.components.values()) {
+      if (component.type === 'quantizer') rate.set(quantizerErrorKey(component.refdes), rate.get(outputOf(component)?.key) || 1);
+    }
+  };
+  const outputOf = (component) => [...signals.values()].find((signal) => signal.driver?.comp === component.refdes && !signal.driver.source);
+  const inputsOf = (component) => [...signals.values()].filter((signal) => signal.readers.some((reader) => reader.comp === component.refdes));
+  if (!changers.length) { set(); return { ok: true, rate, multirate: false }; }
+  for (const component of changers) {
+    try { parseRate(component.value); } catch (err) { return failure('bad-rate', `${component.refdes}: ${err.message}`); }
+  }
+  // A rate changer on a loop: its output is driven by it alone, so a loop
+  // through that signal passes the rate changer.
+  const looped = feedbackSignals(circuit, { signals });
+  for (const component of changers) {
+    const out = outputOf(component);
+    if (out && looped.has(out.key)) return failure('rate-change-in-loop', `${component.refdes} changes the rate inside a feedback loop: a loop runs at one rate (put the rate change after the loop's output)`, [{ code: 'rate-change-in-loop', refs: [component.refdes] }]);
+  }
+  // An upsampler after a downsampler: zeros in place of the samples dropped.
+  const drives = (component) => [outputOf(component)].filter(Boolean);
+  for (const down of changers.filter((c) => c.type === 'downsample')) {
+    const seen = new Set();
+    const stack = drives(down);
+    while (stack.length) {
+      const signal = stack.pop();
+      if (seen.has(signal.key)) continue;
+      seen.add(signal.key);
+      for (const reader of signal.readers) {
+        const part = circuit.components.get(reader.comp);
+        if (part?.type === 'upsample') return failure('upsample-after-downsample', `${part.refdes} upsamples what ${down.refdes} downsampled: an upsampler goes before a downsampler on a path (interpolate, then decimate)`, [{ code: 'upsample-after-downsample', refs: [part.refdes, down.refdes] }]);
+        if (part) stack.push(...drives(part));
+      }
+    }
+  }
+  // Periods as fractions [n, d] of one signal's, along the parts: an edge
+  // says b's period is a's times p/q.
+  const edges = new Map();
+  const link = (a, b, p, q, part) => {
+    if (!sampled(a) || !sampled(b)) return;
+    for (const [from, to, num, den] of [[a, b, p, q], [b, a, q, p]]) {
+      if (!edges.has(from.key)) edges.set(from.key, []);
+      edges.get(from.key).push({ to: to.key, num, den, part });
+    }
+  };
+  const anchors = new Set();
+  for (const component of circuit.components.values()) {
+    const out = outputOf(component);
+    const ins = inputsOf(component);
+    if (component.type === 'sampler') { if (sampled(out)) anchors.add(out.key); continue; }
+    if (isBlockIn(component, 's')) { for (const input of ins) if (sampled(input)) anchors.add(input.key); continue; }
+    if (isRateChanger(component)) {
+      const factor = parseRate(component.value);
+      for (const input of ins) if (out) link(input, out, component.type === 'downsample' ? factor : 1, component.type === 'downsample' ? 1 : factor, component);
+      continue;
+    }
+    if (PASS_THROUGH.has(component.type) || isBlockIn(component, 'z')) {
+      const touching = [out, ...ins].filter(Boolean);
+      for (const other of touching.slice(1)) link(touching[0], other, 1, 1, component);
+    }
+  }
+  const nameOf = (key) => {
+    const signal = signals.get(key);
+    const named = signal?.netIds.map((id) => circuit.nets.get(id)).find((net) => net?.name);
+    return named ? named.name : signal?.driver && !signal.driver.source ? `${signal.driver.comp}.${signal.driver.term}` : signal?.display || key;
+  };
+  const fraction = new Map();
+  for (const start of signals.keys()) {
+    if (fraction.has(start) || !sampled(signals.get(start))) continue;
+    const group = [start];
+    fraction.set(start, [1, 1]);
+    for (let i = 0; i < group.length; i++) {
+      const [n, d] = fraction.get(group[i]);
+      for (const edge of edges.get(group[i]) || []) {
+        const g = gcd(n * edge.num, d * edge.den);
+        const next = [(n * edge.num) / g, (d * edge.den) / g];
+        const known = fraction.get(edge.to);
+        if (!known) { fraction.set(edge.to, next); group.push(edge.to); continue; }
+        if (known[0] !== next[0] || known[1] !== next[1]) {
+          return failure('mixed-rates', `${edge.part.refdes} joins signals of two rates: ${nameOf(group[i])} and ${nameOf(edge.to)} reach it through different rate changes (a junction's signals share one rate)`, [{ code: 'mixed-rates', refs: [edge.part.refdes] }]);
+        }
+      }
+    }
+    // In whole ticks: of the sampler's period where one sets it, else of
+    // the fastest signal's.
+    const anchor = group.find((key) => anchors.has(key));
+    const [an, ad] = anchor ? fraction.get(anchor) : [0, 0];
+    const lcm = group.reduce((l, key) => (l * fraction.get(key)[1]) / gcd(l, fraction.get(key)[1]), 1);
+    const whole = group.map((key) => (fraction.get(key)[0] * lcm) / fraction.get(key)[1]);
+    const common = whole.reduce((g, v) => gcd(g, v), 0);
+    for (const [k, key] of group.entries()) {
+      if (anchor) {
+        // ticks = period / sampler's period.
+        const [n, d] = fraction.get(key);
+        const ticks = (n * ad) / (d * an);
+        if (!(Number.isInteger(Math.round(ticks * 1e9) / 1e9) && Math.round(ticks) >= 1)) {
+          return failure('faster-than-sampler', `${nameOf(key)} would run faster than the sampler (or between its ticks): with a sampler, the sampled side runs at its rate or slower`, []);
+        }
+        if (anchors.has(key) && Math.round(ticks) !== 1) {
+          return failure('dac-rate', `${nameOf(key)} meets the continuous side (a sampler or a DAC) at another rate than the sampler's: samplers and DACs run at one rate`, []);
+        }
+        rate.set(key, Math.round(ticks));
+      } else rate.set(key, whole[k] / common);
+    }
+  }
+  for (const component of circuit.components.values()) {
+    if (component.type === 'quantizer') rate.set(quantizerErrorKey(component.refdes), rate.get(outputOf(component)?.key) || 1);
+  }
+  return { ok: true, rate, multirate: new Set([...rate.values()]).size > 1 || changers.length > 0 };
 }
 
 /** An exact number from a float, to 12 significant figures. */
@@ -735,6 +899,10 @@ function analyzeSampled(context, output, inputs, initialValues) {
   }
   const mixed = mixedPeriods(samplers, periods);
   if (mixed) return mixed;
+  // The sampled side's rates, the samplers' the fastest.
+  const rates = signalRates(context, domain);
+  if (!rates.ok) return rates;
+  context.rates = rates.rate;
 
   // The continuous side: unknowns its driven signals, inputs its sources and
   // the sampled signals H(s) blocks read.
@@ -839,7 +1007,7 @@ function analyzeSampled(context, output, inputs, initialValues) {
     const value = sampledResult({ at: (values) => { const r = at(values); return r.ok ? r.columns[column] : null; }, symbols: symbolList, continuous: domain.get(source.key) === 's', paths: paths.map((path) => path.g[sInputs.findIndex((s) => s.key === source.key)]) });
     return presentSampled(value, initialValues, source, output);
   });
-  return { ok: true, variable: 'z', sampled: true, output: { key: output.key, name: output.display }, entries, issues: [] };
+  return { ok: true, variable: 'z', sampled: true, output: outputOf(output, rates.rate.get(output.key) || 1), entries, issues: [] };
 }
 
 const isZeroRational = (value) => !value || (value.numerator?.kind === 'number' && value.numerator.numerator === 0n);
@@ -1622,6 +1790,39 @@ function curveDbAt(points, f) {
   return a.db + ((b.db - a.db) * Math.log(f / a.f)) / Math.log(b.f / a.f);
 }
 
+/**
+ * What a downsampled output's response plot marks: its own Nyquist, f/fs
+ * 1/(2M), labeled, and the edges of the first band that folds onto the
+ * signal band (its image about 1/M), as the band's own lines are. `decimations` are the curves' (one M, when
+ * all share it); `edges` the band's (bandEdges). On f/fs only.
+ */
+function rateMarkers(decimations, edges) {
+  const q = decimations[0];
+  if (!(q > 1) || decimations.some((d) => d !== q)) return [];
+  const markers = [{ f: 0.5 / q, label: `fₛ/${2 * q}` }];
+  const [low, high] = edges.length === 2 ? [1 / q - edges[1], 1 / q - edges[0]] : edges.length === 1 ? [1 / q - edges[0], 1 / q + edges[0]] : [];
+  if (low > 0 && high <= 0.5 && high > low) markers.push({ f: low, label: '' }, { f: high, label: '' });
+  return markers;
+}
+
+/** A noise curve's points folded at decimation `q`: each f the power sum
+ *  of the q frequencies (of the ticks) that land on it, over q. `dbAt(f,
+ *  db)` adds the curve's offset and the noise added to it. */
+function foldedPoints(trace, points, q, dbAt) {
+  return points.map(({ f }) => {
+    let sum = 0;
+    for (let k = 0; k < q; k++) {
+      let g = (f + k / q) % 1;
+      if (g > 0.5) g = 1 - g;
+      const h = responseAt(trace.value, trace.variable, g);
+      if (!h) continue;
+      const db = dbAt(g, 10 * Math.log10(h[0] * h[0] + h[1] * h[1]));
+      if (Number.isFinite(db)) sum += 10 ** (db / 10);
+    }
+    return { f, db: sum > 0 ? 10 * Math.log10(sum / q) : -400 };
+  });
+}
+
 export function responsePlot(traces, variable, { sAxis = 'omega', band = null, quantity = 'magnitude', background = [], dbfs = null, detail = null } = {}) {
   const withVariable = traces.map((trace) => ({ ...trace, variable: trace.variable || variable }));
   const axis = plotAxis(withVariable, sAxis);
@@ -1645,11 +1846,13 @@ export function responsePlot(traces, variable, { sAxis = 'omega', band = null, q
   // The band's edges on this axis: f/fs as they are, or omega = 2 pi f with
   // s in units of 1/Ts.
   const edges = bandEdges(band).map((f) => (curveAxis === 'normalized' ? f : 2 * Math.PI * f));
+  const markers = curveAxis === 'normalized' ? rateMarkers(curves.map(({ trace }) => trace.decimation || 1), bandEdges(band)) : [];
   return {
     kind: 'response',
     axis: curveAxis,
     range: { low, high: Math.max(high, low + 1) },
     ...(edges.length ? { band: edges } : {}),
+    ...(markers.length ? { markers } : {}),
     ...(quantity === 'phase' ? { quantity: 'phase' } : {}),
     ...(dbfs && quantity !== 'phase' && curveAxis === 'normalized' ? { units: 'dBFS' } : {}),
     traces: [
@@ -1664,12 +1867,18 @@ export function responsePlot(traces, variable, { sAxis = 'omega', band = null, q
           return other?.points.length ? [{ points: other.points, level }] : [];
         }) : [];
         const dbAt = (f, db) => (added.length ? powerSumDb(db + offset, added.map(({ points, level }) => curveDbAt(points, f) + level)) : db + offset);
+        // A downsampled output's noise over its spectrum: what it has at
+        // every frequency folding onto f, (1/M) times the sum of the M.
+        const fold = inDbfs && trace.noise && trace.decimation > 1 ? trace.decimation : 1;
+        const points = fold > 1
+          ? foldedPoints(trace, curve.points.filter(({ f }) => f <= 0.5 / fold), fold, dbAt)
+          : curve.points.map(({ f, db, phase }) => ({ f, db: quantity === 'phase' ? phase : dbAt(f, db) }));
         return {
           label: trace.label,
           color: trace.color,
           ...(trace.start ? { start: true } : {}),
           ...(trace.held?.key ? { hold: trace.held.key } : {}),
-          points: curve.points.map(({ f, db, phase }) => ({ f, db: quantity === 'phase' ? phase : dbAt(f, db) })),
+          points,
         };
       }),
     ],

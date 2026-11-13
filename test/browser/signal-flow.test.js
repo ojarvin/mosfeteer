@@ -7,11 +7,11 @@
 import { describe, before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { start, sleep, browserSkip } from './harness.js';
-import { amplifier, chain, ditheredModulator, modulator } from './fixtures.js';
+import { amplifier, chain, decimatedModulator, ditheredModulator, modulator } from './fixtures.js';
 
 describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
   let h;
-  before(async () => { h = await start({ docs: { modulator: modulator(), dithered: ditheredModulator(), chain: chain(), amplifier: amplifier() }, width: 1500, height: 950 }); });
+  before(async () => { h = await start({ docs: { modulator: modulator(), decimated: decimatedModulator(), dithered: ditheredModulator(), chain: chain(), amplifier: amplifier() }, width: 1500, height: 950 }); });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
   const shown = (selector) => h.evaluate(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); return !!el && !el.hidden && !!el.offsetParent; })()`);
@@ -661,5 +661,19 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     await annotate('Graph');
     await h.until(`${column}.then((c) => c.left === ${placed.left})`);
     assert.ok(placed.left >= placed.right, JSON.stringify(placed));
+  });
+
+  test('a downsampled output is solved at the loop\'s rate: its equations in z of the ticks, its own Nyquist marked, its factor drawn in the box', async () => {
+    await openAnalysis('decimated');
+    await h.evaluate(`${h.module('editor-state.js')}.then((m) => { m.editor.circuit.analysisValues.flow = { output: 'name:Y', sources: { U: 'input', QZ1: 'input' }, swingInput: '', swingFrequency: '' }; })`);
+    await derive();
+    await h.until(`document.querySelectorAll('.signal-flow-results .signal-flow-entry').length === 2`);
+    const text = await h.evaluate(`document.querySelector('.signal-flow-results').textContent`);
+    assert.doesNotMatch(text, /refused|cannot/i);
+    await h.until(`!!document.querySelector('.plots-window .signal-flow-graph .plot-view-svg')`);
+    // (the axis sets the f in italic)
+    assert.ok(await h.evaluate(`[...document.querySelectorAll('.plots-window .signal-flow-graph text')].some((t) => /ₛ\\/8$/.test(t.textContent))`), 'the output\'s Nyquist is marked');
+    // The downsampler's factor in its box.
+    assert.equal(await h.evaluate(`window.__circuit().labels.find((l) => l.owner === 'D1')?.text`), '$\\downarrow 4$');
   });
 });

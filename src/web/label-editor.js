@@ -10,7 +10,7 @@ import { switchState } from '../core/beats.js';
 import { setSharedLabel, sharedLabelPeers } from '../core/shared-labels.js';
 import { MOS_SIZE_ROLE, formatMosSize, parseMosSize } from '../core/mos-size.js';
 import { PART_VALUE_ROLE } from '../core/part-value.js';
-import { TRANSFER_FUNCTION_TYPES, isCoefficientBlock, isSignalBlock, parseDither, parseGain, parseLevels, parseTone, readTransferFunction } from '../core/transfer-function.js';
+import { TRANSFER_FUNCTION_TYPES, isCoefficientBlock, isRateChanger, isSignalBlock, parseDither, parseGain, parseLevels, parseRate, parseTone, readTransferFunction } from '../core/transfer-function.js';
 import { setPartValue } from '../core/part-moves.js';
 import { labelFontSize } from '../core/style.js';
 import { snap } from '../core/grid.js';
@@ -65,6 +65,8 @@ export function inlineEditSchematicBlock(component) {
     ? 'The shape and the amplitude A in full scale: rect 1 (uniform over +-FS), tri 0.5 (triangular over +-FS/2), bin 1 (two levels, +-FS: an LFSR bit), or tern 1 (three levels, -FS, 0, +FS); A may be a coefficient (tri a_d). Scale it into the loop with a gain after it. Enter applies, Esc cancels.'
     : component.type === 'tone'
     ? 'The amplitude A in full scale and the f/fs: 0.01 0.37 (+-FS/100 at f/fs 0.37; f/fs 0 is an offset), each a number or a coefficient (a_r f_r). Enter applies, Esc cancels.'
+    : isRateChanger(component)
+    ? 'The factor, a whole number of at least 2 (8: every 8th sample kept, or 7 zeros after each). Enter applies, Esc cancels.'
     : component.type === 'sampler'
     ? 'The sampling period: a number or a symbol (T, T_s, 1). Enter applies, Esc cancels.'
     : component.type === 'gain'
@@ -127,6 +129,7 @@ export function inlineEditSchematicBlock(component) {
           if (component.type === 'quantizer') parseLevels(text);
           else if (component.type === 'dither') parseDither(text);
           else if (component.type === 'tone') parseTone(text);
+          else if (isRateChanger(component)) parseRate(text);
           else if (isCoefficientBlock(component)) parseGain(text);
           else readTransferFunction(text, TRANSFER_FUNCTION_TYPES[component.type]);
         } catch (err) {

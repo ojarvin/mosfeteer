@@ -94,7 +94,7 @@ export const GUIDES = Object.freeze([
       'Pick the **Output**, set each source to **Input**, **Zero**, or **Constant**, and click **Derive**.',
       'Click **Plots** to see the responses.',
     ],
-    keywords: 'block diagram signal flow loop delta sigma modulator ntf stf transfer function sampler quantizer gain sum integrator',
+    keywords: 'block diagram signal flow loop delta sigma modulator ntf stf transfer function sampler quantizer gain sum integrator downsampler upsampler decimation interpolation multirate',
     tutorial: 'sdm',
     doc: 'signal-flow-analysis.md',
   },

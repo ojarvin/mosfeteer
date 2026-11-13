@@ -14,7 +14,7 @@ test('insert categories keep switches and macros separate and include vccs with 
   assert.deepEqual([...groups.Macros].sort(), ['adc', 'adc_diff', 'comparator', 'comparator_clocked', 'dac', 'dac_diff', 'gm', 'gm_cmfb', 'opamp', 'opamp_diff', 'opamp_diff_cmfb']);
   assert.ok(groups.Logic.includes('mux2') && groups.Logic.includes('tristate_buffer') && groups.Logic.includes('xnor3_gate'));
   assert.ok(groups.Sequential.includes('dff') && groups.Sequential.includes('latch_enb_rstb_qb'));
-  assert.deepEqual(groups['Signal flow'], ['signal_sum', 'signal_multiply', 'tf_s', 'tf_z', 'tf_dac', 'tf_dac_rz', 'tf_delay', 'tf_zdelay', 'gain', 'sampler', 'quantizer', 'dither', 'tone']);
+  assert.deepEqual(groups['Signal flow'], ['signal_sum', 'signal_multiply', 'tf_s', 'tf_z', 'tf_dac', 'tf_dac_rz', 'tf_delay', 'tf_zdelay', 'gain', 'sampler', 'downsample', 'upsample', 'quantizer', 'dither', 'tone']);
   // Filters draw block diagrams; the signal-flow analysis does not read them.
   assert.deepEqual(groups['Block diagram'], ['block', 'filter_lpf', 'filter_hpf', 'filter_bpf', 'filter_notch', 'oscillator']);
   assert.equal(groups.Other, undefined, 'every registered symbol has a category');

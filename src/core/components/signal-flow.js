@@ -201,6 +201,37 @@ export const sampler = defineSymbol({
 });
 
 /**
+ * Rate changers on the sampled side: a downsampler keeps every M-th sample
+ * (a decimator's rate change, `↓M`), an upsampler puts L - 1 zeros after
+ * each sample (an interpolator's, `↑L`). The factor is the value, drawn
+ * inside the box as math. Neither filters: draw the decimation or
+ * interpolation filter as H(z) blocks beside it.
+ */
+function rateChanger(type, description, refPrefix) {
+  return defineSymbol({
+    type,
+    description,
+    refPrefix,
+    terminals: [
+      { name: 'in', x: -80, y: 0, direction: 'input', signalRole: 'input', dir: { x: -1, y: 0 } },
+      { name: 'out', x: 80, y: 0, direction: 'output', signalRole: 'output', dir: { x: 1, y: 0 } },
+    ],
+    bbox: { x: -80, y: -80, w: 160, h: 160 },
+    graphics: [
+      { kind: 'rect', x: -80, y: -80, w: 160, h: 160, style: 'emph' },
+    ],
+    textPos: null,
+    refPos: null,
+    labelOffset: null,
+    defaultValue: '2',
+    allowFloatingTerminals: true,
+  });
+}
+
+export const downsample = rateChanger('downsample', 'Downsampler (keeps every M-th sample)', 'DEC');
+export const upsample = rateChanger('upsample', 'Upsampler (L - 1 zeros after each sample)', 'INT');
+
+/**
  * A dither source: random numbers into a sampled signal, one a sample --
  * rectangular (uniform over +-A) or triangular (two uniforms added, over
  * +-A, peaking at 0), or two or three levels. Its value is the shape and A in full scale (`rect 1`

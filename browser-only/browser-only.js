@@ -15028,6 +15028,7 @@ __exports.loopBreakSignals = loopBreakSignals;
 __exports.loopGain = loopGain;
 __exports.loopMargins = loopMargins;
 __exports.signalDomains = signalDomains;
+__exports.signalRates = signalRates;
 __exports.delayTermsOf = delayTermsOf;
 __exports.sampledEquation = sampledEquation;
 __exports.transferTex = transferTex;
@@ -15051,7 +15052,7 @@ let createRationalOps; __bind(() => { ({ createRationalOps } = __require("src/co
 let cancelCommonPolynomialFactor; __bind(() => { ({ cancelCommonPolynomialFactor } = __require("src/core/analysis/polynomial-gcd.js")); });
 let renderExpression; __bind(() => { ({ renderExpression } = __require("src/core/analysis/present.js")); });
 let bodeSketch, evaluateExpression, expressionSymbols, polynomialRoots; __bind(() => { ({ bodeSketch, evaluateExpression, expressionSymbols, polynomialRoots } = __require("src/core/analysis/bode.js")); });
-let TRANSFER_FUNCTION_TYPES, isBlockIn, parseGain, readTransferFunction, sourceNames; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, isBlockIn, parseGain, readTransferFunction, sourceNames } = __require("src/core/transfer-function.js")); });
+let TRANSFER_FUNCTION_TYPES, isBlockIn, isRateChanger, parseGain, parseRate, readTransferFunction, sourceNames; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, isBlockIn, isRateChanger, parseGain, parseRate, readTransferFunction, sourceNames } = __require("src/core/transfer-function.js")); });
 let analyzedCircuit, canonicalNetName; __bind(() => { ({ analyzedCircuit, canonicalNetName } = __require("src/core/model.js")); });
 let COLOR_PALETTE; __bind(() => { ({ COLOR_PALETTE } = __require("src/core/style.js")); });
 let samplePath; __bind(() => { ({ samplePath } = __require("src/core/analysis/sampling.js")); });
@@ -15097,7 +15098,7 @@ const PASSIVE_TYPES = new Set(['solder', 'output', 'port', 'inputoutput', 'chopp
 const PASS_THROUGH = new Set([...JUNCTIONS, 'quantizer']);
 
 function isSignalPart(component) {
-  return PASS_THROUGH.has(component.type) || Object.hasOwn(TRANSFER_FUNCTION_TYPES, component.type) || component.type === 'sampler';
+  return PASS_THROUGH.has(component.type) || Object.hasOwn(TRANSFER_FUNCTION_TYPES, component.type) || component.type === 'sampler' || isRateChanger(component);
 }
 
 /** A quantizer's error source: a gain of 1 plus this, in the linear model. */
@@ -15358,7 +15359,18 @@ function analyzeSignalFlow(circuit, options = {}, graph = signalFlowGraph(circui
     const blocks = (variable) => parts.filter((component) => TRANSFER_FUNCTION_TYPES[component.type] === variable).map((component) => component.refdes);
     return failure('mixed-domains', `the diagram mixes H(s) blocks (${blocks('s').join(', ')}, continuous) and H(z) blocks (${blocks('z').join(', ')}, sampled) with no sampler: put one where the continuous signal is sampled (an H(s) block reading a sampled signal is the DAC)`);
   }
-  const variable = domains.has('z') ? 'z' : 's';
+  const changers = parts.filter(isRateChanger);
+  if (changers.length && domains.has('s')) {
+    return failure('mixed-domains', `${changers[0].refdes} changes the rate of a sampled signal, but the diagram has H(s) blocks (${parts.filter((component) => isBlockIn(component, 's')).map((component) => component.refdes).join(', ')}, continuous) and no sampler: put one where the continuous signal is sampled`);
+  }
+  const variable = domains.has('z') || changers.length ? 'z' : 's';
+  let decimation = 1;
+  if (variable === 'z') {
+    const rates = signalRates(context);
+    if (!rates.ok) return rates;
+    context.rates = rates.rate;
+    decimation = rates.rate.get(output.key) || 1;
+  }
 
   // Unknowns: every signal a block or junction drives.
   const unknowns = [...signals.values()].filter((signal) => signal.driver && !signal.driver.source);
@@ -15378,7 +15390,13 @@ function analyzeSignalFlow(circuit, options = {}, graph = signalFlowGraph(circui
   }
 
   const entries = inputs.map((source, column) => present(columns[column], variable, source, output));
-  return { ok: true, variable, output: { key: output.key, name: output.display }, entries, issues: [] };
+  return { ok: true, variable, output: outputOf(output, decimation), entries, issues: [] };
+}
+
+/** A result's output: its signal, and (a downsampled one) how many ticks
+ *  of the fastest rate it takes a sample, `decimation`. */
+function outputOf(output, decimation = 1) {
+  return { key: output.key, name: output.display, ...(decimation > 1 ? { decimation } : {}) };
 }
 
 /** The keys of the signals on a feedback loop: those from which a path
@@ -15496,6 +15514,14 @@ function loopMargins(curve) {
   };
 }
 
+/** A rational in z with z^ticks in place of z. */
+function atTicks(value, ticks) {
+  const z = symbol('z');
+  const replacements = new Map([['z', power(z, ticks)]]);
+  const rational = value?.kind === 'rational' ? value : rationalFunction(value, integer(1), { variable: 'z' });
+  return rationalFunction(substitute(rational.numerator, replacements), substitute(rational.denominator, replacements), { variable: 'z' });
+}
+
 /**
  * The equations `x - sum G x = sum S u` of `unknowns` (signals), in
  * `variable`: `A` over the unknowns, `B` over `inputKeys` (signals whose
@@ -15504,7 +15530,7 @@ function loopMargins(curve) {
  * superposition). `extra(signal, row, feed)` builds a row the usual parts
  * do not (a sampler's).
  */
-function linearSystem({ circuit, signals, sourceBySignal, quantizerGains = {} }, unknowns, inputKeys, variable, extra = null) {
+function linearSystem({ circuit, signals, sourceBySignal, quantizerGains = {}, rates = null }, unknowns, inputKeys, variable, extra = null) {
   const index = new Map(unknowns.map((signal, i) => [signal.key, i]));
   // A big diagram's exact algebra is big: give it room, the elimination
   // keeps it as small as the diagram allows.
@@ -15540,7 +15566,14 @@ function linearSystem({ circuit, signals, sourceBySignal, quantizerGains = {} },
       } catch (err) {
         return failure('bad-transfer-function', `${component.refdes}: ${err.message}`);
       }
+      // An H(z) running at M ticks a sample, referred to the tick: H(z^M).
+      const ticks = variable === 'z' ? rates?.get(signal.key) || 1 : 1;
+      if (ticks > 1) h = atTicks(h, ticks);
       feed(row, h, signalAt(component, 'in'));
+    } else if (isRateChanger(component)) {
+      // Referred to the fastest rate, a rate change passes the samples on
+      // (what a downsampler drops aliases; what an upsampler adds images).
+      feed(row, ops.one, signalAt(component, 'in'));
     } else if (component.type === 'gain') {
       let k;
       try {
@@ -15610,7 +15643,7 @@ function signalDomains({ circuit, signals }) {
     if (!signal.driver || signal.driver.source || domain.has(signal.key)) continue;
     const type = circuit.components.get(signal.driver.comp)?.type;
     const at = { comp: signal.driver.comp, kind: 'drives' };
-    if (type === 'sampler' || TRANSFER_FUNCTION_TYPES[type] === 'z') { domain.set(signal.key, 'z'); origin.set(signal.key, at); }
+    if (type === 'sampler' || TRANSFER_FUNCTION_TYPES[type] === 'z' || isRateChanger({ type })) { domain.set(signal.key, 'z'); origin.set(signal.key, at); }
     else if (TRANSFER_FUNCTION_TYPES[type] === 's') { domain.set(signal.key, 's'); origin.set(signal.key, at); }
   }
   for (let changed = true; changed;) {
@@ -15635,7 +15668,7 @@ function signalDomains({ circuit, signals }) {
       if (domain.has(signal.key)) continue;
       for (const { component } of readersOf(signal)) {
         if (component?.type === 'sampler' || isBlockIn(component, 's')) set(signal, 's', { comp: component.refdes, kind: 'reads' });
-        else if (isBlockIn(component, 'z')) set(signal, 'z', { comp: component.refdes, kind: 'reads' });
+        else if (isBlockIn(component, 'z') || isRateChanger(component)) set(signal, 'z', { comp: component.refdes, kind: 'reads' });
       }
     }
   }
@@ -15653,7 +15686,7 @@ function signalDomains({ circuit, signals }) {
   };
   const partKind = (refdes) => {
     const type = circuit.components.get(refdes)?.type;
-    return type === 'sampler' ? 'a sampler' : TRANSFER_FUNCTION_TYPES[type] === 'z' ? 'an H(z) block' : TRANSFER_FUNCTION_TYPES[type] === 's' ? 'an H(s) block' : 'a part';
+    return type === 'sampler' ? 'a sampler' : isRateChanger({ type }) ? 'a rate changer' : TRANSFER_FUNCTION_TYPES[type] === 'z' ? 'an H(z) block' : TRANSFER_FUNCTION_TYPES[type] === 's' ? 'an H(s) block' : 'a part';
   };
   const describe = (signal) => {
     const sampled = domain.get(signal.key) === 'z';
@@ -15665,12 +15698,14 @@ function signalDomains({ circuit, signals }) {
   };
   // Where the domains meet, only a sampler (s to z) or an H(s) block (z to s) may stand.
   for (const component of circuit.components.values()) {
-    if (component.type === 'sampler' || isBlockIn(component, 'z')) {
+    if (component.type === 'sampler' || isBlockIn(component, 'z') || isRateChanger(component)) {
       const input = [...signals.values()].find((signal) => signal.readers.some((reader) => reader.comp === component.refdes));
       if (input && domain.get(input.key) !== (component.type === 'sampler' ? 's' : 'z')) {
         return failure('mixed-domains', component.type === 'sampler'
           ? `${component.refdes} samples a signal that is already sampled: ${describe(input)}`
-          : `${component.refdes} is an H(z) block reading a continuous signal: ${describe(input)}; sample it first (a sampler)`, [{ code: 'mixed-domains', refs: [component.refdes] }]);
+          : isRateChanger(component)
+            ? `${component.refdes} changes the rate of a continuous signal: ${describe(input)}; sample it first (a sampler)`
+            : `${component.refdes} is an H(z) block reading a continuous signal: ${describe(input)}; sample it first (a sampler)`, [{ code: 'mixed-domains', refs: [component.refdes] }]);
       }
     } else if (PASS_THROUGH.has(component.type)) {
       // Inputs first: the signals the message names are then the ones that meet.
@@ -15684,6 +15719,136 @@ function signalDomains({ circuit, signals }) {
     }
   }
   return { ok: true, domain };
+}
+
+const gcd = (a, b) => (b ? gcd(b, a % b) : Math.abs(a));
+
+/**
+ * Each sampled signal's period, in ticks of the fastest rate: 1 for a
+ * diagram of one rate. A downsampler's output is M times its input's
+ * period, an upsampler's 1/L of it; every other part's signals share one
+ * rate. With a sampler, its outputs and the signals a DAC (an H(s) block)
+ * reads run at its period, the tick, and nothing runs faster. A part
+ * joining signals of two rates, a rate changer on a feedback loop, or an
+ * upsampler after a downsampler is refused: a chain of rates is solved by
+ * referring every block to the fastest rate (an H(z) at M ticks a sample
+ * is H(z^M)), which holds only there. `domain` is signalDomains's (every
+ * signal sampled when left out). Returns `{ ok, rate: Map key -> ticks,
+ * multirate }` or a failure.
+ */
+function signalRates({ circuit, signals }, domain = null) {
+  const sampled = (signal) => signal && (!domain || domain.get(signal.key) === 'z');
+  const rate = new Map();
+  const changers = [...circuit.components.values()].filter(isRateChanger);
+  const set = () => {
+    for (const signal of signals.values()) if (sampled(signal)) rate.set(signal.key, 1);
+    for (const component of circuit.components.values()) {
+      if (component.type === 'quantizer') rate.set(quantizerErrorKey(component.refdes), rate.get(outputOf(component)?.key) || 1);
+    }
+  };
+  const outputOf = (component) => [...signals.values()].find((signal) => signal.driver?.comp === component.refdes && !signal.driver.source);
+  const inputsOf = (component) => [...signals.values()].filter((signal) => signal.readers.some((reader) => reader.comp === component.refdes));
+  if (!changers.length) { set(); return { ok: true, rate, multirate: false }; }
+  for (const component of changers) {
+    try { parseRate(component.value); } catch (err) { return failure('bad-rate', `${component.refdes}: ${err.message}`); }
+  }
+  // A rate changer on a loop: its output is driven by it alone, so a loop
+  // through that signal passes the rate changer.
+  const looped = feedbackSignals(circuit, { signals });
+  for (const component of changers) {
+    const out = outputOf(component);
+    if (out && looped.has(out.key)) return failure('rate-change-in-loop', `${component.refdes} changes the rate inside a feedback loop: a loop runs at one rate (put the rate change after the loop's output)`, [{ code: 'rate-change-in-loop', refs: [component.refdes] }]);
+  }
+  // An upsampler after a downsampler: zeros in place of the samples dropped.
+  const drives = (component) => [outputOf(component)].filter(Boolean);
+  for (const down of changers.filter((c) => c.type === 'downsample')) {
+    const seen = new Set();
+    const stack = drives(down);
+    while (stack.length) {
+      const signal = stack.pop();
+      if (seen.has(signal.key)) continue;
+      seen.add(signal.key);
+      for (const reader of signal.readers) {
+        const part = circuit.components.get(reader.comp);
+        if (part?.type === 'upsample') return failure('upsample-after-downsample', `${part.refdes} upsamples what ${down.refdes} downsampled: an upsampler goes before a downsampler on a path (interpolate, then decimate)`, [{ code: 'upsample-after-downsample', refs: [part.refdes, down.refdes] }]);
+        if (part) stack.push(...drives(part));
+      }
+    }
+  }
+  // Periods as fractions [n, d] of one signal's, along the parts: an edge
+  // says b's period is a's times p/q.
+  const edges = new Map();
+  const link = (a, b, p, q, part) => {
+    if (!sampled(a) || !sampled(b)) return;
+    for (const [from, to, num, den] of [[a, b, p, q], [b, a, q, p]]) {
+      if (!edges.has(from.key)) edges.set(from.key, []);
+      edges.get(from.key).push({ to: to.key, num, den, part });
+    }
+  };
+  const anchors = new Set();
+  for (const component of circuit.components.values()) {
+    const out = outputOf(component);
+    const ins = inputsOf(component);
+    if (component.type === 'sampler') { if (sampled(out)) anchors.add(out.key); continue; }
+    if (isBlockIn(component, 's')) { for (const input of ins) if (sampled(input)) anchors.add(input.key); continue; }
+    if (isRateChanger(component)) {
+      const factor = parseRate(component.value);
+      for (const input of ins) if (out) link(input, out, component.type === 'downsample' ? factor : 1, component.type === 'downsample' ? 1 : factor, component);
+      continue;
+    }
+    if (PASS_THROUGH.has(component.type) || isBlockIn(component, 'z')) {
+      const touching = [out, ...ins].filter(Boolean);
+      for (const other of touching.slice(1)) link(touching[0], other, 1, 1, component);
+    }
+  }
+  const nameOf = (key) => {
+    const signal = signals.get(key);
+    const named = signal?.netIds.map((id) => circuit.nets.get(id)).find((net) => net?.name);
+    return named ? named.name : signal?.driver && !signal.driver.source ? `${signal.driver.comp}.${signal.driver.term}` : signal?.display || key;
+  };
+  const fraction = new Map();
+  for (const start of signals.keys()) {
+    if (fraction.has(start) || !sampled(signals.get(start))) continue;
+    const group = [start];
+    fraction.set(start, [1, 1]);
+    for (let i = 0; i < group.length; i++) {
+      const [n, d] = fraction.get(group[i]);
+      for (const edge of edges.get(group[i]) || []) {
+        const g = gcd(n * edge.num, d * edge.den);
+        const next = [(n * edge.num) / g, (d * edge.den) / g];
+        const known = fraction.get(edge.to);
+        if (!known) { fraction.set(edge.to, next); group.push(edge.to); continue; }
+        if (known[0] !== next[0] || known[1] !== next[1]) {
+          return failure('mixed-rates', `${edge.part.refdes} joins signals of two rates: ${nameOf(group[i])} and ${nameOf(edge.to)} reach it through different rate changes (a junction's signals share one rate)`, [{ code: 'mixed-rates', refs: [edge.part.refdes] }]);
+        }
+      }
+    }
+    // In whole ticks: of the sampler's period where one sets it, else of
+    // the fastest signal's.
+    const anchor = group.find((key) => anchors.has(key));
+    const [an, ad] = anchor ? fraction.get(anchor) : [0, 0];
+    const lcm = group.reduce((l, key) => (l * fraction.get(key)[1]) / gcd(l, fraction.get(key)[1]), 1);
+    const whole = group.map((key) => (fraction.get(key)[0] * lcm) / fraction.get(key)[1]);
+    const common = whole.reduce((g, v) => gcd(g, v), 0);
+    for (const [k, key] of group.entries()) {
+      if (anchor) {
+        // ticks = period / sampler's period.
+        const [n, d] = fraction.get(key);
+        const ticks = (n * ad) / (d * an);
+        if (!(Number.isInteger(Math.round(ticks * 1e9) / 1e9) && Math.round(ticks) >= 1)) {
+          return failure('faster-than-sampler', `${nameOf(key)} would run faster than the sampler (or between its ticks): with a sampler, the sampled side runs at its rate or slower`, []);
+        }
+        if (anchors.has(key) && Math.round(ticks) !== 1) {
+          return failure('dac-rate', `${nameOf(key)} meets the continuous side (a sampler or a DAC) at another rate than the sampler's: samplers and DACs run at one rate`, []);
+        }
+        rate.set(key, Math.round(ticks));
+      } else rate.set(key, whole[k] / common);
+    }
+  }
+  for (const component of circuit.components.values()) {
+    if (component.type === 'quantizer') rate.set(quantizerErrorKey(component.refdes), rate.get(outputOf(component)?.key) || 1);
+  }
+  return { ok: true, rate, multirate: new Set([...rate.values()]).size > 1 || changers.length > 0 };
 }
 
 /** An exact number from a float, to 12 significant figures. */
@@ -15793,6 +15958,10 @@ function analyzeSampled(context, output, inputs, initialValues) {
   }
   const mixed = mixedPeriods(samplers, periods);
   if (mixed) return mixed;
+  // The sampled side's rates, the samplers' the fastest.
+  const rates = signalRates(context, domain);
+  if (!rates.ok) return rates;
+  context.rates = rates.rate;
 
   // The continuous side: unknowns its driven signals, inputs its sources and
   // the sampled signals H(s) blocks read.
@@ -15897,7 +16066,7 @@ function analyzeSampled(context, output, inputs, initialValues) {
     const value = sampledResult({ at: (values) => { const r = at(values); return r.ok ? r.columns[column] : null; }, symbols: symbolList, continuous: domain.get(source.key) === 's', paths: paths.map((path) => path.g[sInputs.findIndex((s) => s.key === source.key)]) });
     return presentSampled(value, initialValues, source, output);
   });
-  return { ok: true, variable: 'z', sampled: true, output: { key: output.key, name: output.display }, entries, issues: [] };
+  return { ok: true, variable: 'z', sampled: true, output: outputOf(output, rates.rate.get(output.key) || 1), entries, issues: [] };
 }
 
 const isZeroRational = (value) => !value || (value.numerator?.kind === 'number' && value.numerator.numerator === 0n);
@@ -16680,6 +16849,39 @@ function curveDbAt(points, f) {
   return a.db + ((b.db - a.db) * Math.log(f / a.f)) / Math.log(b.f / a.f);
 }
 
+/**
+ * What a downsampled output's response plot marks: its own Nyquist, f/fs
+ * 1/(2M), labeled, and the edges of the first band that folds onto the
+ * signal band (its image about 1/M), as the band's own lines are. `decimations` are the curves' (one M, when
+ * all share it); `edges` the band's (bandEdges). On f/fs only.
+ */
+function rateMarkers(decimations, edges) {
+  const q = decimations[0];
+  if (!(q > 1) || decimations.some((d) => d !== q)) return [];
+  const markers = [{ f: 0.5 / q, label: `fₛ/${2 * q}` }];
+  const [low, high] = edges.length === 2 ? [1 / q - edges[1], 1 / q - edges[0]] : edges.length === 1 ? [1 / q - edges[0], 1 / q + edges[0]] : [];
+  if (low > 0 && high <= 0.5 && high > low) markers.push({ f: low, label: '' }, { f: high, label: '' });
+  return markers;
+}
+
+/** A noise curve's points folded at decimation `q`: each f the power sum
+ *  of the q frequencies (of the ticks) that land on it, over q. `dbAt(f,
+ *  db)` adds the curve's offset and the noise added to it. */
+function foldedPoints(trace, points, q, dbAt) {
+  return points.map(({ f }) => {
+    let sum = 0;
+    for (let k = 0; k < q; k++) {
+      let g = (f + k / q) % 1;
+      if (g > 0.5) g = 1 - g;
+      const h = responseAt(trace.value, trace.variable, g);
+      if (!h) continue;
+      const db = dbAt(g, 10 * Math.log10(h[0] * h[0] + h[1] * h[1]));
+      if (Number.isFinite(db)) sum += 10 ** (db / 10);
+    }
+    return { f, db: sum > 0 ? 10 * Math.log10(sum / q) : -400 };
+  });
+}
+
 function responsePlot(traces, variable, { sAxis = 'omega', band = null, quantity = 'magnitude', background = [], dbfs = null, detail = null } = {}) {
   const withVariable = traces.map((trace) => ({ ...trace, variable: trace.variable || variable }));
   const axis = plotAxis(withVariable, sAxis);
@@ -16703,11 +16905,13 @@ function responsePlot(traces, variable, { sAxis = 'omega', band = null, quantity
   // The band's edges on this axis: f/fs as they are, or omega = 2 pi f with
   // s in units of 1/Ts.
   const edges = bandEdges(band).map((f) => (curveAxis === 'normalized' ? f : 2 * Math.PI * f));
+  const markers = curveAxis === 'normalized' ? rateMarkers(curves.map(({ trace }) => trace.decimation || 1), bandEdges(band)) : [];
   return {
     kind: 'response',
     axis: curveAxis,
     range: { low, high: Math.max(high, low + 1) },
     ...(edges.length ? { band: edges } : {}),
+    ...(markers.length ? { markers } : {}),
     ...(quantity === 'phase' ? { quantity: 'phase' } : {}),
     ...(dbfs && quantity !== 'phase' && curveAxis === 'normalized' ? { units: 'dBFS' } : {}),
     traces: [
@@ -16722,12 +16926,18 @@ function responsePlot(traces, variable, { sAxis = 'omega', band = null, quantity
           return other?.points.length ? [{ points: other.points, level }] : [];
         }) : [];
         const dbAt = (f, db) => (added.length ? powerSumDb(db + offset, added.map(({ points, level }) => curveDbAt(points, f) + level)) : db + offset);
+        // A downsampled output's noise over its spectrum: what it has at
+        // every frequency folding onto f, (1/M) times the sum of the M.
+        const fold = inDbfs && trace.noise && trace.decimation > 1 ? trace.decimation : 1;
+        const points = fold > 1
+          ? foldedPoints(trace, curve.points.filter(({ f }) => f <= 0.5 / fold), fold, dbAt)
+          : curve.points.map(({ f, db, phase }) => ({ f, db: quantity === 'phase' ? phase : dbAt(f, db) }));
         return {
           label: trace.label,
           color: trace.color,
           ...(trace.start ? { start: true } : {}),
           ...(trace.held?.key ? { hold: trace.held.key } : {}),
-          points: curve.points.map(({ f, db, phase }) => ({ f, db: quantity === 'phase' ? phase : dbAt(f, db) })),
+          points,
         };
       }),
     ],
@@ -16887,11 +17097,11 @@ __exports.quantize = quantize;
 __exports.realize = realize;
 __exports.prepareSimulation = prepareSimulation;
 __exports.sweepAmplitudes = sweepAmplitudes;
-let blockTransferFunction, coefficientValue, delayTermsOf, denseCoefficients, hasDelays, mixedPeriods, signalDomains, signalFlowGraph, withCoefficients; __bind(() => { ({ blockTransferFunction, coefficientValue, delayTermsOf, denseCoefficients, hasDelays, mixedPeriods, signalDomains, signalFlowGraph, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
+let blockTransferFunction, coefficientValue, delayTermsOf, denseCoefficients, hasDelays, mixedPeriods, signalDomains, signalFlowGraph, signalRates, withCoefficients; __bind(() => { ({ blockTransferFunction, coefficientValue, delayTermsOf, denseCoefficients, hasDelays, mixedPeriods, signalDomains, signalFlowGraph, signalRates, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
 let expm; __bind(() => { ({ expm } = __require("src/core/analysis/sampling.js")); });
 let aliasedFrequency; __bind(() => { ({ aliasedFrequency } = __require("src/core/analysis/spectrum.js")); });
 let evaluateExpression; __bind(() => { ({ evaluateExpression } = __require("src/core/analysis/bode.js")); });
-let TRANSFER_FUNCTION_TYPES, ditherVariance, isBlockIn, parseDither, parseGain, parseLevels, parseTone; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, ditherVariance, isBlockIn, parseDither, parseGain, parseLevels, parseTone } = __require("src/core/transfer-function.js")); });
+let TRANSFER_FUNCTION_TYPES, ditherVariance, isBlockIn, isRateChanger, parseDither, parseGain, parseLevels, parseTone; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, ditherVariance, isBlockIn, isRateChanger, parseDither, parseGain, parseLevels, parseTone } = __require("src/core/transfer-function.js")); });
 let analyzedCircuit, canonicalNetName; __bind(() => { ({ analyzedCircuit, canonicalNetName } = __require("src/core/model.js")); });
 let seededRandom; __bind(() => { ({ seededRandom } = __require("src/core/analysis/cmaes.js")); });
 let rationalMultiply; __bind(() => { ({ rationalMultiply } = __require("src/core/analysis/rational.js")); });
@@ -16919,6 +17129,12 @@ let rationalMultiply; __bind(() => { ({ rationalMultiply } = __require("src/core
  * ripple times the DAC's code, say) is no transfer function, so it is
  * worked out a sample at a time, as a quantizer is, in the order its
  * inputs need it.
+ *
+ * With rate changers it steps at the fastest rate's ticks (signalRates): a
+ * slower signal holds its value between its samples, its H(z) blocks
+ * stepping and its sources drawing only at its own, one linear map for
+ * each pattern of rates with a sample at a tick; an upsampler gives its
+ * input's sample, else zero.
  */
 
 
@@ -16980,6 +17196,8 @@ function solveLoop(G, H) {
   return a.map((row, i) => row.slice(n).map((v) => v / a[i][i]));
 }
 
+const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+
 const dot = (row, x) => {
   let sum = 0;
   for (let i = 0; i < row.length; i++) sum += row[i] * x[i];
@@ -16996,13 +17214,16 @@ function matVec(M, x, out) {
  * number), `sources` (the analysis's source settings: a source set to a
  * constant holds it, the rest are zero), `input` (the source the sine
  * drives), `output` (a signal key for the output tone), `frequency` (f/fs
- * of the sine, made coherent with the window), `samples` (the window),
+ * of the sine in the ticks, made coherent with the window), `samples` (the
+ * window, in the output's samples: a downsampled output's take
+ * `decimation` ticks each),
  * `segment` (a whole number of cycles of each tone source in each run of
  * this many samples: the spectrum's segment; the window by default),
  * `warmup`, `subSteps`. Dither is a dither source in the diagram: each
  * draws its own sequence, the same every run.
- * Returns `{ ok, fullScale, frequency, signals, run }`:
- * `signals` `[{ key, name, domain, role }]`, `run(amplitude)` (dBFS) gives
+ * Returns `{ ok, fullScale, frequency, decimation?, signals, run }`:
+ * `signals` `[{ key, name, domain, role, ticks? }]` (`ticks` a slower
+ * signal's period), `run(amplitude)` (dBFS) gives
  * `{ peaks (per signal, over the window), tone (the output's amplitude at
  * the input frequency), overloaded, quantizers }`, `quantizers` each
  * quantizer's `{ refdes, levels, gain, errorVariance }`: its output fitted
@@ -17027,6 +17248,12 @@ function prepareSimulation(circuit, options = {}) {
     if (parts.some((c) => isBlockIn(c, 's'))) return failure('no-clock', 'a continuous-time diagram needs a sampler to be simulated (it sets the clock)');
     domain = new Map([...signals.keys()].map((key) => [key, 'z']));
   }
+  // Each sampled signal's period in ticks (the fastest rate's, the
+  // sampler's where there is one): 1 for a diagram of one rate.
+  const rated = signalRates({ circuit, signals }, samplers.length ? domain : null);
+  if (!rated.ok) return failure(rated.code, rated.error);
+  const ticksOf = (key) => rated.rate.get(key) || 1;
+  const multirate = rated.multirate;
   const num = (expression) => evaluateExpression(coefficientValue(String(expression).replace(/\s/g, '')), values);
   let T = 1;
   try {
@@ -17255,10 +17482,18 @@ function prepareSimulation(circuit, options = {}) {
   const pQuant = new Map(quantizers.map((c, k) => [c.refdes, samplers.length + discreteSources.length + k]));
   const pProduct = new Map(products.map((product, k) => [product.out, samplers.length + discreteSources.length + quantizers.length + k]));
   const pSize = samplers.length + discreteSources.length + quantizers.length + products.length;
-  const Gd = zero(disc.length, disc.length);
-  const Hd = zero(disc.length, md + pSize);
-  try {
+  // A slower signal holds its value between its samples: the map takes its
+  // last value (`held`, after the states and p) where it has none. Each
+  // pattern of the rates that have a sample at a tick is its own map.
+  const period = disc.map((signal) => ticksOf(signal.key));
+  const held = multirate ? disc.length : 0;
+  const width = md + pSize + held;
+  const outputIndexOf = (component) => disc.findIndex((s) => s.driver && !s.driver.source && s.driver.comp === component.refdes);
+  const buildMap = (active) => {
+    const Gd = zero(disc.length, disc.length);
+    const Hd = zero(disc.length, width);
     for (const [i, signal] of disc.entries()) {
+      if (!active(i)) { Hd[i][md + pSize + i] = 1; continue; }
       if (sourceValue.has(signal.key)) { Hd[i][md + pSource.get(signal.key)] = 1; continue; }
       if (!signal.driver) continue;
       const component = circuit.components.get(signal.driver.comp);
@@ -17276,41 +17511,72 @@ function prepareSimulation(circuit, options = {}) {
         if (pProduct.has(signal.key)) { Hd[i][md + pProduct.get(signal.key)] = 1; continue; }
         const { gain, signal: from } = multiplyOf(component);
         feed(gain, from);
+      } else if (isRateChanger(component)) {
+        // A downsampler passes on the sample it keeps; an upsampler its
+        // input's sample, and a zero at a tick its input has none.
+        const input = signalAt(component, 'in');
+        if (input && di.has(input.key) && active(di.get(input.key))) feed(1, input);
       }
+    }
+    const Md = solveLoop(Gd, Hd);
+    if (!Md) return failure('algebraic-loop', 'a sampled loop with no delay has a gain of exactly 1');
+    // Quantizers and products in the order their inputs need them; one that
+    // needs its own output (no delay round its loop) cannot be worked out.
+    // One with no sample at this tick holds.
+    const rowOf = (key) => (key && di.has(key) ? Md[di.get(key)] : null);
+    const nodes = [
+      ...quantizers.filter((q) => active(outputIndexOf(q))).map((q) => ({ refdes: q.refdes, levels: levels.get(q.refdes), rows: [rowOf(signalAt(q, 'in')?.key)], p: md + pQuant.get(q.refdes) })),
+      ...products.filter((product) => active(di.get(product.out))).map((product) => ({ refdes: product.component.refdes, product: true, gain: product.gain, rows: product.inputs.map(rowOf), p: md + pProduct.get(product.out) })),
+    ];
+    const order = [];
+    const pending = new Set(nodes);
+    while (pending.size) {
+      const ready = [...pending].find((node) => node.rows.every((row) => !row || [...pending].every((other) => Math.abs(row[other.p]) < 1e-12)));
+      if (!ready) {
+        const stuck = [...pending][0];
+        return failure('delay-free-loop', `${stuck.refdes} sits in a loop with no delay: ${stuck.product ? 'its inputs need' : 'its input needs'} its own output`);
+      }
+      order.push(ready);
+      pending.delete(ready);
+    }
+    return { ok: true, Md, order };
+  };
+  // Every pattern a run meets: one per tick of the rates' common period.
+  const distinct = [...new Set(period)].sort((a, b) => a - b);
+  const cycle = distinct.reduce((l, p) => (l * p) / gcd(l, p), 1);
+  if (cycle > 65536) return failure('unsimulatable', 'the rates repeat only every ' + cycle + ' ticks: too many to simulate');
+  const maps = new Map();
+  const patternAt = new Array(cycle);
+  try {
+    for (let n = 0; n < cycle; n++) {
+      const key = multirate ? distinct.filter((p) => n % p === 0).join(',') : '';
+      if (!maps.has(key)) {
+        const built = buildMap(multirate ? (i) => i >= 0 && n % period[i] === 0 : () => true);
+        if (!built.ok) return built;
+        maps.set(key, built);
+      }
+      patternAt[n] = maps.get(key);
     }
   } catch (err) {
     return failure('unsimulatable', err.message);
   }
-  const Md = solveLoop(Gd, Hd);
-  if (!Md) return failure('algebraic-loop', 'a sampled loop with no delay has a gain of exactly 1');
-  // Quantizers and products in the order their inputs need them; one that
-  // needs its own output (no delay round its loop) cannot be worked out.
-  const rowOf = (key) => (key && di.has(key) ? Md[di.get(key)] : null);
-  const nodes = [
-    ...quantizers.map((q) => ({ refdes: q.refdes, levels: levels.get(q.refdes), rows: [rowOf(signalAt(q, 'in')?.key)], p: md + pQuant.get(q.refdes) })),
-    ...products.map((product) => ({ refdes: product.component.refdes, product: true, gain: product.gain, rows: product.inputs.map(rowOf), p: md + pProduct.get(product.out) })),
-  ];
-  const order = [];
-  const pending = new Set(nodes);
-  while (pending.size) {
-    const ready = [...pending].find((node) => node.rows.every((row) => !row || [...pending].every((other) => Math.abs(row[other.p]) < 1e-12)));
-    if (!ready) {
-      const stuck = [...pending][0];
-      return failure('delay-free-loop', `${stuck.refdes} sits in a loop with no delay: ${stuck.product ? 'its inputs need' : 'its input needs'} its own output`);
-    }
-    order.push(ready);
-    pending.delete(ready);
-  }
-  const rounding = order.filter((node) => !node.product);
+  const mapAt = (n) => patternAt[n % cycle];
+  // At tick 0 every rate has a sample: every quantizer rounds.
+  const rounding = mapAt(0).order.filter((node) => !node.product);
 
   // ----- the continuous dynamics, F, and the period's segments.
+  // The window and the warmup count the output's samples: a downsampled
+  // output takes `decimation` ticks a sample.
+  const decimation = di.has(options.output) ? ticksOf(options.output) : 1;
   const window = Math.max(64, Math.round(options.samples || 4096));
   const warmup = Math.max(0, Math.round(options.warmup ?? window / 4));
-  // f/fs 0 is a constant input (DC) of the amplitude.
-  const cycles = options.frequency === 0 ? 0 : Math.max(1, Math.round((options.frequency || 1 / 256) * window));
-  const frequency = cycles / window;
+  const windowTicks = window * decimation;
+  const warmupTicks = warmup * decimation;
+  // f/fs 0 is a constant input (DC) of the amplitude; f/fs is of the ticks.
+  const cycles = options.frequency === 0 ? 0 : Math.max(1, Math.round((options.frequency || 1 / 256) * windowTicks));
+  const frequency = cycles / windowTicks;
   // A tone source's cycles are whole in each segment the spectrum averages.
-  const coherent = Math.max(1, Math.round(options.segment || window));
+  const coherent = Math.max(1, Math.round(options.segment || window)) * decimation;
   const omega = (2 * Math.PI * frequency) / T;
   const F = zero(size, size);
   for (const block of blocks) {
@@ -17385,7 +17651,7 @@ function prepareSimulation(circuit, options = {}) {
     }
   }
   const quantized = (signal) => steppedKeys.has(signal.key);
-  const signalList = [...cont, ...disc].map((signal) => ({ key: signal.key, name: named(signal), domain: domain.get(signal.key), role: roleOf(signal), ...(quantized(signal) ? { quantized: true } : {}) }));
+  const signalList = [...cont, ...disc].map((signal) => ({ key: signal.key, name: named(signal), domain: domain.get(signal.key), role: roleOf(signal), ...(quantized(signal) ? { quantized: true } : {}), ...(domain.get(signal.key) === 'z' && ticksOf(signal.key) > 1 ? { ticks: ticksOf(signal.key) } : {}) }));
   const outputIndex = signalList.findIndex((s) => s.key === options.output);
 
   const samplerRows = samplers.map((c) => {
@@ -17401,9 +17667,11 @@ function prepareSimulation(circuit, options = {}) {
    *  `{ index, t, v }` each, t in sample periods from the window's start: a
    *  sampled net once a sample, a continuous one at the sub-steps too). */
   const run = (amplitudeDb, { record = false, levels = false, phase = 0, waves = [] } = {}) => {
-    const traced = waves.filter((i) => i >= 0 && i < signalList.length).map((index) => ({ index, continuous: index < cont.length, t: [], v: [] }));
+    const traced = waves.filter((i) => i >= 0 && i < signalList.length).map((index) => ({ index, continuous: index < cont.length, ticks: index < cont.length ? 1 : period[index - cont.length], t: [], v: [] }));
+    // A slower net once a sample of its own.
     const traceSample = (n) => {
       for (const wave of traced) {
+        if (n % wave.ticks) continue;
         wave.t.push(n);
         wave.v.push(wave.continuous ? Yc[wave.index] : Yd[wave.index - cont.length]);
       }
@@ -17418,7 +17686,7 @@ function prepareSimulation(circuit, options = {}) {
     const wavesOut = () => (traced.length ? { waves: traced } : {});
     const recorded = record && outputIndex >= 0 ? new Float64Array(window) : null;
     const wanted = levels === true ? signalList.map((_, i) => i) : Array.isArray(levels) ? levels : [];
-    const magnitudes = wanted.length ? signalList.map((_, i) => (wanted.includes(i) ? new Float64Array(window) : null)) : null;
+    const magnitudes = wanted.length ? signalList.map((_, i) => (wanted.includes(i) ? new Float64Array(windowTicks) : null)) : null;
     const leveled = magnitudes ? wanted.filter((i) => i >= 0 && i < signalList.length) : [];
     const amplitude = fullScale * 10 ** (amplitudeDb / 20);
     // At DC the sine holds its peak: the amplitude itself.
@@ -17436,7 +17704,7 @@ function prepareSimulation(circuit, options = {}) {
     }
     let xd = new Float64Array(md);
     const p = new Float64Array(pSize);
-    const state = new Float64Array(md + pSize);
+    const state = new Float64Array(width);
     const Yc = new Float64Array(cont.length);
     const Yd = new Float64Array(disc.length);
     const history = new Map(dacInputs.map((key) => [key, new Float64Array(maxShift + 1)]));
@@ -17447,7 +17715,7 @@ function prepareSimulation(circuit, options = {}) {
     const halves = [new Float64Array(m + md), new Float64Array(m + md)];
     let re = 0;
     let im = 0;
-    const total = warmup + window;
+    const total = warmupTicks + windowTicks;
     // Each dither source its own sequence, the same every run: amplitudes
     // compare like for like.
     const sourceDither = new Map([...pSource.keys()].filter((key) => sourceValue.get(key).dither).map((key, i) => {
@@ -17463,8 +17731,7 @@ function prepareSimulation(circuit, options = {}) {
         const set = sourceValue.get(key).dither.frequency;
         if (set === 0) return [key, () => a];
         const f = Math.max(1, Math.round(set * coherent)) / coherent;
-        let k = 0;
-        return [key, () => a * Math.sin(2 * Math.PI * f * k++)];
+        return [key, (n) => a * Math.sin(2 * Math.PI * f * n)];
       }
       return [key, shape === 'rect' ? () => a * (2 * draw() - 1)
         : shape === 'tri' ? () => a * (draw() - draw())
@@ -17472,7 +17739,7 @@ function prepareSimulation(circuit, options = {}) {
             : () => (a * (coin() + coin())) / 2];
     }));
     // Each quantizer's output against its input, for its effective gain.
-    const fits = new Map(rounding.map((node) => [node, { vy: 0, vv: 0, yy: 0 }]));
+    const fits = new Map(rounding.map((node) => [node.refdes, { vy: 0, vv: 0, yy: 0, count: 0 }]));
     // A state a thousand times full scale: the loop has run away.
     const limit = 1e3 * fullScale;
     const track = (measuring) => {
@@ -17481,16 +17748,22 @@ function prepareSimulation(circuit, options = {}) {
       for (let i = 0; i < cont.length; i++) { const v = Math.abs(Yc[i]); if (v > peaks[i]) peaks[i] = v; }
     };
     for (let n = 0; n < total; n++) {
-      const measuring = n >= warmup;
+      const measuring = n >= warmupTicks;
+      const map = mapAt(n);
+      // The output has a sample at this tick.
+      const sample = measuring && !(n % decimation);
       // Just before t = nT: the samplers read.
       samplerRows.forEach((row, k) => { p[k] = row ? dot(row, X) : 0; });
       for (const [key, k] of pSource) {
+        // A slower source draws only at its own samples.
+        if (multirate && n % ticksOf(key)) continue;
         const source = sourceValue.get(key);
-        p[k] = source.driven ? amplitude * Math.sin(2 * Math.PI * frequency * n + phase) : source.dither ? sourceDither.get(key)() : source.constant;
+        p[k] = source.driven ? amplitude * Math.sin(2 * Math.PI * frequency * n + phase) : source.dither ? sourceDither.get(key)(n) : source.constant;
       }
       state.set(xd, 0);
       state.set(p, md);
-      for (const node of order) {
+      if (held) state.set(Yd, md + pSize);
+      for (const node of map.order) {
         if (node.product) {
           let v = node.gain;
           for (const row of node.rows) v *= row ? dot(row, state) : 0;
@@ -17500,22 +17773,22 @@ function prepareSimulation(circuit, options = {}) {
         const y = node.rows[0] ? dot(node.rows[0], state) : 0;
         state[node.p] = quantize(y, node.levels);
         if (measuring) {
-          const fit = fits.get(node);
-          fit.vy += y * state[node.p]; fit.vv += y * y; fit.yy += state[node.p] ** 2;
+          const fit = fits.get(node.refdes);
+          fit.vy += y * state[node.p]; fit.vv += y * y; fit.yy += state[node.p] ** 2; fit.count += 1;
         }
       }
-      matVec(Md, state, Yd);
+      matVec(map.Md, state, Yd);
       // The continuous signals at nT^-, and the output, for the peaks and the tone.
       matVec(Mc, X, Yc);
       if (measuring) {
         for (let i = 0; i < cont.length; i++) { const v = Math.abs(Yc[i]); if (v > peaks[i]) peaks[i] = v; }
         for (let i = 0; i < disc.length; i++) { const v = Math.abs(Yd[i]); if (v > peaks[cont.length + i]) peaks[cont.length + i] = v; }
-        for (const i of leveled) magnitudes[i][n - warmup] = Math.abs(i < cont.length ? Yc[i] : Yd[i - cont.length]);
-        traceSample(n - warmup);
-        if (outputIndex >= 0) {
+        for (const i of leveled) magnitudes[i][n - warmupTicks] = Math.abs(i < cont.length ? Yc[i] : Yd[i - cont.length]);
+        traceSample(n - warmupTicks);
+        if (outputIndex >= 0 && sample) {
           const y = outputIndex < cont.length ? Yc[outputIndex] : Yd[outputIndex - cont.length];
-          if (recorded) recorded[n - warmup] = y;
-          const phase = 2 * Math.PI * frequency * (n - warmup);
+          if (recorded) recorded[(n - warmupTicks) / decimation] = y;
+          const phase = 2 * Math.PI * frequency * (n - warmupTicks);
           re += y * Math.cos(phase);
           im -= y * Math.sin(phase);
         }
@@ -17524,6 +17797,11 @@ function prepareSimulation(circuit, options = {}) {
       const nextXd = new Float64Array(md);
       for (const block of zblocks) {
         const { A, n: order2 } = block.model;
+        // A slower block steps only at its own samples.
+        if (multirate && n % ticksOf(block.out)) {
+          for (let r = 0; r < order2; r++) nextXd[block.offset + r] = xd[block.offset + r];
+          continue;
+        }
         const u = block.input && di.has(block.input) ? Yd[di.get(block.input)] : 0;
         for (let r = 0; r < order2; r++) {
           let v = 0;
@@ -17544,7 +17822,7 @@ function prepareSimulation(circuit, options = {}) {
         }
         if (segment.start > 0 || segment.impulses.length) {
           track(measuring);
-          if (measuring && segment.start > 0 && traced.length) traceBetween(n - warmup + segment.start / T);
+          if (measuring && segment.start > 0 && traced.length) traceBetween(n - warmupTicks + segment.start / T);
         }
         matVec(segment.phi, X, next);
         [X, next] = [next, X];
@@ -17553,7 +17831,7 @@ function prepareSimulation(circuit, options = {}) {
         return { peaks: peaks.map(() => Infinity), tone: Infinity, overloaded: true, ...wavesOut() };
       }
       if (measuring) {
-        const half = halves[n - warmup < window / 2 ? 0 : 1];
+        const half = halves[n - warmupTicks < windowTicks / 2 ? 0 : 1];
         for (let i = 0; i < m; i++) { const v = Math.abs(X[i]); if (v > half[i]) half[i] = v; }
         for (let i = 0; i < md; i++) { const v = Math.abs(xd[i]); if (v > half[m + i]) half[m + i] = v; }
       }
@@ -17564,9 +17842,9 @@ function prepareSimulation(circuit, options = {}) {
     const tone = outputIndex >= 0 ? ((aliasedFrequency(frequency) === 0 ? 1 : 2) * Math.hypot(re, im)) / window : null;
     // y = k v + e, k by least squares: e is then uncorrelated with v.
     const quantizerFits = rounding.map((q) => {
-      const { vy, vv, yy } = fits.get(q);
+      const { vy, vv, yy, count } = fits.get(q.refdes);
       const gain = vv > 0 ? vy / vv : 1;
-      return { refdes: q.refdes, levels: q.levels, gain, errorVariance: Math.max(0, yy - gain * vy) / window };
+      return { refdes: q.refdes, levels: q.levels, gain, errorVariance: Math.max(0, yy - gain * vy) / Math.max(1, count) };
     });
     return { peaks: Array.from(peaks), tone, overloaded: false, quantizers: quantizerFits, ...(recorded ? { samples: recorded } : {}), ...(magnitudes ? { magnitudes } : {}), ...wavesOut() };
   };
@@ -17576,7 +17854,7 @@ function prepareSimulation(circuit, options = {}) {
     const set = sourceValue.get(source.key)?.dither;
     return set && set.shape !== 'sine' ? [{ id: source.id, variance: ditherVariance(set.shape, set.amplitude * fullScale) }] : [];
   });
-  return { ok: true, fullScale, frequency, period: T, signals: signalList, dithers, run };
+  return { ok: true, fullScale, frequency, period: T, ...(decimation > 1 ? { decimation } : {}), signals: signalList, dithers, run };
 }
 
 /** The amplitudes a sweep runs, in dBFS: coarse far below full scale, a
@@ -17920,7 +18198,7 @@ function simulatedSpectrum({ circuit, options, amplitude, segment }) {
     if (!sim.ok) return { error: sim.error };
     const run = sim.run(amplitude, { record: true });
     if (run.overloaded || !run.samples) return { overloaded: !!run.overloaded, fullScale: sim.fullScale, frequency: sim.frequency };
-    return { raw: outputSpectrum(run.samples, { segment, variance: 1 / 3 }), quantizers: run.quantizers, dithers: sim.dithers, fullScale: sim.fullScale, frequency: sim.frequency };
+    return { raw: outputSpectrum(run.samples, { segment, variance: 1 / 3, decimation: sim.decimation || 1 }), quantizers: run.quantizers, dithers: sim.dithers, fullScale: sim.fullScale, frequency: sim.frequency };
   } catch (error) {
     return { error: error.message };
   }
@@ -17953,7 +18231,7 @@ function simulatedMeasures({ circuit, options, amplitude, segment, edges = [] })
     const run = sim.run(amplitude, { record: true });
     if (run.overloaded || !run.samples) return { overloaded: true, signals, fullScale: sim.fullScale };
     const db = (value) => (value > 0 ? 20 * Math.log10(value / sim.fullScale) : null);
-    const raw = outputSpectrum(run.samples, { segment, variance: 1 / 3 });
+    const raw = outputSpectrum(run.samples, { segment, variance: 1 / 3, decimation: sim.decimation || 1 });
     const band = edges.length ? inBand(raw, sim.frequency, edges, { fullScale: sim.fullScale }) : null;
     const measures = {
       sndr: band?.sndr ?? null,
@@ -18049,7 +18327,7 @@ function fft(re, im) {
  * scaled so white noise of variance `variance` reads 0 dB, and the raw
  * (averaged) powers for `inBand`; `n` is the segment, `averages` how many.
  */
-function outputSpectrum(samples, { variance = 1 / 3, segment = samples.length } = {}) {
+function outputSpectrum(samples, { variance = 1 / 3, segment = samples.length, decimation = 1 } = {}) {
   const n = Math.min(segment, samples.length);
   if (n < 16 || (n & (n - 1))) return null;
   const window = Array.from({ length: n }, (_, i) => 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / n));
@@ -18068,8 +18346,10 @@ function outputSpectrum(samples, { variance = 1 / 3, segment = samples.length } 
   for (let k = 0; k <= n / 2; k++) power[k] /= averages;
   const scale = variance * w2;
   const points = [];
-  for (let k = 1; k <= n / 2; k++) points.push({ f: k / n, db: 10 * Math.log10(power[k] / scale || 1e-30) });
-  return { points, power, n, w1, w2, variance, averages };
+  // A downsampled output's bins in f/fs of the ticks: k / (n M).
+  const q = Math.max(1, Math.round(decimation));
+  for (let k = 1; k <= n / 2; k++) points.push({ f: k / (n * q), db: 10 * Math.log10(power[k] / scale || 1e-30) });
+  return { points, power, n, w1, w2, variance, averages, ...(q > 1 ? { decimation: q } : {}) };
 }
 
 /** Where a sampled sine of `frequency` (f/fs, any) shows: its alias, 0 to 0.5. */
@@ -18085,7 +18365,8 @@ function aliasedFrequency(frequency) {
  */
 function dbfsSpectrum(spectrum, fullScale) {
   const reference = (fullScale * spectrum.w1 / 2) ** 2;
-  return spectrum.power.slice(1).map((p, i) => ({ f: (i + 1) / spectrum.n, db: 10 * Math.log10(p / reference || 1e-30) }));
+  const q = spectrum.decimation || 1;
+  return spectrum.power.slice(1).map((p, i) => ({ f: (i + 1) / (spectrum.n * q), db: 10 * Math.log10(p / reference || 1e-30) }));
 }
 
 /**
@@ -18110,11 +18391,13 @@ function dbfsOffset(spectrum, fullScale, { noise, amplitude }) {
 function inBand(spectrum, frequency, edges, { fullScale = 1 } = {}) {
   if (!spectrum || !edges.length) return null;
   const { power, n, w2 } = spectrum;
+  // A downsampled output's bins: f/fs of the ticks times M is its own.
+  const q = spectrum.decimation || 1;
   const [f1, f2] = edges.length === 2 ? edges : [0, edges[0]];
-  const tone = Math.round(aliasedFrequency(frequency) * n);
+  const tone = Math.round(aliasedFrequency(frequency * q) * n);
   let signal = 0;
   let noise = 0;
-  for (let k = Math.max(tone ? 1 : 0, Math.ceil(f1 * n)); k <= Math.min(n / 2, Math.floor(f2 * n)); k++) {
+  for (let k = Math.max(tone ? 1 : 0, Math.ceil(f1 * q * n)); k <= Math.min(n / 2, Math.floor(f2 * q * n)); k++) {
     // A tone at DC: its bins either side counted twice, the mirrored half,
     // so its power is the DC's square as a sine's is half its amplitude's.
     if (Math.abs(k - tone) <= 3) signal += tone || !k ? power[k] : 2 * power[k];
@@ -18140,9 +18423,10 @@ function inBand(spectrum, frequency, edges, { fullScale = 1 } = {}) {
 function plotSpectrum(spectrum, frequency, { bins = 600 } = {}) {
   if (!spectrum) return [];
   const { points, n } = spectrum;
-  const tone = Math.round(aliasedFrequency(frequency) * n);
+  const q = spectrum.decimation || 1;
+  const tone = Math.round(aliasedFrequency(frequency * q) * n);
   const low = Math.log10(points[0].f);
-  const high = Math.log10(0.5);
+  const high = Math.log10(0.5 / q);
   const out = [];
   let bucket = [];
   let edge = low;
@@ -25452,7 +25736,7 @@ const SYMBOL_CATEGORY_RULES = [
   // Block-diagram drawing parts; the signal-flow analysis reads only the
   // next group's.
   ['Block diagram', /^(block|filter_(lpf|hpf|bpf|notch)|oscillator)$/],
-  ['Signal flow', /^(signal_(sum|multiply)|tf_(s|z|dac|dac_rz|delay|zdelay)|gain|sampler|quantizer|dither|tone)$/],
+  ['Signal flow', /^(signal_(sum|multiply)|tf_(s|z|dac|dac_rz|delay|zdelay)|gain|sampler|downsample|upsample|quantizer|dither|tone)$/],
 ];
 
 /** Block-diagram and signal-flow parts: the router keeps two cells of room
@@ -26002,7 +26286,7 @@ let switch_open, switch_closed; __bind(() => { ({ switch_open, switch_closed } =
 let block; __bind(() => { ({ block } = __require("src/core/components/block.js")); });
 let chopper; __bind(() => { ({ chopper } = __require("src/core/components/chopper.js")); });
 let mux2; __bind(() => { ({ mux2 } = __require("src/core/components/mux.js")); });
-let signal_sum, signal_multiply, oscillator, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, tf_dac, tf_dac_rz, tf_delay, tf_zdelay, gain, sampler, quantizer, dither, tone; __bind(() => { ({ signal_sum, signal_multiply, oscillator, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, tf_dac, tf_dac_rz, tf_delay, tf_zdelay, gain, sampler, quantizer, dither, tone } = __require("src/core/components/signal-flow.js")); });
+let signal_sum, signal_multiply, oscillator, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, tf_dac, tf_dac_rz, tf_delay, tf_zdelay, gain, sampler, quantizer, dither, tone, downsample, upsample; __bind(() => { ({ signal_sum, signal_multiply, oscillator, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, tf_dac, tf_dac_rz, tf_delay, tf_zdelay, gain, sampler, quantizer, dither, tone, downsample, upsample } = __require("src/core/components/signal-flow.js")); });
 
 
 
@@ -26130,6 +26414,8 @@ const symbolTypes = {
   tf_zdelay,
   gain,
   sampler,
+  downsample,
+  upsample,
   quantizer,
   dither,
   tone,
@@ -27050,6 +27336,37 @@ const sampler = defineSymbol({
 });
 
 /**
+ * Rate changers on the sampled side: a downsampler keeps every M-th sample
+ * (a decimator's rate change, `↓M`), an upsampler puts L - 1 zeros after
+ * each sample (an interpolator's, `↑L`). The factor is the value, drawn
+ * inside the box as math. Neither filters: draw the decimation or
+ * interpolation filter as H(z) blocks beside it.
+ */
+function rateChanger(type, description, refPrefix) {
+  return defineSymbol({
+    type,
+    description,
+    refPrefix,
+    terminals: [
+      { name: 'in', x: -80, y: 0, direction: 'input', signalRole: 'input', dir: { x: -1, y: 0 } },
+      { name: 'out', x: 80, y: 0, direction: 'output', signalRole: 'output', dir: { x: 1, y: 0 } },
+    ],
+    bbox: { x: -80, y: -80, w: 160, h: 160 },
+    graphics: [
+      { kind: 'rect', x: -80, y: -80, w: 160, h: 160, style: 'emph' },
+    ],
+    textPos: null,
+    refPos: null,
+    labelOffset: null,
+    defaultValue: '2',
+    allowFloatingTerminals: true,
+  });
+}
+
+const downsample = rateChanger('downsample', 'Downsampler (keeps every M-th sample)', 'DEC');
+const upsample = rateChanger('upsample', 'Upsampler (L - 1 zeros after each sample)', 'INT');
+
+/**
  * A dither source: random numbers into a sampled signal, one a sample --
  * rectangular (uniform over +-A) or triangular (two uniforms added, over
  * +-A, peaking at 0), or two or three levels. Its value is the shape and A in full scale (`rect 1`
@@ -27147,6 +27464,8 @@ __exports.tf_delay = tf_delay;
 __exports.tf_zdelay = tf_zdelay;
 __exports.gain = gain;
 __exports.sampler = sampler;
+__exports.downsample = downsample;
+__exports.upsample = upsample;
 __exports.dither = dither;
 __exports.tone = tone;
 __exports.quantizer = quantizer;
@@ -30017,7 +30336,7 @@ let LABEL_FONT_SIZES, TABLE_RULE_ROOM_EM, labelFontSize, strokeWidth; __bind(() 
 let cloneLiteralPath, clonePath, crossNetOverlaps, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments; __bind(() => { ({ cloneLiteralPath, clonePath, crossNetOverlaps, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } = __require("src/core/wiring.js")); });
 let curvedArrowGeometry, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue, timingBreakGeometry; __bind(() => { ({ curvedArrowGeometry, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue, timingBreakGeometry } = __require("src/core/line-style.js")); });
 let SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey; __bind(() => { ({ SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } = __require("src/core/beats.js")); });
-let TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, parseDither, parseGain, parseLevels, parseTone, readTransferFunction, toneValueText, transferFunctionDisplay, transferFunctionLines; __bind(() => { ({ TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, parseDither, parseGain, parseLevels, parseTone, readTransferFunction, toneValueText, transferFunctionDisplay, transferFunctionLines } = __require("src/core/transfer-function.js")); });
+let TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, isRateChanger, parseDither, parseGain, parseLevels, parseRate, parseTone, readTransferFunction, toneValueText, transferFunctionDisplay, transferFunctionLines; __bind(() => { ({ TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, isRateChanger, parseDither, parseGain, parseLevels, parseRate, parseTone, readTransferFunction, toneValueText, transferFunctionDisplay, transferFunctionLines } = __require("src/core/transfer-function.js")); });
 let normalizePartsTable, partsTableKey, partsTableLayout; __bind(() => { ({ normalizePartsTable, partsTableKey, partsTableLayout } = __require("src/core/parts-table.js")); });
 let normalizeFigure; __bind(() => { ({ normalizeFigure } = __require("src/core/figures.js")); });
 let fanStacks, normalizeStack, segmentEnters, stackRects, stackedBoxes, wireEchoes; __bind(() => { ({ fanStacks, normalizeStack, segmentEnters, stackRects, stackedBoxes, wireEchoes } = __require("src/core/box-stack.js")); });
@@ -33520,7 +33839,8 @@ class Circuit {
     const sourceTex = (v) => (typeof v === 'string' ? v : Number(v.toPrecision(6)));
     const ditherTex = () => { const { shape, amplitude } = parseDither(component.value); return `\\text{${shape}} \\pm ${sourceTex(amplitude)}\\text{ FS}`; };
     const toneTex = () => { const { amplitude, frequency } = parseTone(component.value); return `\\pm ${sourceTex(amplitude)}\\text{ FS, }f = ${sourceTex(frequency)}\\text{ }f_s`; };
-    const text = `$${quantizer ? `N = ${component.value}` : dither ? ditherTex() : tone ? toneTex() : gain ? gainDisplay(component.value) : transferFunctionDisplay(component.value, variable)}$`;
+    const rateTex = () => `${component.type === 'downsample' ? '\\downarrow' : '\\uparrow'} ${component.value}`;
+    const text = `$${isRateChanger(component) ? rateTex() : quantizer ? `N = ${component.value}` : dither ? ditherTex() : tone ? toneTex() : gain ? gainDisplay(component.value) : transferFunctionDisplay(component.value, variable)}$`;
     // A gain's short coefficient sits inside its triangle (centered on its
     // centroid, the part's origin); a longer one beside it, by one rule in
     // world terms: above a triangle the signal crosses horizontally, to the
@@ -33531,8 +33851,10 @@ class Circuit {
     // name (-g_1) clears the edges as a plain one (b_1) does.
     // A sampler's period and a quantizer's levels always go beside it.
     const sampler = component.type === 'sampler' || quantizer || dither || tone;
-    const inside = gain && !sampler && gainFitsInside(component.value);
-    const width = inside ? 'thin' : 'normal';
+    // A rate changer's factor is drawn inside its box, at the label's size.
+    const rate = isRateChanger(component);
+    const inside = rate || (gain && !sampler && gainFitsInside(component.value));
+    const width = inside && !rate ? 'thin' : 'normal';
     if (gain && !inside) {
       const flow = applyDir(component.transform, 1, 0);
       const world = Math.abs(flow.x) > 0 ? { x: 0, y: -3 * GRID } : { x: 3 * GRID, y: 0 };
@@ -33895,6 +34217,7 @@ class Circuit {
       if (c.type === 'quantizer') value = String(parseLevels(value));
       else if (c.type === 'dither') value = ditherValueText(parseDither(value));
       else if (c.type === 'tone') value = toneValueText(parseTone(value));
+      else if (isRateChanger(c)) value = String(parseRate(value));
       else if (isCoefficientBlock(c)) parseGain(value);
       else readTransferFunction(value, TRANSFER_FUNCTION_TYPES[c.type]);
       c.value = String(value).trim();
@@ -41015,13 +41338,13 @@ function strokeWidthOf(style, base = 'symbol') {
  * filled arrowhead out by half that outline so its tip meets the visible edge
  * rather than disappearing into the body. The insets by pin ("x,y"), built
  * once per drawing, and only for a wire that has an arrowhead at all. */
-const BODY_EDGE_PIN_TYPES = new Set(['block', 'signal_sum', 'signal_multiply', 'quantizer', ...Object.keys(TRANSFER_FUNCTION_TYPES)]);
+const BODY_EDGE_PIN_TYPES = new Set(['block', 'signal_sum', 'signal_multiply', 'quantizer', 'downsample', 'upsample', ...Object.keys(TRANSFER_FUNCTION_TYPES)]);
 
 /** Signal-flow inputs whose wires carry an arrowhead into them without
  *  being asked: a sum's or multiplier's inputs and a transfer function's
- *  input or a quantizer's (a gain's triangle already points the way). By
- *  pin ("x,y"). */
-const AUTO_ARROW_TYPES = new Set(['signal_sum', 'signal_multiply', 'quantizer', ...Object.keys(TRANSFER_FUNCTION_TYPES)]);
+ *  input, a quantizer's, or a rate changer's (a gain's triangle already
+ *  points the way). By pin ("x,y"). */
+const AUTO_ARROW_TYPES = new Set(['signal_sum', 'signal_multiply', 'quantizer', 'downsample', 'upsample', ...Object.keys(TRANSFER_FUNCTION_TYPES)]);
 
 function signalInputPins(circuit) {
   const pins = new Set();
@@ -41332,6 +41655,7 @@ function texToMathML(source) {
     parallel: '∥', cdot: '·', times: '×', pm: '±', mp: '∓',
     infty: '∞', approx: '≈', le: '≤', ge: '≥', leq: '≤', geq: '≥', neq: '≠', ne: '≠', to: '→', gg: '≫',
     ll: '≪', equiv: '≡', propto: '∝', partial: '∂', sim: '∼', lesssim: '≲', gtrsim: '≳',
+    rightarrow: '→', leftarrow: '←', uparrow: '↑', downarrow: '↓',
   };
   let requestedParallelSize = null;
   const skipSpaces = () => { while (text[index] === ' ') index += 1; };
@@ -46545,7 +46869,7 @@ let SYMBOL_CATEGORY_RULES; __bind(() => { ({ SYMBOL_CATEGORY_RULES } = __require
 let ComponentInstance, MOS_ANALYSIS_TYPES, REFERENCE_MARKER_TYPES, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerName; __bind(() => { ({ ComponentInstance, MOS_ANALYSIS_TYPES, REFERENCE_MARKER_TYPES, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerName } = __require("src/core/model.js")); });
 let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js")); });
 let PIN_RAIL_TYPES, railHang, railRotation; __bind(() => { ({ PIN_RAIL_TYPES, railHang, railRotation } = __require("src/core/pin-rails.js")); });
-let TRANSFER_FUNCTION_TYPES, parseDither, parseGain, parseLevels, parseTone, readTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, parseDither, parseGain, parseLevels, parseTone, readTransferFunction } = __require("src/core/transfer-function.js")); });
+let TRANSFER_FUNCTION_TYPES, parseDither, parseGain, parseLevels, parseRate, parseTone, readTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, parseDither, parseGain, parseLevels, parseRate, parseTone, readTransferFunction } = __require("src/core/transfer-function.js")); });
 let MOS_SIZE_OFFSET, MOS_SIZE_TYPES; __bind(() => { ({ MOS_SIZE_OFFSET, MOS_SIZE_TYPES } = __require("src/core/mos-size.js")); });
 let WAVEFORM_TYPES; __bind(() => { ({ WAVEFORM_TYPES } = __require("src/core/components/current.js")); });
 /**
@@ -46571,6 +46895,7 @@ function valueReads(type, value) {
     if (type === 'quantizer') parseLevels(value);
     else if (type === 'dither') parseDither(value);
     else if (type === 'tone') parseTone(value);
+    else if (type === 'downsample' || type === 'upsample') parseRate(value);
     else if (type === 'gain' || type === 'sampler') parseGain(value);
     else if (TRANSFER_FUNCTION_TYPES[type]) readTransferFunction(value, TRANSFER_FUNCTION_TYPES[type]);
     return true;
@@ -46595,7 +46920,7 @@ const PARTNERS = new Map([
   ['input', 'output'], ['switch_open', 'switch_closed'], ['adc', 'dac'], ['adc_diff', 'dac_diff'],
   ['current_source', 'voltage_source'], ['vccs', 'vcvs'], ['resistor', 'capacitor'],
   ['inverter', 'buffer'], ['tristate_inverter', 'tristate_buffer'],
-  ['signal_sum', 'signal_multiply'], ['filter_lpf', 'filter_hpf'], ['filter_bpf', 'filter_notch'], ['tf_s', 'tf_z'], ['tf_dac', 'tf_dac_rz'], ['tf_delay', 'tf_zdelay'], ['opamp', 'opamp_diff'], ['opamp_diff_cmfb', 'gm_cmfb'], ['comparator', 'comparator_clocked'],
+  ['signal_sum', 'signal_multiply'], ['filter_lpf', 'filter_hpf'], ['filter_bpf', 'filter_notch'], ['tf_s', 'tf_z'], ['tf_dac', 'tf_dac_rz'], ['tf_delay', 'tf_zdelay'], ['downsample', 'upsample'], ['opamp', 'opamp_diff'], ['opamp_diff_cmfb', 'gm_cmfb'], ['comparator', 'comparator_clocked'],
   ...['and', 'or', 'xor'].flatMap((gate) => [2, 3].map((n) => [`${gate}${n}_gate`, `n${gate}${n}_gate`])),
 ].flatMap(([a, b]) => [[a, b], [b, a]]));
 
@@ -49182,6 +49507,7 @@ function straightened(line) {
 __modules["src/core/transfer-function.js"] = function (__require, __exports) {
 __exports.isTransferFunction = isTransferFunction;
 __exports.isCoefficientBlock = isCoefficientBlock;
+__exports.parseRate = parseRate;
 __exports.parseDither = parseDither;
 __exports.parseTone = parseTone;
 __exports.ditherVariance = ditherVariance;
@@ -49242,9 +49568,21 @@ function isTransferFunction(component) {
 }
 
 /** A part whose value is one coefficient, drawn as math: a gain's k, a
- *  sampler's period T. */
+ *  sampler's period T, a rate changer's factor. */
 function isCoefficientBlock(component) {
-  return component?.type === 'gain' || component?.type === 'sampler' || component?.type === 'quantizer' || component?.type === 'dither' || component?.type === 'tone';
+  return component?.type === 'gain' || component?.type === 'sampler' || component?.type === 'quantizer' || component?.type === 'dither' || component?.type === 'tone' || isRateChanger(component);
+}
+
+/** The rate changers: a downsampler keeps every M-th sample (`downsample`,
+ *  its value M), an upsampler puts L - 1 zeros after each (`upsample`, L). */
+const RATE_CHANGER_TYPES = Object.freeze({ downsample: 'down', upsample: 'up' });
+const isRateChanger = (component) => Object.hasOwn(RATE_CHANGER_TYPES, component?.type || '');
+
+/** A rate changer's factor: a whole number of at least 2 (`8`, `M = 8`, `↓8`). */
+function parseRate(text) {
+  const source = String(text ?? '').trim().replace(/^[A-Za-z]\s*=\s*/, '').replace(/^[↓↑]\s*/, '');
+  if (!/^\d+$/.test(source) || Number(source) < 2) throw new Error('a rate changer\'s factor is a whole number of at least 2 (8 keeps every 8th sample)');
+  return Number(source);
 }
 
 /**
@@ -49689,6 +50027,8 @@ function defaultTransferFunction(type) {
 __exports.TRANSFER_FUNCTION_TYPES = TRANSFER_FUNCTION_TYPES;
 __exports.isBlockIn = isBlockIn;
 __exports.TRANSFER_FUNCTION_ROLE = TRANSFER_FUNCTION_ROLE;
+__exports.RATE_CHANGER_TYPES = RATE_CHANGER_TYPES;
+__exports.isRateChanger = isRateChanger;
 __exports.ditherValueText = ditherValueText;
 __exports.toneValueText = toneValueText;
 };
@@ -74480,7 +74820,7 @@ const GUIDES = Object.freeze([
       'Pick the **Output**, set each source to **Input**, **Zero**, or **Constant**, and click **Derive**.',
       'Click **Plots** to see the responses.',
     ],
-    keywords: 'block diagram signal flow loop delta sigma modulator ntf stf transfer function sampler quantizer gain sum integrator',
+    keywords: 'block diagram signal flow loop delta sigma modulator ntf stf transfer function sampler quantizer gain sum integrator downsampler upsampler decimation interpolation multirate',
     tutorial: 'sdm',
     doc: 'signal-flow-analysis.md',
   },
@@ -77496,7 +77836,7 @@ let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js"
 let setSharedLabel, sharedLabelPeers; __bind(() => { ({ setSharedLabel, sharedLabelPeers } = __require("src/core/shared-labels.js")); });
 let MOS_SIZE_ROLE, formatMosSize, parseMosSize; __bind(() => { ({ MOS_SIZE_ROLE, formatMosSize, parseMosSize } = __require("src/core/mos-size.js")); });
 let PART_VALUE_ROLE; __bind(() => { ({ PART_VALUE_ROLE } = __require("src/core/part-value.js")); });
-let TRANSFER_FUNCTION_TYPES, isCoefficientBlock, isSignalBlock, parseDither, parseGain, parseLevels, parseTone, readTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, isCoefficientBlock, isSignalBlock, parseDither, parseGain, parseLevels, parseTone, readTransferFunction } = __require("src/core/transfer-function.js")); });
+let TRANSFER_FUNCTION_TYPES, isCoefficientBlock, isRateChanger, isSignalBlock, parseDither, parseGain, parseLevels, parseRate, parseTone, readTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, isCoefficientBlock, isRateChanger, isSignalBlock, parseDither, parseGain, parseLevels, parseRate, parseTone, readTransferFunction } = __require("src/core/transfer-function.js")); });
 let setPartValue; __bind(() => { ({ setPartValue } = __require("src/core/part-moves.js")); });
 let labelFontSize; __bind(() => { ({ labelFontSize } = __require("src/core/style.js")); });
 let snap; __bind(() => { ({ snap } = __require("src/core/grid.js")); });
@@ -77572,6 +77912,8 @@ function inlineEditSchematicBlock(component) {
     ? 'The shape and the amplitude A in full scale: rect 1 (uniform over +-FS), tri 0.5 (triangular over +-FS/2), bin 1 (two levels, +-FS: an LFSR bit), or tern 1 (three levels, -FS, 0, +FS); A may be a coefficient (tri a_d). Scale it into the loop with a gain after it. Enter applies, Esc cancels.'
     : component.type === 'tone'
     ? 'The amplitude A in full scale and the f/fs: 0.01 0.37 (+-FS/100 at f/fs 0.37; f/fs 0 is an offset), each a number or a coefficient (a_r f_r). Enter applies, Esc cancels.'
+    : isRateChanger(component)
+    ? 'The factor, a whole number of at least 2 (8: every 8th sample kept, or 7 zeros after each). Enter applies, Esc cancels.'
     : component.type === 'sampler'
     ? 'The sampling period: a number or a symbol (T, T_s, 1). Enter applies, Esc cancels.'
     : component.type === 'gain'
@@ -77634,6 +77976,7 @@ function inlineEditSchematicBlock(component) {
           if (component.type === 'quantizer') parseLevels(text);
           else if (component.type === 'dither') parseDither(text);
           else if (component.type === 'tone') parseTone(text);
+          else if (isRateChanger(component)) parseRate(text);
           else if (isCoefficientBlock(component)) parseGain(text);
           else readTransferFunction(text, TRANSFER_FUNCTION_TYPES[component.type]);
         } catch (err) {
@@ -95491,7 +95834,8 @@ function spectrumStatus() {
   if (!spectrum) return '';
   if (spectrum.error) return spectrum.error;
   const measured = inBand(spectrum.raw, spectrum.frequency, bandEdges(editor.circuit.analysisValues.band), { fullScale: spectrum.fullScale });
-  const averaged = `${spectrum.raw.averages} averages of ${spectrum.raw.n} samples`;
+  const decimation = spectrum.raw.decimation || 1;
+  const averaged = `${spectrum.raw.averages} averages of ${spectrum.raw.n} samples${decimation > 1 ? ` at fₛ/${decimation}` : ''}`;
   const gains = (spectrum.quantizers || []).map((q) => `${q.refdes} gain ${Number(q.gain.toPrecision(3))}`).join(', ');
   const curves = gains ? `; curves at ${gains}` : '';
   if (!measured) return `${averaged}; set a band for its SNDR${curves}`;
@@ -95676,7 +96020,7 @@ function addTrace(entry, variable, output) {
   const used = new Set(traces.map((trace) => trace.color));
   const color = TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
   // A trace is named by its ratio (OUT/IN); the equation can be annotated on its own.
-  traces.push({ id, label: entry.label, equation: entry.equation, color, value: entry.value, variable, on: true, noise: !!entry.quantizer, input: entry.input, output: output.key });
+  traces.push({ id, label: entry.label, equation: entry.equation, color, value: entry.value, variable, on: true, noise: !!entry.quantizer, input: entry.input, output: output.key, ...(output.decimation > 1 ? { decimation: output.decimation } : {}) });
   // Its held copies, saved with the design, come back with it.
   restoreHolds();
 }
@@ -101714,7 +102058,7 @@ const PLACEMENT_LABELS = {
   signal_sum: 'Sum junction', signal_multiply: 'Multiply junction',
   comparator: 'Comparator', comparator_clocked: 'Clocked comparator',
   filter_lpf: 'Low-pass filter', filter_hpf: 'High-pass filter', filter_bpf: 'Band-pass filter', filter_notch: 'Notch filter', oscillator: 'Oscillator',
-  tf_s: 'Transfer function H(s)', tf_z: 'Transfer function H(z)', tf_dac: 'DAC, z to s (NRZ pulse: zero-order hold)', tf_dac_rz: 'DAC, z to s (RZ pulse: half-period hold)', tf_delay: 'Delay e^-sT', tf_zdelay: 'Delay z^-1', gain: 'Gain', sampler: 'Sampler, s to z (ideal: no hold)', quantizer: 'Quantizer (N levels)', dither: 'Dither', tone: 'Tone',
+  tf_s: 'Transfer function H(s)', tf_z: 'Transfer function H(z)', tf_dac: 'DAC, z to s (NRZ pulse: zero-order hold)', tf_dac_rz: 'DAC, z to s (RZ pulse: half-period hold)', tf_delay: 'Delay e^-sT', tf_zdelay: 'Delay z^-1', gain: 'Gain', sampler: 'Sampler, s to z (ideal: no hold)', downsample: 'Downsampler (↓M)', upsample: 'Upsampler (↑L)', quantizer: 'Quantizer (N levels)', dither: 'Dither', tone: 'Tone',
 };
 
 const PLACEMENT_ALIASES = {
@@ -101783,6 +102127,8 @@ const PLACEMENT_ALIASES = {
   tone: ['tone', 'sine', 'ripple', 'spur', 'aggressor', 'source', 'sigma delta', 'signal flow'],
   quantizer: ['quantizer', 'adc', 'comparator', 'levels', 'single-bit', 'multibit', 'sigma delta', 'signal flow'],
   sampler: ['sampler', 'sample', 'switch', 'ideal sampler', 'adc', 's to z', 'continuous-time', 'sigma delta', 'signal flow'],
+  downsample: ['downsample', 'decimate', 'decimator', 'rate change', 'multirate', 'sigma delta', 'signal flow'],
+  upsample: ['upsample', 'interpolate', 'interpolator', 'zero stuffing', 'rate change', 'multirate', 'signal flow'],
   tf_s: ['tf', 'transfer function', 'laplace', 's-domain', 'gain', 'integrator', 'block', 'signal flow'],
   tf_z: ['tf', 'transfer function', 'z-domain', 'discrete', 'delay', 'accumulator', 'gain', 'signal flow'],
   tf_dac: ['dac', 'nrz', 'zero-order hold', 'zoh', 'hold', 'sample and hold', 'z to s', 'pulse', 'feedback', 'sigma delta', 'signal flow'],

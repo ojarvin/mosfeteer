@@ -41,9 +41,21 @@ export function isTransferFunction(component) {
 }
 
 /** A part whose value is one coefficient, drawn as math: a gain's k, a
- *  sampler's period T. */
+ *  sampler's period T, a rate changer's factor. */
 export function isCoefficientBlock(component) {
-  return component?.type === 'gain' || component?.type === 'sampler' || component?.type === 'quantizer' || component?.type === 'dither' || component?.type === 'tone';
+  return component?.type === 'gain' || component?.type === 'sampler' || component?.type === 'quantizer' || component?.type === 'dither' || component?.type === 'tone' || isRateChanger(component);
+}
+
+/** The rate changers: a downsampler keeps every M-th sample (`downsample`,
+ *  its value M), an upsampler puts L - 1 zeros after each (`upsample`, L). */
+export const RATE_CHANGER_TYPES = Object.freeze({ downsample: 'down', upsample: 'up' });
+export const isRateChanger = (component) => Object.hasOwn(RATE_CHANGER_TYPES, component?.type || '');
+
+/** A rate changer's factor: a whole number of at least 2 (`8`, `M = 8`, `↓8`). */
+export function parseRate(text) {
+  const source = String(text ?? '').trim().replace(/^[A-Za-z]\s*=\s*/, '').replace(/^[↓↑]\s*/, '');
+  if (!/^\d+$/.test(source) || Number(source) < 2) throw new Error('a rate changer\'s factor is a whole number of at least 2 (8 keeps every 8th sample)');
+  return Number(source);
 }
 
 /**

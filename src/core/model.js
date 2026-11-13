@@ -17,7 +17,7 @@ import { LABEL_FONT_SIZES, TABLE_RULE_ROOM_EM, labelFontSize, strokeWidth } from
 import { cloneLiteralPath, clonePath, crossNetOverlaps, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 import { curvedArrowGeometry, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue, timingBreakGeometry } from './line-style.js';
 import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } from './beats.js';
-import { TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, parseDither, parseGain, parseLevels, parseTone, readTransferFunction, toneValueText, transferFunctionDisplay, transferFunctionLines } from './transfer-function.js';
+import { TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, isRateChanger, parseDither, parseGain, parseLevels, parseRate, parseTone, readTransferFunction, toneValueText, transferFunctionDisplay, transferFunctionLines } from './transfer-function.js';
 import { normalizePartsTable, partsTableKey, partsTableLayout } from './parts-table.js';
 import { normalizeFigure } from './figures.js';
 import { fanStacks, normalizeStack, segmentEnters, stackRects, stackedBoxes, wireEchoes } from './box-stack.js';
@@ -3494,7 +3494,8 @@ export class Circuit {
     const sourceTex = (v) => (typeof v === 'string' ? v : Number(v.toPrecision(6)));
     const ditherTex = () => { const { shape, amplitude } = parseDither(component.value); return `\\text{${shape}} \\pm ${sourceTex(amplitude)}\\text{ FS}`; };
     const toneTex = () => { const { amplitude, frequency } = parseTone(component.value); return `\\pm ${sourceTex(amplitude)}\\text{ FS, }f = ${sourceTex(frequency)}\\text{ }f_s`; };
-    const text = `$${quantizer ? `N = ${component.value}` : dither ? ditherTex() : tone ? toneTex() : gain ? gainDisplay(component.value) : transferFunctionDisplay(component.value, variable)}$`;
+    const rateTex = () => `${component.type === 'downsample' ? '\\downarrow' : '\\uparrow'} ${component.value}`;
+    const text = `$${isRateChanger(component) ? rateTex() : quantizer ? `N = ${component.value}` : dither ? ditherTex() : tone ? toneTex() : gain ? gainDisplay(component.value) : transferFunctionDisplay(component.value, variable)}$`;
     // A gain's short coefficient sits inside its triangle (centered on its
     // centroid, the part's origin); a longer one beside it, by one rule in
     // world terms: above a triangle the signal crosses horizontally, to the
@@ -3505,8 +3506,10 @@ export class Circuit {
     // name (-g_1) clears the edges as a plain one (b_1) does.
     // A sampler's period and a quantizer's levels always go beside it.
     const sampler = component.type === 'sampler' || quantizer || dither || tone;
-    const inside = gain && !sampler && gainFitsInside(component.value);
-    const width = inside ? 'thin' : 'normal';
+    // A rate changer's factor is drawn inside its box, at the label's size.
+    const rate = isRateChanger(component);
+    const inside = rate || (gain && !sampler && gainFitsInside(component.value));
+    const width = inside && !rate ? 'thin' : 'normal';
     if (gain && !inside) {
       const flow = applyDir(component.transform, 1, 0);
       const world = Math.abs(flow.x) > 0 ? { x: 0, y: -3 * GRID } : { x: 3 * GRID, y: 0 };
@@ -3869,6 +3872,7 @@ export class Circuit {
       if (c.type === 'quantizer') value = String(parseLevels(value));
       else if (c.type === 'dither') value = ditherValueText(parseDither(value));
       else if (c.type === 'tone') value = toneValueText(parseTone(value));
+      else if (isRateChanger(c)) value = String(parseRate(value));
       else if (isCoefficientBlock(c)) parseGain(value);
       else readTransferFunction(value, TRANSFER_FUNCTION_TYPES[c.type]);
       c.value = String(value).trim();

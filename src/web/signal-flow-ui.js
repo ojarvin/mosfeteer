@@ -1097,7 +1097,8 @@ function spectrumStatus() {
   if (!spectrum) return '';
   if (spectrum.error) return spectrum.error;
   const measured = inBand(spectrum.raw, spectrum.frequency, bandEdges(editor.circuit.analysisValues.band), { fullScale: spectrum.fullScale });
-  const averaged = `${spectrum.raw.averages} averages of ${spectrum.raw.n} samples`;
+  const decimation = spectrum.raw.decimation || 1;
+  const averaged = `${spectrum.raw.averages} averages of ${spectrum.raw.n} samples${decimation > 1 ? ` at fₛ/${decimation}` : ''}`;
   const gains = (spectrum.quantizers || []).map((q) => `${q.refdes} gain ${Number(q.gain.toPrecision(3))}`).join(', ');
   const curves = gains ? `; curves at ${gains}` : '';
   if (!measured) return `${averaged}; set a band for its SNDR${curves}`;
@@ -1282,7 +1283,7 @@ function addTrace(entry, variable, output) {
   const used = new Set(traces.map((trace) => trace.color));
   const color = TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
   // A trace is named by its ratio (OUT/IN); the equation can be annotated on its own.
-  traces.push({ id, label: entry.label, equation: entry.equation, color, value: entry.value, variable, on: true, noise: !!entry.quantizer, input: entry.input, output: output.key });
+  traces.push({ id, label: entry.label, equation: entry.equation, color, value: entry.value, variable, on: true, noise: !!entry.quantizer, input: entry.input, output: output.key, ...(output.decimation > 1 ? { decimation: output.decimation } : {}) });
   // Its held copies, saved with the design, come back with it.
   restoreHolds();
 }

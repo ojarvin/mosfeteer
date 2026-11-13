@@ -40,7 +40,7 @@ function fft(re, im) {
  * scaled so white noise of variance `variance` reads 0 dB, and the raw
  * (averaged) powers for `inBand`; `n` is the segment, `averages` how many.
  */
-export function outputSpectrum(samples, { variance = 1 / 3, segment = samples.length } = {}) {
+export function outputSpectrum(samples, { variance = 1 / 3, segment = samples.length, decimation = 1 } = {}) {
   const n = Math.min(segment, samples.length);
   if (n < 16 || (n & (n - 1))) return null;
   const window = Array.from({ length: n }, (_, i) => 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / n));
@@ -59,8 +59,10 @@ export function outputSpectrum(samples, { variance = 1 / 3, segment = samples.le
   for (let k = 0; k <= n / 2; k++) power[k] /= averages;
   const scale = variance * w2;
   const points = [];
-  for (let k = 1; k <= n / 2; k++) points.push({ f: k / n, db: 10 * Math.log10(power[k] / scale || 1e-30) });
-  return { points, power, n, w1, w2, variance, averages };
+  // A downsampled output's bins in f/fs of the ticks: k / (n M).
+  const q = Math.max(1, Math.round(decimation));
+  for (let k = 1; k <= n / 2; k++) points.push({ f: k / (n * q), db: 10 * Math.log10(power[k] / scale || 1e-30) });
+  return { points, power, n, w1, w2, variance, averages, ...(q > 1 ? { decimation: q } : {}) };
 }
 
 /** Where a sampled sine of `frequency` (f/fs, any) shows: its alias, 0 to 0.5. */
@@ -76,7 +78,8 @@ export function aliasedFrequency(frequency) {
  */
 export function dbfsSpectrum(spectrum, fullScale) {
   const reference = (fullScale * spectrum.w1 / 2) ** 2;
-  return spectrum.power.slice(1).map((p, i) => ({ f: (i + 1) / spectrum.n, db: 10 * Math.log10(p / reference || 1e-30) }));
+  const q = spectrum.decimation || 1;
+  return spectrum.power.slice(1).map((p, i) => ({ f: (i + 1) / (spectrum.n * q), db: 10 * Math.log10(p / reference || 1e-30) }));
 }
 
 /**
@@ -101,11 +104,13 @@ export function dbfsOffset(spectrum, fullScale, { noise, amplitude }) {
 export function inBand(spectrum, frequency, edges, { fullScale = 1 } = {}) {
   if (!spectrum || !edges.length) return null;
   const { power, n, w2 } = spectrum;
+  // A downsampled output's bins: f/fs of the ticks times M is its own.
+  const q = spectrum.decimation || 1;
   const [f1, f2] = edges.length === 2 ? edges : [0, edges[0]];
-  const tone = Math.round(aliasedFrequency(frequency) * n);
+  const tone = Math.round(aliasedFrequency(frequency * q) * n);
   let signal = 0;
   let noise = 0;
-  for (let k = Math.max(tone ? 1 : 0, Math.ceil(f1 * n)); k <= Math.min(n / 2, Math.floor(f2 * n)); k++) {
+  for (let k = Math.max(tone ? 1 : 0, Math.ceil(f1 * q * n)); k <= Math.min(n / 2, Math.floor(f2 * q * n)); k++) {
     // A tone at DC: its bins either side counted twice, the mirrored half,
     // so its power is the DC's square as a sine's is half its amplitude's.
     if (Math.abs(k - tone) <= 3) signal += tone || !k ? power[k] : 2 * power[k];
@@ -131,9 +136,10 @@ export function inBand(spectrum, frequency, edges, { fullScale = 1 } = {}) {
 export function plotSpectrum(spectrum, frequency, { bins = 600 } = {}) {
   if (!spectrum) return [];
   const { points, n } = spectrum;
-  const tone = Math.round(aliasedFrequency(frequency) * n);
+  const q = spectrum.decimation || 1;
+  const tone = Math.round(aliasedFrequency(frequency * q) * n);
   const low = Math.log10(points[0].f);
-  const high = Math.log10(0.5);
+  const high = Math.log10(0.5 / q);
   const out = [];
   let bucket = [];
   let edge = low;

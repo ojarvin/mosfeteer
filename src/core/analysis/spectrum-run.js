@@ -18,7 +18,7 @@ export function simulatedSpectrum({ circuit, options, amplitude, segment }) {
     if (!sim.ok) return { error: sim.error };
     const run = sim.run(amplitude, { record: true });
     if (run.overloaded || !run.samples) return { overloaded: !!run.overloaded, fullScale: sim.fullScale, frequency: sim.frequency };
-    return { raw: outputSpectrum(run.samples, { segment, variance: 1 / 3 }), quantizers: run.quantizers, dithers: sim.dithers, fullScale: sim.fullScale, frequency: sim.frequency };
+    return { raw: outputSpectrum(run.samples, { segment, variance: 1 / 3, decimation: sim.decimation || 1 }), quantizers: run.quantizers, dithers: sim.dithers, fullScale: sim.fullScale, frequency: sim.frequency };
   } catch (error) {
     return { error: error.message };
   }
@@ -51,7 +51,7 @@ export function simulatedMeasures({ circuit, options, amplitude, segment, edges 
     const run = sim.run(amplitude, { record: true });
     if (run.overloaded || !run.samples) return { overloaded: true, signals, fullScale: sim.fullScale };
     const db = (value) => (value > 0 ? 20 * Math.log10(value / sim.fullScale) : null);
-    const raw = outputSpectrum(run.samples, { segment, variance: 1 / 3 });
+    const raw = outputSpectrum(run.samples, { segment, variance: 1 / 3, decimation: sim.decimation || 1 });
     const band = edges.length ? inBand(raw, sim.frequency, edges, { fullScale: sim.fullScale }) : null;
     const measures = {
       sndr: band?.sndr ?? null,

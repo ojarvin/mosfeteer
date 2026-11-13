@@ -75,13 +75,13 @@ function strokeWidthOf(style, base = 'symbol') {
  * filled arrowhead out by half that outline so its tip meets the visible edge
  * rather than disappearing into the body. The insets by pin ("x,y"), built
  * once per drawing, and only for a wire that has an arrowhead at all. */
-const BODY_EDGE_PIN_TYPES = new Set(['block', 'signal_sum', 'signal_multiply', 'quantizer', ...Object.keys(TRANSFER_FUNCTION_TYPES)]);
+const BODY_EDGE_PIN_TYPES = new Set(['block', 'signal_sum', 'signal_multiply', 'quantizer', 'downsample', 'upsample', ...Object.keys(TRANSFER_FUNCTION_TYPES)]);
 
 /** Signal-flow inputs whose wires carry an arrowhead into them without
  *  being asked: a sum's or multiplier's inputs and a transfer function's
- *  input or a quantizer's (a gain's triangle already points the way). By
- *  pin ("x,y"). */
-const AUTO_ARROW_TYPES = new Set(['signal_sum', 'signal_multiply', 'quantizer', ...Object.keys(TRANSFER_FUNCTION_TYPES)]);
+ *  input, a quantizer's, or a rate changer's (a gain's triangle already
+ *  points the way). By pin ("x,y"). */
+const AUTO_ARROW_TYPES = new Set(['signal_sum', 'signal_multiply', 'quantizer', 'downsample', 'upsample', ...Object.keys(TRANSFER_FUNCTION_TYPES)]);
 
 function signalInputPins(circuit) {
   const pins = new Set();
@@ -392,6 +392,7 @@ export function texToMathML(source) {
     parallel: '∥', cdot: '·', times: '×', pm: '±', mp: '∓',
     infty: '∞', approx: '≈', le: '≤', ge: '≥', leq: '≤', geq: '≥', neq: '≠', ne: '≠', to: '→', gg: '≫',
     ll: '≪', equiv: '≡', propto: '∝', partial: '∂', sim: '∼', lesssim: '≲', gtrsim: '≳',
+    rightarrow: '→', leftarrow: '←', uparrow: '↑', downarrow: '↓',
   };
   let requestedParallelSize = null;
   const skipSpaces = () => { while (text[index] === ' ') index += 1; };

@@ -98,8 +98,8 @@ decade under the longest delay to two over the shortest, and on **f/fs**
 with `T` counted in sample periods (`T = 1` is one sample). A delay has
 infinitely many poles and zeros, so none are listed.
 
-A wire ending on a sum's, a multiplier's, a transfer function's, or a
-quantizer's input draws an arrowhead into it without being asked (render.js
+A wire ending on a sum's, a multiplier's, a transfer function's, a
+quantizer's, or a rate changer's input draws an arrowhead into it without being asked (render.js
 `withSignalArrows`), merged with any it has; a gain's triangle already
 shows the way, so its input takes none. In the editor, a signal-flow part
 hovered, selected, carried, or held as a placement ghost shows arrows out
@@ -245,6 +245,44 @@ images aside. Both plot over `f/fs`. The output must be a sampled signal;
 a delay inside a continuous loop that feeds a sampler, samplers at
 different periods, or impulses reaching a sampler (a DAC block with no
 pulse) are refused.
+
+## Rates
+
+A **downsampler** (`downsample`, its value M: `↓M`) keeps every M-th
+sample; an **upsampler** (`upsample`, L: `↑L`) puts L - 1 zeros after each
+sample. Neither filters: a decimation or interpolation filter is drawn as
+H(z) blocks beside it. They change the rate of a sampled signal only.
+
+Each sampled signal has a period in ticks of the fastest rate
+(`signalRates`): a downsampler's output M times its input's, an
+upsampler's 1/L of it, every other part's signals one rate. With a
+sampler, its outputs and what a DAC reads run at its period, the tick,
+and nothing faster.
+
+The transfer functions are referred to the fastest rate, by the noble
+identities: an H(z) at M ticks a sample is H(z^M), and a rate changer
+passes the samples on. The result is one exact rational in z of the ticks,
+plotted over their f/fs; what a downsampler drops aliases, and what an
+upsampler adds images, as the plot of the path to it shows. A
+downsampled output's result names its decimation (`output.decimation`),
+and its response plot marks its own Nyquist (`fₛ/16` at f/fs 1/16 for M =
+8) and, with a band, the edges of the first band that folds onto it (its
+image about 1/M, unlabeled as the band's own lines are). That holds only where the rates are a chain, so these
+are refused: a rate changer on a feedback loop (a loop runs at one rate),
+an upsampler after a downsampler on a path, a junction or block joining
+signals of two rates, a rate changer on a continuous signal, and a sampler
+or DAC at another rate than the sampler's.
+
+The simulations step at the ticks: a slower signal holds its value
+between its samples, its H(z) blocks stepping and its sources drawing only
+at its own; an upsampler gives its input's sample, else zero. A run's
+window and warmup count the output's samples, so a spectrum of a
+downsampled output is one of its own samples, its bins in f/fs of the
+ticks up to 1/(2M), and the in-band SNDR is the decimated output's. Over
+it, a quantizer's noise curve is its NTF folded at the output's rate: at
+each f, the power of the M frequencies landing on it, over M. The time
+view traces a slower net once a sample of its own. The optimizer's noise
+estimate reads an NTF in band unfolded.
 
 ## Swing
 

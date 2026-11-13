@@ -13,6 +13,20 @@ function build(lines, negatives = []) {
   return circuit.toJSON();
 }
 
+/** The second-order loop of `modulator`, then a two-tap average and a
+ *  downsampler by 4 to the output Y. */
+export function decimatedModulator() {
+  return build([
+    'add input U --at -1600 0', 'add signal_sum S1 --at -1200 0', 'add tf_z H1 --at -800 0 --value "tf([0 1], [1 -1])"',
+    'add signal_sum S3 --at -400 0', 'add tf_z H2 --at 0 0 --value "tf([0 1], [1 -1])"', 'add quantizer QZ1 --at 800 0',
+    'add output V --at 1200 0', 'add gain K1 --at -800 400 --rot 180 --value k_1', 'add gain K2 --at 0 400 --rot 180 --value k_2',
+    'connect U.p S1.w', 'connect S1.e H1.in', 'connect H1.out S3.w', 'connect S3.e H2.in', 'connect QZ1.out V.p',
+    'connect K1.out S1.s', 'connect K2.out S3.s', 'connect H2.out QZ1.in', 'connect V.p K1.in', 'connect V.p K2.in',
+    'add tf_z F1 --at 1600 -800 --value "tf([1 1], [2])"', 'add downsample D1 --at 2000 -800 --value 4', 'add output Y --at 2400 -800',
+    'connect QZ1.out F1.in', 'connect F1.out D1.in', 'connect D1.out Y.p',
+  ], [['S1', 's'], ['S3', 's']]);
+}
+
 /** A second-order discrete delta-sigma loop: gains k_1, k_2, a quantizer. */
 export function modulator() {
   return build([
