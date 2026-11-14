@@ -317,6 +317,18 @@ serverTest('PDF export is vector output when a Chromium-family browser is instal
   const beatsPdf = (await readFile(join(app.root, 'exports', 'beats.pdf'))).toString('latin1');
   assert.match(beatsPdf, /\/Count 3\b/);
   assert.doesNotMatch(beatsPdf, /\/Subtype\s*\/Image/);
+
+  // Beats framed apart: each page the size of its own drawing.
+  const sized = (w, h) => `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><rect width="${w}" height="${h}" fill="#fff"/><path d="M0 0L${w} ${h}" stroke="#000"/></svg>`;
+  const framed = [sized(400, 300), sized(800, 200)];
+  const apart = await app.request('/api/export', {
+    method: 'POST',
+    body: { dir: join(app.root, 'exports'), name: 'framed', formats: ['pdf'], svg: framed[0], pdfPages: framed, pdfPngPages: framed.map(() => TINY_PNG) },
+  });
+  assert.equal(apart.status, 200, await apart.clone().text());
+  const boxes = (await readFile(join(app.root, 'exports', 'framed.pdf'))).toString('latin1').match(/MediaBox\s*\[[^\]]+\]/g)
+    .map((box) => box.match(/[\d.]+/g).map(Number).slice(2).map(Math.round));
+  assert.deepEqual(boxes, [[300, 225], [600, 150]]);
 });
 
 const REPORT_HTML = '<!doctype html><html><head><meta charset="utf-8"><style>@page{size:A4}</style></head><body><h1>Amp</h1><p>One</p><p style="break-before:page">Two</p></body></html>';

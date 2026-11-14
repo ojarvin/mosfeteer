@@ -277,3 +277,12 @@ test('raster PDF fallback writes one page per image for a set of beats', () => {
   });
   assert.throws(() => pngsToPdf([], { widthPt: 1, heightPt: 1 }), /at least one page/);
 });
+
+test('raster PDF fallback gives each page its own size when the beats are framed apart', () => {
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==', 'base64');
+  const pdf = pngsToPdf([png, png], [{ widthPt: 300, heightPt: 150 }, { widthPt: 120, heightPt: 200 }]).toString('latin1');
+  assert.deepEqual(pdf.match(/\/MediaBox \[[^\]]+\]/g), ['/MediaBox [0 0 300 150]', '/MediaBox [0 0 120 200]']);
+  assert.match(pdf, /q 300 0 0 150 0 0 cm/);
+  assert.match(pdf, /q 120 0 0 200 0 0 cm/);
+  assert.throws(() => pngsToPdf([png, png], [{ widthPt: 1, heightPt: 1 }]), /each PDF page needs its size/);
+});

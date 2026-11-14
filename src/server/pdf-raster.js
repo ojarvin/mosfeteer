@@ -77,13 +77,13 @@ export function pngToPdf(png, size) {
   return pngsToPdf([png], size);
 }
 
-/** One page per PNG, each `widthPt` x `heightPt`: a set of beats as one
- *  document when no browser can print them as vectors. */
-export function pngsToPdf(pngs, { widthPt, heightPt }) {
+/** One page per PNG: a set of beats as one document when no browser can
+ *  print them as vectors. `size` is every page's `{ widthPt, heightPt }`, or
+ *  a list of them, one per page (a framed beat is a picture of its own size). */
+export function pngsToPdf(pngs, size) {
   if (!pngs.length) throw new Error('a PDF needs at least one page');
-  const w = Number(widthPt.toFixed(3));
-  const h = Number(heightPt.toFixed(3));
-  const content = Buffer.from(`q ${w} 0 0 ${h} 0 0 cm /Im0 Do Q\n`, 'latin1');
+  const sizes = Array.isArray(size) ? size : pngs.map(() => size);
+  if (sizes.length !== pngs.length) throw new Error('each PDF page needs its size');
   // Objects 1 and 2 are the catalog and the page tree; each page then takes
   // three: the page, its content stream, and its image.
   const pageIds = pngs.map((_, index) => 3 + index * 3);
@@ -95,6 +95,9 @@ export function pngsToPdf(pngs, { widthPt, heightPt }) {
     const { width, height, rgb } = decodePngToRgb(png);
     const image = deflateSync(rgb);
     const id = pageIds[index];
+    const w = Number(sizes[index].widthPt.toFixed(3));
+    const h = Number(sizes[index].heightPt.toFixed(3));
+    const content = Buffer.from(`q ${w} 0 0 ${h} 0 0 cm /Im0 Do Q\n`, 'latin1');
     objects.push(
       Buffer.from(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${w} ${h}] /Resources << /XObject << /Im0 ${id + 2} 0 R >> >> /Contents ${id + 1} 0 R >>`, 'latin1'),
       Buffer.concat([Buffer.from(`<< /Length ${content.length} >>\nstream\n`, 'latin1'), content, Buffer.from('\nendstream', 'latin1')]),

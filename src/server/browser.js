@@ -45,17 +45,21 @@ export function findChromium({ platform = process.platform, env = process.env } 
 
 /**
  * Print an SVG to a one-page vector PDF sized to the drawing -- or an array
- * of SVGs, one page each, sized to the first (a drawing's beats share one
- * frame) -- using headless Chromium with a throwaway profile (so it never
- * attaches to a running browser).
+ * of SVGs, one page each, each page sized to its own drawing (a framed beat
+ * is a picture of its own size: beats.js frameAt) -- using headless
+ * Chromium with a throwaway profile (so it never attaches to a running
+ * browser).
  */
 export async function printSvgToPdf(svgOrPages, { browser = findChromium(), timeoutMs = 60_000 } = {}) {
   const pages = Array.isArray(svgOrPages) ? svgOrPages : [svgOrPages];
   if (!pages.length) throw new Error('a PDF needs at least one page');
-  const { width, height } = svgPixelSize(pages[0]);
+  const sizes = pages.map((svg) => svgPixelSize(svg));
+  // A named page per drawing, each its own size.
+  const pageRules = sizes.map(({ width, height }, index) =>
+    `@page p${index}{size:${width}px ${height}px;margin:0}.p${index}{page:p${index};width:${width}px;height:${height}px}.p${index} svg{width:${width}px;height:${height}px}`).join('');
   // The SVG is rendered by a real browser, so the page denies scripts and
   // every external load; only the inline drawing and its inline styles run.
-  return printHtmlToPdf(`<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:"><style>@page{size:${width}px ${height}px;margin:0}html,body{margin:0;padding:0;background:#fff}svg{display:block;width:${width}px;height:${height}px}.page{break-after:page;overflow:hidden;width:${width}px;height:${height}px}.page:last-child{break-after:auto}</style></head><body>${pages.map((svg) => `<div class="page">${svg}</div>`).join('')}</body></html>`, { browser, timeoutMs });
+  return printHtmlToPdf(`<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:"><style>@page{size:${sizes[0].width}px ${sizes[0].height}px;margin:0}html,body{margin:0;padding:0;background:#fff}svg{display:block}.page{break-after:page;overflow:hidden}.page:last-child{break-after:auto}${pageRules}</style></head><body>${pages.map((svg, index) => `<div class="page p${index}">${svg}</div>`).join('')}</body></html>`, { browser, timeoutMs });
 }
 
 /**

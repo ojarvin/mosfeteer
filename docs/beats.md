@@ -325,6 +325,6 @@ renaming a part renames its references.
   print it, else a page of image each), and numbered SVG and PNG files
   (`name-1.svg`, `name-2.svg`, ...). Unframed beats share the drawing's
   frame, so their pages and files line up; a framed beat's page is its
-  frame.
+  frame, and in the one PDF each page is the size of its own picture.
 - **Commands.** `beat list|add|rm|rename|move|merge|show|dim|hide|switch|frame` and
   `svg --beat N`; see `help`.

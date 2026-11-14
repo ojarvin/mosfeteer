@@ -440,8 +440,12 @@ export async function startApp({
       } catch (error) {
         const rasters = pdfPages ? pdfPngPages : pdfPng && [pdfPng];
         if (!rasters) throw httpError(`could not create PDF: ${error.message}`, 500);
-        const { width, height } = svgPixelSize(pdfPages ? pdfPages[0] : svg);
-        contents.pdf = pngsToPdf(rasters, { widthPt: width * 0.75, heightPt: height * 0.75 });
+        // Each page its own drawing's size, as the vector PDF has it.
+        const sizes = (pdfPages || [svg]).map((page) => {
+          const { width, height } = svgPixelSize(page);
+          return { widthPt: width * 0.75, heightPt: height * 0.75 };
+        });
+        contents.pdf = pngsToPdf(rasters, sizes);
         notes.push(error.code === 'no-browser'
           ? 'PDF contains a high-resolution image because no Chrome, Chromium, Edge, or Brave browser was found for vector output.'
           : `PDF contains a high-resolution image because vector printing failed: ${error.message}`);
