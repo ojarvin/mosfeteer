@@ -223,6 +223,43 @@ describe('editor chrome', { skip: browserSkip() }, () => {
     for (const pattern of ['solid', 'dashed', 'dash-dot', 'dotted']) assert.ok(await h.evaluate(`!!document.querySelector('#style-panel [data-line-style="${pattern}"]')`), pattern);
   });
 
+  test('Paste style in the context menu pastes all of a copied style, or one part of it, as it applies', async () => {
+    const circuit = new Circuit();
+    for (const line of ['add resistor R1 --at 0 400', 'annotation add A source 0 0 --align left', 'annotation add B target 0 200']) runCommand(circuit, line);
+    Object.assign(circuit.labels.get('A').style, { color: 'red', mono: true, bold: false });
+    await h.evaluate(`window.__load(${JSON.stringify(circuit.toJSON())})`);
+    await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.fitView())`);
+    const label = (id) => h.evaluate(`${h.module('editor-state.js')}.then((m) => { const l = m.editor.circuit.labels.get(${JSON.stringify(id)}); return { align: l.align, color: l.style.color ?? null, mono: l.style.mono === true, bold: l.style.bold !== false }; })`);
+    const pasteItems = () => h.evaluate(`[...document.querySelectorAll('.component-context-menu .context-submenu[aria-label="Paste style"] button')].map((b) => b.childNodes[0].textContent.trim())`);
+    const choose = (text) => h.evaluate(`[...document.querySelectorAll('.component-context-menu .context-submenu[aria-label="Paste style"] button')].find((b) => b.childNodes[0].textContent.trim() === ${JSON.stringify(text)}).click()`);
+    const centre = (id) => h.evaluate(`${h.module('editor-state.js')}.then((m) => { const b = m.editor.circuit.labels.get(${JSON.stringify(id)}).bbox(); return { x: b.x + b.w / 2, y: b.y + b.h / 2 }; })`);
+    // Nothing copied yet: no Paste style.
+    let at = await centre('B');
+    await rightClick(at.x, at.y);
+    assert.equal((await pasteItems()).length, 0);
+    await h.key('Escape');
+    await h.evaluate(`${h.module('main.js')}.then((m) => { m.setLabelSelection(['A']); m.render(); document.getElementById('canvas').focus(); })`);
+    await h.key('c', { ctrlKey: true });
+    at = await centre('B');
+    await rightClick(at.x, at.y);
+    assert.deepEqual(await pasteItems(), ['All', 'Color', 'Width', 'Bold', 'Italic', 'Monospace', 'Alignment']);
+    // One part alone: the alignment, and nothing else.
+    const before = await label('B');
+    assert.notEqual(before.align, 'left');
+    await choose('Alignment');
+    assert.deepEqual(await label('B'), { ...before, align: 'left' });
+    // Ctrl/Cmd+Shift+V, or All: the rest too.
+    await h.evaluate(`document.getElementById('canvas').focus()`);
+    await h.key('V', { ctrlKey: true, shiftKey: true });
+    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.labels.get('B').style.color === 'red')`);
+    assert.deepEqual(await label('B'), { align: 'left', color: 'red', mono: true, bold: false });
+    // A part takes the color and width; the text's look does not apply to it.
+    await rightClick(0, 400);
+    assert.deepEqual(await pasteItems(), ['All', 'Color', 'Width']);
+    await choose('Color');
+    assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.get('R1').style.color)`), 'red');
+  });
+
   test('the context menu carries the style controls, keeps no duplicate ids, and stays open while styling', async () => {
     await h.open('edit');
     await h.evaluate(`${h.module('main.js')}.then((m) => { m.setSelection(['R2']); m.render(); })`);

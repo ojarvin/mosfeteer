@@ -34,7 +34,7 @@ import { takesFileTraces } from '../core/data-plot.js';
 import { openPlotExport } from './plot-export-ui.js';
 import { busWidth, netNamesConnect } from '../core/bus.js';
 import { STACK_DEFAULT, fanStacks } from '../core/box-stack.js';
-import { handleStyleControlClick, selectionStyleState, styleDefaults, syncStyleControls, wireStyleValue } from './style-controls.js';
+import { handleStyleControlClick, pasteStyle, pasteStyleChoices, pasteStyleFields, selectionStyleState, styleDefaults, syncStyleControls, wireStyleValue } from './style-controls.js';
 import { activateCopy, activateMove, annotationGeometryAt, commit, deleteSelection, namedGroupNets, pickAt, pickLabel, pickWire, render, restackSelected, selectedComps, selectedLabels, selectedTransform, setLabelSelection, setSelection, supplyBarGroup, supplyBarHit, syncSelectedWire } from './main.js';
 import { noteTip } from './onboarding.js';
 
@@ -842,6 +842,18 @@ function appendContextActions(menu, target) {
   }
   if (target.kind === 'net' || target.kind === 'wire') appendContextItem(group, 'Copy as image', copyAsImage, { shortcut: 'Ctrl/Cmd+Shift+C' });
   menu.appendChild(group);
+  appendPasteStyleMenu(menu);
+}
+
+/** Paste style: all of a copied object's style (Ctrl/Cmd+Shift+V), or one
+ *  part of it at a time, as it applies to the selection. */
+function appendPasteStyleMenu(menu) {
+  const choices = pasteStyleChoices();
+  if (!choices.length) return;
+  appendContextSubmenu(menu, 'Paste style', (submenu) => {
+    appendContextItem(submenu, 'All', () => pasteStyle(), { shortcut: 'Ctrl/Cmd+Shift+V' });
+    for (const { field, name } of choices) appendContextItem(submenu, name, () => pasteStyleFields([field]));
+  });
 }
 
 /** Drawing only: the selected parts stay drawn and checked, and no

@@ -165,7 +165,14 @@ export function selectedStyleSource() {
   const total = comps.length + labels.length + nets.length + wireKeys.length;
   if (total !== 1) return null;
   if (comps.length === 1) return { kind: 'object', style: { ...(comps[0].style || {}) } };
-  if (labels.length === 1) return { kind: 'object', style: { ...(labels[0].style || {}) } };
+  if (labels.length === 1) {
+    const label = labels[0];
+    // A text label's look goes with it: bold, italic, monospace, alignment.
+    const text = label.kind === 'label'
+      ? { bold: fontOn(label, 'bold'), italic: fontOn(label, 'italic'), mono: fontOn(label, 'mono'), align: label.align }
+      : {};
+    return { kind: 'object', style: { ...(label.style || {}), ...text } };
+  }
   if (nets.length === 1) {
     const net = nets[0];
     return {
@@ -188,6 +195,49 @@ export function selectedStyleSource() {
   };
 }
 
+/** What a copied style can carry, in the order the Paste style menu lists it. */
+export const PASTE_STYLE_FIELDS = Object.freeze([
+  { field: 'color', name: 'Color' },
+  { field: 'lineStyle', name: 'Line style' },
+  { field: 'width', name: 'Width' },
+  { field: 'arrowhead', name: 'Arrowheads' },
+  { field: 'bold', name: 'Bold' },
+  { field: 'italic', name: 'Italic' },
+  { field: 'mono', name: 'Monospace' },
+  { field: 'align', name: 'Alignment' },
+]);
+const LINE_FIELDS = ['color', 'lineStyle', 'width', 'arrowhead'];
+const TEXT_FIELDS = ['bold', 'italic', 'mono', 'align'];
+
+/** The fields of the copied style that apply to the selection: those the
+ *  copied object has and at least one selected object takes. */
+export function pasteStyleChoices() {
+  const style = editor.clipboard?.style;
+  if (!style) return [];
+  const objects = [...selectedComps(), ...selectedLabels(), ...[...editor.selectedNets].map((id) => editor.circuit.nets.get(id)).filter(Boolean)];
+  const wires = selectedWireTargets().length > 0 || !!editor.selectedWire;
+  const text = selectedTextTargets().labels.length > 0;
+  const takes = (field) => {
+    if (TEXT_FIELDS.includes(field)) return text;
+    if (wires) return true;
+    if (field === 'lineStyle') return objects.some((obj) => ['arrow', 'box', 'line'].includes(obj.kind) || obj instanceof Net);
+    if (field === 'arrowhead') return objects.some((obj) => supportsArrowhead(obj));
+    return objects.length > 0;
+  };
+  return PASTE_STYLE_FIELDS.filter(({ field }) => style[field] !== undefined && takes(field));
+}
+
+/** Paste only `fields` of the copied style onto the selection. */
+export function pasteStyleFields(fields) {
+  const style = editor.clipboard?.style;
+  if (!style) {
+    logLine('nothing copied');
+    return false;
+  }
+  noteTip('style-paste');
+  return applyStyleToSelected(Object.fromEntries(Object.entries(style).filter(([field]) => fields.includes(field))));
+}
+
 function applyStyleToSelected(style) {
   const comps = selectedComps();
   const labels = selectedLabels();
@@ -203,10 +253,11 @@ function applyStyleToSelected(style) {
     logLine('nothing selected for style paste');
     return false;
   }
+  const textLabels = TEXT_FIELDS.some((field) => style[field] !== undefined) ? selectedTextTargets().labels : [];
   commit(() => {
     for (const obj of objects) {
       const next = { ...(obj.style || {}) };
-      for (const field of ['color', 'lineStyle', 'width', 'arrowhead']) {
+      for (const field of LINE_FIELDS) {
         if (style[field] !== undefined && (field !== 'lineStyle' || ['arrow', 'box', 'line'].includes(obj.kind) || obj instanceof Net) &&
             (field !== 'arrowhead' || supportsArrowhead(obj))) {
           next[field] = style[field];
@@ -216,8 +267,16 @@ function applyStyleToSelected(style) {
       if (obj instanceof Net) applyNetStyle(obj, next);
       else obj.style = { ...(obj.style || {}), ...next };
     }
-    for (const { net, key } of wireTargets) {
-      applyWireTargetStyle(net, key, style);
+    const lineStyle = Object.fromEntries(Object.entries(style).filter(([field]) => LINE_FIELDS.includes(field)));
+    if (Object.keys(lineStyle).length) {
+      for (const { net, key } of wireTargets) applyWireTargetStyle(net, key, lineStyle);
+    }
+    for (const label of textLabels) {
+      for (const field of ['bold', 'italic']) if (typeof style[field] === 'boolean') label.style[field] = style[field];
+      if (style.mono === true) label.style.mono = true;
+      else if (style.mono === false) delete label.style.mono;
+      if (style.align !== undefined) label.setAlign(style.align);
+      label.clearRenderedTextBounds({ restyle: true });
     }
   });
   render();
