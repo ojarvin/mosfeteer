@@ -3280,6 +3280,9 @@ function drawRubber() {
     rubberEl = document.createElement('div');
     rubberEl.className = 'rubber-box';
     rubberEl.setAttribute('aria-hidden', 'true');
+    // The zoom box draws as the Atlas's does (#atlas-zoom-box): a rect, so
+    // its dashes are the same.
+    rubberEl.innerHTML = '<svg class="rubber-zoom" aria-hidden="true"><rect x="0" y="0" width="100%" height="100%" opacity="0.12" stroke-width="1.4" stroke-dasharray="5 4"/></svg>';
     canvasEl.appendChild(rubberEl);
     rubberKey = '';
   }

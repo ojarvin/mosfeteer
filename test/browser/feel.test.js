@@ -35,6 +35,27 @@ describe('editor feel', { skip: browserSkip() }, () => {
     await h.until(`document.querySelector('#canvas .rubber-box')?.hidden === true`);
   });
 
+  test("the editor's zoom box is drawn as the Atlas's", async () => {
+    await h.open('two');
+    const look = (selector) => `(() => { const el = document.querySelector(${JSON.stringify(selector)}); const s = getComputedStyle(el);
+      return [s.fill, s.stroke, el.getAttribute('opacity'), el.getAttribute('stroke-width'), el.getAttribute('stroke-dasharray')]; })()`;
+    const editor = await h.evaluate(`(() => {
+      const canvas = document.getElementById('canvas');
+      const r = canvas.getBoundingClientRect();
+      const at = (x, y) => ({ bubbles: true, cancelable: true, clientX: r.left + x, clientY: r.top + y, button: 2, buttons: 2, view: window });
+      canvas.dispatchEvent(new MouseEvent('mousedown', at(200, 200)));
+      canvas.dispatchEvent(new MouseEvent('mousemove', at(320, 300)));
+      const box = document.querySelector('#canvas .rubber-box');
+      const shown = !!box && !box.hidden && box.classList.contains('neutral') && box.querySelector('.rubber-zoom rect').getBoundingClientRect().width > 50;
+      const value = ${look('#canvas .rubber-box .rubber-zoom rect')};
+      window.dispatchEvent(new MouseEvent('mouseup', at(320, 300)));
+      return { shown, value };
+    })()`);
+    assert.equal(editor.shown, true);
+    assert.deepEqual(editor.value, await h.evaluate(look('#atlas-zoom-box')));
+    assert.equal(await h.evaluate(`getComputedStyle(document.querySelector('#canvas .rubber-box')).borderTopStyle`), 'none');
+  });
+
   test('while a part is dragged the chrome steps back; a selection box leaves it; letting go brings it back', async () => {
     await h.open('two');
     const quiet = `document.documentElement.hasAttribute('data-chrome-quiet')`;

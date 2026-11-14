@@ -3148,9 +3148,34 @@ body:not(.atlas-mode) .toolbar {
   will-change: transform;
 }
 
+/* The zoom box: the Atlas's (#atlas-zoom-box), drawn by its rect. */
 .canvas .rubber-box.neutral {
-  border-color: var(--svg-faint);
-  background: color-mix(in srgb, var(--svg-faint) 12%, transparent);
+  border: 0;
+  background: none;
+}
+
+.canvas .rubber-box .rubber-zoom {
+  display: none;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  pointer-events: none;
+}
+
+.canvas .rubber-box.neutral .rubber-zoom {
+  display: block;
+}
+
+.canvas .rubber-box .rubber-zoom rect,
+#atlas-zoom-box {
+  fill: var(--svg-faint);
+  stroke: var(--svg-faint);
 }
 
 .canvas .rubber-box[hidden] {
@@ -6391,11 +6416,6 @@ html.dark .net-beam-mid { stop-opacity: 0.26; }
   pointer-events: none;
 }
 
-/* The editor's zoom box (main.js, drawRubber). */
-#atlas-zoom-box {
-  fill: var(--svg-faint);
-  stroke: var(--svg-faint);
-}
 
 .atlas-vector {
   position: absolute;
