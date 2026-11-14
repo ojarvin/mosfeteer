@@ -615,6 +615,7 @@ export function commandHelp() {
     '  beat merge N M ...             - merge beats into one at the first: most visible look, switches closed in any, first highlight',
     '  beat show|dim|hide N ID ...    - show, dim, or hide parts and labels from beat N on',
     '  beat switch N REF|PHASE open|closed - set a switch (its whole phase) from beat N on',
+    '  sketch [list] | sketch clear   - count the sketch\'s marker strokes (j in the editor), or remove them all',
     '  beat frame N ID ...|none      - from beat N on, show only the part of the drawing around these parts, labels, or nets (none: the whole drawing)',
     '  beat phases [--after N|--replace] - add a beat per state of the timing diagram (phases high together close together),',
     '                                   or without one a beat per switch phase: what works shown, the rest dimmed',
@@ -1298,6 +1299,16 @@ function dispatch(circuit, cmd, pos, flags, io) {
     return result(`replaced ${changed.length} text${changed.length === 1 ? '' : 's'}${rows.length ? `:\n${rows.join('\n')}` : ''}${joined}`, { changed, joins }, changed.length > 0);
   }
   if (cmd === 'beat' || cmd === 'beats') return beatCommand(circuit, pos, flags, result);
+  if (cmd === 'sketch') {
+    const count = circuit.sketch.strokes.length;
+    const sub = pos[0] || 'list';
+    if (sub === 'list') return result(count ? `${count} sketch stroke${count === 1 ? '' : 's'}` : 'the sketch is empty', { strokes: count });
+    if (sub === 'clear') {
+      circuit.sketch.strokes = [];
+      return result(count ? `cleared ${count} sketch stroke${count === 1 ? '' : 's'}` : 'the sketch was empty', { strokes: 0 }, count > 0);
+    }
+    throw new Error(`unknown sketch command "${sub}"; try: sketch list|clear`);
+  }
   if (cmd === 'timing') {
     const bits = {};
     for (const arg of pos) {

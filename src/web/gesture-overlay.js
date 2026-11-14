@@ -4,6 +4,7 @@
  * makes. The stroke geometry is in gestures.js.
  */
 
+import { liveSketchSvg } from './sketch-ui.js';
 import { componentShapeSvg } from '../core/render.js';
 import { GRID } from '../core/grid.js';
 import { knifeCrossings, pinHandleRadius, strokeCrossesPolyline, strokeCrossesRect } from './gestures.js';
@@ -111,6 +112,9 @@ export function cutAlong(stroke) {
 /** Gesture feedback appended to the editor overlay's elements, in world units. */
 export function withGestureOverlay(svg, ghost) {
   const parts = [];
+  // The marker stroke being drawn (sketch-ui.js).
+  const sketching = liveSketchSvg();
+  if (sketching) parts.push(sketching);
   if (editor.hoverTarget?.kind === 'net' && !editor.drag) {
     for (const id of editor.hoverTarget.ids) {
       for (const pts of editor.circuit.nets.get(id)?.paths() || []) {

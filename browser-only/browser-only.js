@@ -24410,6 +24410,7 @@ function commandHelp() {
     '  beat merge N M ...             - merge beats into one at the first: most visible look, switches closed in any, first highlight',
     '  beat show|dim|hide N ID ...    - show, dim, or hide parts and labels from beat N on',
     '  beat switch N REF|PHASE open|closed - set a switch (its whole phase) from beat N on',
+    '  sketch [list] | sketch clear   - count the sketch\'s marker strokes (j in the editor), or remove them all',
     '  beat frame N ID ...|none      - from beat N on, show only the part of the drawing around these parts, labels, or nets (none: the whole drawing)',
     '  beat phases [--after N|--replace] - add a beat per state of the timing diagram (phases high together close together),',
     '                                   or without one a beat per switch phase: what works shown, the rest dimmed',
@@ -25093,6 +25094,16 @@ function dispatch(circuit, cmd, pos, flags, io) {
     return result(`replaced ${changed.length} text${changed.length === 1 ? '' : 's'}${rows.length ? `:\n${rows.join('\n')}` : ''}${joined}`, { changed, joins }, changed.length > 0);
   }
   if (cmd === 'beat' || cmd === 'beats') return beatCommand(circuit, pos, flags, result);
+  if (cmd === 'sketch') {
+    const count = circuit.sketch.strokes.length;
+    const sub = pos[0] || 'list';
+    if (sub === 'list') return result(count ? `${count} sketch stroke${count === 1 ? '' : 's'}` : 'the sketch is empty', { strokes: count });
+    if (sub === 'clear') {
+      circuit.sketch.strokes = [];
+      return result(count ? `cleared ${count} sketch stroke${count === 1 ? '' : 's'}` : 'the sketch was empty', { strokes: 0 }, count > 0);
+    }
+    throw new Error(`unknown sketch command "${sub}"; try: sketch list|clear`);
+  }
   if (cmd === 'timing') {
     const bits = {};
     for (const arg of pos) {
@@ -30420,6 +30431,7 @@ __exports.analyzedCircuit = analyzedCircuit;
 let RAIL_NAMES, railNameKey; __bind(() => { ({ RAIL_NAMES, railNameKey } = __require("src/core/rail-names.js")); });
 let stripMathDelimiters; __bind(() => { ({ stripMathDelimiters } = __require("src/core/tex-markup.js")); });
 let normalizeWindows, windowsJSON; __bind(() => { ({ normalizeWindows, windowsJSON } = __require("src/core/window-state.js")); });
+let normalizeSketch, sketchJSON; __bind(() => { ({ normalizeSketch, sketchJSON } = __require("src/core/sketch.js")); });
 let normalizeNotes, notePictureIds, renameMentions; __bind(() => { ({ normalizeNotes, notePictureIds, renameMentions } = __require("src/core/notes.js")); });
 let normalizeHistory; __bind(() => { ({ normalizeHistory } = __require("src/core/save-history.js")); });
 let normalizeBand, normalizeOptimizeSetup; __bind(() => { ({ normalizeBand, normalizeOptimizeSetup } = __require("src/core/analysis/optimize-setup.js")); });
@@ -30443,6 +30455,7 @@ let fanStacks, normalizeStack, segmentEnters, stackRects, stackedBoxes, wireEcho
 let PART_VALUE_ROLE, VALUE_LABEL_MODES, VALUE_TYPES, valueLabelTex; __bind(() => { ({ PART_VALUE_ROLE, VALUE_LABEL_MODES, VALUE_TYPES, valueLabelTex } = __require("src/core/part-value.js")); });
 let MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize; __bind(() => { ({ MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize } = __require("src/core/mos-size.js")); });
 let cursorsOf; __bind(() => { ({ cursorsOf } = __require("src/core/plot-cursors.js")); });
+
 
 
 
@@ -33441,6 +33454,8 @@ class Circuit {
     this.analysisValues = { coefficients: {}, bode: null, links: {} };
     // What the editor's windows show for this design (window-state.js).
     this.windows = {};
+    // Marker strokes over the design (sketch.js): saved, never a drawing edit.
+    this.sketch = { strokes: [] };
     // The design's notes: Markdown, never drawn (notes.js), and the
     // pictures pasted into them, by number (`![...](picture:1)`).
     this.notes = '';
@@ -38139,6 +38154,7 @@ class Circuit {
       ...(this.notes ? { notes: this.notes } : {}),
       ...picturesJSON(this.notes, this.pictures),
       ...windowsJSON(this.windows),
+      ...sketchJSON(this.sketch),
       ...(this.history ? { history: this.history } : {}),
     };
   }
@@ -38159,6 +38175,7 @@ class Circuit {
     circuit.savedNames = normalizeSavedNames(data.names);
     circuit.analysisValues = normalizeAnalysisValues(data.analysisValues);
     circuit.windows = normalizeWindows(data.windows);
+    circuit.sketch = normalizeSketch(data.sketch);
     circuit.notes = normalizeNotes(data.notes);
     circuit.pictures = normalizePictures(data.pictures);
     circuit.history = normalizeHistory(data.history);
@@ -41356,6 +41373,7 @@ __exports.svgString = svgString;
 __exports.signalDirectionSvg = signalDirectionSvg;
 __exports.editorOverlay = editorOverlay;
 let applyTransform, fmt, transformRect, transformToSvg; __bind(() => { ({ applyTransform, fmt, transformRect, transformToSvg } = __require("src/core/geometry.js")); });
+let sketchBounds, sketchSvg; __bind(() => { ({ sketchBounds, sketchSvg } = __require("src/core/sketch.js")); });
 let weightedGraphics; __bind(() => { ({ weightedGraphics } = __require("src/core/stroke-weight.js")); });
 let ceilGrid, floorGrid, GRID; __bind(() => { ({ ceilGrid, floorGrid, GRID } = __require("src/core/grid.js")); });
 let autoRoute; __bind(() => { ({ autoRoute } = __require("src/core/router.js")); });
@@ -41375,6 +41393,7 @@ let cursorLayout; __bind(() => { ({ cursorLayout } = __require("src/core/plot-cu
 let plotSpec; __bind(() => { ({ plotSpec } = __require("src/core/plot-spec.js")); });
 let mathRuns; __bind(() => { ({ mathRuns } = __require("src/core/math-text.js")); });
 let joinSegments, stackOutline, stackedBoxes, wireEchoes; __bind(() => { ({ joinSegments, stackOutline, stackedBoxes, wireEchoes } = __require("src/core/box-stack.js")); });
+
 
 
 
@@ -42448,6 +42467,8 @@ function viewportGridSvg(vp) {
  * absent, the view auto-fits the circuit contents (used for exports / PNG).
  * opts.extras {bounds, svg}: drawing beside the circuit -- rects that widen
  * the frame, and markup drawn above everything (linked-design bubbles).
+ * opts.sketch: draw the sketch (sketch.js) above everything, its ink in the frame
+ *   (`sketchFrame: false`: drawn over the frame the drawing has without it).
  * opts.beat {view, fade, timing}: draw one beat (beats.js resolveBeat). What it dims
  * is drawn faint; what it hides is left out, or with `fade` drawn fainter
  * still so the editor can reach it. `timing` (timing-diagram.js
@@ -42494,6 +42515,16 @@ function svgString(circuit, opts = {}) {
       const x = Math.min(b.x, r.x);
       const y = Math.min(b.y, r.y);
       b = { x, y, w: Math.max(b.x + b.w, r.x + r.w) - x, h: Math.max(b.y + b.h, r.y + r.h) - y };
+    }
+  }
+  // A sketch drawn with it widens the frame like any other ink.
+  const sketchBox = o.sketch && o.sketchFrame !== false ? sketchBounds(circuit.sketch) : null;
+  if (sketchBox) {
+    if (b.w <= 0 && b.h <= 0) b = { ...sketchBox };
+    else {
+      const x = Math.min(b.x, sketchBox.x);
+      const y = Math.min(b.y, sketchBox.y);
+      b = { x, y, w: Math.max(b.x + b.w, sketchBox.x + sketchBox.w) - x, h: Math.max(b.y + b.h, sketchBox.y + sketchBox.h) - y };
     }
   }
   // A framed beat shows its frame alone: the export or presenter frames it
@@ -42889,6 +42920,8 @@ function svgString(circuit, opts = {}) {
   }
 
   if (o.extras?.svg) parts.push(o.extras.svg);
+  // The sketch (sketch.js), when asked for: above everything else.
+  if (o.sketch) parts.push(sketchSvg(circuit.sketch));
   parts.push('</svg>');
   return o.themeInk ? themeInkSvg(parts.join('\n')) : parts.join('\n');
 }
@@ -46071,6 +46104,192 @@ function setSharedLabel(circuit, refdes, text) {
   return component;
 }
 
+};
+
+__modules["src/core/sketch.js"] = function (__require, __exports) {
+__exports.normalizeSketch = normalizeSketch;
+__exports.sketchJSON = sketchJSON;
+__exports.simplifyStroke = simplifyStroke;
+__exports.strokePath = strokePath;
+__exports.strokeSvg = strokeSvg;
+__exports.sketchSvg = sketchSvg;
+__exports.sketchBounds = sketchBounds;
+__exports.eraseStrokes = eraseStrokes;
+let resolveColor; __bind(() => { ({ resolveColor } = __require("src/core/style.js")); });
+/**
+ * The sketch: marker strokes drawn over a design while it is discussed. Its
+ * own layer in world coordinates, above the drawing; nothing reads it but
+ * the renderer -- no connectivity, checks, analyses, or arrange. It is
+ * saved with the design (`sketch` in the file) but is no drawing edit: it
+ * never makes the design unsaved and survives undo (web/sketch-ui.js).
+ *
+ * A stroke is `{ color, width, points: [{x, y}, ...] }`; in the file its
+ * points are one flat list, `[x0, y0, x1, y1, ...]`, to tenths of a unit.
+ */
+
+
+
+/** The marker's colors, as the Sketch tool offers them; red first. */
+const SKETCH_COLORS = Object.freeze(['red', 'blue', 'green', 'orange', 'purple']);
+/** A marker stroke's width, in world units (a grid cell is 40). */
+const SKETCH_WIDTH = 10;
+/** How see-through the marker is. */
+const SKETCH_OPACITY = 0.8;
+/** At most this many strokes, and points in a stroke, are kept. */
+const MAX_STROKES = 2000;
+const MAX_POINTS = 4000;
+
+const round = (n) => Math.round(n * 10) / 10;
+
+/** A stroke read from anything, or null when it is none. */
+function normalizeStroke(value) {
+  if (!value || typeof value !== 'object') return null;
+  const flat = Array.isArray(value.points) ? value.points : [];
+  const points = [];
+  for (let i = 0; i + 1 < flat.length && points.length < MAX_POINTS; i += 2) {
+    const [x, y] = [Number(flat[i]), Number(flat[i + 1])];
+    if (Number.isFinite(x) && Number.isFinite(y)) points.push({ x: round(x), y: round(y) });
+  }
+  if (!points.length) return null;
+  const color = typeof value.color === 'string' && value.color ? value.color.slice(0, 40) : SKETCH_COLORS[0];
+  const width = Number.isFinite(Number(value.width)) && Number(value.width) > 0 ? Math.min(200, Number(value.width)) : SKETCH_WIDTH;
+  return { color, width, points };
+}
+
+/** A sketch read from a document; anything malformed is left out. */
+function normalizeSketch(value) {
+  const strokes = Array.isArray(value?.strokes) ? value.strokes : [];
+  return { strokes: strokes.map(normalizeStroke).filter(Boolean).slice(0, MAX_STROKES) };
+}
+
+/** The sketch as saved: left out when it has no strokes. */
+function sketchJSON(sketch) {
+  const strokes = sketch?.strokes || [];
+  if (!strokes.length) return {};
+  return {
+    sketch: {
+      strokes: strokes.map((stroke) => ({
+        color: stroke.color,
+        width: stroke.width,
+        points: stroke.points.flatMap((p) => [round(p.x), round(p.y)]),
+      })),
+    },
+  };
+}
+
+/** Distance from `p` to the segment `a`-`b`. */
+function segmentDistance(p, a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0;
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+/** A drawn stroke's points with the jitter taken out: those within
+ *  `tolerance` of the line through their neighbours go (Ramer-Douglas-Peucker). */
+function simplifyStroke(points, tolerance = 1.5) {
+  if (points.length < 3) return points.map((p) => ({ x: round(p.x), y: round(p.y) }));
+  const keep = new Uint8Array(points.length);
+  keep[0] = 1;
+  keep[points.length - 1] = 1;
+  const stack = [[0, points.length - 1]];
+  while (stack.length) {
+    const [first, last] = stack.pop();
+    let worst = -1;
+    let index = -1;
+    for (let i = first + 1; i < last; i += 1) {
+      const d = segmentDistance(points[i], points[first], points[last]);
+      if (d > worst) { worst = d; index = i; }
+    }
+    if (worst > tolerance) {
+      keep[index] = 1;
+      stack.push([first, index], [index, last]);
+    }
+  }
+  return points.filter((_, i) => keep[i]).map((p) => ({ x: round(p.x), y: round(p.y) }));
+}
+
+const fmt = (n) => String(round(n));
+
+/** A stroke's path: smooth curves through the midpoints between its points,
+ *  so a hand-drawn line reads as one marker stroke. One point is a dot. */
+function strokePath(points) {
+  if (!points.length) return '';
+  if (points.length === 1) return `M ${fmt(points[0].x)} ${fmt(points[0].y)} l 0 0`;
+  if (points.length === 2) return `M ${fmt(points[0].x)} ${fmt(points[0].y)} L ${fmt(points[1].x)} ${fmt(points[1].y)}`;
+  const parts = [`M ${fmt(points[0].x)} ${fmt(points[0].y)}`];
+  for (let i = 1; i < points.length - 1; i += 1) {
+    const mid = { x: (points[i].x + points[i + 1].x) / 2, y: (points[i].y + points[i + 1].y) / 2 };
+    parts.push(`Q ${fmt(points[i].x)} ${fmt(points[i].y)} ${fmt(mid.x)} ${fmt(mid.y)}`);
+  }
+  const last = points[points.length - 1];
+  parts.push(`L ${fmt(last.x)} ${fmt(last.y)}`);
+  return parts.join(' ');
+}
+
+/** One stroke as SVG markup. */
+function strokeSvg(stroke) {
+  return `<path d="${strokePath(stroke.points)}" fill="none" stroke="${resolveColor(stroke.color)}" stroke-width="${fmt(stroke.width)}" stroke-linecap="round" stroke-linejoin="round"/>`;
+}
+
+/** The sketch as a layer of SVG markup ('' when it has no strokes). The
+ *  layer is see-through as a whole, so a stroke crossing itself does not
+ *  darken where it overlaps. */
+function sketchSvg(sketch) {
+  const strokes = sketch?.strokes || [];
+  if (!strokes.length) return '';
+  return `<g class="sketch-layer" opacity="${SKETCH_OPACITY}" pointer-events="none">${strokes.map(strokeSvg).join('')}</g>`;
+}
+
+/** The sketch's extent, or null when it has none. */
+function sketchBounds(sketch) {
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const stroke of sketch?.strokes || []) {
+    const r = stroke.width / 2;
+    for (const p of stroke.points) {
+      x0 = Math.min(x0, p.x - r);
+      y0 = Math.min(y0, p.y - r);
+      x1 = Math.max(x1, p.x + r);
+      y1 = Math.max(y1, p.y + r);
+    }
+  }
+  return Number.isFinite(x0) ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
+}
+
+/** Whether `stroke` passes within `radius` of the segment `a`-`b`. */
+function strokeNear(stroke, a, b, radius) {
+  const reach = radius + stroke.width / 2;
+  const pts = stroke.points;
+  if (pts.length === 1) return segmentDistance(pts[0], a, b) <= reach;
+  for (let i = 1; i < pts.length; i += 1) {
+    // Close enough when either segment comes near the other's ends, or they cross.
+    if (segmentDistance(pts[i - 1], a, b) <= reach || segmentDistance(pts[i], a, b) <= reach ||
+        segmentDistance(a, pts[i - 1], pts[i]) <= reach || segmentDistance(b, pts[i - 1], pts[i]) <= reach ||
+        segmentsCross(a, b, pts[i - 1], pts[i])) return true;
+  }
+  return false;
+}
+
+function segmentsCross(a, b, c, d) {
+  const side = (p, q, r) => Math.sign((q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x));
+  return side(a, b, c) * side(a, b, d) < 0 && side(c, d, a) * side(c, d, b) < 0;
+}
+
+/** Remove the strokes the eraser's path `a`-`b` (`radius` wide) touches.
+ *  Returns how many went. */
+function eraseStrokes(sketch, a, b, radius) {
+  const before = sketch.strokes.length;
+  sketch.strokes = sketch.strokes.filter((stroke) => !strokeNear(stroke, a, b, radius));
+  return before - sketch.strokes.length;
+}
+
+__exports.SKETCH_COLORS = SKETCH_COLORS;
+__exports.SKETCH_WIDTH = SKETCH_WIDTH;
+__exports.SKETCH_OPACITY = SKETCH_OPACITY;
 };
 
 __modules["src/core/stroke-weight.js"] = function (__require, __exports) {
@@ -62326,11 +62545,17 @@ let PLACE, floatingWindow; __bind(() => { ({ PLACE, floatingWindow } = __require
 let buttonIcon; __bind(() => { ({ buttonIcon } = __require("src/web/icons.js")); });
 let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion.js")); });
 let easeInOut; __bind(() => { ({ easeInOut } = __require("src/web/easing.js")); });
+let SKETCH_OPACITY, SKETCH_WIDTH, strokePath; __bind(() => { ({ SKETCH_OPACITY, SKETCH_WIDTH, strokePath } = __require("src/core/sketch.js")); });
+let liveSketchPoints, sketchColor, sketchDown, sketchMove, sketchUp, undoSketch; __bind(() => { ({ liveSketchPoints, sketchColor, sketchDown, sketchMove, sketchUp, undoSketch } = __require("src/web/sketch-ui.js")); });
+let resolveColor; __bind(() => { ({ resolveColor } = __require("src/core/style.js")); });
 /**
  * Beats in the editor: the beat strip, stepping and editing beats, hiding
  * or dimming the selection from a beat on, switch flips, and the full-screen
  * presenter. The beat model is core/beats.js.
  */
+
+
+
 
 
 
@@ -63956,7 +64181,13 @@ function showPresenterFrame(animate = true) {
   frame.className = 'presenter-frame';
   if (!editor.presenter.blank) {
     // Theme ink, like the canvas: the presentation follows light or dark mode.
-    frame.innerHTML = svgString(editor.circuit, { ...DRAWING_EXPORT_OPTIONS, themeInk: true, beat: { view: resolveBeat(editor.circuit, editor.presenter.index), timing: timingBeatBands(editor.circuit, editor.presenter.index) } });
+    frame.innerHTML = svgString(editor.circuit, {
+      ...DRAWING_EXPORT_OPTIONS,
+      themeInk: true,
+      beat: { view: resolveBeat(editor.circuit, editor.presenter.index), timing: timingBeatBands(editor.circuit, editor.presenter.index) },
+      // Sketching (j), the sketch over the beat, in the beat's own frame.
+      ...(editor.presenter.sketch ? { sketch: true, sketchFrame: false } : {}),
+    });
     const svg = frame.querySelector('svg');
     svg?.removeAttribute('width');
     svg?.removeAttribute('height');
@@ -64005,8 +64236,99 @@ function presenterStep(delta) {
   showPresenterFrame();
 }
 
+// ----- sketching while presenting ---------------------------------------------
+// j shows the sketch over the beat and draws on it as the Sketch tool does
+// (sketch-ui.js): a drag draws, Shift-drag erases, Ctrl/Cmd+Z steps back. A
+// click then draws instead of stepping; the keys still step. Esc, or j
+// again, hides the sketch.
+
+const ERASER_PX = 12;
+let presenterStroke = null;
+
+function presenterDrawing() {
+  const all = presenterStageEl.querySelectorAll('.presenter-frame svg');
+  return all[all.length - 1] || null;
+}
+
+/** The world point under the pointer, on the beat shown. */
+function presenterWorld(ev) {
+  const svg = presenterDrawing();
+  const m = svg?.getScreenCTM();
+  if (!m) return null;
+  const p = new DOMPoint(ev.clientX, ev.clientY).matrixTransform(m.inverse());
+  return { x: p.x, y: p.y, scale: m.a };
+}
+
+function setPresenterSketch(on) {
+  if (!editor.presenter) return;
+  editor.presenter.sketch = on;
+  presenterEl.classList.toggle('sketching', on);
+  presenterStroke = null;
+  showPresenterFrame(false);
+}
+
+function presenterSketchDown(ev) {
+  if (!editor.presenter?.sketch || ev.button !== 0) return;
+  const world = presenterWorld(ev);
+  if (!world) return;
+  ev.preventDefault();
+  presenterEl.setPointerCapture?.(ev.pointerId);
+  sketchDown(world, { shiftKey: ev.shiftKey, radius: ERASER_PX / world.scale });
+  presenterStroke = { path: null };
+  // Erasing draws nothing of its own.
+  if (!liveSketchPoints()) return;
+  const svg = presenterDrawing();
+  const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  group.setAttribute('opacity', String(SKETCH_OPACITY));
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  for (const [name, value] of Object.entries({ fill: 'none', stroke: resolveColor(sketchColor()), 'stroke-width': SKETCH_WIDTH, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })) path.setAttribute(name, value);
+  group.append(path);
+  svg.append(group);
+  presenterStroke = { path };
+  drawPresenterStroke();
+}
+
+function drawPresenterStroke() {
+  const points = liveSketchPoints();
+  if (presenterStroke?.path && points) presenterStroke.path.setAttribute('d', strokePath(points));
+}
+
+function presenterSketchMove(ev) {
+  if (!presenterStroke) return;
+  const world = presenterWorld(ev);
+  if (!world) return;
+  // Something erased: the beat drawn again without it.
+  if (sketchMove(world)) showPresenterFrame(false);
+  drawPresenterStroke();
+}
+
+function presenterSketchUp(ev) {
+  if (!presenterStroke) return;
+  const world = presenterWorld(ev);
+  if (world) sketchMove(world);
+  sketchUp();
+  presenterStroke = null;
+  showPresenterFrame(false);
+}
+
 function onPresenterKey(ev) {
   const key = ev.key;
+  if (key === 'j' && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+    setPresenterSketch(!editor.presenter.sketch);
+    ev.preventDefault();
+    return;
+  }
+  if (editor.presenter.sketch && key === 'Escape') {
+    setPresenterSketch(false);
+    ev.preventDefault();
+    return;
+  }
+  if (editor.presenter.sketch && (ev.ctrlKey || ev.metaKey) && key.toLowerCase() === 'z') {
+    undoSketch();
+    showPresenterFrame(false);
+    ev.preventDefault();
+    return;
+  }
   const forward = ['ArrowRight', 'ArrowDown', 'PageDown', ' ', 'Enter', 'n'];
   const back = ['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace', 'p'];
   if (forward.includes(key)) presenterStep(1);
@@ -64022,11 +64344,16 @@ function onPresenterKey(ev) {
 }
 
 function installBeatsUi() {
-  presenterEl?.addEventListener('click', () => presenterStep(1));
+  // Sketching, a click draws; otherwise it steps on (and a right click back).
+  presenterEl?.addEventListener('click', () => { if (!editor.presenter?.sketch) presenterStep(1); });
   presenterEl?.addEventListener('contextmenu', (ev) => {
     ev.preventDefault();
-    presenterStep(-1);
+    if (!editor.presenter?.sketch) presenterStep(-1);
   });
+  presenterEl?.addEventListener('pointerdown', presenterSketchDown);
+  presenterEl?.addEventListener('pointermove', presenterSketchMove);
+  presenterEl?.addEventListener('pointerup', presenterSketchUp);
+  presenterEl?.addEventListener('pointercancel', presenterSketchUp);
   // Leaving full screen (the browser owns Escape there) ends the presentation.
   document.addEventListener('fullscreenchange', () => {
     if (editor.presenter?.fullscreen && document.fullscreenElement !== presenterEl) closePresenter();
@@ -65735,7 +66062,7 @@ let showHelp; __bind(() => { ({ showHelp } = __require("src/web/help.js")); });
 let runCheck; __bind(() => { ({ runCheck } = __require("src/web/design-check-ui.js")); });
 let openFind, openReplace; __bind(() => { ({ openFind, openReplace } = __require("src/web/find-replace-ui.js")); });
 let toggleAtlas, toggleBuiltInDrawings, toggleSymbolSheet; __bind(() => { ({ toggleAtlas, toggleBuiltInDrawings, toggleSymbolSheet } = __require("src/web/atlas.js")); });
-let activateAlign, activateAnnotation, activateCopy, activateEquation, activateHighlight, activateMove, activateNetLabel, activatePlace, activateShapeAnnotation, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render, restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, tidyNow, undo; __bind(() => { ({ activateAlign, activateAnnotation, activateCopy, activateEquation, activateHighlight, activateMove, activateNetLabel, activatePlace, activateShapeAnnotation, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render, restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, tidyNow, undo } = __require("src/web/main.js")); });
+let activateAlign, activateAnnotation, activateCopy, activateEquation, activateHighlight, activateSketch, activateMove, activateNetLabel, activatePlace, activateShapeAnnotation, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render, restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, tidyNow, undo; __bind(() => { ({ activateAlign, activateAnnotation, activateCopy, activateEquation, activateHighlight, activateSketch, activateMove, activateNetLabel, activatePlace, activateShapeAnnotation, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render, restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, tidyNow, undo } = __require("src/web/main.js")); });
 let joinSelectedLines, removeAllNetHighlights; __bind(() => { ({ joinSelectedLines, removeAllNetHighlights } = __require("src/web/annotation-tools.js")); });
 let enterLinkedDesign, leaveLinkedDesign, toggleAllLinkBubbles, toggleLinkBubbles; __bind(() => { ({ enterLinkedDesign, leaveLinkedDesign, toggleAllLinkBubbles, toggleLinkBubbles } = __require("src/web/hierarchy.js")); });
 let copyAsImage; __bind(() => { ({ copyAsImage } = __require("src/web/export-ui.js")); });
@@ -65890,6 +66217,7 @@ const ACTIONS = {
   'symmetry-axis': (direction) => setSymmetryAxis(/^off/i.test(direction || '') || (!direction && symmetryAxis()) ? null : /^h/i.test(direction || '') ? 'mirrorY' : 'mirrorX'),
   tidy: () => tidyNow(),
   edit: () => editSelectionText(),
+  'sketch-tool': () => activateSketch(),
   'add-beat': () => addBeatHere(),
   'next-beat': () => stepBeat(1),
   'previous-beat': () => stepBeat(-1),
@@ -66166,7 +66494,7 @@ const EDITOR_COMMANDS = [
   { name: 'link-bubbles-all', aliases: ['peek-all', 'show-all-links'], canvas: true, help: 'show or hide the designs of all linked parts beside the drawing (Shift+O)' },
   { name: 'enter-link', aliases: ['dive', 'descend', 'open-link'], canvas: true, help: 'open the selected part\'s linked design, with a way back up (Alt+↓)' },
   { name: 'leave-link', aliases: ['up', 'ascend', 'parent', 'used-in', 'where-used'], canvas: true, help: 'back up to the design this one was opened from, else to a design it is used in (Alt+↑)' },
-  { name: 'join-lines', aliases: ['join', 'merge-lines'], canvas: true, help: 'join the selected line annotations into one continuous line (Shift+J)' },
+  { name: 'join-lines', aliases: ['join', 'merge-lines'], canvas: true, help: 'join the selected line annotations into one continuous line (j)' },
   { name: 'align-to', aliases: ['snap-to'], canvas: true, help: 'align the selection to another object\'s edge or point (Shift+A)' },
   { name: 'align', needsArg: true, choices: ['left', 'right', 'top', 'bottom', 'center-x', 'center-y'], canvas: true, help: 'align the selection: left, right, top, bottom, center-x, or center-y (Ctrl/Cmd+Shift+arrows)' },
   { name: 'distribute', aliases: ['spread', 'even'], needsArg: true, choices: ['x', 'y'], canvas: true, help: 'space the selection evenly: x (horizontal) or y (vertical)' },
@@ -66180,6 +66508,7 @@ const EDITOR_COMMANDS = [
   { name: 'arrange-like', aliases: ['arrange-as', 'draw-like', 'redraw-like'], canvas: true, help: 'draw the selected parts as another drawing of them does (Shift+Q)' },
   { name: 'tidy', aliases: ['clean-up', 'cleanup', 'neaten', 'straighten'], canvas: true, help: 're-lay the selection\'s nets and move its crowded labels clear (Shift+T)' },
   { name: 'edit', aliases: ['edit-text', 'rename-selection'], canvas: true, help: 'edit the selected label or part name (t, =, F2)' },
+  { name: 'sketch-tool', aliases: ['marker', 'whiteboard', 'scribble', 'draw'], canvas: true, help: 'the Sketch tool: draw over the design with a marker; Esc hides the sketch (j)' },
   { name: 'add-beat', aliases: ['new-beat'], canvas: true, help: 'add a beat after the one on screen (+)' },
   { name: 'next-beat', canvas: true, help: 'step to the next beat (Alt+→)' },
   { name: 'previous-beat', aliases: ['prev-beat'], canvas: true, help: 'step to the previous beat (Alt+←)' },
@@ -66224,6 +66553,7 @@ const DOCUMENT_COMMANDS = [
   { name: 'annotation', aliases: ['annotate', 'label', 'note', 'text'], help: 'annotation add TEXT X Y ...' },
   { name: 'switch', help: 'switch REF|PHASE open|closed' },
   { name: 'beat', help: 'beat list|add|rm|show|dim|hide ...' },
+  { name: 'sketch', help: 'sketch [list] | sketch clear: count the sketch\'s strokes, or remove them all' },
   { name: 'timing', help: 'draw a timing diagram: timing φ1=10 φ2=01 (or from the beats); --add CLK adds a signal of its own' },
   { name: 'list', aliases: ['ls', 'components', 'parts'], help: 'list components' },
   { name: 'eval', help: 'quality report' },
@@ -70649,14 +70979,16 @@ function openUnsavedDocument(state, name, message = null) {
 /** A document as text, without what its windows show: window state is saved
  *  with the design but is no edit, so it never makes the design unsaved. */
 function drawingText(text) {
-  if (!text || !['"windows"', '"names"', '"mathBox"', '"history"'].some((key) => text.includes(key))) return text;
+  if (!text || !['"windows"', '"sketch"', '"names"', '"mathBox"', '"history"'].some((key) => text.includes(key))) return text;
   try {
     const data = JSON.parse(text);
     // Neither what the windows show, nor the names the file was saved
     // under, nor the size this browser measured a math label at (saved with
     // it so a file reads its size back), nor the save history (the file's,
-    // written as it changes: history-window.js) ever make the design unsaved.
+    // written as it changes: history-window.js) ever make the design unsaved,
+    // nor the sketch over it (sketch-ui.js).
     delete data.windows;
+    delete data.sketch;
     delete data.names;
     delete data.history;
     for (const label of data.labels || []) delete label.mathBox;
@@ -70664,13 +70996,15 @@ function drawingText(text) {
   } catch { return text; }
 }
 
-/** Whether the document differs from its file in its windows' state alone. */
+/** Whether the document differs from its file in its windows' state or its
+ *  sketch alone. */
 function windowsChanged() {
   if (!editor.lastSavedSnapshot || documentChanged()) return false;
-  // The windows themselves: what else is left out of documentChanged (the
-  // saved names, a math label's measured size) is no reason to write.
+  // The windows and the sketch themselves: what else is left out of
+  // documentChanged (the saved names, a math label's measured size) is no
+  // reason to write.
   const windowsOf = (text) => {
-    try { return JSON.stringify(JSON.parse(text).windows ?? null); } catch { return null; }
+    try { const data = JSON.parse(text); return JSON.stringify([data.windows ?? null, data.sketch ?? null]); } catch { return null; }
   };
   return windowsOf(snapshot()) !== windowsOf(editor.lastSavedSnapshot);
 }
@@ -70712,9 +71046,11 @@ async function keepWindowStateOnDiscard() {
     saved = JSON.parse(editor.lastSavedSnapshot);
     now = JSON.parse(snapshot());
   } catch { return; }
-  if (JSON.stringify(saved.windows ?? null) === JSON.stringify(now.windows ?? null)) return;
-  if (now.windows) saved.windows = now.windows;
-  else delete saved.windows;
+  if (JSON.stringify([saved.windows ?? null, saved.sketch ?? null]) === JSON.stringify([now.windows ?? null, now.sketch ?? null])) return;
+  for (const key of ['windows', 'sketch']) {
+    if (now[key]) saved[key] = now[key];
+    else delete saved[key];
+  }
   try {
     editor.syncGeneration += 1;
     await persistence.save({ path }, saved, { overwrite: true, historyBase });
@@ -72376,6 +72712,9 @@ let render, syncRenderedLabelMetrics; __bind(() => { ({ render, syncRenderedLabe
 
 
 const exportGridInput = exportForm?.querySelector('input[name="grid"]');
+// The sketch (sketch-ui.js) goes in only when asked for, and is offered
+// only when the design has one.
+const exportSketchInput = exportForm?.querySelector('input[name="sketch"]');
 
 const exportDarkInput = exportForm?.querySelector('input[name="dark"]');
 
@@ -72445,7 +72784,7 @@ async function copyAsImage() {
  * one PDF (`name.pdf`) with a page per beat. Beats share the whole drawing's
  * frame, so the files and pages line up when stepped through.
  */
-async function runExport({ dir, name, formats, grid = false, dark = false, pngDpi = normalizePngDpi(null), selection = null, beat = null }) {
+async function runExport({ dir, name, formats, grid = false, dark = false, sketch = false, pngDpi = normalizePngDpi(null), selection = null, beat = null }) {
   const supportedFormats = persistence.supportedExportFormats || new Set(formats);
   const unsupported = formats.filter((format) => !supportedFormats.has(format));
   if (unsupported.length) {
@@ -72504,6 +72843,8 @@ async function runExport({ dir, name, formats, grid = false, dark = false, pngDp
       const renderedSvg = renderDocument(drawing, {
         ...DRAWING_EXPORT_OPTIONS,
         grid,
+        // Only the whole drawing carries the sketch; a selection is its parts.
+        sketch: sketch && !selection,
         pageGuide: editor.pageGuide,
         ...(extras ? { extras } : {}),
         ...(view ? { beat: { view, timing: timingBeatBands(editor.circuit, view.index) } } : {}),
@@ -72762,6 +73103,10 @@ function exportCircuit({ content = 'drawing' } = {}) {
   try { saved = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null'); } catch { /* storage unavailable */ }
   if (exportGridInput) exportGridInput.checked = saved?.grid === true;
   if (exportDarkInput) exportDarkInput.checked = saved?.dark === true;
+  if (exportSketchInput) {
+    exportSketchInput.checked = saved?.sketch === true;
+    exportSketchInput.closest('label').hidden = !editor.circuit.sketch?.strokes.length;
+  }
   const dpiSelect = exportForm.querySelector('select[name="pngDpi"]');
   if (dpiSelect) dpiSelect.value = String(normalizePngDpi(saved?.pngDpi));
   // Selection-only is offered per export, never remembered: a later export
@@ -72825,6 +73170,8 @@ function exportAtlasSheet(target) {
   try { saved = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null'); } catch { /* storage unavailable */ }
   if (exportGridInput) exportGridInput.checked = saved?.grid === true;
   if (exportDarkInput) exportDarkInput.checked = saved?.dark === true;
+  // The Atlas's sheet has no sketch of its own.
+  if (exportSketchInput) exportSketchInput.closest('label').hidden = true;
   const formats = Array.isArray(saved?.atlasFormats) ? saved.atlasFormats : ['pdf'];
   for (const input of exportForm.querySelectorAll('input[name="format"]')) {
     const supported = persistence.supportedExportFormats?.has(input.value) ?? true;
@@ -72908,6 +73255,7 @@ function installExportUi() {
     const settings = {
       grid: exportGridInput?.checked === true,
       dark: exportDarkInput?.checked === true,
+      sketch: exportSketchInput?.checked === true,
       pngDpi: normalizePngDpi(exportForm.querySelector('select[name="pngDpi"]')?.value),
     };
     try {
@@ -74183,6 +74531,7 @@ __exports.syncSnapPulse = syncSnapPulse;
 __exports.annotationReach = annotationReach;
 __exports.cutAlong = cutAlong;
 __exports.withGestureOverlay = withGestureOverlay;
+let liveSketchSvg; __bind(() => { ({ liveSketchSvg } = __require("src/web/sketch-ui.js")); });
 let componentShapeSvg; __bind(() => { ({ componentShapeSvg } = __require("src/core/render.js")); });
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let knifeCrossings, pinHandleRadius, strokeCrossesPolyline, strokeCrossesRect; __bind(() => { ({ knifeCrossings, pinHandleRadius, strokeCrossesPolyline, strokeCrossesRect } = __require("src/web/gestures.js")); });
@@ -74197,6 +74546,7 @@ let deleteSelection, nearestTerminal, wireSegmentAt, placementJoinPoints, setLab
  * wire will land on, and the Delete tool's knife stroke with the cuts it
  * makes. The stroke geometry is in gestures.js.
  */
+
 
 
 
@@ -74305,6 +74655,9 @@ function cutAlong(stroke) {
 /** Gesture feedback appended to the editor overlay's elements, in world units. */
 function withGestureOverlay(svg, ghost) {
   const parts = [];
+  // The marker stroke being drawn (sketch-ui.js).
+  const sketching = liveSketchSvg();
+  if (sketching) parts.push(sketching);
   if (editor.hoverTarget?.kind === 'net' && !editor.drag) {
     for (const id of editor.hoverTarget.ids) {
       for (const pts of editor.circuit.nets.get(id)?.paths() || []) {
@@ -77448,6 +77801,7 @@ const ICON_PATHS = {
   reference: '<rect x="3.5" y="5.5" width="11" height="13" rx="1.5"/><rect x="9.5" y="3.5" width="11" height="13" rx="1.5" fill="currentColor" fill-opacity=".16"/><path d="M12.5 8.5h5M12.5 11.5h5M12.5 14.5h3"/>',
   hierarchy: '<rect x="9" y="3.5" width="6" height="5" rx="1"/><rect x="3.5" y="15.5" width="6" height="5" rx="1"/><rect x="14.5" y="15.5" width="6" height="5" rx="1"/><path d="M12 8.5V12M6.5 15.5V12h11v3.5"/>',
   tag: '<path d="M3.5 4.5v7l9 9 8-8-9-9h-7z" fill="currentColor" fill-opacity=".16"/><circle cx="8" cy="8.5" r="1.6" fill="currentColor" stroke="none"/>',
+  sketch: '<path d="M4 18c3-1 4-5 2-7s-3 3 0 4 6-1 7-5-3-6-4-3 1 7 4 8 5-2 7-3"/>',
   highlight: '<path d="M14.5 4.5l5 5-8 8H6.5v-5z" fill="currentColor" fill-opacity=".16"/><path d="M12 7l5 5"/><path d="M3.5 20.5h8"/>',
   text: '<path d="M5 6.5V4.5h14v2M12 4.5v15M9 19.5h6"/>',
   arrow: '<path d="M5 19 16 8"/><path d="M20 4l-1.6 9-7.4-7.4z" fill="currentColor" stroke="none"/>',
@@ -80221,6 +80575,7 @@ __exports.hasWireDraft = hasWireDraft;
 __exports.enterNetLabelMode = enterNetLabelMode;
 __exports.activateNetLabel = activateNetLabel;
 __exports.activateHighlight = activateHighlight;
+__exports.activateSketch = activateSketch;
 __exports.activateAnnotation = activateAnnotation;
 __exports.activateEquation = activateEquation;
 __exports.activateShapeAnnotation = activateShapeAnnotation;
@@ -80283,6 +80638,7 @@ let adoptDrawing, patchChildren, patchDrawing; __bind(() => { ({ adoptDrawing, p
 let syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock; __bind(() => { ({ syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock } = __require("src/web/analysis-ui.js")); });
 let closeComponentContextMenu, openContextMenuAt, installContextMenu; __bind(() => { ({ closeComponentContextMenu, openContextMenuAt, installContextMenu } = __require("src/web/context-menu.js")); });
 let boxState, restoreBoxState, openComponentChildLabelEditor, inlineEditLabel; __bind(() => { ({ boxState, restoreBoxState, openComponentChildLabelEditor, inlineEditLabel } = __require("src/web/label-editor.js")); });
+let installSketchUi, runSketchLine, setSketchVisible, sketchDown, sketchMove, sketchRevision, sketchShown, sketchUp, undoSketch; __bind(() => { ({ installSketchUi, runSketchLine, setSketchVisible, sketchDown, sketchMove, sketchRevision, sketchShown, sketchUp, undoSketch } = __require("src/web/sketch-ui.js")); });
 let activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, closeBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, toggleTimingDialog, onPresenterKey, installBeatsUi, syncTimingEditor; __bind(() => { ({ activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, closeBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, toggleTimingDialog, onPresenterKey, installBeatsUi, syncTimingEditor } = __require("src/web/beats-ui.js")); });
 let formatModifiedTime, revisionTime; __bind(() => { ({ formatModifiedTime, revisionTime } = __require("src/web/modified-time.js")); });
 let persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, openDocumentPath, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession; __bind(() => { ({ persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, openDocumentPath, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } = __require("src/web/document-session.js")); });
@@ -80337,6 +80693,7 @@ let setHidden; __bind(() => { ({ setHidden } = __require("src/web/dom.js")); });
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -80764,6 +81121,7 @@ function deriveInteractionState({ mode = 'normal', labelMode = null, wire = null
   };
   if (labelMode === 'net') return { key: 'net-label', canvasClass: 'mode-net-label', toolbar: 'net-label', label: 'NET LABEL' };
   if (labelMode === 'highlight') return { key: 'highlight', canvasClass: 'mode-highlight', toolbar: 'highlight', label: 'HIGHLIGHT' };
+  if (labelMode === 'sketch') return { key: 'sketch', canvasClass: 'mode-sketch', toolbar: 'sketch', label: 'SKETCH' };
   if (labelMode === 'annotation') return { key: 'annotation', canvasClass: 'mode-annotation', toolbar: 'annotation', label: 'ANNOTATION' };
   if (labelMode === 'equation') return { key: 'equation', canvasClass: 'mode-annotation', toolbar: 'annotation', label: 'EQUATION' };
   if (labelMode === 'line') return { key: 'line', canvasClass: 'mode-annotation', toolbar: 'line', label: 'LINE' };
@@ -80819,6 +81177,7 @@ function drawingOf(text) {
   const data = JSON.parse(text);
   delete data.analysisValues;
   delete data.windows;
+  delete data.sketch;
   delete data.notes;
   delete data.pictures;
   delete data.history;
@@ -80899,6 +81258,7 @@ function beginPreviewTransaction(startSnapshot = snapshot()) {
   // The working copy shares the windows' state and the save history: it is
   // the same document.
   circuit.windows = previewTransaction.baseCircuit.windows;
+  circuit.sketch = previewTransaction.baseCircuit.sketch;
   circuit.history = previewTransaction.baseCircuit.history;
   circuit.adoptTextMetrics(previewTransaction.baseCircuit);
   previewRevision += 1;
@@ -81062,6 +81422,7 @@ function applyJson(blob, { document: replacesDocument = false } = {}) {
   // The save history is the file's, never undone (core/save-history.js).
   if (!replacesDocument && previous) {
     circuit.windows = previous.windows;
+    circuit.sketch = previous.sketch;
     circuit.history = previous.history;
   }
   if (replacesDocument) documentGeneration += 1;
@@ -82429,6 +82790,7 @@ function cycleLabelSelection(dir, fromId = selectedLabel()?.id) {
 // belong to that beat and carry on to the following beats that looked the same.
 
 installBeatsUi();
+installSketchUi();
 
 /**
  * Commit the current insert-mode ghost at the cursor. Stays on the same
@@ -83329,7 +83691,7 @@ function renderCanvas(modelKey) {
   const beatView = activeBeatView(modelKey);
   // The drawing is in world coordinates; only its frame depends on the view.
   // Pan and zoom therefore re-apply the frame and keep the drawing's DOM.
-  const canvasKey = `${modelKey}|${showGrid}|${editingLabelId}|${beatView ? beatView.index : ''}|${[...ghostRefs].join(',')}|${[...ghostLabels].join(',')}|${[...ghostNets].join(',')}`;
+  const canvasKey = `${modelKey}|${showGrid}|${editingLabelId}|${beatView ? beatView.index : ''}|${sketchShown() ? sketchRevision() : ''}|${[...ghostRefs].join(',')}|${[...ghostLabels].join(',')}|${[...ghostNets].join(',')}`;
   // A pan the pointer has let go of without a release (a lost capture): the
   // drawing is painted as usual again.
   if (paintMarginNow() && drag?.mode !== 'pan') endPaintedPan();
@@ -83360,6 +83722,7 @@ function renderCanvas(modelKey) {
       ghostLabels,
       ghostNets,
       editingLabel: editingLabelId,
+      sketch: sketchShown(),
       ...(beatView ? { beat: { view: beatView, fade: true, timing: timingBeatBands(circuit, beatView.index) } } : {}),
     });
     const template = document.createElement('template');
@@ -84912,6 +85275,12 @@ function canvasMouseDown(ev) {
     drag = { mode: 'zoom', startClient, startWorld, moved: false, rubber: null, contextOnRelease: true };
     return;
   }
+  if (labelMode === 'sketch' && b === 0) {
+    ev.preventDefault();
+    drag = { mode: 'sketch', startClient, startWorld, rubber: null };
+    sketchDown(rawStartWorld, { shiftKey: ev.shiftKey });
+    return;
+  }
   if (alignTool && b === 0) {
     alignMouseDown(startWorld, startClient, ev);
     return;
@@ -85981,6 +86350,10 @@ function canvasMouseMove(ev) {
     if (cursorChanged || changed) scheduleInteractionRender();
     return;
   }
+  if (drag.mode === 'sketch') {
+    sketchMove(clientToWorld(ev.clientX, ev.clientY));
+    return;
+  }
 
   const movedOut = dragMoved(drag.startWorld, drag.startClient, w, ev);
   const movedWorld = constrainedWorld(drag.startWorld, w, ev.shiftKey);
@@ -86488,6 +86861,13 @@ function canvasMouseUp(ev) {
 
 function finishCanvasMouseUp(ev) {
   if (!drag) return;
+  if (drag.mode === 'sketch') {
+    sketchMove(clientToWorld(ev.clientX, ev.clientY));
+    sketchUp();
+    drag = null;
+    render();
+    return;
+  }
   const releaseWorld = clientToWorld(ev.clientX, ev.clientY);
   const movedOut = dragMoved(drag.startWorld, drag.startClient, releaseWorld, ev);
   const w = wire && terminalSnap ? terminalSnapWorld(releaseWorld) : releaseWorld;
@@ -87440,6 +87820,12 @@ function onNormalKey(key, shiftKey = false) {
     void editValues();
     return;
   }
+  // j: the Sketch tool, armed or left (leaving hides the sketch).
+  if (key === 'j') {
+    if (labelMode === 'sketch') activateSelect();
+    else activateSketch();
+    return;
+  }
   if (key === 'z') {
     openSwapPicker(swapTargets());
     return;
@@ -87758,6 +88144,9 @@ function runLine(line) {
 
   logCommand(trimmed);
 
+  // The sketch is no drawing edit: its commands change it alone.
+  if (/^sketch\b/i.test(trimmed)) return runSketchLine(trimmed);
+
   // The history lives in the file, and the drawing here may be ahead of it:
   // the History window changes it in the file.
   if (/^history\s+\S/i.test(trimmed)) {
@@ -87895,6 +88284,8 @@ function activateLabelPlacement(kind) {
     ? 'NET LABEL: click a physical wire; stays active until Esc'
     : kind === 'highlight'
       ? 'HIGHLIGHT: click a net to cycle its color; 8 removes all; Esc exits'
+    : kind === 'sketch'
+      ? 'SKETCH: drag to draw · Shift-drag erases · Ctrl+Z undoes · Esc hides the sketch'
     : kind === 'annotation'
       ? 'ANNOTATION: click anywhere to place free text; Esc cancels'
       : `${kind.toUpperCase()}: click start and end points; stays active until Esc`);
@@ -87915,6 +88306,13 @@ function activateNetLabel() {
 
 function activateHighlight() {
   activateLabelPlacement('highlight');
+}
+
+/** j: the Sketch tool, its layer on show until the tool is left. */
+function activateSketch() {
+  activateLabelPlacement('sketch');
+  setSketchVisible(true);
+  render();
 }
 
 function activateAnnotation() {
@@ -87965,6 +88363,8 @@ function wrapSelectionInBox() {
 
 /** Disarm the one-shot tools: move, copy, delete, label and annotation placement. */
 function disarmTools() {
+  // Leaving the Sketch tool hides the sketch again.
+  if (labelMode === 'sketch') setSketchVisible(false);
   moveMode = null;
   copyMode = false;
   deleteMode = false;
@@ -88332,7 +88732,9 @@ window.addEventListener('keydown', (ev) => {
     } else if (k === 'z') {
       ev.preventDefault();
       if (drag?.mode === 'copyghost') cancelDrag();
-      undo();
+      // In the Sketch tool, undo steps back through the sketch alone.
+      if (labelMode === 'sketch') undoSketch();
+      else undo();
     } else if (k === 'y') {
       ev.preventDefault();
       redo();
@@ -98580,6 +98982,249 @@ function sizingDocumentShown() {
 
 };
 
+__modules["src/web/sketch-ui.js"] = function (__require, __exports) {
+__exports.setSketchVisible = setSketchVisible;
+__exports.undoSketch = undoSketch;
+__exports.clearSketch = clearSketch;
+__exports.runSketchLine = runSketchLine;
+__exports.sketchDown = sketchDown;
+__exports.sketchMove = sketchMove;
+__exports.sketchUp = sketchUp;
+__exports.liveSketchSvg = liveSketchSvg;
+__exports.syncSketchBar = syncSketchBar;
+__exports.installSketchUi = installSketchUi;
+let SKETCH_COLORS, SKETCH_WIDTH, eraseStrokes, simplifyStroke, strokeSvg; __bind(() => { ({ SKETCH_COLORS, SKETCH_WIDTH, eraseStrokes, simplifyStroke, strokeSvg } = __require("src/core/sketch.js")); });
+let runCommand; __bind(() => { ({ runCommand } = __require("src/core/commands.js")); });
+let COLOR_PALETTE; __bind(() => { ({ COLOR_PALETTE } = __require("src/core/style.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let persistDraft; __bind(() => { ({ persistDraft } = __require("src/web/document-session.js")); });
+let logLine, hintLine; __bind(() => { ({ logLine, hintLine } = __require("src/web/status-bar-ui.js")); });
+let render, scheduleInteractionRender; __bind(() => { ({ render, scheduleInteractionRender } = __require("src/web/main.js")); });
+/**
+ * The Sketch tool (j): marker strokes over the design while it is
+ * discussed (core/sketch.js). Arming it shows the sketch layer; Esc (or
+ * another tool) leaves it and hides the layer again, and arming it again
+ * brings the strokes back. A drag draws in the chosen color; Shift-drag,
+ * or the eraser, removes the strokes it crosses. The sketch is saved with
+ * the design but is no drawing edit: Ctrl/Cmd+Z in the tool steps back
+ * through the sketch's own changes, and the design never becomes unsaved
+ * for it (document-session.js writes it with the windows' state).
+ */
+
+
+
+
+
+
+
+
+
+const UNDO_LIMIT = 200;
+// Screen pixels the eraser reaches either side of the pointer.
+const ERASER_PX = 8;
+
+let visible = false;
+let color = SKETCH_COLORS[0];
+let eraser = false;
+let revision = 0;
+// The stroke being drawn, or the eraser's last point.
+let live = null;
+// The sketch's earlier states, for undo in the tool; per document.
+let undo = { circuit: null, states: [] };
+
+const sketch = () => editor.circuit.sketch;
+const barEl = () => document.getElementById('sketch-bar');
+
+/** Whether the sketch layer is on show. */
+const sketchShown = () => visible;
+/** A number that changes whenever the sketch does: the canvas redraws on it. */
+const sketchRevision = () => revision;
+
+function undoStates() {
+  if (undo.circuit !== editor.circuit.sketch) undo = { circuit: editor.circuit.sketch, states: [] };
+  return undo.states;
+}
+
+/** Remember the sketch as it is, before a change. */
+function rememberSketch() {
+  const states = undoStates();
+  states.push(sketch().strokes.slice());
+  if (states.length > UNDO_LIMIT) states.shift();
+}
+
+/** The sketch changed: draw it again, and keep it in the window's draft. */
+function sketchChanged() {
+  revision += 1;
+  persistDraft();
+  render();
+}
+
+/** Show or hide the sketch layer (the tool arms and disarms it). */
+function setSketchVisible(on) {
+  if (visible === on) return;
+  visible = on;
+  live = null;
+  revision += 1;
+  syncSketchBar();
+}
+
+/** Ctrl/Cmd+Z in the tool: the sketch as it was before its last change. */
+function undoSketch() {
+  const states = undoStates();
+  if (!states.length) {
+    hintLine('SKETCH: nothing to undo');
+    return;
+  }
+  undo.circuit.strokes = states.pop();
+  sketchChanged();
+}
+
+/** Remove every stroke (one step undoes it). */
+function clearSketch() {
+  const count = sketch().strokes.length;
+  if (!count) {
+    hintLine('SKETCH: the sketch is empty');
+    return;
+  }
+  rememberSketch();
+  sketch().strokes = [];
+  logLine(`cleared ${count} sketch stroke${count === 1 ? '' : 's'}`);
+  sketchChanged();
+}
+
+/** `sketch ...` typed on the command line: the sketch's own change, never a
+ *  drawing edit. Returns the error message when it fails. */
+function runSketchLine(line) {
+  let result;
+  rememberSketch();
+  const before = sketch().strokes.length;
+  try {
+    result = runCommand(editor.circuit, line);
+  } catch (err) {
+    undoStates().pop();
+    const message = String(err.message || err);
+    logLine(message);
+    return message;
+  }
+  if (result?.text) logLine(result.text);
+  if (result?.mutated || sketch().strokes.length !== before) sketchChanged();
+  else undoStates().pop();
+  return undefined;
+}
+
+/** The eraser's reach in world units at this zoom. */
+function eraserRadius() {
+  const pane = document.querySelector('.canvas-pane')?.getBoundingClientRect();
+  return pane?.width ? (ERASER_PX * editor.view.w) / pane.width : ERASER_PX;
+}
+
+/** A press in the tool: a stroke starts, or (Shift, or the eraser) erasing.
+ *  `radius`: the eraser's reach in world units (the editor's at its zoom by
+ *  default; the presenter gives its own). */
+function sketchDown(world, { shiftKey = false, radius = null } = {}) {
+  rememberSketch();
+  if (eraser || shiftKey) {
+    live = { erase: true, last: world, erased: 0, radius };
+    sketchMove(world);
+    return;
+  }
+  live = { erase: false, points: [world] };
+  scheduleInteractionRender();
+}
+
+/** The pointer moved while pressed. Returns how many strokes the eraser
+ *  took on the way (0 while drawing). */
+function sketchMove(world) {
+  if (!live) return 0;
+  if (live.erase) {
+    const gone = eraseStrokes(sketch(), live.last, world, live.radius ?? eraserRadius());
+    live.last = world;
+    if (gone) {
+      live.erased += gone;
+      revision += 1;
+      render();
+    }
+    return gone;
+  }
+  const last = live.points[live.points.length - 1];
+  if (Math.hypot(world.x - last.x, world.y - last.y) < 0.5) return 0;
+  live.points.push(world);
+  scheduleInteractionRender();
+  return 0;
+}
+
+/** The points of the stroke being drawn (none while erasing). */
+const liveSketchPoints = () => (live && !live.erase ? live.points : null);
+/** The marker's color now. */
+const sketchColor = () => color;
+
+/** The press let go: the stroke is kept, smoothed. */
+function sketchUp() {
+  if (!live) return;
+  const done = live;
+  live = null;
+  if (done.erase) {
+    if (!done.erased) undoStates().pop();
+    else sketchChanged();
+    return;
+  }
+  sketch().strokes.push({ color, width: SKETCH_WIDTH, points: simplifyStroke(done.points) });
+  sketchChanged();
+}
+
+/** The stroke being drawn, as overlay markup in world units. */
+function liveSketchSvg() {
+  if (!live || live.erase || !live.points.length) return '';
+  return `<g class="sketch-live" opacity="0.8" pointer-events="none">${strokeSvg({ color, width: SKETCH_WIDTH, points: live.points })}</g>`;
+}
+
+/** The bar over the drawing while the tool is armed: colors, eraser, clear. */
+function syncSketchBar() {
+  const bar = barEl();
+  if (!bar) return;
+  bar.hidden = !visible;
+  for (const button of bar.querySelectorAll('[data-sketch-color]')) {
+    button.setAttribute('aria-checked', String(!eraser && button.dataset.sketchColor === color));
+  }
+  bar.querySelector('#sketch-eraser')?.setAttribute('aria-pressed', String(eraser));
+}
+
+function installSketchUi() {
+  const bar = barEl();
+  if (!bar) return;
+  const swatches = bar.querySelector('.sketch-colors');
+  for (const token of SKETCH_COLORS) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'swatch';
+    button.setAttribute('role', 'radio');
+    button.dataset.sketchColor = token;
+    const name = token[0].toUpperCase() + token.slice(1);
+    button.setAttribute('aria-label', name);
+    button.title = name;
+    button.style.setProperty('--swatch', COLOR_PALETTE[token]);
+    swatches?.append(button);
+  }
+  bar.addEventListener('click', (ev) => {
+    const swatch = ev.target.closest('[data-sketch-color]');
+    if (swatch) {
+      color = swatch.dataset.sketchColor;
+      eraser = false;
+    } else if (ev.target.closest('#sketch-eraser')) eraser = !eraser;
+    else if (ev.target.closest('#sketch-clear')) clearSketch();
+    else return;
+    syncSketchBar();
+    document.getElementById('canvas')?.focus({ preventScroll: true });
+  });
+  syncSketchBar();
+}
+
+__exports.sketchShown = sketchShown;
+__exports.sketchRevision = sketchRevision;
+__exports.liveSketchPoints = liveSketchPoints;
+__exports.sketchColor = sketchColor;
+};
+
 __modules["src/web/startup.js"] = function (__require, __exports) {
 __exports.revealStartup = revealStartup;
 __exports.opensOnAtlas = opensOnAtlas;
@@ -101841,6 +102486,7 @@ const TOOL_CURSOR_ICONS = {
   align: 'align',
   'net-label': 'tag',
   highlight: 'highlight',
+  sketch: 'sketch',
   annotation: 'text',
   equation: 'text',
   arrow: 'arrow',
@@ -101961,7 +102607,7 @@ let appendContextItem, openMenuAt; __bind(() => { ({ appendContextItem, openMenu
 let saveCircuit; __bind(() => { ({ saveCircuit } = __require("src/web/document-session.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let removeAllNetHighlights; __bind(() => { ({ removeAllNetHighlights } = __require("src/web/annotation-tools.js")); });
-let activateAlign, activateAnnotation, activateCopy, activateDelete, activateHighlight, activateMove, activateNetLabel, activatePlace, activateSelect, activateShapeAnnotation, activateWire, hasWireDraft, interactionState, render, restackSelected, selectedTransform; __bind(() => { ({ activateAlign, activateAnnotation, activateCopy, activateDelete, activateHighlight, activateMove, activateNetLabel, activatePlace, activateSelect, activateShapeAnnotation, activateWire, hasWireDraft, interactionState, render, restackSelected, selectedTransform } = __require("src/web/main.js")); });
+let activateAlign, activateAnnotation, activateCopy, activateDelete, activateHighlight, activateSketch, activateMove, activateNetLabel, activatePlace, activateSelect, activateShapeAnnotation, activateWire, hasWireDraft, interactionState, render, restackSelected, selectedTransform; __bind(() => { ({ activateAlign, activateAnnotation, activateCopy, activateDelete, activateHighlight, activateSketch, activateMove, activateNetLabel, activatePlace, activateSelect, activateShapeAnnotation, activateWire, hasWireDraft, interactionState, render, restackSelected, selectedTransform } = __require("src/web/main.js")); });
 let setAttr; __bind(() => { ({ setAttr } = __require("src/web/dom.js")); });
 /**
  * The toolbar and tool rail: fitting the toolbar to the window, the tool
@@ -102069,6 +102715,7 @@ const TOOLBAR_IDS = {
   'bring-front': ['btn-bring-front'],
   'net-label': ['btn-net-label', 'btn-mode-net-label', 'tool-net-label', 'mode-net-label'],
   highlight: ['btn-mode-highlight'],
+  sketch: ['btn-mode-sketch'],
   annotation: ['btn-annotation', 'btn-mode-annotation', 'tool-annotation', 'mode-annotation'],
   arrow: ['btn-arrow', 'btn-mode-arrow', 'tool-arrow', 'mode-arrow'],
   box: ['btn-box', 'btn-mode-box', 'tool-box', 'mode-box'],
@@ -102270,7 +102917,7 @@ function syncInteractionUI() {
   }
   // Toggle only real changes: rewriting the canvas class invalidates style
   // for the whole drawing, and this runs on every repaint.
-  for (const name of ['mode-normal', 'mode-place', 'mode-insert', 'mode-wire', 'mode-move', 'mode-detached-move', 'mode-copy', 'mode-delete', 'mode-net-label', 'mode-highlight', 'mode-annotation']) {
+  for (const name of ['mode-normal', 'mode-place', 'mode-insert', 'mode-wire', 'mode-move', 'mode-detached-move', 'mode-copy', 'mode-delete', 'mode-net-label', 'mode-highlight', 'mode-sketch', 'mode-annotation']) {
     canvasEl.classList.toggle(name, name === state.canvasClass);
   }
   canvasEl.classList.toggle(state.canvasClass, true);
@@ -102372,6 +103019,8 @@ function bindInteractionControls() {
     'bring-front': () => restackSelected('front'),
     'net-label': activateNetLabel,
     highlight: activateHighlight,
+    // The Sketch button, like j, arms the tool or leaves it.
+    sketch: () => (editor.labelMode === 'sketch' ? activateSelect() : activateSketch()),
     annotation: activateAnnotation,
     arrow: () => activateShapeAnnotation('arrow'),
     box: () => activateShapeAnnotation('box'),
@@ -103050,6 +103699,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['z', 'change the type of the selected parts (nmos to pmos, R to C); wiring stays'],
     ['- (on a sum input)', 'flip the sign of the sum or multiply input under the cursor'],
     ['g / v (on a pin)', 'wire a ground / supply to the unconnected pin under the cursor'],
+    ['j', 'sketch over the design with a marker; Shift-drag erases; Esc hides the sketch'],
     ['k', 'hold a vertical symmetry axis through the selection or the cursor; again turns it horizontal, again releases it: what is drawn on one side is drawn on the other'],
     ['Shift+Q', 'arrange the selected parts like another drawing of them: this design, the workspace, or a built-in one'],
     ['Shift+T', 'tidy the selection: re-lay its nets fresh and move its crowded labels clear, as one undo'],

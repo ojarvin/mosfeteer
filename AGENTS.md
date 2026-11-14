@@ -111,9 +111,10 @@ stale, one undo entry per finished adjustment.
 the one command language for the prompt, `window.__run`, the CLI, and the
 HTTP API; a new command goes in `dispatch()` and `commandHelp()` with a
 success and an error test. Beats, peek bubbles, and the trail are view
-state, never geometry. What the windows show (`Circuit#windows`) and the
-save history (`Circuit#history`) are saved with the design but never make
-it unsaved and survive undo; the notes (`Circuit#notes`) are settings-like
+state, never geometry. What the windows show (`Circuit#windows`), the
+sketch (`Circuit#sketch`, marker strokes nothing but the renderer reads),
+and the save history (`Circuit#history`) are saved with the design but
+never make it unsaved and survive undo; the notes (`Circuit#notes`) are settings-like
 document data. Feature
 modules reach editor state through `editor` (`editor-state.js`) and import
 `main.js` only as `./main.js`.

@@ -536,14 +536,16 @@ function openUnsavedDocument(state, name, message = null) {
 /** A document as text, without what its windows show: window state is saved
  *  with the design but is no edit, so it never makes the design unsaved. */
 function drawingText(text) {
-  if (!text || !['"windows"', '"names"', '"mathBox"', '"history"'].some((key) => text.includes(key))) return text;
+  if (!text || !['"windows"', '"sketch"', '"names"', '"mathBox"', '"history"'].some((key) => text.includes(key))) return text;
   try {
     const data = JSON.parse(text);
     // Neither what the windows show, nor the names the file was saved
     // under, nor the size this browser measured a math label at (saved with
     // it so a file reads its size back), nor the save history (the file's,
-    // written as it changes: history-window.js) ever make the design unsaved.
+    // written as it changes: history-window.js) ever make the design unsaved,
+    // nor the sketch over it (sketch-ui.js).
     delete data.windows;
+    delete data.sketch;
     delete data.names;
     delete data.history;
     for (const label of data.labels || []) delete label.mathBox;
@@ -551,13 +553,15 @@ function drawingText(text) {
   } catch { return text; }
 }
 
-/** Whether the document differs from its file in its windows' state alone. */
+/** Whether the document differs from its file in its windows' state or its
+ *  sketch alone. */
 function windowsChanged() {
   if (!editor.lastSavedSnapshot || documentChanged()) return false;
-  // The windows themselves: what else is left out of documentChanged (the
-  // saved names, a math label's measured size) is no reason to write.
+  // The windows and the sketch themselves: what else is left out of
+  // documentChanged (the saved names, a math label's measured size) is no
+  // reason to write.
   const windowsOf = (text) => {
-    try { return JSON.stringify(JSON.parse(text).windows ?? null); } catch { return null; }
+    try { const data = JSON.parse(text); return JSON.stringify([data.windows ?? null, data.sketch ?? null]); } catch { return null; }
   };
   return windowsOf(snapshot()) !== windowsOf(editor.lastSavedSnapshot);
 }
@@ -599,9 +603,11 @@ async function keepWindowStateOnDiscard() {
     saved = JSON.parse(editor.lastSavedSnapshot);
     now = JSON.parse(snapshot());
   } catch { return; }
-  if (JSON.stringify(saved.windows ?? null) === JSON.stringify(now.windows ?? null)) return;
-  if (now.windows) saved.windows = now.windows;
-  else delete saved.windows;
+  if (JSON.stringify([saved.windows ?? null, saved.sketch ?? null]) === JSON.stringify([now.windows ?? null, now.sketch ?? null])) return;
+  for (const key of ['windows', 'sketch']) {
+    if (now[key]) saved[key] = now[key];
+    else delete saved[key];
+  }
   try {
     editor.syncGeneration += 1;
     await persistence.save({ path }, saved, { overwrite: true, historyBase });

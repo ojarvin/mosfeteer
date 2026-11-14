@@ -24,6 +24,9 @@ import { PLACE, floatingWindow } from './floating-window.js';
 import { buttonIcon } from './icons.js';
 import { reducedMotion } from './motion.js';
 import { easeInOut } from './easing.js';
+import { SKETCH_OPACITY, SKETCH_WIDTH, strokePath } from '../core/sketch.js';
+import { liveSketchPoints, sketchColor, sketchDown, sketchMove, sketchUp, undoSketch } from './sketch-ui.js';
+import { resolveColor } from '../core/style.js';
 
 export function activeBeatIndex() {
   if (!editor.activeBeatId) return null;
@@ -1628,7 +1631,13 @@ function showPresenterFrame(animate = true) {
   frame.className = 'presenter-frame';
   if (!editor.presenter.blank) {
     // Theme ink, like the canvas: the presentation follows light or dark mode.
-    frame.innerHTML = svgString(editor.circuit, { ...DRAWING_EXPORT_OPTIONS, themeInk: true, beat: { view: resolveBeat(editor.circuit, editor.presenter.index), timing: timingBeatBands(editor.circuit, editor.presenter.index) } });
+    frame.innerHTML = svgString(editor.circuit, {
+      ...DRAWING_EXPORT_OPTIONS,
+      themeInk: true,
+      beat: { view: resolveBeat(editor.circuit, editor.presenter.index), timing: timingBeatBands(editor.circuit, editor.presenter.index) },
+      // Sketching (j), the sketch over the beat, in the beat's own frame.
+      ...(editor.presenter.sketch ? { sketch: true, sketchFrame: false } : {}),
+    });
     const svg = frame.querySelector('svg');
     svg?.removeAttribute('width');
     svg?.removeAttribute('height');
@@ -1677,8 +1686,99 @@ function presenterStep(delta) {
   showPresenterFrame();
 }
 
+// ----- sketching while presenting ---------------------------------------------
+// j shows the sketch over the beat and draws on it as the Sketch tool does
+// (sketch-ui.js): a drag draws, Shift-drag erases, Ctrl/Cmd+Z steps back. A
+// click then draws instead of stepping; the keys still step. Esc, or j
+// again, hides the sketch.
+
+const ERASER_PX = 12;
+let presenterStroke = null;
+
+function presenterDrawing() {
+  const all = presenterStageEl.querySelectorAll('.presenter-frame svg');
+  return all[all.length - 1] || null;
+}
+
+/** The world point under the pointer, on the beat shown. */
+function presenterWorld(ev) {
+  const svg = presenterDrawing();
+  const m = svg?.getScreenCTM();
+  if (!m) return null;
+  const p = new DOMPoint(ev.clientX, ev.clientY).matrixTransform(m.inverse());
+  return { x: p.x, y: p.y, scale: m.a };
+}
+
+function setPresenterSketch(on) {
+  if (!editor.presenter) return;
+  editor.presenter.sketch = on;
+  presenterEl.classList.toggle('sketching', on);
+  presenterStroke = null;
+  showPresenterFrame(false);
+}
+
+function presenterSketchDown(ev) {
+  if (!editor.presenter?.sketch || ev.button !== 0) return;
+  const world = presenterWorld(ev);
+  if (!world) return;
+  ev.preventDefault();
+  presenterEl.setPointerCapture?.(ev.pointerId);
+  sketchDown(world, { shiftKey: ev.shiftKey, radius: ERASER_PX / world.scale });
+  presenterStroke = { path: null };
+  // Erasing draws nothing of its own.
+  if (!liveSketchPoints()) return;
+  const svg = presenterDrawing();
+  const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  group.setAttribute('opacity', String(SKETCH_OPACITY));
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  for (const [name, value] of Object.entries({ fill: 'none', stroke: resolveColor(sketchColor()), 'stroke-width': SKETCH_WIDTH, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })) path.setAttribute(name, value);
+  group.append(path);
+  svg.append(group);
+  presenterStroke = { path };
+  drawPresenterStroke();
+}
+
+function drawPresenterStroke() {
+  const points = liveSketchPoints();
+  if (presenterStroke?.path && points) presenterStroke.path.setAttribute('d', strokePath(points));
+}
+
+function presenterSketchMove(ev) {
+  if (!presenterStroke) return;
+  const world = presenterWorld(ev);
+  if (!world) return;
+  // Something erased: the beat drawn again without it.
+  if (sketchMove(world)) showPresenterFrame(false);
+  drawPresenterStroke();
+}
+
+function presenterSketchUp(ev) {
+  if (!presenterStroke) return;
+  const world = presenterWorld(ev);
+  if (world) sketchMove(world);
+  sketchUp();
+  presenterStroke = null;
+  showPresenterFrame(false);
+}
+
 export function onPresenterKey(ev) {
   const key = ev.key;
+  if (key === 'j' && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+    setPresenterSketch(!editor.presenter.sketch);
+    ev.preventDefault();
+    return;
+  }
+  if (editor.presenter.sketch && key === 'Escape') {
+    setPresenterSketch(false);
+    ev.preventDefault();
+    return;
+  }
+  if (editor.presenter.sketch && (ev.ctrlKey || ev.metaKey) && key.toLowerCase() === 'z') {
+    undoSketch();
+    showPresenterFrame(false);
+    ev.preventDefault();
+    return;
+  }
   const forward = ['ArrowRight', 'ArrowDown', 'PageDown', ' ', 'Enter', 'n'];
   const back = ['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace', 'p'];
   if (forward.includes(key)) presenterStep(1);
@@ -1694,11 +1794,16 @@ export function onPresenterKey(ev) {
 }
 
 export function installBeatsUi() {
-  presenterEl?.addEventListener('click', () => presenterStep(1));
+  // Sketching, a click draws; otherwise it steps on (and a right click back).
+  presenterEl?.addEventListener('click', () => { if (!editor.presenter?.sketch) presenterStep(1); });
   presenterEl?.addEventListener('contextmenu', (ev) => {
     ev.preventDefault();
-    presenterStep(-1);
+    if (!editor.presenter?.sketch) presenterStep(-1);
   });
+  presenterEl?.addEventListener('pointerdown', presenterSketchDown);
+  presenterEl?.addEventListener('pointermove', presenterSketchMove);
+  presenterEl?.addEventListener('pointerup', presenterSketchUp);
+  presenterEl?.addEventListener('pointercancel', presenterSketchUp);
   // Leaving full screen (the browser owns Escape there) ends the presentation.
   document.addEventListener('fullscreenchange', () => {
     if (editor.presenter?.fullscreen && document.fullscreenElement !== presenterEl) closePresenter();

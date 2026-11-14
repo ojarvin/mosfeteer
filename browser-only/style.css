@@ -4951,6 +4951,48 @@ button.off {
   opacity: 0.55;
 }
 
+/* The Sketch tool's bar, over the top of the drawing (sketch-ui.js). */
+.sketch-bar {
+  position: absolute;
+  z-index: 6;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 4px 12px;
+  border-radius: var(--radius-lg);
+}
+
+.sketch-bar[hidden] {
+  display: none;
+}
+
+.sketch-bar-title {
+  font-weight: 600;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+.sketch-colors {
+  display: flex;
+  gap: 6px;
+  padding: 0 4px;
+}
+
+.sketch-bar button:not(.swatch) {
+  min-height: var(--control-h-sm);
+  padding: 0 10px;
+  background: transparent;
+  border-color: transparent;
+}
+
+.sketch-bar button[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
 .glass {
   background: var(--glass-bg);
   -webkit-backdrop-filter: var(--glass-filter);
@@ -6803,6 +6845,10 @@ html.dark .presenter svg [stroke="#fff"] { stroke: var(--paper); }
   display: block;
   width: 100%;
   height: 100%;
+}
+
+.presenter.sketching {
+  cursor: crosshair;
 }
 
 .presenter-frame.entering {

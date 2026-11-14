@@ -1,6 +1,7 @@
 import { RAIL_NAMES, railNameKey } from './rail-names.js';
 import { stripMathDelimiters } from './tex-markup.js';
 import { normalizeWindows, windowsJSON } from './window-state.js';
+import { normalizeSketch, sketchJSON } from './sketch.js';
 import { normalizeNotes, notePictureIds, renameMentions } from './notes.js';
 import { normalizeHistory } from './save-history.js';
 import { normalizeBand, normalizeOptimizeSetup } from './analysis/optimize-setup.js';
@@ -2996,6 +2997,8 @@ export class Circuit {
     this.analysisValues = { coefficients: {}, bode: null, links: {} };
     // What the editor's windows show for this design (window-state.js).
     this.windows = {};
+    // Marker strokes over the design (sketch.js): saved, never a drawing edit.
+    this.sketch = { strokes: [] };
     // The design's notes: Markdown, never drawn (notes.js), and the
     // pictures pasted into them, by number (`![...](picture:1)`).
     this.notes = '';
@@ -7694,6 +7697,7 @@ export class Circuit {
       ...(this.notes ? { notes: this.notes } : {}),
       ...picturesJSON(this.notes, this.pictures),
       ...windowsJSON(this.windows),
+      ...sketchJSON(this.sketch),
       ...(this.history ? { history: this.history } : {}),
     };
   }
@@ -7714,6 +7718,7 @@ export class Circuit {
     circuit.savedNames = normalizeSavedNames(data.names);
     circuit.analysisValues = normalizeAnalysisValues(data.analysisValues);
     circuit.windows = normalizeWindows(data.windows);
+    circuit.sketch = normalizeSketch(data.sketch);
     circuit.notes = normalizeNotes(data.notes);
     circuit.pictures = normalizePictures(data.pictures);
     circuit.history = normalizeHistory(data.history);

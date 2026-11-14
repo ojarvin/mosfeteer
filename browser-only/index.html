@@ -245,6 +245,7 @@
       <fieldset>
         <legend>Appearance</legend>
         <label class="export-drawing-only"><input type="checkbox" name="grid" /> Include grid</label>
+        <label class="export-drawing-only export-sketch"><input type="checkbox" name="sketch" /> Include sketch</label>
         <label class="export-drawing-only"><input type="checkbox" name="dark" /> Dark theme</label>
         <label class="export-page-guide-row" title="The width at which a full-width figure has the guide's text size: the export is padded to it">Page guide
           <select id="export-page-guide" name="pageGuide">
@@ -360,8 +361,9 @@
         <button id="btn-mode-delete" class="mode-control" data-icon="trash" data-action="delete" aria-pressed="false" title="Delete (Del)" aria-label="Delete selected objects">Delete <kbd>Del</kbd></button>
         <span class="mode-separator" role="separator" aria-hidden="true"></span>
         <button id="btn-mode-net-label" class="mode-control label-control net-label-control" data-icon="tag" data-action="net-label" data-label-kind="net" aria-pressed="false" title="Net label (l)" aria-label="Place a label on a physical wire">Net label <kbd>l</kbd></button>
-        <button id="btn-mode-highlight" class="mode-control" data-icon="highlight" data-action="highlight" aria-pressed="false" aria-haspopup="menu" title="Highlight nets (9)" aria-label="Highlight nets">Highlight <kbd>9</kbd></button>
         <button id="btn-rail-annotate" class="mode-control annotation-control rail-flyout-proxy" data-icon="text" data-flyout-proxy="annotate" aria-pressed="false" aria-haspopup="true" aria-expanded="false" aria-controls="rail-flyout" title="Annotations" aria-label="Annotation tools">Annotations</button>
+        <button id="btn-mode-highlight" class="mode-control" data-icon="highlight" data-action="highlight" aria-pressed="false" aria-haspopup="menu" title="Highlight nets (9)" aria-label="Highlight nets">Highlight <kbd>9</kbd></button>
+        <button id="btn-mode-sketch" class="mode-control" data-icon="sketch" data-action="sketch" aria-pressed="false" title="Sketch (j)" aria-label="Sketch over the design">Sketch <kbd>j</kbd></button>
       </div>
       <div id="wire-flyout" class="rail-flyout glass" data-editor-edge="left" role="group" aria-label="Wire shape" hidden>
         <button id="btn-route-orthogonal" class="mode-control" data-icon="wire" data-route-mode="orthogonal" aria-pressed="false" title="Orthogonal (F3)" aria-label="Orthogonal wire">Orthogonal <kbd>F3</kbd></button>
@@ -383,6 +385,13 @@
       </div>
       <div class="canvas" id="canvas" tabindex="0" role="application" aria-label="Editor canvas. Tab to focus objects; Enter or Space selects the focused object; arrow keys nudge selection."></div>
       <div id="component-context-menu" class="component-context-menu" hidden role="menu" aria-label="Context actions"></div>
+      <!-- The Sketch tool's bar (sketch-ui.js): shown while the tool is armed. -->
+      <div id="sketch-bar" class="sketch-bar glass" data-editor-edge="top" role="toolbar" aria-label="Sketch" hidden>
+        <span class="sketch-bar-title">Sketch</span>
+        <div class="sketch-colors" role="radiogroup" aria-label="Marker color"></div>
+        <button id="sketch-eraser" type="button" aria-pressed="false" title="Eraser (or Shift-drag)">Eraser</button>
+        <button id="sketch-clear" type="button" title="Clear the sketch">Clear</button>
+      </div>
       <section id="tutorial-card" class="tutorial-card glass" data-editor-edge="bottom" aria-labelledby="tutorial-title" hidden>
         <header class="tutorial-head">
           <span id="tutorial-title" class="tutorial-title">Tutorial · 5T OTA</span>

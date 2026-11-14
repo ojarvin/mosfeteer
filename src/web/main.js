@@ -69,6 +69,7 @@ import { adoptDrawing, patchChildren, patchDrawing } from './svg-patch.js';
 import { syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock } from './analysis-ui.js';
 import { closeComponentContextMenu, openContextMenuAt, installContextMenu } from './context-menu.js';
 import { boxState, restoreBoxState, openComponentChildLabelEditor, inlineEditLabel } from './label-editor.js';
+import { installSketchUi, runSketchLine, setSketchVisible, sketchDown, sketchMove, sketchRevision, sketchShown, sketchUp, undoSketch } from './sketch-ui.js';
 import { activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, closeBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, toggleTimingDialog, onPresenterKey, installBeatsUi, syncTimingEditor } from './beats-ui.js';
 import { formatModifiedTime, revisionTime } from './modified-time.js';
 import { persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, openDocumentPath, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } from './document-session.js';
@@ -444,6 +445,7 @@ export function deriveInteractionState({ mode = 'normal', labelMode = null, wire
   };
   if (labelMode === 'net') return { key: 'net-label', canvasClass: 'mode-net-label', toolbar: 'net-label', label: 'NET LABEL' };
   if (labelMode === 'highlight') return { key: 'highlight', canvasClass: 'mode-highlight', toolbar: 'highlight', label: 'HIGHLIGHT' };
+  if (labelMode === 'sketch') return { key: 'sketch', canvasClass: 'mode-sketch', toolbar: 'sketch', label: 'SKETCH' };
   if (labelMode === 'annotation') return { key: 'annotation', canvasClass: 'mode-annotation', toolbar: 'annotation', label: 'ANNOTATION' };
   if (labelMode === 'equation') return { key: 'equation', canvasClass: 'mode-annotation', toolbar: 'annotation', label: 'EQUATION' };
   if (labelMode === 'line') return { key: 'line', canvasClass: 'mode-annotation', toolbar: 'line', label: 'LINE' };
@@ -499,6 +501,7 @@ function drawingOf(text) {
   const data = JSON.parse(text);
   delete data.analysisValues;
   delete data.windows;
+  delete data.sketch;
   delete data.notes;
   delete data.pictures;
   delete data.history;
@@ -579,6 +582,7 @@ function beginPreviewTransaction(startSnapshot = snapshot()) {
   // The working copy shares the windows' state and the save history: it is
   // the same document.
   circuit.windows = previewTransaction.baseCircuit.windows;
+  circuit.sketch = previewTransaction.baseCircuit.sketch;
   circuit.history = previewTransaction.baseCircuit.history;
   circuit.adoptTextMetrics(previewTransaction.baseCircuit);
   previewRevision += 1;
@@ -742,6 +746,7 @@ export function applyJson(blob, { document: replacesDocument = false } = {}) {
   // The save history is the file's, never undone (core/save-history.js).
   if (!replacesDocument && previous) {
     circuit.windows = previous.windows;
+    circuit.sketch = previous.sketch;
     circuit.history = previous.history;
   }
   if (replacesDocument) documentGeneration += 1;
@@ -2109,6 +2114,7 @@ export function cycleLabelSelection(dir, fromId = selectedLabel()?.id) {
 // belong to that beat and carry on to the following beats that looked the same.
 
 installBeatsUi();
+installSketchUi();
 
 /**
  * Commit the current insert-mode ghost at the cursor. Stays on the same
@@ -3009,7 +3015,7 @@ export function renderCanvas(modelKey) {
   const beatView = activeBeatView(modelKey);
   // The drawing is in world coordinates; only its frame depends on the view.
   // Pan and zoom therefore re-apply the frame and keep the drawing's DOM.
-  const canvasKey = `${modelKey}|${showGrid}|${editingLabelId}|${beatView ? beatView.index : ''}|${[...ghostRefs].join(',')}|${[...ghostLabels].join(',')}|${[...ghostNets].join(',')}`;
+  const canvasKey = `${modelKey}|${showGrid}|${editingLabelId}|${beatView ? beatView.index : ''}|${sketchShown() ? sketchRevision() : ''}|${[...ghostRefs].join(',')}|${[...ghostLabels].join(',')}|${[...ghostNets].join(',')}`;
   // A pan the pointer has let go of without a release (a lost capture): the
   // drawing is painted as usual again.
   if (paintMarginNow() && drag?.mode !== 'pan') endPaintedPan();
@@ -3040,6 +3046,7 @@ export function renderCanvas(modelKey) {
       ghostLabels,
       ghostNets,
       editingLabel: editingLabelId,
+      sketch: sketchShown(),
       ...(beatView ? { beat: { view: beatView, fade: true, timing: timingBeatBands(circuit, beatView.index) } } : {}),
     });
     const template = document.createElement('template');
@@ -4592,6 +4599,12 @@ function canvasMouseDown(ev) {
     drag = { mode: 'zoom', startClient, startWorld, moved: false, rubber: null, contextOnRelease: true };
     return;
   }
+  if (labelMode === 'sketch' && b === 0) {
+    ev.preventDefault();
+    drag = { mode: 'sketch', startClient, startWorld, rubber: null };
+    sketchDown(rawStartWorld, { shiftKey: ev.shiftKey });
+    return;
+  }
   if (alignTool && b === 0) {
     alignMouseDown(startWorld, startClient, ev);
     return;
@@ -5661,6 +5674,10 @@ export function canvasMouseMove(ev) {
     if (cursorChanged || changed) scheduleInteractionRender();
     return;
   }
+  if (drag.mode === 'sketch') {
+    sketchMove(clientToWorld(ev.clientX, ev.clientY));
+    return;
+  }
 
   const movedOut = dragMoved(drag.startWorld, drag.startClient, w, ev);
   const movedWorld = constrainedWorld(drag.startWorld, w, ev.shiftKey);
@@ -6168,6 +6185,13 @@ export function canvasMouseUp(ev) {
 
 function finishCanvasMouseUp(ev) {
   if (!drag) return;
+  if (drag.mode === 'sketch') {
+    sketchMove(clientToWorld(ev.clientX, ev.clientY));
+    sketchUp();
+    drag = null;
+    render();
+    return;
+  }
   const releaseWorld = clientToWorld(ev.clientX, ev.clientY);
   const movedOut = dragMoved(drag.startWorld, drag.startClient, releaseWorld, ev);
   const w = wire && terminalSnap ? terminalSnapWorld(releaseWorld) : releaseWorld;
@@ -7120,6 +7144,12 @@ function onNormalKey(key, shiftKey = false) {
     void editValues();
     return;
   }
+  // j: the Sketch tool, armed or left (leaving hides the sketch).
+  if (key === 'j') {
+    if (labelMode === 'sketch') activateSelect();
+    else activateSketch();
+    return;
+  }
   if (key === 'z') {
     openSwapPicker(swapTargets());
     return;
@@ -7438,6 +7468,9 @@ export function runLine(line) {
 
   logCommand(trimmed);
 
+  // The sketch is no drawing edit: its commands change it alone.
+  if (/^sketch\b/i.test(trimmed)) return runSketchLine(trimmed);
+
   // The history lives in the file, and the drawing here may be ahead of it:
   // the History window changes it in the file.
   if (/^history\s+\S/i.test(trimmed)) {
@@ -7575,6 +7608,8 @@ function activateLabelPlacement(kind) {
     ? 'NET LABEL: click a physical wire; stays active until Esc'
     : kind === 'highlight'
       ? 'HIGHLIGHT: click a net to cycle its color; 8 removes all; Esc exits'
+    : kind === 'sketch'
+      ? 'SKETCH: drag to draw · Shift-drag erases · Ctrl+Z undoes · Esc hides the sketch'
     : kind === 'annotation'
       ? 'ANNOTATION: click anywhere to place free text; Esc cancels'
       : `${kind.toUpperCase()}: click start and end points; stays active until Esc`);
@@ -7595,6 +7630,13 @@ export function activateNetLabel() {
 
 export function activateHighlight() {
   activateLabelPlacement('highlight');
+}
+
+/** j: the Sketch tool, its layer on show until the tool is left. */
+export function activateSketch() {
+  activateLabelPlacement('sketch');
+  setSketchVisible(true);
+  render();
 }
 
 export function activateAnnotation() {
@@ -7645,6 +7687,8 @@ function wrapSelectionInBox() {
 
 /** Disarm the one-shot tools: move, copy, delete, label and annotation placement. */
 function disarmTools() {
+  // Leaving the Sketch tool hides the sketch again.
+  if (labelMode === 'sketch') setSketchVisible(false);
   moveMode = null;
   copyMode = false;
   deleteMode = false;
@@ -8012,7 +8056,9 @@ window.addEventListener('keydown', (ev) => {
     } else if (k === 'z') {
       ev.preventDefault();
       if (drag?.mode === 'copyghost') cancelDrag();
-      undo();
+      // In the Sketch tool, undo steps back through the sketch alone.
+      if (labelMode === 'sketch') undoSketch();
+      else undo();
     } else if (k === 'y') {
       ev.preventDefault();
       redo();

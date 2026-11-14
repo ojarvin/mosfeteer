@@ -22,7 +22,7 @@ import { showHelp } from './help.js';
 import { runCheck } from './design-check-ui.js';
 import { openFind, openReplace } from './find-replace-ui.js';
 import { toggleAtlas, toggleBuiltInDrawings, toggleSymbolSheet } from './atlas.js';
-import { activateAlign, activateAnnotation, activateCopy, activateEquation, activateHighlight, activateMove, activateNetLabel, activatePlace,
+import { activateAlign, activateAnnotation, activateCopy, activateEquation, activateHighlight, activateSketch, activateMove, activateNetLabel, activatePlace,
   activateShapeAnnotation, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render,
   restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, tidyNow, undo } from './main.js';
 import { joinSelectedLines, removeAllNetHighlights } from './annotation-tools.js';
@@ -141,6 +141,7 @@ export const ACTIONS = {
   'symmetry-axis': (direction) => setSymmetryAxis(/^off/i.test(direction || '') || (!direction && symmetryAxis()) ? null : /^h/i.test(direction || '') ? 'mirrorY' : 'mirrorX'),
   tidy: () => tidyNow(),
   edit: () => editSelectionText(),
+  'sketch-tool': () => activateSketch(),
   'add-beat': () => addBeatHere(),
   'next-beat': () => stepBeat(1),
   'previous-beat': () => stepBeat(-1),

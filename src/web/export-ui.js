@@ -30,6 +30,9 @@ import { linkBubbleExtras, workspaceDesigns } from './hierarchy.js';
 import { render, syncRenderedLabelMetrics } from './main.js';
 
 const exportGridInput = exportForm?.querySelector('input[name="grid"]');
+// The sketch (sketch-ui.js) goes in only when asked for, and is offered
+// only when the design has one.
+const exportSketchInput = exportForm?.querySelector('input[name="sketch"]');
 
 const exportDarkInput = exportForm?.querySelector('input[name="dark"]');
 
@@ -99,7 +102,7 @@ export async function copyAsImage() {
  * one PDF (`name.pdf`) with a page per beat. Beats share the whole drawing's
  * frame, so the files and pages line up when stepped through.
  */
-async function runExport({ dir, name, formats, grid = false, dark = false, pngDpi = normalizePngDpi(null), selection = null, beat = null }) {
+async function runExport({ dir, name, formats, grid = false, dark = false, sketch = false, pngDpi = normalizePngDpi(null), selection = null, beat = null }) {
   const supportedFormats = persistence.supportedExportFormats || new Set(formats);
   const unsupported = formats.filter((format) => !supportedFormats.has(format));
   if (unsupported.length) {
@@ -158,6 +161,8 @@ async function runExport({ dir, name, formats, grid = false, dark = false, pngDp
       const renderedSvg = renderDocument(drawing, {
         ...DRAWING_EXPORT_OPTIONS,
         grid,
+        // Only the whole drawing carries the sketch; a selection is its parts.
+        sketch: sketch && !selection,
         pageGuide: editor.pageGuide,
         ...(extras ? { extras } : {}),
         ...(view ? { beat: { view, timing: timingBeatBands(editor.circuit, view.index) } } : {}),
@@ -416,6 +421,10 @@ export function exportCircuit({ content = 'drawing' } = {}) {
   try { saved = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null'); } catch { /* storage unavailable */ }
   if (exportGridInput) exportGridInput.checked = saved?.grid === true;
   if (exportDarkInput) exportDarkInput.checked = saved?.dark === true;
+  if (exportSketchInput) {
+    exportSketchInput.checked = saved?.sketch === true;
+    exportSketchInput.closest('label').hidden = !editor.circuit.sketch?.strokes.length;
+  }
   const dpiSelect = exportForm.querySelector('select[name="pngDpi"]');
   if (dpiSelect) dpiSelect.value = String(normalizePngDpi(saved?.pngDpi));
   // Selection-only is offered per export, never remembered: a later export
@@ -479,6 +488,8 @@ export function exportAtlasSheet(target) {
   try { saved = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null'); } catch { /* storage unavailable */ }
   if (exportGridInput) exportGridInput.checked = saved?.grid === true;
   if (exportDarkInput) exportDarkInput.checked = saved?.dark === true;
+  // The Atlas's sheet has no sketch of its own.
+  if (exportSketchInput) exportSketchInput.closest('label').hidden = true;
   const formats = Array.isArray(saved?.atlasFormats) ? saved.atlasFormats : ['pdf'];
   for (const input of exportForm.querySelectorAll('input[name="format"]')) {
     const supported = persistence.supportedExportFormats?.has(input.value) ?? true;
@@ -562,6 +573,7 @@ export function installExportUi() {
     const settings = {
       grid: exportGridInput?.checked === true,
       dark: exportDarkInput?.checked === true,
+      sketch: exportSketchInput?.checked === true,
       pngDpi: normalizePngDpi(exportForm.querySelector('select[name="pngDpi"]')?.value),
     };
     try {

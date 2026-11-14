@@ -163,6 +163,27 @@ pixels to the inch (`printPxPerUnit`, `src/core/page-guide.js`). A click on
 it opens a menu: Fit (`f`), Zoom to selection (`Shift+F`), 50/100/200/400%,
 and a field for a typed percentage, kept within the zoom range.
 
+The Sketch tool (`j`, or `:sketch-tool`; `src/web/sketch-ui.js`,
+`src/core/sketch.js`) draws marker strokes over the design while it is
+discussed. It shows the sketch layer while armed; Esc (or `j` again, or
+another tool) leaves it and hides the layer, and arming it again brings
+the strokes back.
+
+- A drag draws a stroke in the bar's color: smoothed, round-ended, see-through,
+  a fixed width in world units, above everything else.
+- Shift-drag, or the bar's Eraser, removes the strokes it crosses. Clear, or
+  `sketch clear`, removes them all.
+- Ctrl/Cmd+Z in the tool steps back through the sketch's own changes; the
+  drawing's undo never touches it.
+- The sketch is saved in the design file (`sketch`: strokes of color, width,
+  and flat points) with the windows' state: it never makes the design unsaved.
+- Nothing reads it but the renderer: no connectivity, check, analysis, or
+  arrange. Export includes it when Include sketch is checked (offered when
+  there is one), framing its ink with the drawing's.
+- Presenting, `j` shows the sketch over the beat and a drag draws on it
+  (a click then draws instead of stepping); Esc hides it, and a second Esc
+  ends the talk.
+
 Settings → Display → Accent color picks the interface's accent (selection,
 the active tool, focus) from the drawing's palette, or the default teal
 (`src/web/accent.js`): a browser preference like the theme, shaded for

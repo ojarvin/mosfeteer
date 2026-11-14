@@ -1,4 +1,5 @@
 import { applyTransform, fmt, transformRect, transformToSvg } from './geometry.js';
+import { sketchBounds, sketchSvg } from './sketch.js';
 import { weightedGraphics } from './stroke-weight.js';
 import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute } from './router.js';
@@ -1071,6 +1072,8 @@ function viewportGridSvg(vp) {
  * absent, the view auto-fits the circuit contents (used for exports / PNG).
  * opts.extras {bounds, svg}: drawing beside the circuit -- rects that widen
  * the frame, and markup drawn above everything (linked-design bubbles).
+ * opts.sketch: draw the sketch (sketch.js) above everything, its ink in the frame
+ *   (`sketchFrame: false`: drawn over the frame the drawing has without it).
  * opts.beat {view, fade, timing}: draw one beat (beats.js resolveBeat). What it dims
  * is drawn faint; what it hides is left out, or with `fade` drawn fainter
  * still so the editor can reach it. `timing` (timing-diagram.js
@@ -1117,6 +1120,16 @@ export function svgString(circuit, opts = {}) {
       const x = Math.min(b.x, r.x);
       const y = Math.min(b.y, r.y);
       b = { x, y, w: Math.max(b.x + b.w, r.x + r.w) - x, h: Math.max(b.y + b.h, r.y + r.h) - y };
+    }
+  }
+  // A sketch drawn with it widens the frame like any other ink.
+  const sketchBox = o.sketch && o.sketchFrame !== false ? sketchBounds(circuit.sketch) : null;
+  if (sketchBox) {
+    if (b.w <= 0 && b.h <= 0) b = { ...sketchBox };
+    else {
+      const x = Math.min(b.x, sketchBox.x);
+      const y = Math.min(b.y, sketchBox.y);
+      b = { x, y, w: Math.max(b.x + b.w, sketchBox.x + sketchBox.w) - x, h: Math.max(b.y + b.h, sketchBox.y + sketchBox.h) - y };
     }
   }
   // A framed beat shows its frame alone: the export or presenter frames it
@@ -1512,6 +1525,8 @@ export function svgString(circuit, opts = {}) {
   }
 
   if (o.extras?.svg) parts.push(o.extras.svg);
+  // The sketch (sketch.js), when asked for: above everything else.
+  if (o.sketch) parts.push(sketchSvg(circuit.sketch));
   parts.push('</svg>');
   return o.themeInk ? themeInkSvg(parts.join('\n')) : parts.join('\n');
 }

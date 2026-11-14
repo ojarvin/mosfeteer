@@ -64,6 +64,7 @@ export const ICON_PATHS = {
   reference: '<rect x="3.5" y="5.5" width="11" height="13" rx="1.5"/><rect x="9.5" y="3.5" width="11" height="13" rx="1.5" fill="currentColor" fill-opacity=".16"/><path d="M12.5 8.5h5M12.5 11.5h5M12.5 14.5h3"/>',
   hierarchy: '<rect x="9" y="3.5" width="6" height="5" rx="1"/><rect x="3.5" y="15.5" width="6" height="5" rx="1"/><rect x="14.5" y="15.5" width="6" height="5" rx="1"/><path d="M12 8.5V12M6.5 15.5V12h11v3.5"/>',
   tag: '<path d="M3.5 4.5v7l9 9 8-8-9-9h-7z" fill="currentColor" fill-opacity=".16"/><circle cx="8" cy="8.5" r="1.6" fill="currentColor" stroke="none"/>',
+  sketch: '<path d="M4 18c3-1 4-5 2-7s-3 3 0 4 6-1 7-5-3-6-4-3 1 7 4 8 5-2 7-3"/>',
   highlight: '<path d="M14.5 4.5l5 5-8 8H6.5v-5z" fill="currentColor" fill-opacity=".16"/><path d="M12 7l5 5"/><path d="M3.5 20.5h8"/>',
   text: '<path d="M5 6.5V4.5h14v2M12 4.5v15M9 19.5h6"/>',
   arrow: '<path d="M5 19 16 8"/><path d="M20 4l-1.6 9-7.4-7.4z" fill="currentColor" stroke="none"/>',

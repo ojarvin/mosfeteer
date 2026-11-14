@@ -18,7 +18,7 @@ import { appendContextItem, openMenuAt } from './context-menu.js';
 import { saveCircuit } from './document-session.js';
 import { editor } from './editor-state.js';
 import { removeAllNetHighlights } from './annotation-tools.js';
-import { activateAlign, activateAnnotation, activateCopy, activateDelete, activateHighlight, activateMove, activateNetLabel, activatePlace, activateSelect, activateShapeAnnotation, activateWire, hasWireDraft, interactionState, render, restackSelected, selectedTransform } from './main.js';
+import { activateAlign, activateAnnotation, activateCopy, activateDelete, activateHighlight, activateSketch, activateMove, activateNetLabel, activatePlace, activateSelect, activateShapeAnnotation, activateWire, hasWireDraft, interactionState, render, restackSelected, selectedTransform } from './main.js';
 import { setAttr } from './dom.js';
 
 // The top toolbar drops button text in stages as its row runs out of space (see
@@ -104,6 +104,7 @@ const TOOLBAR_IDS = {
   'bring-front': ['btn-bring-front'],
   'net-label': ['btn-net-label', 'btn-mode-net-label', 'tool-net-label', 'mode-net-label'],
   highlight: ['btn-mode-highlight'],
+  sketch: ['btn-mode-sketch'],
   annotation: ['btn-annotation', 'btn-mode-annotation', 'tool-annotation', 'mode-annotation'],
   arrow: ['btn-arrow', 'btn-mode-arrow', 'tool-arrow', 'mode-arrow'],
   box: ['btn-box', 'btn-mode-box', 'tool-box', 'mode-box'],
@@ -305,7 +306,7 @@ export function syncInteractionUI() {
   }
   // Toggle only real changes: rewriting the canvas class invalidates style
   // for the whole drawing, and this runs on every repaint.
-  for (const name of ['mode-normal', 'mode-place', 'mode-insert', 'mode-wire', 'mode-move', 'mode-detached-move', 'mode-copy', 'mode-delete', 'mode-net-label', 'mode-highlight', 'mode-annotation']) {
+  for (const name of ['mode-normal', 'mode-place', 'mode-insert', 'mode-wire', 'mode-move', 'mode-detached-move', 'mode-copy', 'mode-delete', 'mode-net-label', 'mode-highlight', 'mode-sketch', 'mode-annotation']) {
     canvasEl.classList.toggle(name, name === state.canvasClass);
   }
   canvasEl.classList.toggle(state.canvasClass, true);
@@ -407,6 +408,8 @@ function bindInteractionControls() {
     'bring-front': () => restackSelected('front'),
     'net-label': activateNetLabel,
     highlight: activateHighlight,
+    // The Sketch button, like j, arms the tool or leaves it.
+    sketch: () => (editor.labelMode === 'sketch' ? activateSelect() : activateSketch()),
     annotation: activateAnnotation,
     arrow: () => activateShapeAnnotation('arrow'),
     box: () => activateShapeAnnotation('box'),

@@ -20,6 +20,7 @@ export const TOOL_CURSOR_ICONS = {
   align: 'align',
   'net-label': 'tag',
   highlight: 'highlight',
+  sketch: 'sketch',
   annotation: 'text',
   equation: 'text',
   arrow: 'arrow',

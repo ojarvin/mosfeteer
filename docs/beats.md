@@ -318,6 +318,8 @@ renaming a part renames its references.
   other, still showing the old beat (its middle evenly, its size by a
   constant ratio, `presenterFrameAt`), and the new beat fades in once it is
   there; with reduced motion it cuts.
+  `j` shows the sketch over the beat and draws on it
+  ([`editor.md`](editor.md), the Sketch tool); Esc hides it again.
 - **Export.** The export dialog exports the whole drawing, one beat, or every
   beat: one PDF with a page per beat (`name.pdf`, vector where Chromium can
   print it, else a page of image each), and numbered SVG and PNG files
