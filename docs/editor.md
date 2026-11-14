@@ -157,6 +157,12 @@ transition as the dimmed chrome (`--motion`; registered properties in
 style.css). A wheel or a view animation leaves the blur as it is: without
 the dimming, its return would show.
 
+The status bar's zoom reads a percentage of print size: at 100% a normal
+label shows at the page guide's text size (8 pt with no guide), 96 CSS
+pixels to the inch (`printPxPerUnit`, `src/core/page-guide.js`). A click on
+it opens a menu: Fit (`f`), Zoom to selection (`Shift+F`), 50/100/200/400%,
+and a field for a typed percentage, kept within the zoom range.
+
 Settings → Display → Accent color picks the interface's accent (selection,
 the active tool, focus) from the drawing's palette, or the default teal
 (`src/web/accent.js`): a browser preference like the theme, shaded for

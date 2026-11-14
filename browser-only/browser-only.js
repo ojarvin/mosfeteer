@@ -39361,6 +39361,7 @@ __exports.OBJECT_CLIPBOARD_FORMAT = OBJECT_CLIPBOARD_FORMAT;
 
 __modules["src/core/page-guide.js"] = function (__require, __exports) {
 __exports.customPageGuide = customPageGuide;
+__exports.printPxPerUnit = printPxPerUnit;
 __exports.normalizePageGuide = normalizePageGuide;
 __exports.parsePageGuide = parsePageGuide;
 __exports.pageGuideWidth = pageGuideWidth;
@@ -39431,6 +39432,17 @@ function customPageGuide(value, { strict = false } = {}) {
     preset: 'custom', width: round(width, 3), unit, textPt: round(textPt, 2),
     name: 'Custom', widthPt, widthLabel: label, latexWidth: `${round(width, 3)}${unit}`,
   };
+}
+
+/** Text size, in points, of a figure printed with no page guide. */
+const DEFAULT_TEXT_PT = 8;
+
+/** CSS pixels per world unit at print size: a normal label shows at the
+ *  guide's text size (8 pt with no guide), 96 CSS pixels to the inch. This is
+ *  the editor's 100% zoom. */
+function printPxPerUnit(guide) {
+  const textPt = normalizePageGuide(guide)?.textPt ?? DEFAULT_TEXT_PT;
+  return (textPt * 96) / 72 / LABEL_FONT_SIZE;
 }
 
 /** A stored guide choice, normalized; null when no guide is on. A preset is
@@ -39510,6 +39522,7 @@ function circuitPageGuideFrame(circuit, guide, padding = GRID) {
 }
 
 __exports.PAGE_GUIDE_UNITS = PAGE_GUIDE_UNITS;
+__exports.DEFAULT_TEXT_PT = DEFAULT_TEXT_PT;
 };
 
 __modules["src/core/part-moves.js"] = function (__require, __exports) {
@@ -64890,9 +64903,10 @@ __exports.clientToWorld = clientToWorld;
 __exports.worldToClient = worldToClient;
 __exports.worldRect = worldRect;
 __exports.rectContained = rectContained;
+__exports.zoomToPercent = zoomToPercent;
 __exports.zoomToWorldRect = zoomToWorldRect;
 let linkBubbleFrames; __bind(() => { ({ linkBubbleFrames } = __require("src/web/hierarchy.js")); });
-let circuitPageGuideFrame; __bind(() => { ({ circuitPageGuideFrame } = __require("src/core/page-guide.js")); });
+let circuitPageGuideFrame, printPxPerUnit; __bind(() => { ({ circuitPageGuideFrame, printPxPerUnit } = __require("src/core/page-guide.js")); });
 let viewportFrame, viewportGridPath; __bind(() => { ({ viewportFrame, viewportGridPath } = __require("src/core/render.js")); });
 let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js")); });
 let viewFollowingCursor, worldAndCursorFromClient; __bind(() => { ({ viewFollowingCursor, worldAndCursorFromClient } = __require("src/web/interaction.js")); });
@@ -65343,6 +65357,25 @@ function worldRect(a, b) {
  *  a box only captures whole objects. */
 function rectContained(r, box) {
   return r.x >= box.x0 && r.x + r.w <= box.x1 && r.y >= box.y0 && r.y + r.h <= box.y1;
+}
+
+/** The view at `percent` of print size (page-guide.js printPxPerUnit), about
+ *  the same middle, within the zoom range. */
+function zoomToPercent(percent, { animate = false } = {}) {
+  const p = paneSize();
+  if (!p || !(percent > 0)) return;
+  const w = Math.min(Math.max(p.w / ((percent / 100) * printPxPerUnit(editor.pageGuide)), minViewW()), maxViewW());
+  const h = w * (p.h / p.w);
+  const v = editor.view;
+  const target = { x: v.x + v.w / 2 - w / 2, y: v.y + v.h / 2 - h / 2, w, h };
+  cancelViewAnimation();
+  editor.viewPane = p;
+  fittedSnapshot = null;
+  if (animate) animateViewTo(target);
+  else {
+    Object.assign(editor.view, target);
+    render();
+  }
 }
 
 function zoomToWorldRect(r) {
@@ -80014,7 +80047,7 @@ let openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu; __bind((
 let logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar; __bind(() => { ({ logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar } = __require("src/web/status-bar-ui.js")); });
 let resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi; __bind(() => { ({ resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi } = __require("src/web/design-check-ui.js")); });
 let partialVertexPicks, selectAllNetIds; __bind(() => { ({ partialVertexPicks, selectAllNetIds } = __require("src/core/selection.js")); });
-let paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, finishViewAnimation, holdViewMoving, fitView, fitSelection, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect, PAN_MARGIN, frameLike, paintMarginNow, paintedFrame, placeLayer, setPaintMargin, slideLayers; __bind(() => { ({ paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, finishViewAnimation, holdViewMoving, fitView, fitSelection, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect, PAN_MARGIN, frameLike, paintMarginNow, paintedFrame, placeLayer, setPaintMargin, slideLayers } = __require("src/web/canvas-view.js")); });
+let paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, finishViewAnimation, holdViewMoving, fitView, fitSelection, zoomToPercent, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect, PAN_MARGIN, frameLike, paintMarginNow, paintedFrame, placeLayer, setPaintMargin, slideLayers; __bind(() => { ({ paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, finishViewAnimation, holdViewMoving, fitView, fitSelection, zoomToPercent, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect, PAN_MARGIN, frameLike, paintMarginNow, paintedFrame, placeLayer, setPaintMargin, slideLayers } = __require("src/web/canvas-view.js")); });
 let adoptDrawing, patchChildren, patchDrawing; __bind(() => { ({ adoptDrawing, patchChildren, patchDrawing } = __require("src/web/svg-patch.js")); });
 let syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock; __bind(() => { ({ syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock } = __require("src/web/analysis-ui.js")); });
 let closeComponentContextMenu, openContextMenuAt, installContextMenu; __bind(() => { ({ closeComponentContextMenu, openContextMenuAt, installContextMenu } = __require("src/web/context-menu.js")); });
@@ -80035,7 +80068,7 @@ let onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickA
 let editValues; __bind(() => { ({ editValues } = __require("src/web/value-edit.js")); });
 let beginPorts, installPortTool; __bind(() => { ({ beginPorts, installPortTool } = __require("src/web/port-tool.js")); });
 let noteSelectionForTips, openArrangePicker; __bind(() => { ({ noteSelectionForTips, openArrangePicker } = __require("src/web/arrange-ui.js")); });
-let toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi; __bind(() => { ({ toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } = __require("src/web/toolbar-ui.js")); });
+let toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi, closeToolbarMenu; __bind(() => { ({ toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi, closeToolbarMenu } = __require("src/web/toolbar-ui.js")); });
 let installNetBeams, mountNetBeams, syncNetBeams; __bind(() => { ({ installNetBeams, mountNetBeams, syncNetBeams } = __require("src/web/net-beams.js")); });
 let installWireSweep; __bind(() => { ({ installWireSweep } = __require("src/web/wire-sweep.js")); });
 let installPictureTheme; __bind(() => { ({ installPictureTheme } = __require("src/web/picture-theme.js")); });
@@ -88236,7 +88269,38 @@ if (paneEl && typeof ResizeObserver !== 'undefined') {
   }).observe(paneEl);
 }
 
-statusZoomEl?.addEventListener('click', () => fitView({ animate: true }));
+// The zoom chip's menu (toolbar-ui.js toolbarMenus opens and closes it):
+// fit, the selection, a preset, or a typed percentage of print size.
+const zoomMenuEl = document.getElementById('zoom-menu');
+const zoomInputEl = document.getElementById('zoom-input');
+statusZoomEl?.addEventListener('click', () => {
+  if (zoomInputEl) zoomInputEl.value = statusZoomEl.textContent.replace('%', '');
+});
+zoomMenuEl?.addEventListener('click', (ev) => {
+  const zoom = ev.target.closest?.('[data-zoom]')?.dataset.zoom;
+  if (!zoom) return;
+  if (zoom === 'fit') fitView({ animate: true });
+  else if (zoom === 'selection') fitSelection({ animate: true });
+  else zoomToPercent(Number(zoom), { animate: true });
+  canvasEl.focus({ preventScroll: true });
+});
+zoomInputEl?.addEventListener('keydown', (ev) => {
+  ev.stopPropagation();
+  if (ev.key === 'Escape') {
+    closeToolbarMenu(statusZoomEl, zoomMenuEl, true);
+    return;
+  }
+  if (ev.key !== 'Enter') return;
+  ev.preventDefault();
+  const percent = Number.parseFloat(zoomInputEl.value.replace(',', '.'));
+  if (!(percent > 0)) {
+    hintLine('zoom takes a percentage, such as 150');
+    return;
+  }
+  closeToolbarMenu(statusZoomEl, zoomMenuEl);
+  zoomToPercent(percent, { animate: true });
+  canvasEl.focus({ preventScroll: true });
+});
 
 /** Move a box annotation and its child labels by (dx, dy). */
 function shiftBoxGroup(box, dx, dy) {
@@ -98327,6 +98391,7 @@ __exports.announce = announce;
 __exports.noteActionPrevented = noteActionPrevented;
 __exports.renderStatus = renderStatus;
 __exports.installStatusBar = installStatusBar;
+let printPxPerUnit; __bind(() => { ({ printPxPerUnit } = __require("src/core/page-guide.js")); });
 let contextKeyHints, labelSummary, logDrawerTransition, statusFields, zoomPercent; __bind(() => { ({ contextKeyHints, labelSummary, logDrawerTransition, statusFields, zoomPercent } = __require("src/web/status-bar.js")); });
 let arrangeSuggestionHint; __bind(() => { ({ arrangeSuggestionHint } = __require("src/web/arrange-suggest.js")); });
 let symmetryAxisHint; __bind(() => { ({ symmetryAxisHint } = __require("src/web/symmetry-axis.js")); });
@@ -98341,6 +98406,7 @@ let setClassName, setHidden, setText; __bind(() => { ({ setClassName, setHidden,
  * readouts, the message chip, and the log it opens. The fields' wording is
  * in status-bar.js.
  */
+
 
 
 
@@ -98494,7 +98560,7 @@ function renderStatus() {
   setText(statusCursorEl, fields.cursor);
   // render() measured the pane before writing the DOM; measuring again here
   // would force a synchronous layout on every frame.
-  setText(statusZoomEl, `${zoomPercent(editor.view, (editor.viewPane || paneSize())?.w, editor.zoom)}%`);
+  setText(statusZoomEl, `${zoomPercent(editor.view, (editor.viewPane || paneSize())?.w, printPxPerUnit(editor.pageGuide))}%`);
 }
 
 /** The footer's key strip: the few keys that matter now, while no mode hint
@@ -98629,7 +98695,8 @@ function logDrawerTransition(state, event) {
   }
 }
 
-/** Zoom as a percentage of the editor's default scale (`basePxPerUnit`). */
+/** Zoom as a percentage of print size (`basePxPerUnit`, page-guide.js
+ *  printPxPerUnit): 100% shows the drawing as large as it prints. */
 function zoomPercent(view, paneWidth, basePxPerUnit) {
   if (!view?.w || !paneWidth || !basePxPerUnit) return 100;
   return Math.round(((paneWidth / view.w) / basePxPerUnit) * 100);
@@ -102060,6 +102127,7 @@ const toolbarMenus = [
   [document.getElementById('atlas-check'), document.getElementById('atlas-check-menu')],
   [document.getElementById('atlas-list'), document.getElementById('atlas-list-panel')],
   [document.getElementById('style-line-pattern'), document.getElementById('style-line-menu')],
+  [document.getElementById('status-zoom'), document.getElementById('zoom-menu')],
 ].filter(([button, menu]) => button && menu);
 
 function closeToolbarMenu(button, menu, focusButton = false) {

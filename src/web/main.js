@@ -64,7 +64,7 @@ import { openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu } fr
 import { logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar } from './status-bar-ui.js';
 import { resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi } from './design-check-ui.js';
 import { partialVertexPicks, selectAllNetIds } from '../core/selection.js';
-import { paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, finishViewAnimation, holdViewMoving, fitView, fitSelection, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect, PAN_MARGIN, frameLike, paintMarginNow, paintedFrame, placeLayer, setPaintMargin, slideLayers } from './canvas-view.js';
+import { paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, finishViewAnimation, holdViewMoving, fitView, fitSelection, zoomToPercent, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect, PAN_MARGIN, frameLike, paintMarginNow, paintedFrame, placeLayer, setPaintMargin, slideLayers } from './canvas-view.js';
 import { adoptDrawing, patchChildren, patchDrawing } from './svg-patch.js';
 import { syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock } from './analysis-ui.js';
 import { closeComponentContextMenu, openContextMenuAt, installContextMenu } from './context-menu.js';
@@ -85,7 +85,7 @@ import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQ
 import { editValues } from './value-edit.js';
 import { beginPorts, installPortTool } from './port-tool.js';
 import { noteSelectionForTips, openArrangePicker } from './arrange-ui.js';
-import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } from './toolbar-ui.js';
+import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi, closeToolbarMenu } from './toolbar-ui.js';
 import { installNetBeams, mountNetBeams, syncNetBeams } from './net-beams.js';
 import { installWireSweep } from './wire-sweep.js';
 import { installPictureTheme } from './picture-theme.js';
@@ -8180,7 +8180,38 @@ if (paneEl && typeof ResizeObserver !== 'undefined') {
   }).observe(paneEl);
 }
 
-statusZoomEl?.addEventListener('click', () => fitView({ animate: true }));
+// The zoom chip's menu (toolbar-ui.js toolbarMenus opens and closes it):
+// fit, the selection, a preset, or a typed percentage of print size.
+const zoomMenuEl = document.getElementById('zoom-menu');
+const zoomInputEl = document.getElementById('zoom-input');
+statusZoomEl?.addEventListener('click', () => {
+  if (zoomInputEl) zoomInputEl.value = statusZoomEl.textContent.replace('%', '');
+});
+zoomMenuEl?.addEventListener('click', (ev) => {
+  const zoom = ev.target.closest?.('[data-zoom]')?.dataset.zoom;
+  if (!zoom) return;
+  if (zoom === 'fit') fitView({ animate: true });
+  else if (zoom === 'selection') fitSelection({ animate: true });
+  else zoomToPercent(Number(zoom), { animate: true });
+  canvasEl.focus({ preventScroll: true });
+});
+zoomInputEl?.addEventListener('keydown', (ev) => {
+  ev.stopPropagation();
+  if (ev.key === 'Escape') {
+    closeToolbarMenu(statusZoomEl, zoomMenuEl, true);
+    return;
+  }
+  if (ev.key !== 'Enter') return;
+  ev.preventDefault();
+  const percent = Number.parseFloat(zoomInputEl.value.replace(',', '.'));
+  if (!(percent > 0)) {
+    hintLine('zoom takes a percentage, such as 150');
+    return;
+  }
+  closeToolbarMenu(statusZoomEl, zoomMenuEl);
+  zoomToPercent(percent, { animate: true });
+  canvasEl.focus({ preventScroll: true });
+});
 
 /** Move a box annotation and its child labels by (dx, dy). */
 function shiftBoxGroup(box, dx, dy) {

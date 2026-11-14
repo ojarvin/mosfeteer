@@ -60,6 +60,17 @@ export function customPageGuide(value, { strict = false } = {}) {
   };
 }
 
+/** Text size, in points, of a figure printed with no page guide. */
+export const DEFAULT_TEXT_PT = 8;
+
+/** CSS pixels per world unit at print size: a normal label shows at the
+ *  guide's text size (8 pt with no guide), 96 CSS pixels to the inch. This is
+ *  the editor's 100% zoom. */
+export function printPxPerUnit(guide) {
+  const textPt = normalizePageGuide(guide)?.textPt ?? DEFAULT_TEXT_PT;
+  return (textPt * 96) / 72 / LABEL_FONT_SIZE;
+}
+
 /** A stored guide choice, normalized; null when no guide is on. A preset is
  *  its id or `{ preset }`; a custom guide `{ preset: 'custom', width, unit,
  *  textPt }`. */

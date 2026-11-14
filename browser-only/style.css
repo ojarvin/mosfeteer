@@ -536,6 +536,37 @@ button:focus-visible {
   right: 0;
 }
 
+/* The status bar's zoom menu opens upward, at its right edge. */
+.zoom-menu {
+  top: auto;
+  bottom: calc(100% + 6px);
+  left: auto;
+  right: 0;
+  color: var(--text);
+  font-size: var(--text-md);
+}
+
+.zoom-menu button {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.toolbar-menu.zoom-menu [role="menuitem"]:has(kbd)::after {
+  content: none;
+}
+
+.zoom-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+}
+
+.zoom-field input {
+  width: 4.5rem;
+}
+
 /* A menu opened by a click holds the focus itself, unmarked. */
 .toolbar-menu:focus {
   outline: none;

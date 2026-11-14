@@ -41,7 +41,7 @@ test('the command line opens the drawer and closes it when done, unless pinned',
   assert.equal(logDrawerTransition(command, { type: 'unknown' }), command);
 });
 
-test('zoom reads as a percentage of the default scale; fields hide empty selection', () => {
+test('zoom reads as a percentage of the print scale; fields hide empty selection', () => {
   assert.equal(zoomPercent({ w: 1000 }, 700, 0.7), 100);
   assert.equal(zoomPercent({ w: 500 }, 700, 0.7), 200);
   assert.equal(zoomPercent(null, 700, 0.7), 100);

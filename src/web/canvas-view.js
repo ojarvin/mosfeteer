@@ -4,7 +4,7 @@
  */
 
 import { linkBubbleFrames } from './hierarchy.js';
-import { circuitPageGuideFrame } from '../core/page-guide.js';
+import { circuitPageGuideFrame, printPxPerUnit } from '../core/page-guide.js';
 import { viewportFrame, viewportGridPath } from '../core/render.js';
 import { snap, GRID } from '../core/grid.js';
 import { viewFollowingCursor, worldAndCursorFromClient } from './interaction.js';
@@ -438,6 +438,25 @@ export function worldRect(a, b) {
  *  a box only captures whole objects. */
 export function rectContained(r, box) {
   return r.x >= box.x0 && r.x + r.w <= box.x1 && r.y >= box.y0 && r.y + r.h <= box.y1;
+}
+
+/** The view at `percent` of print size (page-guide.js printPxPerUnit), about
+ *  the same middle, within the zoom range. */
+export function zoomToPercent(percent, { animate = false } = {}) {
+  const p = paneSize();
+  if (!p || !(percent > 0)) return;
+  const w = Math.min(Math.max(p.w / ((percent / 100) * printPxPerUnit(editor.pageGuide)), minViewW()), maxViewW());
+  const h = w * (p.h / p.w);
+  const v = editor.view;
+  const target = { x: v.x + v.w / 2 - w / 2, y: v.y + v.h / 2 - h / 2, w, h };
+  cancelViewAnimation();
+  editor.viewPane = p;
+  fittedSnapshot = null;
+  if (animate) animateViewTo(target);
+  else {
+    Object.assign(editor.view, target);
+    render();
+  }
 }
 
 export function zoomToWorldRect(r) {

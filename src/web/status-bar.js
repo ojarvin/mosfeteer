@@ -62,7 +62,8 @@ export function logDrawerTransition(state, event) {
   }
 }
 
-/** Zoom as a percentage of the editor's default scale (`basePxPerUnit`). */
+/** Zoom as a percentage of print size (`basePxPerUnit`, page-guide.js
+ *  printPxPerUnit): 100% shows the drawing as large as it prints. */
 export function zoomPercent(view, paneWidth, basePxPerUnit) {
   if (!view?.w || !paneWidth || !basePxPerUnit) return 100;
   return Math.round(((paneWidth / view.w) / basePxPerUnit) * 100);

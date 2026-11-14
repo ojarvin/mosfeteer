@@ -458,6 +458,7 @@ export const toolbarMenus = [
   [document.getElementById('atlas-check'), document.getElementById('atlas-check-menu')],
   [document.getElementById('atlas-list'), document.getElementById('atlas-list-panel')],
   [document.getElementById('style-line-pattern'), document.getElementById('style-line-menu')],
+  [document.getElementById('status-zoom'), document.getElementById('zoom-menu')],
 ].filter(([button, menu]) => button && menu);
 
 export function closeToolbarMenu(button, menu, focusButton = false) {

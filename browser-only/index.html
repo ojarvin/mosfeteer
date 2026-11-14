@@ -688,7 +688,20 @@
       <span id="status-selection" class="status-chip status-selection" title="Current selection" hidden></span>
       <span id="status-modified" class="status-chip status-modified" hidden></span>
       <span id="status-cursor" class="status-chip status-cursor" title="Cursor position (world units)"></span>
-      <button id="status-zoom" type="button" class="status-chip status-zoom" title="Zoom · click to fit (f)">100%</button>
+      <div class="toolbar-popover zoom-popover">
+        <button id="status-zoom" type="button" class="status-chip status-zoom" aria-haspopup="menu" aria-expanded="false" aria-controls="zoom-menu" title="Zoom (100% is print size)">100%</button>
+        <div id="zoom-menu" class="toolbar-menu zoom-menu" role="menu" aria-label="Zoom" hidden>
+          <button type="button" role="menuitem" data-zoom="fit">Fit <kbd>F</kbd></button>
+          <button type="button" role="menuitem" data-zoom="selection">Zoom to selection <kbd>Shift+F</kbd></button>
+          <span class="toolbar-menu-separator" role="separator"></span>
+          <button type="button" role="menuitem" data-zoom="50">50%</button>
+          <button type="button" role="menuitem" data-zoom="100">100% (print size)</button>
+          <button type="button" role="menuitem" data-zoom="200">200%</button>
+          <button type="button" role="menuitem" data-zoom="400">400%</button>
+          <span class="toolbar-menu-separator" role="separator"></span>
+          <label class="zoom-field">Zoom <input id="zoom-input" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Zoom percentage" /> %</label>
+        </div>
+      </div>
       <button id="status-check" type="button" class="status-chip status-check pending" title="Check the current schematic (x)">Check</button>
       <button id="btn-help" type="button" class="status-chip status-help" title="Show keyboard and command help (?)" aria-label="Help">?</button>
     </div>

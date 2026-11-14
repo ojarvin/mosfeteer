@@ -125,3 +125,12 @@ test('every guide is listed with its width and text size, the menus as pageGuide
     assert.ok(html.includes(`<option value="${preset}">${title}</option>`), `the export dialog names ${title}`);
   }
 });
+
+test('100% zoom is print size: a normal label shows at the guide\'s text size, 8 pt with none', async () => {
+  const { printPxPerUnit } = await import('../src/core/page-guide.js');
+  const { LABEL_FONT_SIZE } = await import('../src/core/model.js');
+  const pt = (guide) => (printPxPerUnit(guide) * LABEL_FONT_SIZE * 72) / 96;
+  assert.ok(Math.abs(pt(null) - 8) < 1e-9);
+  assert.ok(Math.abs(pt('ieee-1col') - 8) < 1e-9);
+  assert.ok(Math.abs(pt({ preset: 'custom', width: 12, unit: 'cm', textPt: 10 }) - 10) < 1e-9);
+});

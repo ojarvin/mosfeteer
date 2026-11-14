@@ -4,6 +4,7 @@
  * in status-bar.js.
  */
 
+import { printPxPerUnit } from '../core/page-guide.js';
 import { contextKeyHints, labelSummary, logDrawerTransition, statusFields, zoomPercent } from './status-bar.js';
 import { arrangeSuggestionHint } from './arrange-suggest.js';
 import { symmetryAxisHint } from './symmetry-axis.js';
@@ -156,7 +157,7 @@ export function renderStatus() {
   setText(statusCursorEl, fields.cursor);
   // render() measured the pane before writing the DOM; measuring again here
   // would force a synchronous layout on every frame.
-  setText(statusZoomEl, `${zoomPercent(editor.view, (editor.viewPane || paneSize())?.w, editor.zoom)}%`);
+  setText(statusZoomEl, `${zoomPercent(editor.view, (editor.viewPane || paneSize())?.w, printPxPerUnit(editor.pageGuide))}%`);
 }
 
 /** The footer's key strip: the few keys that matter now, while no mode hint

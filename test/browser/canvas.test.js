@@ -311,6 +311,38 @@ describe('canvas editing', { skip: browserSkip() }, () => {
     for (const k of ['x', 'y', 'w', 'h']) assert.ok(Math.abs(again[k] - fitted[k]) < 1e-6, `${k}: ${again[k]} vs ${fitted[k]}`);
   });
 
+  test('the zoom chip reads a percentage of print size; its menu fits, picks a preset, or takes a typed zoom', async () => {
+    const chip = () => h.evaluate(`document.getElementById('status-zoom').textContent`);
+    const menuOpen = () => h.evaluate(`!document.getElementById('zoom-menu').hidden`);
+    const labelPx = () => h.evaluate(`Promise.all([${h.module('editor-state.js')}, ${h.module('canvas-view.js')}]).then(([s, v]) => {
+      const a = v.worldToClient(0, 0); const b = v.worldToClient(46, 0); return b.x - a.x; })`);
+    await h.click('#status-zoom');
+    assert.equal(await menuOpen(), true);
+    assert.equal(await h.evaluate(`document.getElementById('zoom-input').value + '%'`), await chip());
+    await h.click('#zoom-menu [data-zoom="100"]');
+    await h.settle();
+    assert.equal(await menuOpen(), false);
+    assert.equal(await chip(), '100%');
+    // A normal label, 46 units tall, shows at 8 pt: 8/72 in at 96 px to the inch.
+    assert.ok(Math.abs(await labelPx() - (8 * 96) / 72) < 0.05, String(await labelPx()));
+    await h.click('#status-zoom');
+    await h.evaluate(`(() => { const i = document.getElementById('zoom-input'); i.focus(); i.value = '250'; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+    await h.settle();
+    assert.equal(await chip(), '250%');
+    assert.equal(await menuOpen(), false);
+    await h.key('f');
+    await h.settle();
+    const fitted = await chip();
+    await h.click('#status-zoom');
+    await h.click('#zoom-menu [data-zoom="400"]');
+    await h.settle();
+    assert.equal(await chip(), '400%');
+    await h.click('#status-zoom');
+    await h.click('#zoom-menu [data-zoom="fit"]');
+    await h.settle();
+    assert.equal(await chip(), fitted);
+  });
+
   test('F lets the tool rail float over an empty corner of the drawing, which stays centred', async () => {
     // A row of parts along the bottom and a column up the right: the
     // drawing's top-left corner is empty.
