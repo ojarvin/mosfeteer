@@ -118,6 +118,33 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
     assert.equal(await menuOpen(), false);
   });
 
+  test("the bars curve over the drawing's and the desk's corners with the windows' radius", async () => {
+    await h.open('top');
+    const radius = await h.evaluate(`getComputedStyle(document.querySelector('.mode-toolbar')).borderTopLeftRadius`);
+    assert.equal(radius, '12px');
+    const corners = (selector, pseudo = null) => h.evaluate(`(() => { const s = getComputedStyle(document.querySelector(${JSON.stringify(selector)}), ${JSON.stringify(pseudo)}); return [s.content, s.borderTopLeftRadius, s.borderTopRightRadius, s.borderBottomLeftRadius, s.borderBottomRightRadius]; })()`);
+    // The editor: the drawing is a sheet with four rounded corners, framed by
+    // the bars and the side panel, and its border is the one line between.
+    for (const selector of ['.canvas', '.canvas > svg']) assert.deepEqual((await corners(selector)).slice(1), [radius, radius, radius, radius], selector);
+    assert.equal(await h.evaluate(`getComputedStyle(document.querySelector('.canvas-pane')).backgroundColor === getComputedStyle(document.querySelector('.toolbar')).backgroundColor`), true);
+    for (const [selector, side] of [['.toolbar', 'Bottom'], ['.statusbar', 'Top'], ['.side-panel', 'Left']]) {
+      assert.equal(await h.evaluate(`getComputedStyle(document.querySelector(${JSON.stringify(selector)})).border${side}Color`), 'rgba(0, 0, 0, 0)', selector);
+    }
+    assert.equal((await corners('.toolbar', '::before'))[0], 'none', 'no fillets over the editor');
+    // The Atlas: the bar hangs a fillet at each top corner of the desk.
+    await openDesk();
+    const bottom = await h.evaluate(`document.querySelector('.toolbar').getBoundingClientRect().bottom`);
+    for (const [pseudo, side] of [['::before', 1], ['::after', 2]]) {
+      const c = await corners('.toolbar', pseudo);
+      assert.notEqual(c[0], 'none', pseudo);
+      assert.equal(c[side], radius, pseudo);
+      const box = await h.evaluate(`(() => { const s = getComputedStyle(document.querySelector('.toolbar'), ${JSON.stringify(pseudo)}); return [s.width, s.height, s.top]; })()`);
+      assert.deepEqual(box.slice(0, 2), [radius, radius], pseudo);
+      assert.ok(Math.abs(parseFloat(box[2]) + 1 - (bottom - (await h.evaluate(`document.querySelector('.toolbar').getBoundingClientRect().top`)))) < 0.5, `${pseudo} hangs from the bar's bottom line`);
+    }
+    await closeDesk();
+  });
+
   test('the open design is marked, and the pick lifts with the designs it links to; the rest dim', async () => {
     await openDesk();
     const tiles = Object.fromEntries((await snapshot()).tiles.map((t) => [t.name, t]));

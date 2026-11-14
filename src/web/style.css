@@ -3093,16 +3093,29 @@ html.dark.invert-pictures .light-picture {
 .canvas-pane {
   flex: 1;
   overflow: hidden;
-  background: var(--bg);
+  background: var(--bg-panel);
   user-select: none;
   -webkit-user-select: none;
 }
 
+/* The drawing is a sheet with the windows' corners: the toolbar, the side
+   panel, and the status bar curve over it. Its own border is the one line
+   between them, so theirs are clear beside it. */
 .canvas {
   position: relative;
   width: 100%;
   height: 100%;
   padding: 0;
+  border-radius: var(--radius-lg);
+  overflow: clip;
+}
+
+.canvas > svg {
+  border-radius: var(--radius-lg);
+}
+
+body:not(.atlas-mode) .toolbar {
+  border-bottom-color: transparent;
 }
 
 /* Math labels, drawn over the drawing in the same frame (main.js). */
@@ -3533,7 +3546,8 @@ button.app-mark-button:active {
   position: relative;
   width: var(--side-panel-width);
   flex: none;
-  border-left: 1px solid var(--border);
+  /* Clear beside the drawing, whose sheet draws the line (.canvas). */
+  border-left: 1px solid transparent;
   background: var(--bg-panel);
   display: flex;
   flex-direction: column;
@@ -4001,7 +4015,8 @@ button.app-mark-button:active {
   gap: 10px;
   height: 26px;
   padding: 0 6px 0 8px;
-  border-top: 1px solid var(--border);
+  /* Clear: the drawing's sheet draws the line (.canvas). */
+  border-top: 1px solid transparent;
   background: var(--bg-panel);
   font-size: var(--text-sm);
   color: var(--text-dim);
@@ -5054,6 +5069,7 @@ button.off {
   .side-panel {
     position: absolute;
     z-index: 15;
+    border-left-color: var(--border);
     top: 0;
     right: 0;
     bottom: 0;
@@ -6549,6 +6565,33 @@ body.atlas-mode .editor-only {
 .toolbar {
   position: relative;
   z-index: 96;
+}
+
+/* The bar curves over the desk's top corners, as over the editor's sheet. */
+body.atlas-mode .toolbar::before,
+body.atlas-mode .toolbar::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  box-sizing: border-box;
+  width: var(--radius-lg);
+  height: var(--radius-lg);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 0 0 var(--radius-lg) var(--bg-panel);
+  clip-path: inset(0);
+  pointer-events: none;
+}
+
+body.atlas-mode .toolbar::before {
+  left: 0;
+  border-left: 1px solid var(--border);
+  border-top-left-radius: var(--radius-lg);
+}
+
+body.atlas-mode .toolbar::after {
+  right: 0;
+  border-right: 1px solid var(--border);
+  border-top-right-radius: var(--radius-lg);
 }
 
 /* Names the design the editor returns to; a long name gives way to an ellipsis. */
