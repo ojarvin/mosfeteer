@@ -59,12 +59,8 @@ function configureBrowserOnlyUi() {
     setButtonText(workspaceButton, 'Open folder…');
     workspaceButton.title = 'Workspace folder';
   }
-  const pdf = exportForm?.querySelector('input[name="format"][value="pdf"]');
-  if (pdf) {
-    pdf.checked = false;
-    pdf.disabled = true;
-    pdf.closest('label')?.setAttribute('title', 'PDF export is not available in browser-only mode; use the browser print command.');
-  }
+  // A PDF comes from the browser's print dialog (print-pdf.js).
+  exportForm?.querySelector('input[name="format"][value="pdf"]')?.closest('label')?.setAttribute('title', 'Opens the print dialog: choose Save as PDF');
 }
 
 // Each window keeps its own draft and says which document it shows, so two

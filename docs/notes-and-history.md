@@ -82,8 +82,11 @@ key, `searchDesign` matches a word found there).
 The notes are also the text of the design's report (`src/core/report.js`,
 `buildReport`): a printable HTML document, and the PDF the server prints
 from it with headless Chromium (`printHtmlToPdf`). The export dialog's
-**Report** (or the notes window's **Report…**) writes it as PDF and HTML;
-browser-only mode writes the HTML, which prints from the browser. Scripted:
+**Report** (or the notes window's **Report…**) writes it as PDF and HTML.
+Browser-only mode writes the HTML, and its PDF opens the report in the
+browser's print dialog, where Save as PDF makes it (`src/web/print-pdf.js`);
+drawing, beat, and Atlas PDFs go the same way, one page per picture at its
+own size (`src/core/print-pages.js`). Scripted:
 `report [--file F.html] [--guide G] [--name TITLE]` lists its figures and
 warnings, and writes the HTML.
 

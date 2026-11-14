@@ -697,7 +697,10 @@ export function createBrowserPersistenceAdapter({
   return {
     browserOnly: true,
     liveSync: false,
-    supportedExportFormats: new Set(['svg', 'png', 'html']),
+    // A PDF here comes from the browser's print dialog (print-pdf.js), never
+    // a written file: export-ui.js prints it instead of sending it.
+    supportedExportFormats: new Set(['svg', 'png', 'html', 'pdf']),
+    printsPdf: true,
     get canChooseExportFolder() { return canChooseExportFolder(); },
     /** While the submit still carries user activation: ask for access to a
      *  chosen export folder, or reserve a native PNG save target before

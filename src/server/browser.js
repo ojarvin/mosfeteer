@@ -9,7 +9,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { svgPixelSize } from '../core/render.js';
+import { printPagesHtml } from '../core/print-pages.js';
 
 function onPath(names, env) {
   const dirs = String(env.PATH || '').split(delimiter).filter(Boolean);
@@ -52,14 +52,7 @@ export function findChromium({ platform = process.platform, env = process.env } 
  */
 export async function printSvgToPdf(svgOrPages, { browser = findChromium(), timeoutMs = 60_000 } = {}) {
   const pages = Array.isArray(svgOrPages) ? svgOrPages : [svgOrPages];
-  if (!pages.length) throw new Error('a PDF needs at least one page');
-  const sizes = pages.map((svg) => svgPixelSize(svg));
-  // A named page per drawing, each its own size.
-  const pageRules = sizes.map(({ width, height }, index) =>
-    `@page p${index}{size:${width}px ${height}px;margin:0}.p${index}{page:p${index};width:${width}px;height:${height}px}.p${index} svg{width:${width}px;height:${height}px}`).join('');
-  // The SVG is rendered by a real browser, so the page denies scripts and
-  // every external load; only the inline drawing and its inline styles run.
-  return printHtmlToPdf(`<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:"><style>@page{size:${sizes[0].width}px ${sizes[0].height}px;margin:0}html,body{margin:0;padding:0;background:#fff}svg{display:block}.page{break-after:page;overflow:hidden}.page:last-child{break-after:auto}${pageRules}</style></head><body>${pages.map((svg, index) => `<div class="page p${index}">${svg}</div>`).join('')}</body></html>`, { browser, timeoutMs });
+  return printHtmlToPdf(printPagesHtml(pages), { browser, timeoutMs });
 }
 
 /**

@@ -45,4 +45,41 @@ describe('browser-only, opened from a file', { skip: browserSkip() }, () => {
     assert.equal(result.id, 3);
     assert.ok(Math.abs(result.gain - 20 * Math.log10(2)) < 1e-6);
   });
+
+  test('a PDF, of the notes or the drawing, opens in the browser\'s print dialog sized to its pages', async () => {
+    // Each print view as it opens; the dialog itself is left to the browser.
+    await h.evaluate(`(() => {
+      window.__printed = [];
+      new MutationObserver((records) => {
+        for (const record of records) for (const node of record.addedNodes) {
+          if (node.classList?.contains('print-frame')) window.__printed.push(node.srcdoc);
+        }
+      }).observe(document.body, { childList: true });
+    })()`);
+    const circuit = new Circuit();
+    runCommand(circuit, 'add resistor R1 --at 0 0');
+    circuit.notes = '# Bias\n\nThe resistor sets the bias.';
+    await h.evaluate(`window.__load(${JSON.stringify(circuit.toJSON())})`);
+    const exportAs = async (content, name) => {
+      await h.click('#btn-export');
+      await h.until(`document.getElementById('export-dialog').open`);
+      await h.click(`[data-export-content="${content}"]`);
+      await h.evaluate(`(() => { const form = document.getElementById('export-form');
+        document.getElementById('export-name').value = ${JSON.stringify(name)};
+        for (const box of form.querySelectorAll('[name=format]')) box.checked = box.value === 'pdf'; })()`);
+      assert.equal(await h.evaluate(`document.querySelector('#export-form [name=format][value=pdf]').disabled`), false, 'PDF is offered');
+      const before = await h.evaluate(`window.__printed.length`);
+      await h.click('#export-submit');
+      await h.until(`window.__printed.length > ${before}`, 20000);
+      return h.evaluate(`window.__printed.at(-1)`);
+    };
+    const notes = await exportAs('report', 'bias-notes');
+    assert.match(notes, /<title>bias-notes<\/title>|<h1[^>]*>Bias/);
+    assert.match(notes, /The resistor sets the bias/);
+    assert.match(notes, /@page/);
+    const drawing = await exportAs('drawing', 'bias');
+    assert.match(drawing, /<title>bias<\/title>/);
+    assert.match(drawing, /@page p0\{size:[\d.]+px [\d.]+px;margin:0\}/);
+    assert.match(drawing, /<svg/);
+  });
 });

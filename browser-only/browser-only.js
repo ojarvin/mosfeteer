@@ -41323,6 +41323,36 @@ __exports.DEFAULT_PNG_DPI = DEFAULT_PNG_DPI;
 __exports.DEFAULT_EXPORT_TEXT_PT = DEFAULT_EXPORT_TEXT_PT;
 };
 
+__modules["src/core/print-pages.js"] = function (__require, __exports) {
+__exports.printPagesHtml = printPagesHtml;
+let escapeSvg; __bind(() => { ({ escapeSvg } = __require("src/core/style.js")); });
+let svgPixelSize; __bind(() => { ({ svgPixelSize } = __require("src/core/render.js")); });
+/**
+ * Drawings laid out for printing to PDF: one page per SVG, each page the
+ * size of its own drawing (CSS named pages), nothing around it. The server
+ * prints this with headless Chromium (server/browser.js printSvgToPdf); the
+ * browser-only build hands it to the browser's own print dialog
+ * (web/print-pdf.js), where "Save as PDF" makes the same document.
+ */
+
+
+
+
+/** The HTML that prints `pages` (SVG strings) one to a page. `title` names
+ *  the document, which a print dialog offers as the file's name. */
+function printPagesHtml(pages, { title = '' } = {}) {
+  if (!pages.length) throw new Error('a PDF needs at least one page');
+  const sizes = pages.map((svg) => svgPixelSize(svg));
+  // A named page per drawing, each its own size.
+  const pageRules = sizes.map(({ width, height }, index) =>
+    `@page p${index}{size:${width}px ${height}px;margin:0}.p${index}{page:p${index};width:${width}px;height:${height}px}.p${index} svg{width:${width}px;height:${height}px}`).join('');
+  // The SVG is rendered by a real browser, so the page denies scripts and
+  // every external load; only the inline drawing and its inline styles run.
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:">${title ? `<title>${escapeSvg(title)}</title>` : ''}<style>@page{size:${sizes[0].width}px ${sizes[0].height}px;margin:0}html,body{margin:0;padding:0;background:#fff}svg{display:block}.page{break-after:page;overflow:hidden}.page:last-child{break-after:auto}${pageRules}</style></head><body>${pages.map((svg, index) => `<div class="page p${index}">${svg}</div>`).join('')}</body></html>`;
+}
+
+};
+
 __modules["src/core/rail-names.js"] = function (__require, __exports) {
 __exports.plainName = plainName;
 __exports.railNameKey = railNameKey;
@@ -70502,12 +70532,8 @@ function configureBrowserOnlyUi() {
     setButtonText(workspaceButton, 'Open folder…');
     workspaceButton.title = 'Workspace folder';
   }
-  const pdf = exportForm?.querySelector('input[name="format"][value="pdf"]');
-  if (pdf) {
-    pdf.checked = false;
-    pdf.disabled = true;
-    pdf.closest('label')?.setAttribute('title', 'PDF export is not available in browser-only mode; use the browser print command.');
-  }
+  // A PDF comes from the browser's print dialog (print-pdf.js).
+  exportForm?.querySelector('input[name="format"][value="pdf"]')?.closest('label')?.setAttribute('title', 'Opens the print dialog: choose Save as PDF');
 }
 
 // Each window keeps its own draft and says which document it shows, so two
@@ -72658,6 +72684,8 @@ __exports.copyAsImage = copyAsImage;
 __exports.exportCircuit = exportCircuit;
 __exports.exportAtlasSheet = exportAtlasSheet;
 __exports.installExportUi = installExportUi;
+let printPagesHtml; __bind(() => { ({ printPagesHtml } = __require("src/core/print-pages.js")); });
+let printHtml; __bind(() => { ({ printHtml } = __require("src/web/print-pdf.js")); });
 let resolveBeat; __bind(() => { ({ resolveBeat } = __require("src/core/beats.js")); });
 let timingBeatBands; __bind(() => { ({ timingBeatBands } = __require("src/core/timing-diagram.js")); });
 let circuitPageGuideFrame, normalizePageGuide, pageGuideCaption, pageGuideTitle; __bind(() => { ({ circuitPageGuideFrame, normalizePageGuide, pageGuideCaption, pageGuideTitle } = __require("src/core/page-guide.js")); });
@@ -72687,6 +72715,8 @@ let render, syncRenderedLabelMetrics; __bind(() => { ({ render, syncRenderedLabe
  * dialog also exports the report, the notes with their figures
  * (core/report.js), as HTML and PDF.
  */
+
+
 
 
 
@@ -72792,19 +72822,24 @@ async function runExport({ dir, name, formats, grid = false, dark = false, sketc
     return;
   }
   const allBeats = beat === 'all';
-  const onePdf = allBeats && formats.includes('pdf');
+  // Browser-only, the PDF is printed (print-pdf.js), every beat on a page of
+  // its own, after the files are written.
+  const printing = !!persistence.printsPdf && formats.includes('pdf');
+  const fileFormats = printing ? formats.filter((format) => format !== 'pdf') : formats;
+  const printed = [];
+  const onePdf = allBeats && fileFormats.includes('pdf');
   const jobs = allBeats
-    ? editor.circuit.beats.map((_, index) => ({ name: `${name}-${index + 1}`, beat: index, formats: formats.filter((format) => format !== 'pdf') }))
-    : [{ name, beat, formats }];
+    ? editor.circuit.beats.map((_, index) => ({ name: `${name}-${index + 1}`, beat: index, formats: fileFormats.filter((format) => format !== 'pdf') }))
+    : [{ name, beat, formats: fileFormats }];
   try {
-    const files = [...jobs.flatMap((job) => job.formats.map((format) => `${job.name}.${format}`)), ...(onePdf ? [`${name}.pdf`] : [])];
+    const files = [...jobs.flatMap((job) => job.formats.map((format) => `${job.name}.${format}`)), ...(onePdf || printing ? [`${name}.pdf`] : [])];
     logLine(`Exporting ${files.join(', ')}…`);
     // Reserve a native PNG save target while the submit event still carries
     // user activation. Rasterization below is asynchronous and may otherwise
     // make a later download click get blocked by the browser. A set of beat
     // files is downloaded instead of asking for each one.
     const prepared = persistence.prepareExport
-      ? await persistence.prepareExport({ name, formats: jobs.length === 1 ? formats : [], dir })
+      ? await persistence.prepareExport({ name, formats: jobs.length === 1 ? fileFormats : [], dir })
       : null;
     // A MathML label can acquire its final browser-sized box after the last
     // canvas paint. Sync it before taking bounds for the exported viewBox.
@@ -72851,6 +72886,7 @@ async function runExport({ dir, name, formats, grid = false, dark = false, sketc
       });
       const svg = await withEmbeddedMathFont(dark ? applyExportDarkTheme(renderedSvg) : renderedSvg);
       if (onePdf) pages.push(svg);
+      if (printing) printed.push(svg);
       if (!job.formats.length) continue;
       const request = { dir, name: job.name, formats: job.formats, svg };
       if (job.formats.includes('png')) request.png = await svgToPngDataUrl(svg, exportPngScale(pngDpi), { dpi: pngDpi });
@@ -72863,10 +72899,22 @@ async function runExport({ dir, name, formats, grid = false, dark = false, sketc
       for (const page of pages) pdfPngPages.push(await svgToPngDataUrl(page, PDF_FALLBACK_PNG_SCALE));
       if (!await write({ dir, name, formats: ['pdf'], svg: pages[0], pdfPages: pages, pdfPngPages })) return;
     }
-    logLine(`Exported ${paths.map((path) => path.split(/[\\/]/).pop()).join(', ')} to ${displayPath(folder)}.`);
+    if (paths.length) logLine(`Exported ${paths.map((path) => path.split(/[\\/]/).pop()).join(', ')} to ${displayPath(folder)}.`);
     for (const note of notes) logLine(note);
+    if (printing) await printPdf(printPagesHtml(printed, { title: name }), name);
   } catch (err) {
     logLine(`Could not export: ${err.message}`, 'error');
+  }
+}
+
+/** Browser-only: the PDF from the browser's print dialog, where Save as PDF
+ *  writes it (print-pdf.js). */
+async function printPdf(html, name) {
+  logLine(`Printing ${name}.pdf: choose Save as PDF in the print dialog.`);
+  try {
+    await printHtml(html, { name });
+  } catch (err) {
+    logLine(`Could not open the print dialog: ${err.message}`, 'error');
   }
 }
 
@@ -72924,15 +72972,21 @@ async function runReportExport({ dir, name, formats }) {
     const prepared = persistence.prepareExport ? await persistence.prepareExport({ name, formats: [], dir }) : null;
     settleLabelMetrics();
     const report = await currentReport(await embeddedMathFontFace());
-    const result = await writeExportFiles({ dir, name, formats, report: report.html }, { prepared });
-    if (!result) {
-      logLine('Export canceled.');
-      return;
-    }
+    // Browser-only, the PDF is printed from the report's own pages.
+    const printing = !!persistence.printsPdf && formats.includes('pdf');
+    const fileFormats = printing ? formats.filter((format) => format !== 'pdf') : formats;
     const count = report.figures.filter((figure) => figure.kind).length;
-    logLine(`Exported the report (${count} figure${count === 1 ? '' : 's'}) to ${result.paths.map((path) => path.split(/[\\/]/).pop()).join(', ')} in ${displayPath(result.dir)}.`);
+    if (fileFormats.length) {
+      const result = await writeExportFiles({ dir, name, formats: fileFormats, report: report.html }, { prepared });
+      if (!result) {
+        logLine('Export canceled.');
+        return;
+      }
+      logLine(`Exported the report (${count} figure${count === 1 ? '' : 's'}) to ${result.paths.map((path) => path.split(/[\\/]/).pop()).join(', ')} in ${displayPath(result.dir)}.`);
+      for (const note of result.notes || []) logLine(note);
+    }
     for (const warning of report.warnings) logLine(warning, 'error');
-    for (const note of result.notes || []) logLine(note);
+    if (printing) await printPdf(report.html, name);
   } catch (err) {
     logLine(`Could not export: ${err.message}`, 'error');
   }
@@ -72975,6 +73029,20 @@ async function runAtlasExport({ dir, name, formats, grid = false, dark = false, 
     const prepared = persistence.prepareExport ? await persistence.prepareExport({ name, formats, dir }) : null;
     const { svg: sheet, scale, count } = target.build({ grid });
     const svg = await withEmbeddedMathFont(dark ? applyExportDarkTheme(sheet) : sheet);
+    // Browser-only, the PDF is printed (print-pdf.js) after the files.
+    if (persistence.printsPdf && formats.includes('pdf')) {
+      const rest = formats.filter((format) => format !== 'pdf');
+      if (rest.length) {
+        const result = await writeExportFiles({ dir, name, formats: rest, svg }, { prepared });
+        if (!result) {
+          report('Export canceled.');
+          return;
+        }
+        report(`Exported ${count} design${count === 1 ? '' : 's'} to ${result.paths.map((path) => path.split(/[\\/]/).pop()).join(', ')} in ${displayPath(result.dir)}.`);
+      }
+      await printPdf(printPagesHtml([svg], { title: name }), name);
+      return;
+    }
     const request = { dir, name, formats, svg };
     if (formats.includes('pdf')) {
       const { width, height } = svgPixelSize(svg);
@@ -73177,7 +73245,7 @@ function exportAtlasSheet(target) {
     const supported = persistence.supportedExportFormats?.has(input.value) ?? true;
     input.checked = input.value !== 'png' && supported && formats.includes(input.value);
   }
-  // Without PDF (browser-only), the sheet is an SVG.
+  // With no format chosen, the sheet is an SVG.
   if (![...exportForm.querySelectorAll('input[name="format"]:checked')].length) {
     const svgInput = exportForm.querySelector('input[name="format"][value="svg"]');
     if (svgInput) svgInput.checked = true;
@@ -92324,7 +92392,10 @@ function createBrowserPersistenceAdapter({
   return {
     browserOnly: true,
     liveSync: false,
-    supportedExportFormats: new Set(['svg', 'png', 'html']),
+    // A PDF here comes from the browser's print dialog (print-pdf.js), never
+    // a written file: export-ui.js prints it instead of sending it.
+    supportedExportFormats: new Set(['svg', 'png', 'html', 'pdf']),
+    printsPdf: true,
     get canChooseExportFolder() { return canChooseExportFolder(); },
     /** While the submit still carries user activation: ask for access to a
      *  chosen export folder, or reserve a native PNG save target before
@@ -93630,6 +93701,66 @@ function installPortTool() {
 }
 
 __exports.PORT_KINDS = PORT_KINDS;
+};
+
+__modules["src/web/print-pdf.js"] = function (__require, __exports) {
+__exports.printHtml = printHtml;
+/**
+ * A PDF in the browser-only build: no program can print one to a file here,
+ * so the page to print opens in the browser's own print dialog, where "Save
+ * as PDF" makes the PDF (vector, its text selectable). The document's pages
+ * size the paper (CSS `@page`): the drawings' own sizes (core/print-pages.js)
+ * or the report's pages (core/report.js). The suggested file name is `name`.
+ */
+
+/** Open the print dialog on `html`. Resolves once the dialog has closed. */
+function printHtml(html, { name = '' } = {}) {
+  return new Promise((resolve, reject) => {
+    const frame = document.createElement('iframe');
+    frame.className = 'print-frame';
+    frame.setAttribute('aria-hidden', 'true');
+    frame.tabIndex = -1;
+    // Off screen but laid out: a frame with no size can print blank.
+    Object.assign(frame.style, { position: 'fixed', left: '-10000px', top: '0', width: '800px', height: '600px', border: '0' });
+    frame.addEventListener('load', () => {
+      const win = frame.contentWindow;
+      if (!win) {
+        frame.remove();
+        reject(new Error('the print view did not open'));
+        return;
+      }
+      // The dialog offers the page's title as the file name; the frame's
+      // title for its own document, the window's in some browsers.
+      const title = document.title;
+      if (name) document.title = name;
+      let finished = false;
+      const done = () => {
+        if (finished) return;
+        finished = true;
+        document.title = title;
+        setTimeout(() => frame.remove(), 0);
+        resolve();
+      };
+      win.addEventListener('afterprint', done, { once: true });
+      try {
+        win.focus();
+        // Blocks until the dialog closes where the browser supports it.
+        win.print();
+      } catch (error) {
+        document.title = title;
+        frame.remove();
+        reject(error);
+        return;
+      }
+      // A browser that returns before the dialog closes still fires
+      // afterprint; one that never does is let go after a while.
+      setTimeout(done, 60_000);
+    }, { once: true });
+    frame.srcdoc = html;
+    document.body.append(frame);
+  });
+}
+
 };
 
 __modules["src/web/radial-menu.js"] = function (__require, __exports) {
