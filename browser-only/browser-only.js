@@ -62303,6 +62303,7 @@ __exports.syncTimingEditor = syncTimingEditor;
 __exports.toggleTimingDialog = toggleTimingDialog;
 __exports.appendBeatContextItems = appendBeatContextItems;
 __exports.openPresenter = openPresenter;
+__exports.presenterFrameAt = presenterFrameAt;
 __exports.onPresenterKey = onPresenterKey;
 __exports.installBeatsUi = installBeatsUi;
 let element, setText; __bind(() => { ({ element, setText } = __require("src/web/dom.js")); });
@@ -62324,11 +62325,13 @@ let chooseAction; __bind(() => { ({ chooseAction } = __require("src/web/file-dia
 let PLACE, floatingWindow; __bind(() => { ({ PLACE, floatingWindow } = __require("src/web/floating-window.js")); });
 let buttonIcon; __bind(() => { ({ buttonIcon } = __require("src/web/icons.js")); });
 let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion.js")); });
+let easeInOut; __bind(() => { ({ easeInOut } = __require("src/web/easing.js")); });
 /**
  * Beats in the editor: the beat strip, stepping and editing beats, hiding
  * or dimming the selection from a beat on, switch flips, and the full-screen
  * presenter. The beat model is core/beats.js.
  */
+
 
 
 
@@ -63909,6 +63912,43 @@ function closePresenter() {
   canvasEl.focus({ preventScroll: true });
 }
 
+const PRESENTER_MOVE_MS = 520;
+let presenterMove = 0;
+
+const viewBoxOf = (svg) => {
+  const box = svg?.getAttribute('viewBox')?.split(/[\s,]+/).map(Number);
+  return box?.length === 4 && box.every(Number.isFinite) ? { x: box[0], y: box[1], w: box[2], h: box[3] } : null;
+};
+const setViewBox = (svg, box) => svg.setAttribute('viewBox', `${box.x} ${box.y} ${box.w} ${box.h}`);
+
+/** The view `t` (0..1) of the way between two frames: the middle moves
+ *  evenly and the size changes by a constant ratio, eased in and out, so a
+ *  zoom reads as one camera move. */
+function presenterFrameAt(from, to, t) {
+  const k = easeInOut(t);
+  const w = from.w * (to.w / from.w) ** k;
+  const h = from.h * (to.h / from.h) ** k;
+  const cx = from.x + from.w / 2 + ((to.x + to.w / 2) - (from.x + from.w / 2)) * k;
+  const cy = from.y + from.h / 2 + ((to.y + to.h / 2) - (from.y + from.h / 2)) * k;
+  return { x: cx - w / 2, y: cy - h / 2, w, h };
+}
+
+/** Move the presenter's camera: every drawing on the stage shows the view
+ *  going from `from` to `to`, while the new beat fades in over the old. */
+function movePresenterFrame(svgs, from, to) {
+  const start = performance.now();
+  const move = ++presenterMove;
+  const step = (now) => {
+    if (move !== presenterMove) return;
+    const t = Math.min(1, (now - start) / PRESENTER_MOVE_MS);
+    const box = presenterFrameAt(from, to, t);
+    for (const svg of svgs) if (svg.isConnected) setViewBox(svg, box);
+    if (t < 1) requestAnimationFrame(step);
+  };
+  for (const svg of svgs) setViewBox(svg, from);
+  requestAnimationFrame(step);
+}
+
 function showPresenterFrame(animate = true) {
   if (!editor.presenter) return;
   const frame = document.createElement('div');
@@ -63922,10 +63962,19 @@ function showPresenterFrame(animate = true) {
     svg?.setAttribute('role', 'img');
     svg?.setAttribute('aria-label', beatLabel(editor.presenter.index));
   }
-  // The new frame fades in over the old one, which then goes; every beat
-  // shares the drawing's frame, so only what changed appears to move.
+  // The new frame fades in over the old one, which then goes; unframed beats
+  // share the drawing's frame, so only what changed appears to move. Between
+  // beats framed differently the camera moves from one frame to the other.
   const previous = [...presenterStageEl.children];
   const still = !animate || reducedMotion();
+  // Where the camera is now: the newest drawing's view, mid-move or not.
+  const shown = [...previous].reverse().map((el) => el.querySelector('svg')).find(Boolean);
+  const from = viewBoxOf(shown);
+  const to = viewBoxOf(frame.querySelector('svg'));
+  presenterMove += 1;
+  if (!still && from && to && ['x', 'y', 'w', 'h'].some((key) => Math.abs(from[key] - to[key]) > 1e-6)) {
+    movePresenterFrame([...previous.map((el) => el.querySelector('svg')).filter(Boolean), frame.querySelector('svg')], from, to);
+  }
   if (still) previous.forEach((el) => el.remove());
   else {
     frame.classList.add('entering');

@@ -382,6 +382,42 @@ describe('floating windows', { skip: browserSkip() }, () => {
     await closeAll();
   });
 
+  test('presenting, the camera moves smoothly from one beat frame to the next', async () => {
+    await h.open('beats');
+    await closeAll();
+    await h.evaluate(`window.__run('beat frame 2 R1')`);
+    await h.evaluate(`${h.module('beats-ui.js')}.then((m) => m.openPresenter(0))`);
+    await h.until(`!!document.querySelector('.presenter-frame svg')`);
+    const box = () => h.evaluate(`(() => { const all = document.querySelectorAll('.presenter-frame svg'); return all[all.length - 1].getAttribute('viewBox').split(' ').map(Number); })()`);
+    const whole = await box();
+    const press = (key) => h.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true, cancelable: true }))`);
+    // Motion on for this (the harness reduces it), then back.
+    await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+    // Step on and watch every frame drawn: the width shrinks step by step.
+    const reduce = () => h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+    const widths = await h.evaluate(`new Promise((resolve) => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+      const seen = [];
+      const start = performance.now();
+      const look = () => {
+        const all = document.querySelectorAll('.presenter-frame svg');
+        seen.push(Number(all[all.length - 1].getAttribute('viewBox').split(' ')[2]));
+        if (performance.now() - start < 800) requestAnimationFrame(look); else resolve(seen);
+      };
+      requestAnimationFrame(look);
+    })`).finally(reduce);
+    const landed = await box();
+    assert.ok(landed[2] < whole[2], JSON.stringify({ whole, landed }));
+    const between = [...new Set(widths.filter((w) => w < whole[2] - 1 && w > landed[2] + 1))];
+    assert.ok(between.length >= 3, `the view passes through several sizes on its way: ${widths.join(' ')}`);
+    for (let i = 1; i < widths.length; i++) assert.ok(widths[i] <= widths[i - 1] + 1e-6, `it only zooms in: ${widths.join(' ')}`);
+    // The frame it lands on is the beat's own, as its export frames it.
+    const exported = await h.evaluate(`Promise.all([${h.module('editor-state.js')}, ${h.module('../core/render.js')}, ${h.module('../core/beats.js')}]).then(([s, r, b]) => r.svgString(s.editor.circuit, { beat: { view: b.resolveBeat(s.editor.circuit, 1) } }).match(/viewBox="([^"]+)"/)[1].split(' ').map(Number))`);
+    for (let i = 0; i < 4; i++) assert.ok(Math.abs(landed[i] - exported[i]) < 1e-6, `${landed} vs ${exported}`);
+    await press('Escape');
+    await h.until(`!document.querySelector('.presenter-frame')`);
+  });
+
   test('the timing editor says each way to and from the beats once, in plain words', async () => {
     await h.open('beats');
     await h.key('K', { shiftKey: true });

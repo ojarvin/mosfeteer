@@ -313,7 +313,10 @@ renaming a part renames its references.
   drawing. Between unframed beats the camera stays where it is.
 - **Presenting.** `Shift+F5` shows the beats full screen from the current one,
   in the editor's light or dark theme. Unframed beats keep the whole drawing's
-  frame, so only what changes moves; a framed beat shows its frame.
+  frame, so only what changes moves; a framed beat shows its frame. Between
+  beats framed differently the camera moves from one frame to the other
+  while the new beat fades in (its middle evenly, its size by a constant
+  ratio, `presenterFrameAt`); with reduced motion it cuts.
 - **Export.** The export dialog exports the whole drawing, one beat, or every
   beat: one PDF with a page per beat (`name.pdf`, vector where Chromium can
   print it, else a page of image each), and numbered SVG and PNG files
