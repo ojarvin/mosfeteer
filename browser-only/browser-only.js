@@ -63934,8 +63934,8 @@ function presenterFrameAt(from, to, t) {
 }
 
 /** Move the presenter's camera: every drawing on the stage shows the view
- *  going from `from` to `to`, while the new beat fades in over the old. */
-function movePresenterFrame(svgs, from, to) {
+ *  going from `from` to `to`; `landed` runs once it is there. */
+function movePresenterFrame(svgs, from, to, landed) {
   const start = performance.now();
   const move = ++presenterMove;
   const step = (now) => {
@@ -63944,6 +63944,7 @@ function movePresenterFrame(svgs, from, to) {
     const box = presenterFrameAt(from, to, t);
     for (const svg of svgs) if (svg.isConnected) setViewBox(svg, box);
     if (t < 1) requestAnimationFrame(step);
+    else landed();
   };
   for (const svg of svgs) setViewBox(svg, from);
   requestAnimationFrame(step);
@@ -63964,7 +63965,9 @@ function showPresenterFrame(animate = true) {
   }
   // The new frame fades in over the old one, which then goes; unframed beats
   // share the drawing's frame, so only what changed appears to move. Between
-  // beats framed differently the camera moves from one frame to the other.
+  // beats framed differently the camera first moves, showing the old beat,
+  // and the new one fades in once it is there: what it adds appears in the
+  // new frame rather than seeming to have been outside the old one.
   const previous = [...presenterStageEl.children];
   const still = !animate || reducedMotion();
   // Where the camera is now: the newest drawing's view, mid-move or not.
@@ -63972,13 +63975,18 @@ function showPresenterFrame(animate = true) {
   const from = viewBoxOf(shown);
   const to = viewBoxOf(frame.querySelector('svg'));
   presenterMove += 1;
-  if (!still && from && to && ['x', 'y', 'w', 'h'].some((key) => Math.abs(from[key] - to[key]) > 1e-6)) {
-    movePresenterFrame([...previous.map((el) => el.querySelector('svg')).filter(Boolean), frame.querySelector('svg')], from, to);
-  }
+  const moves = !still && from && to && ['x', 'y', 'w', 'h'].some((key) => Math.abs(from[key] - to[key]) > 1e-6);
   if (still) previous.forEach((el) => el.remove());
   else {
-    frame.classList.add('entering');
     frame.addEventListener('animationend', () => previous.forEach((el) => el.remove()), { once: true });
+    if (!moves) frame.classList.add('entering');
+    else {
+      frame.classList.add('waiting');
+      movePresenterFrame([...previous.map((el) => el.querySelector('svg')).filter(Boolean), frame.querySelector('svg')], from, to, () => {
+        frame.classList.remove('waiting');
+        frame.classList.add('entering');
+      });
+    }
   }
   presenterStageEl.appendChild(frame);
   const beat = editor.circuit.beats[editor.presenter.index];

@@ -395,18 +395,23 @@ describe('floating windows', { skip: browserSkip() }, () => {
     await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
     // Step on and watch every frame drawn: the width shrinks step by step.
     const reduce = () => h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
-    const widths = await h.evaluate(`new Promise((resolve) => {
+    const samples = await h.evaluate(`new Promise((resolve) => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
       const seen = [];
       const start = performance.now();
       const look = () => {
         const all = document.querySelectorAll('.presenter-frame svg');
-        seen.push(Number(all[all.length - 1].getAttribute('viewBox').split(' ')[2]));
-        if (performance.now() - start < 800) requestAnimationFrame(look); else resolve(seen);
+        const newest = all[all.length - 1];
+        seen.push([Number(newest.getAttribute('viewBox').split(' ')[2]), Number(getComputedStyle(newest.closest('.presenter-frame')).opacity)]);
+        if (performance.now() - start < 1100) requestAnimationFrame(look); else resolve(seen);
       };
       requestAnimationFrame(look);
     })`).finally(reduce);
     const landed = await box();
+    // The camera moves first, the new beat hidden; it shows once the camera is there.
+    for (const [w, opacity] of samples) if (w > landed[2] + 1e-6) assert.equal(opacity, 0, `hidden while moving: ${JSON.stringify(samples)}`);
+    assert.equal(samples.at(-1)[1], 1, 'shown once it has landed');
+    const widths = samples.map(([w]) => w);
     assert.ok(landed[2] < whole[2], JSON.stringify({ whole, landed }));
     const between = [...new Set(widths.filter((w) => w < whole[2] - 1 && w > landed[2] + 1))];
     assert.ok(between.length >= 3, `the view passes through several sizes on its way: ${widths.join(' ')}`);

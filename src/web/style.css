@@ -6823,6 +6823,11 @@ html.dark .presenter svg [stroke="#fff"] { stroke: var(--paper); }
   animation: presenter-in 220ms var(--ease-out);
 }
 
+/* Drawn but not shown while the camera moves to its frame. */
+.presenter-frame.waiting {
+  opacity: 0;
+}
+
 @keyframes presenter-in {
   from { opacity: 0; }
   to { opacity: 1; }
