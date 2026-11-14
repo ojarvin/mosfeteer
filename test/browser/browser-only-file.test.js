@@ -47,12 +47,18 @@ describe('browser-only, opened from a file', { skip: browserSkip() }, () => {
   });
 
   test('a PDF, of the notes or the drawing, opens in the browser\'s print dialog sized to its pages', async () => {
-    // Each print view as it opens; the dialog itself is left to the browser.
+    // Each print view as it opens. Its print is answered here, as a browser
+    // closing the dialog would: a real dialog can block the page (print-pdf.js
+    // prints a task after the frame's load, so this replaces it first).
     await h.evaluate(`(() => {
       window.__printed = [];
       new MutationObserver((records) => {
         for (const record of records) for (const node of record.addedNodes) {
-          if (node.classList?.contains('print-frame')) window.__printed.push(node.srcdoc);
+          if (!node.classList?.contains('print-frame')) continue;
+          node.addEventListener('load', () => {
+            const win = node.contentWindow;
+            win.print = () => { window.__printed.push(node.srcdoc); win.dispatchEvent(new Event('afterprint')); };
+          });
         }
       }).observe(document.body, { childList: true });
     })()`);

@@ -93742,19 +93742,22 @@ function printHtml(html, { name = '' } = {}) {
         resolve();
       };
       win.addEventListener('afterprint', done, { once: true });
-      try {
-        win.focus();
-        // Blocks until the dialog closes where the browser supports it.
-        win.print();
-      } catch (error) {
-        document.title = title;
-        frame.remove();
-        reject(error);
-        return;
-      }
-      // A browser that returns before the dialog closes still fires
-      // afterprint; one that never does is let go after a while.
-      setTimeout(done, 60_000);
+      // A task after the load: everything the load set up has run first.
+      setTimeout(() => {
+        try {
+          win.focus();
+          // Blocks until the dialog closes where the browser supports it.
+          win.print();
+        } catch (error) {
+          document.title = title;
+          frame.remove();
+          reject(error);
+          return;
+        }
+        // A browser that returns before the dialog closes still fires
+        // afterprint; one that never does is let go after a while.
+        setTimeout(done, 60_000);
+      }, 0);
     }, { once: true });
     frame.srcdoc = html;
     document.body.append(frame);
