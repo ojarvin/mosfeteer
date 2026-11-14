@@ -346,8 +346,9 @@ describe('editor chrome', { skip: browserSkip() }, () => {
 
   test('the chrome speaks one language: menu keys as kbd with no repeated titles, short placeholders, type names, and one close title', async () => {
     await h.open('amplifier');
-    // A menu item's text is its tooltip: no title repeats or explains it.
-    const titled = await h.evaluate(`[...document.querySelectorAll('#document-menu button, #settings-menu button')].filter((b) => b.textContent.trim() && b.title && !['Scroll pans, pinch zooms', 'The file stays on disk'].includes(b.title)).map((b) => b.textContent.trim())`);
+    // A More menu item's text is its tooltip: no title repeats or explains it.
+    // (Settings items explain themselves in one sentence: settings.test.js.)
+    const titled = await h.evaluate(`[...document.querySelectorAll('#document-menu button')].filter((b) => b.textContent.trim() && b.title && !['The file stays on disk'].includes(b.title)).map((b) => b.textContent.trim())`);
     assert.deepEqual(titled, []);
     const open = await h.evaluate(`document.getElementById('btn-open-file').querySelector('kbd')?.textContent`);
     assert.equal(open, 'Ctrl/Cmd+O');

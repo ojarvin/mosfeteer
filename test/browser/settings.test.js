@@ -18,6 +18,14 @@ describe('settings', { skip: browserSkip() }, () => {
   const checked = () => h.evaluate(`${JSON.stringify(ids)}.map((id) => document.getElementById(id).getAttribute('aria-checked'))`);
   const shown = () => h.evaluate(`Promise.all([${h.module('editor-state.js')}, ${h.module('net-beams.js')}]).then(([s, b]) => [s.editor.showGrid, s.editor.guidesVisible, s.editor.crosshairVisible, b.netBeamsShown()])`);
 
+  test('each Settings item says what it does in one sentence when hovered', async () => {
+    await h.click('#btn-settings');
+    const items = await h.evaluate(`[...document.querySelectorAll('#settings-menu [role^="menuitem"]')].filter((el) => !el.hidden).map((el) => [el.textContent.trim(), el.title])`);
+    await h.click('#btn-settings');
+    assert.ok(items.length >= 18, String(items.length));
+    for (const [name, title] of items) assert.match(title, /^[A-Z][^.;:]*\.$/, name);
+  });
+
   test('the Display toggles are kept after a reload', async () => {
     assert.deepEqual(await shown(), [true, true, false, false]);
     for (const id of ids) await h.click(`#${id}`);

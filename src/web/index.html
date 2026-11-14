@@ -127,37 +127,37 @@
         <button id="btn-settings" class="icon-button" data-icon="sliders" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-menu" aria-label="Settings" title="Settings">Settings</button>
         <div id="settings-menu" class="toolbar-menu settings-menu" role="menu" aria-label="Settings" hidden>
           <p class="toolbar-menu-heading">Display</p>
-          <button id="btn-grid" type="button" role="menuitemcheckbox" aria-checked="true" data-icon="grid">Grid <kbd>#</kbd></button>
-          <button id="btn-guides" type="button" role="menuitemcheckbox" aria-checked="true" data-icon="guides">Placement guides <kbd>Shift+G</kbd></button>
-          <button id="btn-crosshair" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="crosshair">Crosshair <kbd>Shift+C</kbd></button>
-          <button id="btn-theme" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="moon">Dark theme <kbd>Shift+D</kbd></button>
-          <button id="btn-theme-system" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="sun">Theme follows the system</button>
-          <button id="btn-invert-pictures" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="picture">Pictures follow the theme</button>
-          <button id="btn-reduce-motion" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="motion">Reduce motion</button>
-          <button id="btn-hardware-acceleration" type="button" role="menuitemcheckbox" aria-checked="true" data-icon="chip">Hardware acceleration</button>
-          <button id="btn-net-beams" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="highlight">Net beams</button>
-          <button id="btn-arrange-suggestions" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="guides">Arrange suggestions</button>
+          <button id="btn-grid" title="Shows the grid that parts and wires snap to." type="button" role="menuitemcheckbox" aria-checked="true" data-icon="grid">Grid <kbd>#</kbd></button>
+          <button id="btn-guides" title="Shows alignment and spacing lines while you place or move a part." type="button" role="menuitemcheckbox" aria-checked="true" data-icon="guides">Placement guides <kbd>Shift+G</kbd></button>
+          <button id="btn-crosshair" title="Draws a horizontal and a vertical line through the pointer." type="button" role="menuitemcheckbox" aria-checked="false" data-icon="crosshair">Crosshair <kbd>Shift+C</kbd></button>
+          <button id="btn-theme" title="Shows the editor and the drawing in dark colors." type="button" role="menuitemcheckbox" aria-checked="false" data-icon="moon">Dark theme <kbd>Shift+D</kbd></button>
+          <button id="btn-theme-system" title="Uses the light or dark theme your system is set to." type="button" role="menuitemcheckbox" aria-checked="false" data-icon="sun">Theme follows the system</button>
+          <button id="btn-invert-pictures" title="In the dark theme, shows pasted pictures with a light background inverted." type="button" role="menuitemcheckbox" aria-checked="false" data-icon="picture">Pictures follow the theme</button>
+          <button id="btn-reduce-motion" title="Turns off animations." type="button" role="menuitemcheckbox" aria-checked="false" data-icon="motion">Reduce motion</button>
+          <button id="btn-hardware-acceleration" title="Uses the graphics card to draw." type="button" role="menuitemcheckbox" aria-checked="true" data-icon="chip">Hardware acceleration</button>
+          <button id="btn-net-beams" title="Shows lines from the net under the pointer to the nets with the same name." type="button" role="menuitemcheckbox" aria-checked="false" data-icon="highlight">Net beams</button>
+          <button id="btn-arrange-suggestions" title="Offers to redraw a mirror, pair, or OTA you complete the way your other designs draw it." type="button" role="menuitemcheckbox" aria-checked="false" data-icon="guides">Arrange suggestions</button>
           <p class="toolbar-menu-heading" id="settings-accent-heading">Accent color</p>
           <div id="settings-accent" class="settings-accent" role="group" aria-labelledby="settings-accent-heading"></div>
           <span class="toolbar-menu-separator" role="separator"></span>
           <p class="toolbar-menu-heading" id="settings-page-heading">Page guide</p>
           <p class="toolbar-menu-note">The width at which a full-width figure has the guide's text size. Export pads to it.</p>
           <div role="group" aria-labelledby="settings-page-heading">
-            <button type="button" role="menuitemradio" aria-checked="true" data-page-guide="">No page guide</button>
-            <button type="button" role="menuitemradio" aria-checked="false" data-page-guide="ieee-1col">IEEE single column (3.5 in, 8 pt)</button>
-            <button type="button" role="menuitemradio" aria-checked="false" data-page-guide="ieee-2col">IEEE double column (7.16 in, 8 pt)</button>
-            <button type="button" role="menuitemradio" aria-checked="false" data-page-guide="a4">A4 page (16 cm, 8 pt)</button>
+            <button type="button" role="menuitemradio" aria-checked="true" title="Exports the drawing at its own width." data-page-guide="">No page guide</button>
+            <button type="button" role="menuitemradio" aria-checked="false" title="Pads exports so the text is 8 pt in an IEEE single column." data-page-guide="ieee-1col">IEEE single column (3.5 in, 8 pt)</button>
+            <button type="button" role="menuitemradio" aria-checked="false" title="Pads exports so the text is 8 pt across an IEEE double column." data-page-guide="ieee-2col">IEEE double column (7.16 in, 8 pt)</button>
+            <button type="button" role="menuitemradio" aria-checked="false" title="Pads exports so the text is 8 pt across an A4 page." data-page-guide="a4">A4 page (16 cm, 8 pt)</button>
             <button type="button" role="menuitemradio" aria-checked="false" data-page-guide="custom" hidden>Custom</button>
           </div>
-          <button id="btn-custom-page-guide" type="button" role="menuitem">Custom page guide…</button>
+          <button id="btn-custom-page-guide" title="Sets your own figure width and text size." type="button" role="menuitem">Custom page guide…</button>
           <span class="toolbar-menu-separator" role="separator"></span>
           <p class="toolbar-menu-heading">Input</p>
-          <button id="btn-scroll-scheme" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="trackpad" title="Scroll pans, pinch zooms">Trackpad scrolling</button>
+          <button id="btn-scroll-scheme" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="trackpad" title="Scrolling pans the drawing and pinching zooms it.">Trackpad scrolling</button>
           <span class="toolbar-menu-separator" role="separator"></span>
           <p class="toolbar-menu-heading">Learning</p>
-          <button id="btn-tips" type="button" role="menuitemcheckbox" aria-checked="true" data-icon="lightbulb">Show tips</button>
+          <button id="btn-tips" title="Shows short tips about the editor as you work." type="button" role="menuitemcheckbox" aria-checked="true" data-icon="lightbulb">Show tips</button>
           <span class="toolbar-menu-separator" role="separator"></span>
-          <button id="btn-github" type="button" role="menuitem" data-icon="external" data-href="https://github.com/ojarvin/mosfeteer">Mosfeteer on GitHub</button>
+          <button id="btn-github" title="Opens the project page in your browser." type="button" role="menuitem" data-icon="external" data-href="https://github.com/ojarvin/mosfeteer">Mosfeteer on GitHub</button>
         </div>
       </div>
     </div>

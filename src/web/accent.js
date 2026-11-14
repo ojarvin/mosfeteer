@@ -94,7 +94,7 @@ export function installAccent() {
       button.setAttribute('role', 'menuitemradio');
       button.dataset.accent = token || '';
       button.setAttribute('aria-label', name);
-      button.title = name;
+      button.title = token ? `Colors the selection and the active tool ${token}.` : 'Colors the selection and the active tool the default teal.';
       button.style.setProperty('--swatch', token ? COLOR_PALETTE[token] : 'var(--accent-default, #0e7c7b)');
       button.addEventListener('click', () => applyAccent(token));
       row.append(button);

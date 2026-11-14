@@ -171,7 +171,8 @@ inverted with its hues kept, on the drawing, in the notes, and in a reference
 window; the stored picture and exports are unchanged), Net beams
 (`net-beams` on the command line), and Arrange suggestions (off by default;
 [`docs/arrange.md`](arrange.md)). Every Settings choice is a browser
-preference, kept between visits (`localStorage`). With net
+preference, kept between visits (`localStorage`). Hovering a Settings item shows
+one plain sentence that says what it does (its `title`). With net
 beams on, while the pointer is over a net, or a port, supply, ground, or
 VCM on it, a beam arched over the top runs from the cursor (snapped to the
 grid; a supply, ground, or VCM's own terminal) to each other physical net
