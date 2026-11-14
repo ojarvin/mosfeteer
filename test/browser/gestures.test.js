@@ -161,11 +161,20 @@ describe('gestures', { skip: browserSkip() }, () => {
       await h.mouse('mouseReleased', b.x, b.y);
       await h.settle();
     }
-    await h.key('Enter');
-    await h.until(`${h.module('editor-state.js')}.then((m) => { const names = m.editor.pendingNetNameChoice?.names || []; return names.includes('A') && names.includes('B'); })`, 5000);
-    // Canceled, the short is undone: the two nets stay apart.
-    await h.key('Escape');
+    // Enter asks at once; Escape in the same task, before the menu has had a
+    // frame to open, still cancels it, and the short is undone.
+    const asked = await h.evaluate(`${h.module('editor-state.js')}.then((m) => {
+      const canvas = document.getElementById('canvas');
+      canvas.focus();
+      canvas.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      const names = m.editor.pendingNetNameChoice?.names || [];
+      canvas.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      return names;
+    })`);
+    assert.ok(asked.includes('A') && asked.includes('B'), JSON.stringify(asked));
     await h.settle();
+    assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.pendingNetNameChoice)`), null);
+    assert.equal(await h.evaluate(`document.querySelector('.component-context-menu').hidden`), true, 'the menu never stays open');
     // (A port alone on its net carries the net's name: VIN is A now, VOUT B.)
     assert.notEqual(await ed(`c.netOfTerminal({ comp: 'A', term: 'p' }).id`), await ed(`c.netOfTerminal({ comp: 'B', term: 'p' }).id`));
     // The same short from a script keeps one name and notes the other.

@@ -1045,7 +1045,8 @@ export function installContextMenu() {
   });
   componentContextMenuEl?.addEventListener('mouseleave', releaseContextHover);
   window.addEventListener('keydown', (ev) => {
-    if (componentContextMenuEl?.hidden) return;
+    // A net name question is pending from the edit on, its menu a frame later.
+    if (componentContextMenuEl?.hidden && !editor.pendingNetNameChoice) return;
     if (ev.key === 'Escape') {
       ev.preventDefault();
       closeComponentContextMenu();

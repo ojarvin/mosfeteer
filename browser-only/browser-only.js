@@ -68348,7 +68348,8 @@ function installContextMenu() {
   });
   componentContextMenuEl?.addEventListener('mouseleave', releaseContextHover);
   window.addEventListener('keydown', (ev) => {
-    if (componentContextMenuEl?.hidden) return;
+    // A net name question is pending from the edit on, its menu a frame later.
+    if (componentContextMenuEl?.hidden && !editor.pendingNetNameChoice) return;
     if (ev.key === 'Escape') {
       ev.preventDefault();
       closeComponentContextMenu();
@@ -89600,7 +89601,18 @@ function shortNetsAtPlacedSolder(comp) {
  * the whole edit. `choice` is { point, names, pick(name), cancel(), heading? }. */
 function askNetNameChoice(choice) {
   editor.pendingNetNameChoice = choice;
+  // Escape cancels it from now on, even before the menu has opened.
+  editor.contextMenuDismiss = dismissNetNameChoice(choice);
   requestAnimationFrame(openNetNameChoiceMenu);
+}
+
+/** No name picked: the edit is undone. */
+function dismissNetNameChoice(choice) {
+  return () => {
+    editor.pendingNetNameChoice = null;
+    choice.cancel();
+    render();
+  };
 }
 
 /** A commit that shorts two given names asks which one survives; a cancel
@@ -89684,6 +89696,8 @@ function askForNewReferenceShort(startSnapshot) {
 function openNetNameChoiceMenu() {
   const choice = editor.pendingNetNameChoice;
   if (!choice || !componentContextMenuEl) return;
+  // Clearing the way for the menu is no cancel.
+  editor.contextMenuDismiss = null;
   closeComponentContextMenu();
   const menu = componentContextMenuEl;
   menu.hidden = false;
@@ -89710,11 +89724,7 @@ function openNetNameChoiceMenu() {
     appendMarkupText(text, name);
     item.prepend(text);
   }
-  editor.contextMenuDismiss = () => {
-    editor.pendingNetNameChoice = null;
-    choice.cancel();
-    render();
-  };
+  editor.contextMenuDismiss = dismissNetNameChoice(choice);
   const rect = menu.getBoundingClientRect();
   if (rect.bottom > window.innerHeight - 4) menu.style.top = `${Math.max(4, window.innerHeight - 4 - rect.height)}px`;
   menu.querySelector('button')?.focus();
