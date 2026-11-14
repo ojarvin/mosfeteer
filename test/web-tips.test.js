@@ -77,6 +77,16 @@ test('the third clicked wire offers the stroke; a stroke answers it', () => {
   for (let i = 0; i < 3; i += 1) assert.notEqual(answered.note('wire-commit', 0)?.id, 'wire-stroke');
 });
 
+test('the third hand-set color or width offers paste style; a style paste answers it', () => {
+  const book = new TipBook();
+  book.note('style-set', 0);
+  book.note('style-set', 0);
+  assert.equal(book.note('style-set', 0)?.id, 'paste-style');
+  const answered = new TipBook();
+  answered.note('style-paste', 0);
+  for (let i = 0; i < 3; i += 1) assert.notEqual(answered.note('style-set', 0)?.id, 'paste-style');
+});
+
 test('the tips of the newer features show the first time their situation comes up', () => {
   for (const [event, id] of [['mirrored-pair', 'symmetry-axis'], ['cell-selected', 'arrange-like'], ['arrange', 'arrange-suggestions'], ['arrange-built-in', 'built-in-drawings']]) {
     assert.equal(new TipBook().note(event, 0)?.id, id, `${id} on the first ${event}`);

@@ -10,6 +10,7 @@ import { Net } from '../core/model.js';
 import { componentContextMenuEl } from './elements.js';
 import { ICON_PATHS } from './icons.js';
 import { logLine } from './status-bar-ui.js';
+import { noteTip } from './onboarding.js';
 import { editor } from './editor-state.js';
 import { commit, keyToWire, render, selectedComps, selectedLabels } from './main.js';
 import { setHidden } from './dom.js';
@@ -228,6 +229,7 @@ export function pasteStyle() {
     logLine(editor.clipboard ? 'style paste requires a single copied object' : 'nothing copied');
     return false;
   }
+  noteTip('style-paste');
   return applyStyleToSelected(editor.clipboard.style);
 }
 
@@ -242,6 +244,7 @@ function applySelectedStyle(field, value) {
   }
   const objects = [...comps, ...labels, ...nets];
   if (!objects.length && !wireTargets.length) return;
+  if (field === 'color' || field === 'width') noteTip('style-set');
   const next = value || styleDefaults(field);
   commit(() => {
     for (const obj of objects) {

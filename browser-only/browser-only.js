@@ -98719,6 +98719,7 @@ let Net; __bind(() => { ({ Net } = __require("src/core/model.js")); });
 let componentContextMenuEl; __bind(() => { ({ componentContextMenuEl } = __require("src/web/elements.js")); });
 let ICON_PATHS; __bind(() => { ({ ICON_PATHS } = __require("src/web/icons.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
+let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let commit, keyToWire, render, selectedComps, selectedLabels; __bind(() => { ({ commit, keyToWire, render, selectedComps, selectedLabels } = __require("src/web/main.js")); });
 let setHidden; __bind(() => { ({ setHidden } = __require("src/web/dom.js")); });
@@ -98727,6 +98728,7 @@ let setHidden; __bind(() => { ({ setHidden } = __require("src/web/dom.js")); });
  * width, text alignment, bold, italic, and monospace. The side panel and the context
  * menu's style strip share them; Ctrl+Shift+V pastes a copied style.
  */
+
 
 
 
@@ -98952,6 +98954,7 @@ function pasteStyle() {
     logLine(editor.clipboard ? 'style paste requires a single copied object' : 'nothing copied');
     return false;
   }
+  noteTip('style-paste');
   return applyStyleToSelected(editor.clipboard.style);
 }
 
@@ -98966,6 +98969,7 @@ function applySelectedStyle(field, value) {
   }
   const objects = [...comps, ...labels, ...nets];
   if (!objects.length && !wireTargets.length) return;
+  if (field === 'color' || field === 'width') noteTip('style-set');
   const next = value || styleDefaults(field);
   commit(() => {
     for (const obj of objects) {
@@ -101334,6 +101338,13 @@ const TIPS = Object.freeze([
     after: 1,
     retiredBy: 'arrange-suggestions-on',
     text: 'Settings → Arrange suggestions: as you complete a mirror or pair, Tab draws it as you drew it before.',
+  },
+  {
+    id: 'paste-style',
+    trigger: 'style-set',
+    after: 3,
+    retiredBy: 'style-paste',
+    text: 'Ctrl+C a part, then Ctrl+Shift+V on others to give them its color and width.',
   },
   {
     id: 'built-in-drawings',

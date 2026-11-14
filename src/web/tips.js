@@ -98,6 +98,13 @@ export const TIPS = Object.freeze([
     text: 'Settings → Arrange suggestions: as you complete a mirror or pair, Tab draws it as you drew it before.',
   },
   {
+    id: 'paste-style',
+    trigger: 'style-set',
+    after: 3,
+    retiredBy: 'style-paste',
+    text: 'Ctrl+C a part, then Ctrl+Shift+V on others to give them its color and width.',
+  },
+  {
     id: 'built-in-drawings',
     trigger: 'arrange-built-in',
     after: 1,
