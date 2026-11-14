@@ -202,6 +202,11 @@ export function beatsFromJSON(data) {
     for (const [key, color] of Object.entries(entry.highlights || {})) {
       if (color === null || typeof color === 'string') beat.highlights[key] = color;
     }
+    // A frame from this beat on; null goes back to the whole drawing.
+    if (Object.hasOwn(entry, 'frame')) {
+      const frame = entry.frame === null ? null : normalizeFrame(entry.frame);
+      if (frame !== undefined) beat.frame = frame;
+    }
     beats.push(beat);
   }
   return beats;
@@ -221,6 +226,7 @@ export function beatsToJSON(circuit) {
     const highlights = Object.entries(beat.highlights);
     if (switches.length) out.switches = Object.fromEntries(switches);
     if (highlights.length) out.highlights = Object.fromEntries(highlights);
+    if (Object.hasOwn(beat, 'frame')) out.frame = beat.frame ? { ...beat.frame } : null;
     return out;
   });
 }
@@ -259,6 +265,39 @@ export function beatTargetId(circuit, id) {
   if (label?.owner) return circuit.components.has(label.owner) ? label.owner : null;
   if (label?.parent) return beatTargetId(circuit, label.parent);
   return beatObjectKind(circuit, id) ? id : null;
+}
+
+// ----- frames -----------------------------------------------------------------
+
+/** A beat's frame: a world rectangle `{x, y, w, h}` with some width and
+ *  height, rounded to hundredths; undefined when `value` is not one. */
+export function normalizeFrame(value) {
+  if (!value || typeof value !== 'object') return undefined;
+  const [x, y, w, h] = ['x', 'y', 'w', 'h'].map((key) => Number(value[key]));
+  if (![x, y, w, h].every(Number.isFinite) || w <= 0 || h <= 0) return undefined;
+  const round = (n) => Math.round(n * 100) / 100;
+  return { x: round(x), y: round(y), w: round(w), h: round(h) };
+}
+
+const sameFrame = (a, b) => (a === b) || (!!a && !!b && a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h);
+
+/** Per-beat frame (null: the whole drawing). */
+function frameTrack(beats) {
+  let frame = null;
+  return beats.map((beat) => {
+    if (Object.hasOwn(beat, 'frame')) frame = beat.frame;
+    return frame;
+  });
+}
+
+function writeFrameTrack(beats, track) {
+  let frame = null;
+  track.forEach((next, index) => {
+    delete beats[index].frame;
+    if (sameFrame(next, frame)) return;
+    beats[index].frame = next;
+    frame = next;
+  });
 }
 
 // ----- tracks -----------------------------------------------------------------
@@ -325,15 +364,18 @@ function editAllTracks(circuit, edit) {
     ...[...ids].map((id) => ({ kind: 'visible', key: id, track: visibilityTrack(beats, id), base: 'show' })),
     ...[...refs].map((ref) => ({ kind: 'switches', key: ref, track: valueTrack(beats, 'switches', ref, switchBase(circuit, ref)), base: switchBase(circuit, ref) })),
     ...[...keys].map((key) => ({ kind: 'highlights', key, track: valueTrack(beats, 'highlights', key, highlightBase(circuit, key)), base: highlightBase(circuit, key) })),
+    { kind: 'frame', key: 'frame', track: frameTrack(beats), base: null },
   ];
   edit(tracks);
   for (const beat of beats) {
     for (const presence of PRESENCES) beat[presence] = [];
     beat.switches = {};
     beat.highlights = {};
+    delete beat.frame;
   }
   for (const { kind, key, track, base } of tracks) {
     if (kind === 'visible') writeVisibilityTrack(beats, key, track);
+    else if (kind === 'frame') writeFrameTrack(beats, track);
     else writeValueTrack(beats, kind, key, track, base);
   }
 }
@@ -409,6 +451,7 @@ export function mergeBeats(circuit, indices) {
       const values = merged.map((index) => entry.track[index]);
       if (entry.kind === 'visible') entry.track[into] = values.reduce((a, b) => (PRESENCE_RANK[b] > PRESENCE_RANK[a] ? b : a));
       else if (entry.kind === 'switches') entry.track[into] = values.includes('closed') ? 'closed' : values[0];
+      else if (entry.kind === 'frame') entry.track[into] = values.includes(null) ? null : unionFrame(values);
       else entry.track[into] = values.find((value) => value) ?? values[0];
     }
     for (const index of rest.reverse()) {
@@ -418,6 +461,33 @@ export function mergeBeats(circuit, indices) {
   });
   circuit.beats[into].name = name;
   return into;
+}
+
+/** The frame around all of `frames`. */
+function unionFrame(frames) {
+  const x0 = Math.min(...frames.map((f) => f.x));
+  const y0 = Math.min(...frames.map((f) => f.y));
+  const x1 = Math.max(...frames.map((f) => f.x + f.w));
+  const y1 = Math.max(...frames.map((f) => f.y + f.h));
+  return normalizeFrame({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+}
+
+/** Beat `index`'s frame: the part of the drawing it shows, or null for the
+ *  whole drawing. */
+export function frameAt(circuit, index) {
+  return frameTrack(circuit.beats || [])[index] ?? null;
+}
+
+/** Frame beat `index` to `frame` (null: the whole drawing), carried forward
+ *  to the following beats that had the same frame. */
+export function setFrameFrom(circuit, index, frame) {
+  checkIndex(circuit, index);
+  const next = frame === null ? null : normalizeFrame(frame);
+  if (next === undefined) throw new Error('a frame is a rectangle with some width and height');
+  const track = frameTrack(circuit.beats);
+  const old = track[index];
+  for (let i = index; i < track.length && sameFrame(track[i], old); i += 1) track[i] = next;
+  writeFrameTrack(circuit.beats, track);
 }
 
 export function renameBeat(circuit, index, name) {
@@ -949,6 +1019,7 @@ export function resolveBeat(circuit, index) {
     switchTypes,
     highlights,
     wires,
+    frame: frameAt(circuit, index),
     netHighlight: closedSwitchHighlight(circuit, (net) => busNetHighlight(circuit, highlights, net),
       (component) => switchTypes.get(component.refdes) || component.type),
     /** Symbol definition drawn for a component in this beat. */

@@ -340,6 +340,48 @@ describe('floating windows', { skip: browserSkip() }, () => {
     await closeAll();
   });
 
+  test("a beat framed to the selection takes the camera there; stepping off it fits the whole drawing again", async () => {
+    await h.open('beats');
+    await closeAll();
+    await h.key('B', { shiftKey: true });
+    await h.until(`!document.getElementById('beat-strip').hidden`);
+    await h.key('f');
+    await h.settle();
+    const view = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => ({ ...m.editor.view }))`);
+    const whole = await view();
+    const items = () => h.evaluate(`[...document.querySelectorAll('.component-context-menu button')].map((b) => b.childNodes[0].textContent.trim())`);
+    const choose = (text) => h.evaluate(`[...document.querySelectorAll('.component-context-menu button')].find((b) => b.childNodes[0].textContent.trim() === ${JSON.stringify(text)}).click()`);
+    const chipMenu = (index) => h.evaluate(`(() => { const chip = document.querySelector('#beat-strip [data-beat-index="${index}"]'); const r = chip.getBoundingClientRect();
+      chip.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.x + 4, clientY: r.y + 4 })); })()`);
+    // Nothing selected: nothing to frame to.
+    await chipMenu(1);
+    assert.equal(await h.evaluate(`[...document.querySelectorAll('.component-context-menu button')].find((b) => b.textContent.startsWith('Frame to selection')).disabled`), true);
+    assert.ok(!(await items()).includes('Show the whole drawing'));
+    await h.key('Escape');
+    await h.evaluate(`${h.module('main.js')}.then((m) => { m.setSelection(['R1']); m.render(); })`);
+    await chipMenu(1);
+    await choose('Frame to selection');
+    await h.settle();
+    assert.equal(await h.evaluate(`${h.module('beats-ui.js')}.then((m) => m.activeBeatIndex())`), 1);
+    const frame = await h.evaluate(`window.__circuit().beats[1].frame`);
+    assert.ok(frame && frame.w > 0, JSON.stringify(frame));
+    const framed = await view();
+    assert.ok(framed.w < whole.w, JSON.stringify({ whole, framed }));
+    assert.equal(await h.evaluate(`document.querySelectorAll('#canvas .beat-frame').length`), 1);
+    // Back to the first beat, which has no frame: the whole drawing again.
+    await h.key('ArrowLeft', { altKey: true });
+    await h.settle();
+    const back = await view();
+    const fit = await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.fitTarget())`);
+    for (const k of ['x', 'y', 'w', 'h']) assert.ok(Math.abs(back[k] - fit[k]) < 1e-6, `${k}: ${back[k]} vs ${fit[k]}`);
+    assert.ok(Math.abs(back.w - whole.w) < 1e-6);
+    assert.equal(await h.evaluate(`document.querySelectorAll('#canvas .beat-frame').length`), 0);
+    await chipMenu(1);
+    await choose('Show the whole drawing');
+    assert.equal(await h.evaluate(`window.__circuit().beats[1].frame`), undefined);
+    await closeAll();
+  });
+
   test('the timing editor says each way to and from the beats once, in plain words', async () => {
     await h.open('beats');
     await h.key('K', { shiftKey: true });

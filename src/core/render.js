@@ -1075,7 +1075,8 @@ function viewportGridSvg(vp) {
  * is drawn faint; what it hides is left out, or with `fade` drawn fainter
  * still so the editor can reach it. `timing` (timing-diagram.js
  * timingBeatBands) shades where the timing diagram shows the beat.
- * The frame stays the whole drawing's, so every beat lines up.
+ * The frame stays the whole drawing's, so every beat lines up, unless the
+ * beat has a frame of its own (beats.js frameAt): then that is framed.
  */
 export function svgString(circuit, opts = {}) {
   const o = { grid: false, terminals: true, junctions: true, background: true, netNames: false, includeBBox: false, emptyHint: true, ...opts };
@@ -1118,6 +1119,9 @@ export function svgString(circuit, opts = {}) {
       b = { x, y, w: Math.max(b.x + b.w, r.x + r.w) - x, h: Math.max(b.y + b.h, r.y + r.h) - y };
     }
   }
+  // A framed beat shows its frame alone: the export or presenter frames it
+  // as the whole drawing is framed otherwise (beats.js frameAt).
+  if (beat?.frame) b = { ...beat.frame };
   const vp = o.viewport;
   const empty = b.w <= 0 && b.h <= 0;
   if (empty && !vp) {
@@ -1598,6 +1602,11 @@ function alignToolSvg({ outline, source, hover, features, focus, preview, target
 
 export function editorOverlay(circuit, opts = {}) {
   const parts = [];
+  // A framed beat: what its figure shows, padded as an export pads it.
+  const beatFrame = opts.beatView?.frame;
+  if (beatFrame) {
+    parts.push(`<rect class="beat-frame" x="${fmt(beatFrame.x - GRID)}" y="${fmt(beatFrame.y - GRID)}" width="${fmt(beatFrame.w + 2 * GRID)}" height="${fmt(beatFrame.h + 2 * GRID)}" fill="none" vector-effect="non-scaling-stroke" pointer-events="none"/>`);
+  }
   if (opts.cursor && opts.cursorCrosshair) {
     const { x, y } = opts.cursor;
     const { x: vx, y: vy, w, h } = opts.cursorCrosshair;

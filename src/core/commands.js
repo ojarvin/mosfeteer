@@ -17,7 +17,8 @@ import { VALUE_TYPES, replacedNameLabels } from './part-value.js';
 import { analyzeSmallSignal } from './analysis/index.js';
 import { placeSmallSignalModel, smallSignalSchematic } from './analysis/model-schematic.js';
 import { joinLineAnnotations } from './line-join.js';
-import { addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } from './beats.js';
+import { addBeat, beatTitle, frameAt, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setFrameFrom, setPresenceFrom, setSwitchFrom } from './beats.js';
+import { selectionSubset } from './selection-drawing.js';
 import { addTimingDiagram, existingTimingDiagram, timingBeatBands, timingPhaseNamed, timingPhases, timingStates } from './timing-diagram.js';
 import { addTerminalStubs } from './stubs.js';
 import { SYNTHESIS_GATES, SYNTHESIS_STYLES, drawSynthesis, gateSummary, signalNames, synthesizeLogic } from './analysis/logic-synthesis.js';
@@ -614,6 +615,7 @@ export function commandHelp() {
     '  beat merge N M ...             - merge beats into one at the first: most visible look, switches closed in any, first highlight',
     '  beat show|dim|hide N ID ...    - show, dim, or hide parts and labels from beat N on',
     '  beat switch N REF|PHASE open|closed - set a switch (its whole phase) from beat N on',
+    '  beat frame N ID ...|none      - from beat N on, show only the part of the drawing around these parts, labels, or nets (none: the whole drawing)',
     '  beat phases [--after N|--replace] - add a beat per state of the timing diagram (phases high together close together),',
     '                                   or without one a beat per switch phase: what works shown, the rest dimmed',
     '  timing [ROW=WAVE ...] [--add NAME,...] [--rm NAME,...] [--slot N] [--lead on|off] [--beats] [--gaps auto|none|A:B,...] [--fall|--rise ROW=N,...] [--order A,B,...] [--place]',
@@ -1790,6 +1792,7 @@ function beatList(circuit) {
     if (switches.length) parts.push(`switches ${switches.map(([ref, state]) => `${ref}=${state}`).join(' ')}`);
     const highlights = Object.entries(beat.highlights);
     if (highlights.length) parts.push(`highlights ${highlights.map(([key, color]) => `${key.replace(/^name:/, '')}=${color || 'none'}`).join(' ')}`);
+    if (Object.hasOwn(beat, 'frame')) parts.push(beat.frame ? `frame ${beat.frame.x},${beat.frame.y} ${beat.frame.w}x${beat.frame.h}` : 'frame whole drawing');
     return parts.join('  ');
   }).join('\n');
 }
@@ -1847,7 +1850,29 @@ function beatCommand(circuit, pos, flags, result) {
     setSwitchFrom(circuit, index, ref, state);
     return result(`${ref} ${state} from beat ${index + 1}`, null, true);
   }
-  throw new Error(`unknown beat command "${sub}"; try: beat list|add|rm|rename|move|merge|show|dim|hide|switch|phases`);
+  if (sub === 'frame') {
+    const index = beatIndex(circuit, pos[1]);
+    const ids = pos.slice(2);
+    if (!ids.length) throw new Error('usage: beat frame N ID ... | beat frame N none');
+    if (ids.length === 1 && ids[0] === 'none') {
+      setFrameFrom(circuit, index, null);
+      return result(`beat ${index + 1} on shows the whole drawing`, null, true);
+    }
+    const unknown = ids.filter((id) => !circuit.components.has(id) && !circuit.labels.has(id) && !circuit.nets.has(id));
+    if (unknown.length) throw new Error(`beat frame: no part, label, or net ${unknown.join(', ')}`);
+    const drawing = selectionSubset(circuit, {
+      refs: new Set(ids.filter((id) => circuit.components.has(id))),
+      labels: ids.filter((id) => circuit.labels.has(id)),
+      netIds: new Set(ids.filter((id) => circuit.nets.has(id))),
+      wireKeys: new Set(),
+    });
+    const bounds = drawing.inkBounds();
+    if (bounds.w <= 0 || bounds.h <= 0) throw new Error('beat frame: nothing drawn to frame');
+    setFrameFrom(circuit, index, bounds);
+    const frame = frameAt(circuit, index);
+    return result(`framed beat ${index + 1} on to ${ids.join(' ')}`, { frame }, true);
+  }
+  throw new Error(`unknown beat command "${sub}"; try: beat list|add|rm|rename|move|merge|show|dim|hide|switch|phases|frame`);
 }
 
 function netCommand(circuit, pos, result) {

@@ -34,6 +34,12 @@ drawing fixes every beat. Code: `src/core/beats.js`; tests:
    strokes meet they do not double up.
 5. **Switches and highlights are per beat** on top of the drawing's own
    positions and highlights, with the same carry-forward rule.
+6. **A frame is per beat too.** A beat with no frame shows the whole
+   drawing. A framed beat shows only its frame, a rectangle of the drawing,
+   padded as an export pads the drawing. A frame carries forward like the
+   other changes, and a beat can go back to the whole drawing from there on.
+   Merged beats take the frame around all of theirs, or the whole drawing
+   when any of them shows it.
 
 ## Switch phases
 
@@ -266,9 +272,14 @@ relative to the beat before (the first beat is relative to the drawing):
 "beats": [
   { "id": "b1", "name": "Signal path", "hide": ["M3", "M4"] },
   { "id": "b2", "name": "Bias", "show": ["M3", "M4"], "dim": ["M1"], "hide": ["L2"] },
-  { "id": "b3", "name": "Phase 2", "switches": { "φ_{2}": "closed", "S5": "open" }, "highlights": { "name:VX": "red" } }
+  { "id": "b3", "name": "Phase 2", "switches": { "φ_{2}": "closed", "S5": "open" }, "highlights": { "name:VX": "red" } },
+  { "id": "b4", "name": "Detail", "frame": { "x": 0, "y": -40, "w": 200, "h": 80 } },
+  { "id": "b5", "name": "All again", "frame": null }
 ]
 ```
+
+A `frame` is the ink rectangle the beat shows from then on (world units);
+`null` goes back to the whole drawing.
 
 An object whose first entry is a `show` is hidden before it. A document
 without `beats` has none. References to deleted objects are dropped on save;
@@ -283,7 +294,9 @@ renaming a part renames its references.
   drawing. Escape on the drawing, with nothing selected, closes the window
   and shows the whole drawing. The beat on screen draws what it dims faint and what it hides
   fainter still; both stay selectable. `h` hides the selection from this beat
-  on (or shows it again), `Shift+H` dims it, `s` flips selected switches (from
+  on (or shows it again), `Shift+H` dims it, the chip's menu
+  **Frame to selection** frames it (from this beat on) to the selection's ink
+  and **Show the whole drawing** clears that, `s` flips selected switches (from
   this beat on, or in the drawing when no beat is shown), and the highlight
   tool colors nets for this beat on. The dot beside each beat says how the
   selection looks there; clicking it shows or hides it in that beat alone.
@@ -295,13 +308,17 @@ renaming a part renames its references.
   phases active at once), and a net's first highlight among them. TeX phase
   names join in one formula (`$\phi_1, \phi_2$`). The other beats keep
   their look.
+  Stepping onto a framed beat moves the camera to its frame, outlined with a
+  dashed line; stepping from one back to an unframed beat fits the whole
+  drawing. Between unframed beats the camera stays where it is.
 - **Presenting.** `Shift+F5` shows the beats full screen from the current one,
-  in the editor's light or dark theme. Every beat keeps the whole drawing's
-  frame, so only what changes moves.
+  in the editor's light or dark theme. Unframed beats keep the whole drawing's
+  frame, so only what changes moves; a framed beat shows its frame.
 - **Export.** The export dialog exports the whole drawing, one beat, or every
   beat: one PDF with a page per beat (`name.pdf`, vector where Chromium can
   print it, else a page of image each), and numbered SVG and PNG files
-  (`name-1.svg`, `name-2.svg`, ...). All share the drawing's frame, so the
-  pages and files line up.
-- **Commands.** `beat list|add|rm|rename|move|merge|show|dim|hide|switch` and
+  (`name-1.svg`, `name-2.svg`, ...). Unframed beats share the drawing's
+  frame, so their pages and files line up; a framed beat's page is its
+  frame.
+- **Commands.** `beat list|add|rm|rename|move|merge|show|dim|hide|switch|frame` and
   `svg --beat N`; see `help`.

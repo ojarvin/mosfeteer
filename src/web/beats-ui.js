@@ -6,12 +6,14 @@
 
 import { element, setText } from './dom.js';
 import { DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, MAX_ROW_CELLS, annotateTimingDiagram, parseTimingValue, timingStates, beatTimingBits, defaultTimingPairs, drawnTimingDiagram, existingTimingDiagram, removeTimingDiagram, setTimingDiagram, timingBeatBands, timingMissing, timingPhases, timingRowSources } from '../core/timing-diagram.js';
-import { addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey, switchPhases } from '../core/beats.js';
+import { addBeat, beatTargetId, beatTitle, frameAt, introduceAt, setFrameFrom, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey, switchPhases } from '../core/beats.js';
 import { plainTexText, svgString, texToLabelMarkup } from '../core/render.js';
-import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
+import { DRAWING_EXPORT_OPTIONS, hasDrawableSelection, selectionSubset } from '../core/selection-drawing.js';
+import { GRID } from '../core/grid.js';
+import { copySelectionSource } from './copy-paste.js';
 import { canvasEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl } from './elements.js';
 import { logLine, hintLine } from './status-bar-ui.js';
-import { fitView } from './canvas-view.js';
+import { animateViewTo, fitView, fittedView } from './canvas-view.js';
 import { closeComponentContextMenu, appendContextItem, openMenuAt } from './context-menu.js';
 import { editor } from './editor-state.js';
 import { appendMarkupText } from './side-panel.js';
@@ -75,8 +77,25 @@ function beatStripVisible() {
   return editor.beatStripOpen;
 }
 
+const sameFrame = (a, b) => (a === b) || (!!a && !!b && a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h);
+
+/** A frame padded as an export pads it: what the beat's figure shows. */
+export function paddedBeatFrame(frame) {
+  return { x: frame.x - GRID, y: frame.y - GRID, w: frame.w + 2 * GRID, h: frame.h + 2 * GRID };
+}
+
+/** The camera follows the beats' frames: onto a framed beat's frame, and
+ *  back to the whole drawing from one; between unframed beats it stays. */
+function followBeatFrame(from, to) {
+  if (sameFrame(from, to)) return;
+  if (to) animateViewTo({ ...editor.view, ...fittedView(paddedBeatFrame(to)) }, 240);
+  else fitView({ animate: true });
+}
+
 /** Show one beat (an index), or the whole drawing (null). */
 function setActiveBeat(index, { keepSelection = false } = {}) {
+  const before = activeBeatIndex();
+  const fromFrame = before === null ? null : frameAt(editor.circuit, before);
   const beat = index === null ? null : editor.circuit.beats[index];
   editor.activeBeatId = beat?.id || null;
   if (!keepSelection) {
@@ -86,6 +105,35 @@ function setActiveBeat(index, { keepSelection = false } = {}) {
   if (beat) editor.beatStripOpen = true;
   rememberBeatObjects();
   render();
+  followBeatFrame(fromFrame, beat ? frameAt(editor.circuit, index) : null);
+}
+
+/** Frame beat `index` on to the selection's ink, and show it. */
+function frameBeatToSelection(index) {
+  const source = copySelectionSource();
+  const bounds = hasDrawableSelection(source) ? selectionSubset(editor.circuit, source).inkBounds() : null;
+  if (!bounds || bounds.w <= 0 || bounds.h <= 0) {
+    hintLine('BEATS: select what the beat should frame first');
+    return;
+  }
+  const before = activeBeatIndex();
+  const fromFrame = before === null ? null : frameAt(editor.circuit, before);
+  commit(() => setFrameFrom(editor.circuit, index, bounds));
+  logLine(`${beatLabel(index)} on frames the selection`);
+  if (before !== index) setActiveBeat(index, { keepSelection: true });
+  else {
+    render();
+    followBeatFrame(fromFrame, frameAt(editor.circuit, index));
+  }
+}
+
+/** Beat `index` on shows the whole drawing again. */
+function unframeBeat(index) {
+  const fromFrame = activeBeatIndex() === index ? frameAt(editor.circuit, index) : null;
+  commit(() => setFrameFrom(editor.circuit, index, null));
+  logLine(`${beatLabel(index)} on shows the whole drawing`);
+  render();
+  if (fromFrame) followBeatFrame(fromFrame, null);
 }
 
 /** Step through All, beat 1, ..., the last beat, stopping at both ends. */
@@ -463,6 +511,8 @@ function openBeatMenu(index, x, y) {
   appendContextItem(group, 'Move earlier', () => moveBeatBy(index, -1), { disabled: index === 0 });
   appendContextItem(group, 'Move later', () => moveBeatBy(index, 1), { disabled: index === editor.circuit.beats.length - 1 });
   appendContextItem(group, 'Present from here', () => openPresenter(index), { shortcut: 'Shift+F5' });
+  appendContextItem(group, 'Frame to selection', () => frameBeatToSelection(index), { disabled: !hasDrawableSelection(copySelectionSource()) });
+  if (frameAt(editor.circuit, index)) appendContextItem(group, 'Show the whole drawing', () => unframeBeat(index));
   const picked = editor.selectedBeatIds.has(editor.circuit.beats[index]?.id) ? editor.selectedBeatIds.size : 1;
   if (picked > 1) appendContextItem(group, `Merge ${picked} beats`, () => mergePickedBeats());
   appendContextItem(group, picked > 1 ? `Delete ${picked} beats` : 'Delete beat', () => deleteBeat(index), { danger: true, shortcut: 'Del' });

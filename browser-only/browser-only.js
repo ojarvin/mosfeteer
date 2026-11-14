@@ -21021,10 +21021,13 @@ __exports.beatsFromJSON = beatsFromJSON;
 __exports.beatsToJSON = beatsToJSON;
 __exports.beatTitle = beatTitle;
 __exports.beatTargetId = beatTargetId;
+__exports.normalizeFrame = normalizeFrame;
 __exports.addBeat = addBeat;
 __exports.removeBeat = removeBeat;
 __exports.moveBeat = moveBeat;
 __exports.mergeBeats = mergeBeats;
+__exports.frameAt = frameAt;
+__exports.setFrameFrom = setFrameFrom;
 __exports.renameBeat = renameBeat;
 __exports.setPresenceFrom = setPresenceFrom;
 __exports.setPresenceAt = setPresenceAt;
@@ -21250,6 +21253,11 @@ function beatsFromJSON(data) {
     for (const [key, color] of Object.entries(entry.highlights || {})) {
       if (color === null || typeof color === 'string') beat.highlights[key] = color;
     }
+    // A frame from this beat on; null goes back to the whole drawing.
+    if (Object.hasOwn(entry, 'frame')) {
+      const frame = entry.frame === null ? null : normalizeFrame(entry.frame);
+      if (frame !== undefined) beat.frame = frame;
+    }
     beats.push(beat);
   }
   return beats;
@@ -21269,6 +21277,7 @@ function beatsToJSON(circuit) {
     const highlights = Object.entries(beat.highlights);
     if (switches.length) out.switches = Object.fromEntries(switches);
     if (highlights.length) out.highlights = Object.fromEntries(highlights);
+    if (Object.hasOwn(beat, 'frame')) out.frame = beat.frame ? { ...beat.frame } : null;
     return out;
   });
 }
@@ -21307,6 +21316,39 @@ function beatTargetId(circuit, id) {
   if (label?.owner) return circuit.components.has(label.owner) ? label.owner : null;
   if (label?.parent) return beatTargetId(circuit, label.parent);
   return beatObjectKind(circuit, id) ? id : null;
+}
+
+// ----- frames -----------------------------------------------------------------
+
+/** A beat's frame: a world rectangle `{x, y, w, h}` with some width and
+ *  height, rounded to hundredths; undefined when `value` is not one. */
+function normalizeFrame(value) {
+  if (!value || typeof value !== 'object') return undefined;
+  const [x, y, w, h] = ['x', 'y', 'w', 'h'].map((key) => Number(value[key]));
+  if (![x, y, w, h].every(Number.isFinite) || w <= 0 || h <= 0) return undefined;
+  const round = (n) => Math.round(n * 100) / 100;
+  return { x: round(x), y: round(y), w: round(w), h: round(h) };
+}
+
+const sameFrame = (a, b) => (a === b) || (!!a && !!b && a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h);
+
+/** Per-beat frame (null: the whole drawing). */
+function frameTrack(beats) {
+  let frame = null;
+  return beats.map((beat) => {
+    if (Object.hasOwn(beat, 'frame')) frame = beat.frame;
+    return frame;
+  });
+}
+
+function writeFrameTrack(beats, track) {
+  let frame = null;
+  track.forEach((next, index) => {
+    delete beats[index].frame;
+    if (sameFrame(next, frame)) return;
+    beats[index].frame = next;
+    frame = next;
+  });
 }
 
 // ----- tracks -----------------------------------------------------------------
@@ -21373,15 +21415,18 @@ function editAllTracks(circuit, edit) {
     ...[...ids].map((id) => ({ kind: 'visible', key: id, track: visibilityTrack(beats, id), base: 'show' })),
     ...[...refs].map((ref) => ({ kind: 'switches', key: ref, track: valueTrack(beats, 'switches', ref, switchBase(circuit, ref)), base: switchBase(circuit, ref) })),
     ...[...keys].map((key) => ({ kind: 'highlights', key, track: valueTrack(beats, 'highlights', key, highlightBase(circuit, key)), base: highlightBase(circuit, key) })),
+    { kind: 'frame', key: 'frame', track: frameTrack(beats), base: null },
   ];
   edit(tracks);
   for (const beat of beats) {
     for (const presence of PRESENCES) beat[presence] = [];
     beat.switches = {};
     beat.highlights = {};
+    delete beat.frame;
   }
   for (const { kind, key, track, base } of tracks) {
     if (kind === 'visible') writeVisibilityTrack(beats, key, track);
+    else if (kind === 'frame') writeFrameTrack(beats, track);
     else writeValueTrack(beats, kind, key, track, base);
   }
 }
@@ -21457,6 +21502,7 @@ function mergeBeats(circuit, indices) {
       const values = merged.map((index) => entry.track[index]);
       if (entry.kind === 'visible') entry.track[into] = values.reduce((a, b) => (PRESENCE_RANK[b] > PRESENCE_RANK[a] ? b : a));
       else if (entry.kind === 'switches') entry.track[into] = values.includes('closed') ? 'closed' : values[0];
+      else if (entry.kind === 'frame') entry.track[into] = values.includes(null) ? null : unionFrame(values);
       else entry.track[into] = values.find((value) => value) ?? values[0];
     }
     for (const index of rest.reverse()) {
@@ -21466,6 +21512,33 @@ function mergeBeats(circuit, indices) {
   });
   circuit.beats[into].name = name;
   return into;
+}
+
+/** The frame around all of `frames`. */
+function unionFrame(frames) {
+  const x0 = Math.min(...frames.map((f) => f.x));
+  const y0 = Math.min(...frames.map((f) => f.y));
+  const x1 = Math.max(...frames.map((f) => f.x + f.w));
+  const y1 = Math.max(...frames.map((f) => f.y + f.h));
+  return normalizeFrame({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+}
+
+/** Beat `index`'s frame: the part of the drawing it shows, or null for the
+ *  whole drawing. */
+function frameAt(circuit, index) {
+  return frameTrack(circuit.beats || [])[index] ?? null;
+}
+
+/** Frame beat `index` to `frame` (null: the whole drawing), carried forward
+ *  to the following beats that had the same frame. */
+function setFrameFrom(circuit, index, frame) {
+  checkIndex(circuit, index);
+  const next = frame === null ? null : normalizeFrame(frame);
+  if (next === undefined) throw new Error('a frame is a rectangle with some width and height');
+  const track = frameTrack(circuit.beats);
+  const old = track[index];
+  for (let i = index; i < track.length && sameFrame(track[i], old); i += 1) track[i] = next;
+  writeFrameTrack(circuit.beats, track);
 }
 
 function renameBeat(circuit, index, name) {
@@ -21997,6 +22070,7 @@ function resolveBeat(circuit, index) {
     switchTypes,
     highlights,
     wires,
+    frame: frameAt(circuit, index),
     netHighlight: closedSwitchHighlight(circuit, (net) => busNetHighlight(circuit, highlights, net),
       (component) => switchTypes.get(component.refdes) || component.type),
     /** Symbol definition drawn for a component in this beat. */
@@ -23699,7 +23773,8 @@ let VALUE_TYPES, replacedNameLabels; __bind(() => { ({ VALUE_TYPES, replacedName
 let analyzeSmallSignal; __bind(() => { ({ analyzeSmallSignal } = __require("src/core/analysis/index.js")); });
 let placeSmallSignalModel, smallSignalSchematic; __bind(() => { ({ placeSmallSignalModel, smallSignalSchematic } = __require("src/core/analysis/model-schematic.js")); });
 let joinLineAnnotations; __bind(() => { ({ joinLineAnnotations } = __require("src/core/line-join.js")); });
-let addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom; __bind(() => { ({ addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } = __require("src/core/beats.js")); });
+let addBeat, beatTitle, frameAt, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setFrameFrom, setPresenceFrom, setSwitchFrom; __bind(() => { ({ addBeat, beatTitle, frameAt, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setFrameFrom, setPresenceFrom, setSwitchFrom } = __require("src/core/beats.js")); });
+let selectionSubset; __bind(() => { ({ selectionSubset } = __require("src/core/selection-drawing.js")); });
 let addTimingDiagram, existingTimingDiagram, timingBeatBands, timingPhaseNamed, timingPhases, timingStates; __bind(() => { ({ addTimingDiagram, existingTimingDiagram, timingBeatBands, timingPhaseNamed, timingPhases, timingStates } = __require("src/core/timing-diagram.js")); });
 let addTerminalStubs; __bind(() => { ({ addTerminalStubs } = __require("src/core/stubs.js")); });
 let SYNTHESIS_GATES, SYNTHESIS_STYLES, drawSynthesis, gateSummary, signalNames, synthesizeLogic; __bind(() => { ({ SYNTHESIS_GATES, SYNTHESIS_STYLES, drawSynthesis, gateSummary, signalNames, synthesizeLogic } = __require("src/core/analysis/logic-synthesis.js")); });
@@ -23718,6 +23793,7 @@ let parsePageGuide; __bind(() => { ({ parsePageGuide } = __require("src/core/pag
 let findInLabels, replaceInLabels; __bind(() => { ({ findInLabels, replaceInLabels } = __require("src/core/label-search.js")); });
 let normalizeNotes, notesMarkdown; __bind(() => { ({ normalizeNotes, notesMarkdown } = __require("src/core/notes.js")); });
 let checkpointHistory, historyEntries, historyEntryState, historyText, pinHistoryEntry, removeHistoryEntry, settledHistory, unpinHistoryEntry; __bind(() => { ({ checkpointHistory, historyEntries, historyEntryState, historyText, pinHistoryEntry, removeHistoryEntry, settledHistory, unpinHistoryEntry } = __require("src/core/save-history.js")); });
+
 
 
 
@@ -24334,6 +24410,7 @@ function commandHelp() {
     '  beat merge N M ...             - merge beats into one at the first: most visible look, switches closed in any, first highlight',
     '  beat show|dim|hide N ID ...    - show, dim, or hide parts and labels from beat N on',
     '  beat switch N REF|PHASE open|closed - set a switch (its whole phase) from beat N on',
+    '  beat frame N ID ...|none      - from beat N on, show only the part of the drawing around these parts, labels, or nets (none: the whole drawing)',
     '  beat phases [--after N|--replace] - add a beat per state of the timing diagram (phases high together close together),',
     '                                   or without one a beat per switch phase: what works shown, the rest dimmed',
     '  timing [ROW=WAVE ...] [--add NAME,...] [--rm NAME,...] [--slot N] [--lead on|off] [--beats] [--gaps auto|none|A:B,...] [--fall|--rise ROW=N,...] [--order A,B,...] [--place]',
@@ -25510,6 +25587,7 @@ function beatList(circuit) {
     if (switches.length) parts.push(`switches ${switches.map(([ref, state]) => `${ref}=${state}`).join(' ')}`);
     const highlights = Object.entries(beat.highlights);
     if (highlights.length) parts.push(`highlights ${highlights.map(([key, color]) => `${key.replace(/^name:/, '')}=${color || 'none'}`).join(' ')}`);
+    if (Object.hasOwn(beat, 'frame')) parts.push(beat.frame ? `frame ${beat.frame.x},${beat.frame.y} ${beat.frame.w}x${beat.frame.h}` : 'frame whole drawing');
     return parts.join('  ');
   }).join('\n');
 }
@@ -25567,7 +25645,29 @@ function beatCommand(circuit, pos, flags, result) {
     setSwitchFrom(circuit, index, ref, state);
     return result(`${ref} ${state} from beat ${index + 1}`, null, true);
   }
-  throw new Error(`unknown beat command "${sub}"; try: beat list|add|rm|rename|move|merge|show|dim|hide|switch|phases`);
+  if (sub === 'frame') {
+    const index = beatIndex(circuit, pos[1]);
+    const ids = pos.slice(2);
+    if (!ids.length) throw new Error('usage: beat frame N ID ... | beat frame N none');
+    if (ids.length === 1 && ids[0] === 'none') {
+      setFrameFrom(circuit, index, null);
+      return result(`beat ${index + 1} on shows the whole drawing`, null, true);
+    }
+    const unknown = ids.filter((id) => !circuit.components.has(id) && !circuit.labels.has(id) && !circuit.nets.has(id));
+    if (unknown.length) throw new Error(`beat frame: no part, label, or net ${unknown.join(', ')}`);
+    const drawing = selectionSubset(circuit, {
+      refs: new Set(ids.filter((id) => circuit.components.has(id))),
+      labels: ids.filter((id) => circuit.labels.has(id)),
+      netIds: new Set(ids.filter((id) => circuit.nets.has(id))),
+      wireKeys: new Set(),
+    });
+    const bounds = drawing.inkBounds();
+    if (bounds.w <= 0 || bounds.h <= 0) throw new Error('beat frame: nothing drawn to frame');
+    setFrameFrom(circuit, index, bounds);
+    const frame = frameAt(circuit, index);
+    return result(`framed beat ${index + 1} on to ${ids.join(' ')}`, { frame }, true);
+  }
+  throw new Error(`unknown beat command "${sub}"; try: beat list|add|rm|rename|move|merge|show|dim|hide|switch|phases|frame`);
 }
 
 function netCommand(circuit, pos, result) {
@@ -42352,7 +42452,8 @@ function viewportGridSvg(vp) {
  * is drawn faint; what it hides is left out, or with `fade` drawn fainter
  * still so the editor can reach it. `timing` (timing-diagram.js
  * timingBeatBands) shades where the timing diagram shows the beat.
- * The frame stays the whole drawing's, so every beat lines up.
+ * The frame stays the whole drawing's, so every beat lines up, unless the
+ * beat has a frame of its own (beats.js frameAt): then that is framed.
  */
 function svgString(circuit, opts = {}) {
   const o = { grid: false, terminals: true, junctions: true, background: true, netNames: false, includeBBox: false, emptyHint: true, ...opts };
@@ -42395,6 +42496,9 @@ function svgString(circuit, opts = {}) {
       b = { x, y, w: Math.max(b.x + b.w, r.x + r.w) - x, h: Math.max(b.y + b.h, r.y + r.h) - y };
     }
   }
+  // A framed beat shows its frame alone: the export or presenter frames it
+  // as the whole drawing is framed otherwise (beats.js frameAt).
+  if (beat?.frame) b = { ...beat.frame };
   const vp = o.viewport;
   const empty = b.w <= 0 && b.h <= 0;
   if (empty && !vp) {
@@ -42875,6 +42979,11 @@ function alignToolSvg({ outline, source, hover, features, focus, preview, target
 
 function editorOverlay(circuit, opts = {}) {
   const parts = [];
+  // A framed beat: what its figure shows, padded as an export pads it.
+  const beatFrame = opts.beatView?.frame;
+  if (beatFrame) {
+    parts.push(`<rect class="beat-frame" x="${fmt(beatFrame.x - GRID)}" y="${fmt(beatFrame.y - GRID)}" width="${fmt(beatFrame.w + 2 * GRID)}" height="${fmt(beatFrame.h + 2 * GRID)}" fill="none" vector-effect="non-scaling-stroke" pointer-events="none"/>`);
+  }
   if (opts.cursor && opts.cursorCrosshair) {
     const { x, y } = opts.cursor;
     const { x: vx, y: vy, w, h } = opts.cursorCrosshair;
@@ -62180,6 +62289,7 @@ __exports.activeBeatIndex = activeBeatIndex;
 __exports.activeBeatView = activeBeatView;
 __exports.rememberBeatObjects = rememberBeatObjects;
 __exports.introduceNewBeatObjects = introduceNewBeatObjects;
+__exports.paddedBeatFrame = paddedBeatFrame;
 __exports.stepBeat = stepBeat;
 __exports.toggleBeatStrip = toggleBeatStrip;
 __exports.closeBeatStrip = closeBeatStrip;
@@ -62197,12 +62307,14 @@ __exports.onPresenterKey = onPresenterKey;
 __exports.installBeatsUi = installBeatsUi;
 let element, setText; __bind(() => { ({ element, setText } = __require("src/web/dom.js")); });
 let DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, MAX_ROW_CELLS, annotateTimingDiagram, parseTimingValue, timingStates, beatTimingBits, defaultTimingPairs, drawnTimingDiagram, existingTimingDiagram, removeTimingDiagram, setTimingDiagram, timingBeatBands, timingMissing, timingPhases, timingRowSources; __bind(() => { ({ DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, MAX_ROW_CELLS, annotateTimingDiagram, parseTimingValue, timingStates, beatTimingBits, defaultTimingPairs, drawnTimingDiagram, existingTimingDiagram, removeTimingDiagram, setTimingDiagram, timingBeatBands, timingMissing, timingPhases, timingRowSources } = __require("src/core/timing-diagram.js")); });
-let addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey, switchPhases; __bind(() => { ({ addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey, switchPhases } = __require("src/core/beats.js")); });
+let addBeat, beatTargetId, beatTitle, frameAt, introduceAt, setFrameFrom, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey, switchPhases; __bind(() => { ({ addBeat, beatTargetId, beatTitle, frameAt, introduceAt, setFrameFrom, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey, switchPhases } = __require("src/core/beats.js")); });
 let plainTexText, svgString, texToLabelMarkup; __bind(() => { ({ plainTexText, svgString, texToLabelMarkup } = __require("src/core/render.js")); });
-let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __require("src/core/selection-drawing.js")); });
+let DRAWING_EXPORT_OPTIONS, hasDrawableSelection, selectionSubset; __bind(() => { ({ DRAWING_EXPORT_OPTIONS, hasDrawableSelection, selectionSubset } = __require("src/core/selection-drawing.js")); });
+let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
+let copySelectionSource; __bind(() => { ({ copySelectionSource } = __require("src/web/copy-paste.js")); });
 let canvasEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl; __bind(() => { ({ canvasEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl } = __require("src/web/elements.js")); });
 let logLine, hintLine; __bind(() => { ({ logLine, hintLine } = __require("src/web/status-bar-ui.js")); });
-let fitView; __bind(() => { ({ fitView } = __require("src/web/canvas-view.js")); });
+let animateViewTo, fitView, fittedView; __bind(() => { ({ animateViewTo, fitView, fittedView } = __require("src/web/canvas-view.js")); });
 let closeComponentContextMenu, appendContextItem, openMenuAt; __bind(() => { ({ closeComponentContextMenu, appendContextItem, openMenuAt } = __require("src/web/context-menu.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let appendMarkupText; __bind(() => { ({ appendMarkupText } = __require("src/web/side-panel.js")); });
@@ -62217,6 +62329,8 @@ let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion
  * or dimming the selection from a beat on, switch flips, and the full-screen
  * presenter. The beat model is core/beats.js.
  */
+
+
 
 
 
@@ -62289,8 +62403,25 @@ function beatStripVisible() {
   return editor.beatStripOpen;
 }
 
+const sameFrame = (a, b) => (a === b) || (!!a && !!b && a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h);
+
+/** A frame padded as an export pads it: what the beat's figure shows. */
+function paddedBeatFrame(frame) {
+  return { x: frame.x - GRID, y: frame.y - GRID, w: frame.w + 2 * GRID, h: frame.h + 2 * GRID };
+}
+
+/** The camera follows the beats' frames: onto a framed beat's frame, and
+ *  back to the whole drawing from one; between unframed beats it stays. */
+function followBeatFrame(from, to) {
+  if (sameFrame(from, to)) return;
+  if (to) animateViewTo({ ...editor.view, ...fittedView(paddedBeatFrame(to)) }, 240);
+  else fitView({ animate: true });
+}
+
 /** Show one beat (an index), or the whole drawing (null). */
 function setActiveBeat(index, { keepSelection = false } = {}) {
+  const before = activeBeatIndex();
+  const fromFrame = before === null ? null : frameAt(editor.circuit, before);
   const beat = index === null ? null : editor.circuit.beats[index];
   editor.activeBeatId = beat?.id || null;
   if (!keepSelection) {
@@ -62300,6 +62431,35 @@ function setActiveBeat(index, { keepSelection = false } = {}) {
   if (beat) editor.beatStripOpen = true;
   rememberBeatObjects();
   render();
+  followBeatFrame(fromFrame, beat ? frameAt(editor.circuit, index) : null);
+}
+
+/** Frame beat `index` on to the selection's ink, and show it. */
+function frameBeatToSelection(index) {
+  const source = copySelectionSource();
+  const bounds = hasDrawableSelection(source) ? selectionSubset(editor.circuit, source).inkBounds() : null;
+  if (!bounds || bounds.w <= 0 || bounds.h <= 0) {
+    hintLine('BEATS: select what the beat should frame first');
+    return;
+  }
+  const before = activeBeatIndex();
+  const fromFrame = before === null ? null : frameAt(editor.circuit, before);
+  commit(() => setFrameFrom(editor.circuit, index, bounds));
+  logLine(`${beatLabel(index)} on frames the selection`);
+  if (before !== index) setActiveBeat(index, { keepSelection: true });
+  else {
+    render();
+    followBeatFrame(fromFrame, frameAt(editor.circuit, index));
+  }
+}
+
+/** Beat `index` on shows the whole drawing again. */
+function unframeBeat(index) {
+  const fromFrame = activeBeatIndex() === index ? frameAt(editor.circuit, index) : null;
+  commit(() => setFrameFrom(editor.circuit, index, null));
+  logLine(`${beatLabel(index)} on shows the whole drawing`);
+  render();
+  if (fromFrame) followBeatFrame(fromFrame, null);
 }
 
 /** Step through All, beat 1, ..., the last beat, stopping at both ends. */
@@ -62677,6 +62837,8 @@ function openBeatMenu(index, x, y) {
   appendContextItem(group, 'Move earlier', () => moveBeatBy(index, -1), { disabled: index === 0 });
   appendContextItem(group, 'Move later', () => moveBeatBy(index, 1), { disabled: index === editor.circuit.beats.length - 1 });
   appendContextItem(group, 'Present from here', () => openPresenter(index), { shortcut: 'Shift+F5' });
+  appendContextItem(group, 'Frame to selection', () => frameBeatToSelection(index), { disabled: !hasDrawableSelection(copySelectionSource()) });
+  if (frameAt(editor.circuit, index)) appendContextItem(group, 'Show the whole drawing', () => unframeBeat(index));
   const picked = editor.selectedBeatIds.has(editor.circuit.beats[index]?.id) ? editor.selectedBeatIds.size : 1;
   if (picked > 1) appendContextItem(group, `Merge ${picked} beats`, () => mergePickedBeats());
   appendContextItem(group, picked > 1 ? `Delete ${picked} beats` : 'Delete beat', () => deleteBeat(index), { danger: true, shortcut: 'Del' });

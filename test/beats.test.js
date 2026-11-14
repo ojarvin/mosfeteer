@@ -528,3 +528,70 @@ test('phase beats are made only for phases in use; a complement is closed while 
   assert.deepEqual(closed(1), ['S2', 'S3']);
   assert.deepEqual(closed(2), ['S3']);
 });
+
+// ----- frames -------------------------------------------------------------------
+
+test('a beat frame carries forward like any beat change, and none goes back to the whole drawing', async () => {
+  const { frameAt, setFrameFrom } = await import('../src/core/beats.js');
+  const circuit = tee(4);
+  const box = { x: 0, y: -40, w: 200, h: 80 };
+  setFrameFrom(circuit, 1, box);
+  assert.deepEqual([0, 1, 2, 3].map((i) => frameAt(circuit, i)), [null, box, box, box]);
+  setFrameFrom(circuit, 3, null);
+  assert.deepEqual([0, 1, 2, 3].map((i) => frameAt(circuit, i)), [null, box, box, null]);
+  // Reframing beat 1 changes it and the beats after it that shared its frame.
+  const other = { x: 400, y: -40, w: 120, h: 80 };
+  setFrameFrom(circuit, 1, other);
+  assert.deepEqual([0, 1, 2, 3].map((i) => frameAt(circuit, i)), [null, other, other, null]);
+  assert.throws(() => setFrameFrom(circuit, 0, { x: 0, y: 0, w: 0, h: 10 }), /width and height/);
+  assert.deepEqual(resolveBeat(circuit, 2).frame, other);
+});
+
+test('beat frames are saved, and adding, moving, removing, or merging beats keeps every beat framed as before', async () => {
+  const { frameAt, setFrameFrom } = await import('../src/core/beats.js');
+  const circuit = tee(3);
+  const a = { x: 0, y: -40, w: 200, h: 80 };
+  const b = { x: 400, y: 0, w: 100, h: 100 };
+  setFrameFrom(circuit, 1, a);
+  setFrameFrom(circuit, 2, b);
+  const saved = circuit.toJSON().beats;
+  assert.deepEqual(saved.map((beat) => beat.frame), [undefined, a, b]);
+  const loaded = loadDocument(JSON.parse(JSON.stringify(circuit.toJSON())));
+  assert.deepEqual([0, 1, 2].map((i) => frameAt(loaded, i)), [null, a, b]);
+  const looks = (c) => c.beats.map((_, i) => frameAt(c, i));
+  addBeat(circuit, { index: 1 });
+  assert.deepEqual(looks(circuit), [null, null, a, b]);
+  moveBeat(circuit, 3, 0);
+  assert.deepEqual(looks(circuit), [b, null, null, a]);
+  removeBeat(circuit, 0);
+  assert.deepEqual(looks(circuit), [null, null, a]);
+  // Merged: the frame around both, or the whole drawing when either has none.
+  setFrameFrom(circuit, 1, b);
+  mergeBeats(circuit, [1, 2]);
+  assert.deepEqual(looks(circuit), [null, { x: 0, y: -40, w: 500, h: 140 }]);
+  mergeBeats(circuit, [0, 1]);
+  assert.deepEqual(looks(circuit), [null]);
+});
+
+test('a framed beat exports its frame alone, padded as the drawing is', async () => {
+  const { setFrameFrom } = await import('../src/core/beats.js');
+  const circuit = tee(2);
+  setFrameFrom(circuit, 1, { x: 0, y: -40, w: 200, h: 80 });
+  const viewBox = (svg) => svg.match(/viewBox="([^"]+)"/)[1].split(' ').map(Number);
+  assert.deepEqual(viewBox(svgString(circuit, { beat: { view: resolveBeat(circuit, 0) } })), viewBox(svgString(circuit)));
+  assert.deepEqual(viewBox(svgString(circuit, { beat: { view: resolveBeat(circuit, 1) } })), [-40, -80, 280, 160]);
+});
+
+test('beat frame frames beats to parts, labels, or nets; none clears; unknown names and missing beats are refused', () => {
+  const circuit = tee(2);
+  const framed = runCommand(circuit, 'beat frame 2 R1 R3');
+  assert.equal(framed.mutated, true, framed.text);
+  const r1 = circuit.components.get('R1').bboxWorld();
+  assert.ok(framed.json.frame.x <= r1.x + 1 && framed.json.frame.w > 0, JSON.stringify(framed.json));
+  assert.match(runCommand(circuit, 'beat list').text, /frame /);
+  assert.equal(runCommand(circuit, 'beat frame 2 none').mutated, true);
+  assert.equal(resolveBeat(circuit, 1).frame, null);
+  assert.throws(() => runCommand(circuit, 'beat frame 2 NOPE'), /no part, label, or net NOPE/);
+  assert.throws(() => runCommand(circuit, 'beat frame 9 R1'), /no beat 9/);
+  assert.throws(() => runCommand(circuit, 'beat frame 2'), /usage: beat frame/);
+});
