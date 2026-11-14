@@ -17,7 +17,7 @@ import { setSymmetryAxis, symmetryAxis } from './symmetry-axis.js';
 import { setSidePanelVisible, sidePanelVisible } from './side-panel.js';
 import { toggleAnalysisDock } from './analysis-ui.js';
 import { addBeatHere, flipSelectedSwitches, openPresenter, stepBeat, toggleBeatStrip, toggleSelectionInBeat } from './beats-ui.js';
-import { fitView } from './canvas-view.js';
+import { fitView, fitSelection } from './canvas-view.js';
 import { showHelp } from './help.js';
 import { runCheck } from './design-check-ui.js';
 import { openFind, openReplace } from './find-replace-ui.js';
@@ -85,6 +85,7 @@ export const ACTIONS = {
   symbols: () => toggleSymbolSheet(),
   'built-in-drawings': () => toggleBuiltInDrawings(),
   fit: () => fitView({ animate: true }),
+  'fit-selection': () => fitSelection({ animate: true }),
   shortcuts: () => showHelp(),
   check: () => runCheck(),
   find: () => openFind(),

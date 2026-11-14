@@ -281,6 +281,36 @@ describe('canvas editing', { skip: browserSkip() }, () => {
     assert.ok(at.ink.right - at.ink.left < beside, JSON.stringify(at));
   });
 
+  test('Shift+F zooms to the selection, and with nothing selected fits as F does', async () => {
+    const wide = new Circuit();
+    for (let k = 0; k < 30; k++) runCommand(wide, `add resistor R${k} --at ${k * 160} 0 --rot 90`);
+    await h.evaluate(`window.__load(${JSON.stringify(wide.toJSON())})`);
+    const view = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => ({ ...m.editor.view }))`);
+    await h.key('f');
+    await h.settle();
+    const fitted = await view();
+    await clickAt(5 * 160, 0);
+    assert.deepEqual(await h.evaluate(`${h.module('editor-state.js')}.then((m) => [...m.editor.multi])`), ['R5']);
+    await h.key('F', { shiftKey: true });
+    await h.settle();
+    const zoomed = await view();
+    assert.ok(zoomed.w < fitted.w / 3, JSON.stringify({ fitted, zoomed }));
+    // The part is on screen, near the middle; its far neighbours are not.
+    const part = await h.evaluate(`Promise.all([${h.module('editor-state.js')}, ${h.module('canvas-view.js')}]).then(([s, v]) => {
+      const b = s.editor.circuit.components.get('R5').bboxWorld();
+      const c = v.worldToClient(b.x + b.w / 2, b.y + b.h / 2);
+      const r = document.querySelector('.canvas-pane').getBoundingClientRect();
+      return { x: c.x - r.left, y: c.y - r.top, w: r.width, h: r.height };
+    })`);
+    assert.ok(Math.abs(part.x - part.w / 2) < part.w / 4 && Math.abs(part.y - part.h / 2) < part.h / 4, JSON.stringify(part));
+    assert.ok(zoomed.x > 160 && zoomed.x + zoomed.w < 10 * 160, JSON.stringify(zoomed));
+    await h.key('Escape');
+    await h.key('F', { shiftKey: true });
+    await h.settle();
+    const again = await view();
+    for (const k of ['x', 'y', 'w', 'h']) assert.ok(Math.abs(again[k] - fitted[k]) < 1e-6, `${k}: ${again[k]} vs ${fitted[k]}`);
+  });
+
   test('F lets the tool rail float over an empty corner of the drawing, which stays centred', async () => {
     // A row of parts along the bottom and a column up the right: the
     // drawing's top-left corner is empty.

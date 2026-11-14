@@ -64,7 +64,7 @@ import { openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu } fr
 import { logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar } from './status-bar-ui.js';
 import { resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi } from './design-check-ui.js';
 import { partialVertexPicks, selectAllNetIds } from '../core/selection.js';
-import { paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, finishViewAnimation, holdViewMoving, fitView, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect, PAN_MARGIN, frameLike, paintMarginNow, paintedFrame, placeLayer, setPaintMargin, slideLayers } from './canvas-view.js';
+import { paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, finishViewAnimation, holdViewMoving, fitView, fitSelection, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect, PAN_MARGIN, frameLike, paintMarginNow, paintedFrame, placeLayer, setPaintMargin, slideLayers } from './canvas-view.js';
 import { adoptDrawing, patchChildren, patchDrawing } from './svg-patch.js';
 import { syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock } from './analysis-ui.js';
 import { closeComponentContextMenu, openContextMenuAt, installContextMenu } from './context-menu.js';
@@ -6867,7 +6867,8 @@ export function transformPendingComponent(operation) {
 function viewKey(key, shiftKey = false) {
   if (mode === 'insert' && !pendingPlace) return false;
   // Over a reference window, f fits its design instead.
-  if (key === 'F' || key === 'f') { if (!fitHoveredReference()) fitView({ animate: true }); }
+  if (key === 'F' || (key === 'f' && shiftKey)) fitSelection({ animate: true });
+  else if (key === 'f') { if (!fitHoveredReference()) fitView({ animate: true }); }
   else if (key === '#') setGrid(!showGrid);
   else if (key === 'C' || (key === 'c' && shiftKey)) setCrosshair(!crosshairVisible);
   else if (key === 'G' || (key === 'g' && shiftKey)) setGuides(!guidesVisible);

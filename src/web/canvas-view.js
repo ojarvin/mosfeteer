@@ -13,6 +13,8 @@ import { editor } from './editor-state.js';
 import { render, selectedComps } from './main.js';
 import { reducedMotion } from './motion.js';
 import { fitPlacement } from './fit-area.js';
+import { copySelectionSource } from './copy-paste.js';
+import { hasDrawableSelection, selectionSubset } from '../core/selection-drawing.js';
 
 // The pane's size, measured once and kept until the pane resizes. Reading
 // layout after the render has written the canvas forces the browser to lay
@@ -206,6 +208,27 @@ export function fitView({ animate = false } = {}) {
   Object.assign(editor.view, target);
   fittedSnapshot = { ...editor.view };
   render();
+}
+
+/** Shift+F: the view fits the selection's ink as F fits the drawing's, clear
+ *  of the rail and the open windows; with nothing selected it is F. */
+export function fitSelection({ animate = false } = {}) {
+  const source = copySelectionSource();
+  const drawing = hasDrawableSelection(source) ? selectionSubset(editor.circuit, source) : null;
+  const bounds = drawing?.inkBounds();
+  if (!bounds || (bounds.w <= 0 && bounds.h <= 0)) {
+    fitView({ animate });
+    return;
+  }
+  cancelViewAnimation();
+  const target = { ...editor.view, ...fittedView(bounds, drawing.inkRects()) };
+  editor.viewPane = paneSize();
+  fittedSnapshot = null;
+  if (animate) animateViewTo(target);
+  else {
+    Object.assign(editor.view, target);
+    render();
+  }
 }
 
 /** The view that fits the drawing (its ink, a page guide, the selection). */

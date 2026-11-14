@@ -64875,6 +64875,7 @@ __exports.finishViewAnimation = finishViewAnimation;
 __exports.animateViewTo = animateViewTo;
 __exports.refitIfFitted = refitIfFitted;
 __exports.fitView = fitView;
+__exports.fitSelection = fitSelection;
 __exports.fitTarget = fitTarget;
 __exports.fittedView = fittedView;
 __exports.setPaintMargin = setPaintMargin;
@@ -64900,10 +64901,14 @@ let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); 
 let render, selectedComps; __bind(() => { ({ render, selectedComps } = __require("src/web/main.js")); });
 let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion.js")); });
 let fitPlacement; __bind(() => { ({ fitPlacement } = __require("src/web/fit-area.js")); });
+let copySelectionSource; __bind(() => { ({ copySelectionSource } = __require("src/web/copy-paste.js")); });
+let hasDrawableSelection, selectionSubset; __bind(() => { ({ hasDrawableSelection, selectionSubset } = __require("src/core/selection-drawing.js")); });
 /**
  * The canvas view: the world window the pane shows, its zoom limits, fitting
  * and animating it, and converting between screen and world coordinates.
  */
+
+
 
 
 
@@ -65108,6 +65113,27 @@ function fitView({ animate = false } = {}) {
   Object.assign(editor.view, target);
   fittedSnapshot = { ...editor.view };
   render();
+}
+
+/** Shift+F: the view fits the selection's ink as F fits the drawing's, clear
+ *  of the rail and the open windows; with nothing selected it is F. */
+function fitSelection({ animate = false } = {}) {
+  const source = copySelectionSource();
+  const drawing = hasDrawableSelection(source) ? selectionSubset(editor.circuit, source) : null;
+  const bounds = drawing?.inkBounds();
+  if (!bounds || (bounds.w <= 0 && bounds.h <= 0)) {
+    fitView({ animate });
+    return;
+  }
+  cancelViewAnimation();
+  const target = { ...editor.view, ...fittedView(bounds, drawing.inkRects()) };
+  editor.viewPane = paneSize();
+  fittedSnapshot = null;
+  if (animate) animateViewTo(target);
+  else {
+    Object.assign(editor.view, target);
+    render();
+  }
 }
 
 /** The view that fits the drawing (its ink, a page guide, the selection). */
@@ -65452,7 +65478,7 @@ let setSymmetryAxis, symmetryAxis; __bind(() => { ({ setSymmetryAxis, symmetryAx
 let setSidePanelVisible, sidePanelVisible; __bind(() => { ({ setSidePanelVisible, sidePanelVisible } = __require("src/web/side-panel.js")); });
 let toggleAnalysisDock; __bind(() => { ({ toggleAnalysisDock } = __require("src/web/analysis-ui.js")); });
 let addBeatHere, flipSelectedSwitches, openPresenter, stepBeat, toggleBeatStrip, toggleSelectionInBeat; __bind(() => { ({ addBeatHere, flipSelectedSwitches, openPresenter, stepBeat, toggleBeatStrip, toggleSelectionInBeat } = __require("src/web/beats-ui.js")); });
-let fitView; __bind(() => { ({ fitView } = __require("src/web/canvas-view.js")); });
+let fitView, fitSelection; __bind(() => { ({ fitView, fitSelection } = __require("src/web/canvas-view.js")); });
 let showHelp; __bind(() => { ({ showHelp } = __require("src/web/help.js")); });
 let runCheck; __bind(() => { ({ runCheck } = __require("src/web/design-check-ui.js")); });
 let openFind, openReplace; __bind(() => { ({ openFind, openReplace } = __require("src/web/find-replace-ui.js")); });
@@ -65556,6 +65582,7 @@ const ACTIONS = {
   symbols: () => toggleSymbolSheet(),
   'built-in-drawings': () => toggleBuiltInDrawings(),
   fit: () => fitView({ animate: true }),
+  'fit-selection': () => fitSelection({ animate: true }),
   shortcuts: () => showHelp(),
   check: () => runCheck(),
   find: () => openFind(),
@@ -65841,6 +65868,7 @@ const EDITOR_COMMANDS = [
   { name: 'symbols', aliases: ['symbol-sheet', 'symbol-reference', 'library', 'legend'], help: 'all symbols, drawn from the registry (Learn → Symbols)' },
   { name: 'built-in-drawings', aliases: ['drawings', 'cells', 'built-in-cells'], help: 'the built-in drawings Shift+Q arranges parts like (Learn → Symbols)' },
   { name: 'fit', aliases: ['zoom-fit', 'zoom', 'fit-view'], help: 'fit the view to the drawing (f)' },
+  { name: 'fit-selection', aliases: ['zoom-selection', 'zoom-to-selection'], help: 'zoom to the selection (Shift+F)' },
   { name: 'shortcuts', aliases: ['keys', 'keybindings', 'hotkeys', 'cheatsheet', 'keymap'], help: 'show the keyboard shortcuts (?)' },
   { name: 'check', aliases: ['design-check', 'drc', 'lint', 'verify'], help: 'run Design Check (x)' },
   { name: 'find', aliases: ['search', 'filter'], help: 'find parts, nets, and text in the panel (Ctrl/Cmd+F)' },
@@ -79986,7 +80014,7 @@ let openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu; __bind((
 let logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar; __bind(() => { ({ logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar } = __require("src/web/status-bar-ui.js")); });
 let resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi; __bind(() => { ({ resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi } = __require("src/web/design-check-ui.js")); });
 let partialVertexPicks, selectAllNetIds; __bind(() => { ({ partialVertexPicks, selectAllNetIds } = __require("src/core/selection.js")); });
-let paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, finishViewAnimation, holdViewMoving, fitView, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect, PAN_MARGIN, frameLike, paintMarginNow, paintedFrame, placeLayer, setPaintMargin, slideLayers; __bind(() => { ({ paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, finishViewAnimation, holdViewMoving, fitView, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect, PAN_MARGIN, frameLike, paintMarginNow, paintedFrame, placeLayer, setPaintMargin, slideLayers } = __require("src/web/canvas-view.js")); });
+let paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, finishViewAnimation, holdViewMoving, fitView, fitSelection, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect, PAN_MARGIN, frameLike, paintMarginNow, paintedFrame, placeLayer, setPaintMargin, slideLayers; __bind(() => { ({ paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, finishViewAnimation, holdViewMoving, fitView, fitSelection, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect, PAN_MARGIN, frameLike, paintMarginNow, paintedFrame, placeLayer, setPaintMargin, slideLayers } = __require("src/web/canvas-view.js")); });
 let adoptDrawing, patchChildren, patchDrawing; __bind(() => { ({ adoptDrawing, patchChildren, patchDrawing } = __require("src/web/svg-patch.js")); });
 let syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock; __bind(() => { ({ syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock } = __require("src/web/analysis-ui.js")); });
 let closeComponentContextMenu, openContextMenuAt, installContextMenu; __bind(() => { ({ closeComponentContextMenu, openContextMenuAt, installContextMenu } = __require("src/web/context-menu.js")); });
@@ -86895,7 +86923,8 @@ function transformPendingComponent(operation) {
 function viewKey(key, shiftKey = false) {
   if (mode === 'insert' && !pendingPlace) return false;
   // Over a reference window, f fits its design instead.
-  if (key === 'F' || key === 'f') { if (!fitHoveredReference()) fitView({ animate: true }); }
+  if (key === 'F' || (key === 'f' && shiftKey)) fitSelection({ animate: true });
+  else if (key === 'f') { if (!fitHoveredReference()) fitView({ animate: true }); }
   else if (key === '#') setGrid(!showGrid);
   else if (key === 'C' || (key === 'c' && shiftKey)) setCrosshair(!crosshairVisible);
   else if (key === 'G' || (key === 'g' && shiftKey)) setGuides(!guidesVisible);
@@ -102687,6 +102716,7 @@ const EDITOR_KEYMAP = Object.freeze([
   ]],
   ['view', [
     ['f', 'fit view to contents'],
+    ['Shift+F', 'zoom to the selection (fit when nothing is selected)'],
     ['#', 'toggle the placement grid'],
     ['Shift+C', 'toggle crosshair visibility'],
     ['Shift+G', 'toggle the spacing and alignment guides'],

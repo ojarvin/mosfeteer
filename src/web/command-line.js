@@ -46,6 +46,7 @@ export const EDITOR_COMMANDS = [
   { name: 'symbols', aliases: ['symbol-sheet', 'symbol-reference', 'library', 'legend'], help: 'all symbols, drawn from the registry (Learn → Symbols)' },
   { name: 'built-in-drawings', aliases: ['drawings', 'cells', 'built-in-cells'], help: 'the built-in drawings Shift+Q arranges parts like (Learn → Symbols)' },
   { name: 'fit', aliases: ['zoom-fit', 'zoom', 'fit-view'], help: 'fit the view to the drawing (f)' },
+  { name: 'fit-selection', aliases: ['zoom-selection', 'zoom-to-selection'], help: 'zoom to the selection (Shift+F)' },
   { name: 'shortcuts', aliases: ['keys', 'keybindings', 'hotkeys', 'cheatsheet', 'keymap'], help: 'show the keyboard shortcuts (?)' },
   { name: 'check', aliases: ['design-check', 'drc', 'lint', 'verify'], help: 'run Design Check (x)' },
   { name: 'find', aliases: ['search', 'filter'], help: 'find parts, nets, and text in the panel (Ctrl/Cmd+F)' },

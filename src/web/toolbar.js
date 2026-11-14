@@ -255,6 +255,7 @@ const EDITOR_KEYMAP = Object.freeze([
   ]],
   ['view', [
     ['f', 'fit view to contents'],
+    ['Shift+F', 'zoom to the selection (fit when nothing is selected)'],
     ['#', 'toggle the placement grid'],
     ['Shift+C', 'toggle crosshair visibility'],
     ['Shift+G', 'toggle the spacing and alignment guides'],
