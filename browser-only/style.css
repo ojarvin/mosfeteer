@@ -5778,8 +5778,8 @@ button.off {
 .gesture-hover-net {
   fill: none;
   stroke: var(--accent);
-  stroke-width: 7;
-  stroke-opacity: 0.22;
+  stroke-width: 10;
+  stroke-opacity: 0.38;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -5833,13 +5833,15 @@ html.dark .net-beam-mid { stop-opacity: 0.26; }
 }
 
 .net-marker-glow * {
-  stroke-opacity: 0.35 !important;
+  stroke-width: 16px !important;
+  stroke-opacity: 0.5 !important;
 }
 
 /* A hovered net's markers and ports match its lighter hover tint. */
 .gesture-hover-marker * {
-  stroke-width: 7px !important;
-  fill-opacity: 0.1 !important;
+  stroke-width: 10px !important;
+  stroke-opacity: 0.38 !important;
+  fill-opacity: 0.14 !important;
 }
 
 .selection-glow [fill="none"] {

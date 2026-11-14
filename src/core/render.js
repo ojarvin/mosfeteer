@@ -1934,7 +1934,7 @@ export function editorOverlay(circuit, opts = {}) {
     for (const pts of paths) {
       if (!pts || pts.length < 2) continue;
       const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-      parts.push(`<path d="${d}" fill="none" stroke="${SELECT}" stroke-width="12" opacity="0.35" stroke-linecap="round" stroke-linejoin="round"/>`);
+      parts.push(`<path d="${d}" fill="none" stroke="${SELECT}" stroke-width="16" opacity="0.5" stroke-linecap="round" stroke-linejoin="round"/>`);
       parts.push(`<path d="${d}" fill="none" stroke="${SELECT}" stroke-width="2.4"/>`);
     }
   }

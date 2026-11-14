@@ -904,6 +904,16 @@ test('a highlighted net glows its reference markers and ports, not other devices
   assert.equal(editorOverlay(circuit, { nets: [net] }).includes('net-marker-glow'), false);
 });
 
+test('a highlighted net glows with a wide, half-opaque halo under a solid core line', () => {
+  const circuit = new Circuit();
+  circuit.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  circuit.addComponent('ground', { refdes: 'G1', x: 200, y: 80 });
+  const net = circuit.connect('R1.b', 'G1.gnd');
+  const overlay = editorOverlay(circuit, { nets: [net] });
+  assert.match(overlay, /stroke-width="16" opacity="0\.5" stroke-linecap="round"/);
+  assert.match(overlay, /stroke-width="2\.4"\/>/);
+});
+
 test('a net highlight colors the group wires, net labels, and rail markers without restyling them', async () => {
   const { runCommand } = await import('../src/core/commands.js');
   const { COLOR_PALETTE } = await import('../src/core/style.js');
