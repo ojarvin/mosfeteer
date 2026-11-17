@@ -4976,26 +4976,9 @@ export class Circuit {
     // A non-translation transform (rotate/mirror) relocates terminals in a way
     // the drawn body cannot follow; lay the net out fresh from its terminals.
     if (moved === 'refresh') {
-      const previous = {
-        branches: net.branches?.map((p) => clonePath(p, net.allowDiagonal)) || null,
-        route: net.route?.length >= 2 ? clonePath(net.route, net.allowDiagonal) : null,
-        junctions: net.junctions.map((p) => ({ ...p })),
-      };
-      net.branches = null;
-      net.route = null;
-      net.junctions = []; // Fresh layout starts from terminal anchors only.
-      if (!this._layoutFresh(net, net.anchorWorlds(), env)) {
-        // A refresh is allowed to fail, but it must never erase a route that
-        // was already valid merely because the new layout is unroutable.
-        net.branches = previous.branches;
-        net.route = previous.route;
-        net.junctions = previous.junctions;
-        return this._rerouteFailure(net, moved);
-      }
-      this._reanchorWireArrowheads(net, previousPaths, net.paths());
-      this._repairNetLabels(net);
-      this._completeComponentEdit(net.id);
-      return true;
+      // A refresh may fail, but it never erases a route that was valid
+      // merely because the new layout is unroutable.
+      return this._layoutNetFresh(net, env, previousPaths, { resync: false }) || this._rerouteFailure(net, moved);
     }
     // A complete same-delta set move is a rigid translation, including
     // junction-ending branches whose second endpoint cannot be classified as
@@ -5049,10 +5032,7 @@ export class Circuit {
           x: p.x + delta.dx,
           y: p.y + delta.dy,
         }));
-        this._reanchorWireArrowheads(net, previousPaths, net.paths());
-        this._repairNetLabels(net);
-        this._completeComponentEdit(net.id);
-        return true;
+        return this._rerouted(net, previousPaths);
       }
     }
     // Partial set moves preserve unselected-side wire bodies and re-anchor
@@ -5079,18 +5059,15 @@ export class Circuit {
       // row another arm has just moved onto (a same-net overlap); only then
       // lay the net out again from the terminals it now has.
       if (following.size && (rerouted.some((b) => !b) || hasPositiveBranchOverlap(rerouted, net.allowDiagonal)) &&
-          this._layoutFollowedNetFresh(net, env, previousPaths)) return true;
+          this._layoutNetFresh(net, env, previousPaths)) return true;
       if (rerouted.some((b) => !b)) {
         return this._rerouteFailure(net, moved);
       }
       net.branches = rerouted.map((p) => clonePath(p, net.allowDiagonal));
       net.route = net.branches[0] ? clonePath(net.branches[0], net.allowDiagonal) : null;
       if (moved && moved.size > 0) this._pruneDanglingBranches(net);
-      this._reanchorWireArrowheads(net, previousPaths, net.paths());
       this._resyncJunctions(net);
-      this._repairNetLabels(net);
-      this._completeComponentEdit(net.id);
-      return true;
+      return this._rerouted(net, previousPaths);
     }
     if (net.route && net.route.length >= 2) {
       const rerouted = this._reroutePolyline(net, net.route, moved, env);
@@ -5099,11 +5076,8 @@ export class Circuit {
       }
       net.route = clonePath(rerouted, net.allowDiagonal);
       if (moved && moved.size > 0) this._pruneDanglingBranches(net);
-      this._reanchorWireArrowheads(net, previousPaths, net.paths());
       this._resyncJunctions(net);
-      this._repairNetLabels(net);
-      this._completeComponentEdit(net.id);
-      return true;
+      return this._rerouted(net, previousPaths);
     }
     // A one-terminal net may own a deliberate wire stub. Never erase that
     // geometry merely because it has no second electrical endpoint yet.
@@ -5115,6 +5089,12 @@ export class Circuit {
     // No drawn shape to preserve: lay out fresh from the anchors.
     const laidOut = this._layoutFresh(net, anchors, env);
     if (!laidOut) return this._rerouteFailure(net, moved);
+    return this._rerouted(net, previousPaths);
+  }
+
+  /** A net rerouted: its arrowheads on the paths it now has, its labels on
+   *  its wire, and its part of the component edit done. */
+  _rerouted(net, previousPaths) {
     this._reanchorWireArrowheads(net, previousPaths, net.paths());
     this._repairNetLabels(net);
     this._completeComponentEdit(net.id);
@@ -5523,10 +5503,11 @@ export class Circuit {
     return following;
   }
 
-  /** Lay a net out again from its terminals when carrying its junctions along
-   * a move could not keep its drawn shape. Returns false (net untouched) when
-   * that is unroutable too. */
-  _layoutFollowedNetFresh(net, env, previousPaths) {
+  /** Lay a net out again from its terminals: after a rotate or mirror, or
+   * when carrying its junctions along a move could not keep its drawn shape
+   * (then, `resync`, its junctions are read again from the new paths).
+   * Returns false, the net as it was, when that is unroutable too. */
+  _layoutNetFresh(net, env, previousPaths, { resync = true } = {}) {
     const previous = {
       branches: net.branches?.map((p) => clonePath(p, net.allowDiagonal)) || null,
       route: net.route?.length >= 2 ? clonePath(net.route, net.allowDiagonal) : null,
@@ -5536,11 +5517,8 @@ export class Circuit {
     net.route = null;
     net.junctions = [];
     if (this._layoutFresh(net, net.anchorWorlds(), env)) {
-      this._resyncJunctions(net);
-      this._reanchorWireArrowheads(net, previousPaths, net.paths());
-      this._repairNetLabels(net);
-      this._completeComponentEdit(net.id);
-      return true;
+      if (resync) this._resyncJunctions(net);
+      return this._rerouted(net, previousPaths);
     }
     net.branches = previous.branches;
     net.route = previous.route;
@@ -5842,6 +5820,18 @@ export class Circuit {
     return [...new Set(nets.map((net) => canonicalNetName(net.name)).filter(Boolean))];
   }
 
+  /** A net just joined or made: its name as its reference markers give it,
+   *  its analysis attributes, its interface pins' labels; then (`settle`)
+   *  the cross-coupling it may make and the solder dots. */
+  _syncJoinedNet(net, { settle = true } = {}) {
+    this._syncReferenceMarkerNetName(net);
+    this._syncAnalysisAttributes(net);
+    this._syncInterfacePinLabels(net, { enforceName: true });
+    if (!settle) return;
+    this._inferCrossCoupling(new Set([net]));
+    this.syncJunctionSolders();
+  }
+
   _syncAnalysisAttributes(net) {
     if (!net) return net;
     const portTypes = INTERFACE_PIN_TYPES;
@@ -5938,9 +5928,7 @@ export class Circuit {
     this._mergeNameConflict(involvedNets, { allowConflict: true });
     if (involvedNets.length === 1 &&
         okRefs.every((r) => involved.has(`${r.comp}.${r.term}`))) {
-      this._syncReferenceMarkerNetName(involvedNets[0]);
-      this._syncAnalysisAttributes(involvedNets[0]);
-      this._syncInterfacePinLabels(involvedNets[0], { enforceName: true });
+      this._syncJoinedNet(involvedNets[0], { settle: false });
       return involvedNets[0];
     }
     const topology = this._snapshotNetTopology();
@@ -5969,11 +5957,7 @@ export class Circuit {
       primary.junctions = [...junctions, ...primary.junctions].filter((point, index, all) =>
         all.findIndex((other) => other.x === point.x && other.y === point.y) === index);
       this._reduceNet(primary);
-      this._syncReferenceMarkerNetName(primary);
-      this._syncAnalysisAttributes(primary);
-      this._syncInterfacePinLabels(primary, { enforceName: true });
-      this._inferCrossCoupling(new Set([primary]));
-      this.syncJunctionSolders();
+      this._syncJoinedNet(primary);
       return primary;
     }
     let net;
@@ -5997,9 +5981,7 @@ export class Circuit {
           }
         }
         if (net) {
-          this._syncReferenceMarkerNetName(net);
-          this._syncAnalysisAttributes(net);
-          this._syncInterfacePinLabels(net, { enforceName: true });
+          this._syncJoinedNet(net, { settle: false });
           return net;
         }
       } catch (err) {
@@ -6044,11 +6026,7 @@ export class Circuit {
       }
     }
     this._reduceNet(net);
-    this._syncReferenceMarkerNetName(net);
-    this._syncAnalysisAttributes(net);
-    this._syncInterfacePinLabels(net, { enforceName: true });
-    this._inferCrossCoupling(new Set([net]));
-    this.syncJunctionSolders();
+    this._syncJoinedNet(net);
     return net;
   }
 
@@ -6478,11 +6456,7 @@ export class Circuit {
     primary.branches = branches;
     primary.route = branches.length ? clonePath(branches[0], allowDiagonal) : null;
     primary.junctions = uniquePoints([...this._netJunctions(primary, branches), ...junctions, p]);
-    this._syncReferenceMarkerNetName(primary);
-    this._syncAnalysisAttributes(primary);
-    this._syncInterfacePinLabels(primary, { enforceName: true });
-    this._inferCrossCoupling(new Set([primary]));
-    this.syncJunctionSolders();
+    this._syncJoinedNet(primary);
     return primary;
   }
 
