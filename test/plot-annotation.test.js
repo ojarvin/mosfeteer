@@ -312,3 +312,19 @@ test('a spectrum plot annotated before the spectrum had an entry keeps its SNDR 
   runCommand(circuit, `annotation plottrace ${box.id} 1 --label Simulated`);
   assert.deepEqual(circuit.plotLegend(box).map((l) => l.text), ['$NTF$', 'Simulated', '$\\text{SNDR 80 dB}$']);
 });
+
+test('a legend beside its plot is a cell from the plot: in black its line samples, in colors its text', () => {
+  for (const black of [true, false]) {
+    const { c, legend } = twoTracePlot({ black });
+    // The column as placed beside the 720-wide box: past the samples' room in black.
+    const left = 720 + (black ? 120 : 0);
+    legend.forEach((label) => label.moveTo(left + label.bbox().w / 2, label.anchor.y));
+    const svg = svgString(c);
+    // The pane ends half a cell inside the box: its last grid line is there.
+    assert.match(svg, /<line x1="700" y1="[\d.]+" x2="700"/);
+    const starts = black
+      ? [...svg.matchAll(/<line class="plot-legend-sample" x1="([\d.]+)"/g)].map((m) => Number(m[1]))
+      : legend.map((label) => label.bbox().x + 20);
+    assert.deepEqual(starts, [740, 740], black ? 'the samples' : 'the text');
+  }
+});

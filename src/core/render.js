@@ -808,19 +808,22 @@ function plotAnnotationSvg(label, opacity = '') {
   const plot = label.plot;
   const response = ['response', 'swing', 'step', 'wave', 'locus', 'data'].includes(plot.kind);
   const fontSize = plotFontSize(plot, h);
+  // Its pane ends half a cell inside the box: a legend beside the box has
+  // its text (in colors) or its line samples (in black) a cell past it.
+  const right = LABEL_ALIGN_INSET;
   // A response plot (signal-flow analysis) draws each trace in its color;
   // its traces' names are math labels beside it, children of the box.
   // An overloaded run (null) runs off the top.
   const figure = plot.kind === 'locus'
-    ? locusFigure(plot, { width: w, height: h, fontSize })
+    ? locusFigure(plot, { width: w, height: h, fontSize, right })
     : plot.kind === 'data'
-    ? dataFigure(plot, { width: w, height: h, fontSize })
+    ? dataFigure(plot, { width: w, height: h, fontSize, right })
     : plot.kind === 'step' || plot.kind === 'wave'
-    ? stepFigure(plot, { width: w, height: h, fontSize })
+    ? stepFigure(plot, { width: w, height: h, fontSize, right })
     : plot.kind === 'swing'
-    ? swingFigure({ ...plot, traces: plot.traces.map((t) => ({ ...t, points: t.points.map((p) => ({ a: p.a, db: p.db ?? Infinity })) })) }, { width: w, height: h, fontSize })
+    ? swingFigure({ ...plot, traces: plot.traces.map((t) => ({ ...t, points: t.points.map((p) => ({ a: p.a, db: p.db ?? Infinity })) })) }, { width: w, height: h, fontSize, right })
     : response
-    ? responseFigure(plot, { width: w, height: h, fontSize })
+    ? responseFigure(plot, { width: w, height: h, fontSize, right })
     : bodeFigure(plot, { width: w, height: h, phase: plot.phase, numbers: false, corners: plot.corners, quantity: plot.quantity, fontSize });
   const color = escapeSvg(resolveColor(label.style?.color || '#111'));
   const stroke = (role, ink = color) => {
@@ -878,12 +881,14 @@ function plotAnnotationSvg(label, opacity = '') {
   })() : '';
   // In black, each curve's legend entry has its line before it, in the
   // room left for it there (a lone curve's too); notes after them none.
+  // Beside the box, a line starts a cell past the pane, and ends half a
+  // cell before its text.
   const samples = black && label.circuit
     ? label.circuit.plotLegend(label).slice(0, legendCurves.length).map((entry, n) => {
       const b = entry.bbox();
       const cy = b.y + b.h / 2 - y;
-      const x1 = b.x - PLOT_LEGEND_SAMPLE_ROOM + 10 - x;
-      const x2 = b.x - 6 - x;
+      const x1 = b.x - PLOT_LEGEND_SAMPLE_ROOM + LABEL_ALIGN_INSET - x;
+      const x2 = b.x - x;
       // A spectrum's sample is gray, as its curve is.
       const curve = legendCurves[n];
       const look = curve.spectrum ? `${stroke('curve', SPECTRUM_GRAY)}${curve.held !== undefined ? ` stroke-dasharray="${dashOf(curve.held + 1)}"` : ''}` : `${stroke('curve')}${dashOf(curve.rank) ? ` stroke-dasharray="${dashOf(curve.rank)}"` : ''}`;

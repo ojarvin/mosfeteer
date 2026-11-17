@@ -22130,12 +22130,13 @@ function axisTitles(items, pane, em, { x, y }) {
 }
 
 /** A plot's pane in a `width` x `height` box: room left of it and under it
- *  for the numbers and axis titles. */
-function framePane(width, height, em, plot = null) {
+ *  for the numbers and axis titles; `right` the room right of it (on the
+ *  drawing half a cell, so its legend's text starts a cell past it). */
+function framePane(width, height, em, plot = null, right = 0.9 * em) {
   const left = AXIS_LEFT_EM * em;
   // A vertical marker's label (plot-cursors.js) takes a row above the plot.
   const top = (cursorTitleRow(plot?.cursors) ? 2.1 : 0.9) * em;
-  return { x: left, y: top, w: Math.max(10, width - left - 0.9 * em), h: Math.max(10, height - top - AXIS_BOTTOM_EM * em) };
+  return { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - AXIS_BOTTOM_EM * em) };
 }
 
 /** The pane's left and bottom axes. */
@@ -22407,13 +22408,13 @@ function cornerNames(poles, zeros) {
  * f/f_{s} for sampled systems, relative ω otherwise. Curve items carry
  * `trace`, their index. The traces' names go beside the figure, not in it.
  */
-function responseFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
+function responseFigure(plot, { width = 480, height = 260, fontSize = 11, right } = {}) {
   const items = [];
   const em = fontSize;
   // A zoomed plot keeps the limits it was annotated at (`view`).
   const view = plot.view || {};
   const [low, high] = view.x ? view.x.map(Math.log10) : rangeWithExtra(plot, { log: true });
-  const pane = framePane(width, height, em, plot);
+  const pane = framePane(width, height, em, plot, right);
   const x = (f) => pane.x + ((Math.log10(f) - low) / (high - low)) * pane.w;
   // The axis fits every curve, in whole 20 dB steps; its ticks spread out on
   // a wide range (a high-order noise shaper reaches far down).
@@ -22492,10 +22493,10 @@ function responseFigure(plot, { width = 480, height = 260, fontSize = 11 } = {})
  * sampled trace as stairs. `plot`: `{ unit: 'n' | 't', range: { low, high },
  * traces: [{ color, stairs, points: [{ t, y }] }] }`.
  */
-function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
+function stepFigure(plot, { width = 480, height = 260, fontSize = 11, right } = {}) {
   const items = [];
   const em = fontSize;
-  const pane = framePane(width, height, em, plot);
+  const pane = framePane(width, height, em, plot, right);
   const view = plot.view || {};
   const [low, high] = view.x || rangeWithExtra(plot);
   const x = (t) => pane.x + ((t - low) / (high - low || 1)) * pane.w;
@@ -22550,10 +22551,10 @@ function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
  * under zero. `plot`: `{ x: { label, scale }, y: { label, scale }, traces:
  * [{ color, points: [[x, y]] }], view? }`.
  */
-function dataFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
+function dataFigure(plot, { width = 480, height = 260, fontSize = 11, right } = {}) {
   const items = [];
   const em = fontSize;
-  const pane = framePane(width, height, em, plot);
+  const pane = framePane(width, height, em, plot, right);
   const xs = plot.x?.scale === 'log' ? 'log' : 'linear';
   const ys = plot.y?.scale === 'log' ? 'log' : 'linear';
   const curves = plot.traces.map((trace) => trace.points.map(([px, py]) => [toU(xs, px), toU(ys, py)])
@@ -22613,12 +22614,12 @@ function niceStep(rough) {
  * amplitude, both in dB of full scale, a 0 dB line at full scale. `plot`:
  * `{ range: { low, high } (input dBFS), traces: [{ color, points: [{ a, db }] }] }`.
  */
-function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
+function swingFigure(plot, { width = 480, height = 260, fontSize = 11, right } = {}) {
   const items = [];
   const em = fontSize;
   const view = plot.view || {};
   const [low, high] = view.x || rangeWithExtra(plot);
-  const pane = framePane(width, height, em, plot);
+  const pane = framePane(width, height, em, plot, right);
   const x = (a) => pane.x + ((a - low) / (high - low)) * pane.w;
   // The peaks fit in whole 10 dB steps; a loop blowing up runs off the top.
   const values = [...plot.traces.flatMap((trace) => trace.points.map((p) => p.db)), ...extraValues(plot)].filter((db) => Number.isFinite(db) && db > -200);
@@ -22767,10 +22768,10 @@ function swingLimit(traces) {
  * dots from light (the sweep's start) to full color (its end), the
  * current value's poles as crosses. `plot`: locus.js's `locusPlot`.
  */
-function locusFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
+function locusFigure(plot, { width = 480, height = 260, fontSize = 11, right } = {}) {
   const items = [];
   const em = fontSize;
-  const pane = framePane(width, height, em, plot);
+  const pane = framePane(width, height, em, plot, right);
   const z = plot.variable === 'z';
   // In z the view stays near the unit circle: a pole far outside is
   // unstable either way, and following it would shrink the circle away.
@@ -42233,19 +42234,22 @@ function plotAnnotationSvg(label, opacity = '') {
   const plot = label.plot;
   const response = ['response', 'swing', 'step', 'wave', 'locus', 'data'].includes(plot.kind);
   const fontSize = plotFontSize(plot, h);
+  // Its pane ends half a cell inside the box: a legend beside the box has
+  // its text (in colors) or its line samples (in black) a cell past it.
+  const right = LABEL_ALIGN_INSET;
   // A response plot (signal-flow analysis) draws each trace in its color;
   // its traces' names are math labels beside it, children of the box.
   // An overloaded run (null) runs off the top.
   const figure = plot.kind === 'locus'
-    ? locusFigure(plot, { width: w, height: h, fontSize })
+    ? locusFigure(plot, { width: w, height: h, fontSize, right })
     : plot.kind === 'data'
-    ? dataFigure(plot, { width: w, height: h, fontSize })
+    ? dataFigure(plot, { width: w, height: h, fontSize, right })
     : plot.kind === 'step' || plot.kind === 'wave'
-    ? stepFigure(plot, { width: w, height: h, fontSize })
+    ? stepFigure(plot, { width: w, height: h, fontSize, right })
     : plot.kind === 'swing'
-    ? swingFigure({ ...plot, traces: plot.traces.map((t) => ({ ...t, points: t.points.map((p) => ({ a: p.a, db: p.db ?? Infinity })) })) }, { width: w, height: h, fontSize })
+    ? swingFigure({ ...plot, traces: plot.traces.map((t) => ({ ...t, points: t.points.map((p) => ({ a: p.a, db: p.db ?? Infinity })) })) }, { width: w, height: h, fontSize, right })
     : response
-    ? responseFigure(plot, { width: w, height: h, fontSize })
+    ? responseFigure(plot, { width: w, height: h, fontSize, right })
     : bodeFigure(plot, { width: w, height: h, phase: plot.phase, numbers: false, corners: plot.corners, quantity: plot.quantity, fontSize });
   const color = escapeSvg(resolveColor(label.style?.color || '#111'));
   const stroke = (role, ink = color) => {
@@ -42303,12 +42307,14 @@ function plotAnnotationSvg(label, opacity = '') {
   })() : '';
   // In black, each curve's legend entry has its line before it, in the
   // room left for it there (a lone curve's too); notes after them none.
+  // Beside the box, a line starts a cell past the pane, and ends half a
+  // cell before its text.
   const samples = black && label.circuit
     ? label.circuit.plotLegend(label).slice(0, legendCurves.length).map((entry, n) => {
       const b = entry.bbox();
       const cy = b.y + b.h / 2 - y;
-      const x1 = b.x - PLOT_LEGEND_SAMPLE_ROOM + 10 - x;
-      const x2 = b.x - 6 - x;
+      const x1 = b.x - PLOT_LEGEND_SAMPLE_ROOM + LABEL_ALIGN_INSET - x;
+      const x2 = b.x - x;
       // A spectrum's sample is gray, as its curve is.
       const curve = legendCurves[n];
       const look = curve.spectrum ? `${stroke('curve', SPECTRUM_GRAY)}${curve.held !== undefined ? ` stroke-dasharray="${dashOf(curve.held + 1)}"` : ''}` : `${stroke('curve')}${dashOf(curve.rank) ? ` stroke-dasharray="${dashOf(curve.rank)}"` : ''}`;
