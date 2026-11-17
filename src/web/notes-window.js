@@ -20,7 +20,7 @@ import { normalizeNotes, notesMarkdown, resolveMention } from '../core/notes.js'
 import { renderNotes } from '../core/notes-markdown.js';
 import { canvasEl } from './elements.js';
 import { editor } from './editor-state.js';
-import { floatingWindow } from './floating-window.js';
+import { floatingWindow, windowToggle } from './floating-window.js';
 import { setHoverTarget } from './hover-preview.js';
 import { workspaceDesigns } from './hierarchy.js';
 import { openDocumentPath } from './document-session.js';
@@ -352,33 +352,24 @@ async function copyMarkdown() {
   }
 }
 
-function syncButton() {
-  document.getElementById('btn-window-notes')?.setAttribute('aria-pressed', String(notesShown()));
-}
-
-export function notesShown() {
-  return !!win && !win.el.hidden;
-}
-
-function show() {
-  if (!win) build();
-  win.el.hidden = false;
-  shownKey = null;
-  renderView();
-  win.chrome.place();
-  // An empty design's notes open ready to write.
-  if (!notes()) startEditing();
-  syncButton();
-}
-
-function hide() {
-  if (!win || win.el.hidden) return;
-  stopEditing();
-  if (editor.hoverFromPanel) setHoverTarget(null);
-  win.el.hidden = true;
-  syncButton();
-  canvasEl.focus({ preventScroll: true });
-}
+const notesWindow = windowToggle({
+  get: () => win,
+  build,
+  buttons: [['btn-window-notes']],
+  onShow: () => {
+    shownKey = null;
+    renderView();
+    win.chrome.place();
+    // An empty design's notes open ready to write.
+    if (!notes()) startEditing();
+  },
+  onHide: () => {
+    stopEditing();
+    if (editor.hoverFromPanel) setHoverTarget(null);
+  },
+});
+export const notesShown = notesWindow.shown;
+const { show, hide } = notesWindow;
 
 /** Show the notes, if they are not shown already. */
 export function showNotes() {
@@ -386,10 +377,7 @@ export function showNotes() {
 }
 
 /** Shift+N: show or hide the notes. */
-export function toggleNotes() {
-  if (notesShown()) hide();
-  else show();
-}
+export const toggleNotes = notesWindow.toggle;
 
 export function installNotes() {
   document.getElementById('btn-window-notes')?.addEventListener('click', toggleNotes);

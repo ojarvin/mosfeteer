@@ -509,3 +509,32 @@ export function floatingWindow(el, { key, onClose, place = PLACE.topRight, resiz
     },
   };
 }
+
+/**
+ * A tool window shown and hidden by its toolbar button: `get()` its window
+ * ({ el }, null until `build()` makes it on first show); `onShow()` runs
+ * once it is unhidden (to draw it, place it, focus it), `onHide()` before
+ * it is hidden. `buttons` are [id, attribute] pairs (the attribute
+ * 'aria-pressed' unless given) that show whether it is open. Hiding it
+ * gives the drawing the keys again. Returns { shown, show, hide, toggle }.
+ */
+export function windowToggle({ get, build, buttons, onShow = () => {}, onHide = () => {} }) {
+  const shown = () => !!get() && !get().el.hidden;
+  const sync = () => {
+    for (const [id, attribute = 'aria-pressed'] of buttons) document.getElementById(id)?.setAttribute(attribute, String(shown()));
+  };
+  const show = () => {
+    if (!get()) build();
+    get().el.hidden = false;
+    onShow();
+    sync();
+  };
+  const hide = () => {
+    if (!shown()) return;
+    onHide();
+    get().el.hidden = true;
+    sync();
+    document.getElementById('canvas')?.focus({ preventScroll: true });
+  };
+  return { shown, show, hide, toggle: () => (shown() ? hide() : show()) };
+}

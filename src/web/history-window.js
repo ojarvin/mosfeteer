@@ -18,7 +18,7 @@ import {
 } from '../core/save-history.js';
 import { canvasEl } from './elements.js';
 import { editor } from './editor-state.js';
-import { floatingWindow } from './floating-window.js';
+import { floatingWindow, windowToggle } from './floating-window.js';
 import { confirmChoice } from './file-dialog.js';
 import { formatModifiedTime } from './modified-time.js';
 import { appendContextItem, openMenuAt } from './context-menu.js';
@@ -310,38 +310,23 @@ function build() {
   win = { el: node, list, message, checkpoint, clear, top, chrome };
 }
 
-export function historyShown() {
-  return !!win && !win.el.hidden;
-}
-
-function syncButton() {
-  document.getElementById('btn-history')?.setAttribute('aria-checked', String(historyShown()));
-  document.getElementById('btn-window-history')?.setAttribute('aria-pressed', String(historyShown()));
-}
-
-function show() {
-  if (!win) build();
-  win.el.hidden = false;
-  form = null;
-  renderList();
-  win.chrome.place();
-  void refresh();
-  syncButton();
-}
-
-function hide() {
-  if (!win || win.el.hidden) return;
-  win.el.hidden = true;
-  form = null;
-  syncButton();
-  canvasEl.focus({ preventScroll: true });
-}
+const historyWindow = windowToggle({
+  get: () => win,
+  build,
+  buttons: [['btn-history', 'aria-checked'], ['btn-window-history']],
+  onShow: () => {
+    form = null;
+    renderList();
+    win.chrome.place();
+    void refresh();
+  },
+  onHide: () => { form = null; },
+});
+export const historyShown = historyWindow.shown;
+const { hide } = historyWindow;
 
 /** More → History: show or hide the design's history. */
-export function toggleHistory() {
-  if (historyShown()) hide();
-  else show();
-}
+export const toggleHistory = historyWindow.toggle;
 
 export function installHistory() {
   document.getElementById('btn-history')?.addEventListener('click', toggleHistory);

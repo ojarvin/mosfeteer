@@ -65320,14 +65320,12 @@ function afterPaint(work) {
 };
 
 __modules["src/web/calculator-window.js"] = function (__require, __exports) {
-__exports.calculatorShown = calculatorShown;
-__exports.toggleCalculator = toggleCalculator;
 __exports.installCalculator = installCalculator;
 let calculate, formatResult, replayNames, siResult; __bind(() => { ({ calculate, formatResult, replayNames, siResult } = __require("src/core/calculator.js")); });
 let CALCULATOR_HISTORY; __bind(() => { ({ CALCULATOR_HISTORY } = __require("src/core/window-state.js")); });
 let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let PLACE, floatingWindow; __bind(() => { ({ PLACE, floatingWindow } = __require("src/web/floating-window.js")); });
+let PLACE, floatingWindow, windowToggle; __bind(() => { ({ PLACE, floatingWindow, windowToggle } = __require("src/web/floating-window.js")); });
 let markSettingsChanged, onDocumentShown; __bind(() => { ({ markSettingsChanged, onDocumentShown } = __require("src/web/main.js")); });
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 /**
@@ -65469,35 +65467,21 @@ function build() {
   win = { el: node, list, empty, input, chrome };
 }
 
-function syncButton() {
-  document.getElementById('btn-window-calculator')?.setAttribute('aria-pressed', String(calculatorShown()));
-}
-
-function calculatorShown() {
-  return !!win && !win.el.hidden;
-}
-
-function show() {
-  if (!win) build();
-  win.el.hidden = false;
-  renderList();
-  win.chrome.place();
-  win.input.focus();
-  syncButton();
-}
-
-function hide() {
-  if (!win || win.el.hidden) return;
-  win.el.hidden = true;
-  syncButton();
-  canvasEl.focus({ preventScroll: true });
-}
+const calculatorWindow = windowToggle({
+  get: () => win,
+  build,
+  buttons: [['btn-window-calculator']],
+  onShow: () => {
+    renderList();
+    win.chrome.place();
+    win.input.focus();
+  },
+});
+const calculatorShown = calculatorWindow.shown;
+const { hide } = calculatorWindow;
 
 /** Shift+E: show or hide the calculator. */
-function toggleCalculator() {
-  if (calculatorShown()) hide();
-  else show();
-}
+const toggleCalculator = calculatorWindow.toggle;
 
 function installCalculator() {
   document.getElementById('btn-window-calculator')?.addEventListener('click', toggleCalculator);
@@ -65510,6 +65494,8 @@ function installCalculator() {
   });
 }
 
+__exports.calculatorShown = calculatorShown;
+__exports.toggleCalculator = toggleCalculator;
 };
 
 __modules["src/web/canvas-view.js"] = function (__require, __exports) {
@@ -74150,6 +74136,7 @@ __modules["src/web/floating-window.js"] = function (__require, __exports) {
 __exports.floatingWindowPosition = floatingWindowPosition;
 __exports.clearOfOthers = clearOfOthers;
 __exports.floatingWindow = floatingWindow;
+__exports.windowToggle = windowToggle;
 let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion.js")); });
 let EASE_OUT, cssEase; __bind(() => { ({ EASE_OUT, cssEase } = __require("src/web/easing.js")); });
 /**
@@ -74662,6 +74649,35 @@ function floatingWindow(el, { key, onClose, place = PLACE.topRight, resizable = 
       observers.forEach((observer) => observer.disconnect());
     },
   };
+}
+
+/**
+ * A tool window shown and hidden by its toolbar button: `get()` its window
+ * ({ el }, null until `build()` makes it on first show); `onShow()` runs
+ * once it is unhidden (to draw it, place it, focus it), `onHide()` before
+ * it is hidden. `buttons` are [id, attribute] pairs (the attribute
+ * 'aria-pressed' unless given) that show whether it is open. Hiding it
+ * gives the drawing the keys again. Returns { shown, show, hide, toggle }.
+ */
+function windowToggle({ get, build, buttons, onShow = () => {}, onHide = () => {} }) {
+  const shown = () => !!get() && !get().el.hidden;
+  const sync = () => {
+    for (const [id, attribute = 'aria-pressed'] of buttons) document.getElementById(id)?.setAttribute(attribute, String(shown()));
+  };
+  const show = () => {
+    if (!get()) build();
+    get().el.hidden = false;
+    onShow();
+    sync();
+  };
+  const hide = () => {
+    if (!shown()) return;
+    onHide();
+    get().el.hidden = true;
+    sync();
+    document.getElementById('canvas')?.focus({ preventScroll: true });
+  };
+  return { shown, show, hide, toggle: () => (shown() ? hide() : show()) };
 }
 
 __exports.PLACE = PLACE;
@@ -77374,14 +77390,12 @@ function installHintFolding(root) {
 
 __modules["src/web/history-window.js"] = function (__require, __exports) {
 __exports.renderHistoryWindow = renderHistoryWindow;
-__exports.historyShown = historyShown;
-__exports.toggleHistory = toggleHistory;
 __exports.installHistory = installHistory;
 __exports.historyDocumentShown = historyDocumentShown;
 let checkpointHistory, historyEntries, historyEntryState, historyText, pinHistoryEntry, removeHistoryEntry, settledHistory, textHash, unpinHistoryEntry; __bind(() => { ({ checkpointHistory, historyEntries, historyEntryState, historyText, pinHistoryEntry, removeHistoryEntry, settledHistory, textHash, unpinHistoryEntry } = __require("src/core/save-history.js")); });
 let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let floatingWindow; __bind(() => { ({ floatingWindow } = __require("src/web/floating-window.js")); });
+let floatingWindow, windowToggle; __bind(() => { ({ floatingWindow, windowToggle } = __require("src/web/floating-window.js")); });
 let confirmChoice; __bind(() => { ({ confirmChoice } = __require("src/web/file-dialog.js")); });
 let formatModifiedTime; __bind(() => { ({ formatModifiedTime } = __require("src/web/modified-time.js")); });
 let appendContextItem, openMenuAt; __bind(() => { ({ appendContextItem, openMenuAt } = __require("src/web/context-menu.js")); });
@@ -77700,38 +77714,23 @@ function build() {
   win = { el: node, list, message, checkpoint, clear, top, chrome };
 }
 
-function historyShown() {
-  return !!win && !win.el.hidden;
-}
-
-function syncButton() {
-  document.getElementById('btn-history')?.setAttribute('aria-checked', String(historyShown()));
-  document.getElementById('btn-window-history')?.setAttribute('aria-pressed', String(historyShown()));
-}
-
-function show() {
-  if (!win) build();
-  win.el.hidden = false;
-  form = null;
-  renderList();
-  win.chrome.place();
-  void refresh();
-  syncButton();
-}
-
-function hide() {
-  if (!win || win.el.hidden) return;
-  win.el.hidden = true;
-  form = null;
-  syncButton();
-  canvasEl.focus({ preventScroll: true });
-}
+const historyWindow = windowToggle({
+  get: () => win,
+  build,
+  buttons: [['btn-history', 'aria-checked'], ['btn-window-history']],
+  onShow: () => {
+    form = null;
+    renderList();
+    win.chrome.place();
+    void refresh();
+  },
+  onHide: () => { form = null; },
+});
+const historyShown = historyWindow.shown;
+const { hide } = historyWindow;
 
 /** More → History: show or hide the design's history. */
-function toggleHistory() {
-  if (historyShown()) hide();
-  else show();
-}
+const toggleHistory = historyWindow.toggle;
 
 function installHistory() {
   document.getElementById('btn-history')?.addEventListener('click', toggleHistory);
@@ -77746,6 +77745,8 @@ function historyDocumentShown() {
 }
 
 
+__exports.historyShown = historyShown;
+__exports.toggleHistory = toggleHistory;
 };
 
 __modules["src/web/hover-preview.js"] = function (__require, __exports) {
@@ -89952,16 +89953,14 @@ function attachNoteCompletion(field, names) {
 
 __modules["src/web/notes-window.js"] = function (__require, __exports) {
 __exports.renderNotesWindow = renderNotesWindow;
-__exports.notesShown = notesShown;
 __exports.showNotes = showNotes;
-__exports.toggleNotes = toggleNotes;
 __exports.installNotes = installNotes;
 __exports.notesDocumentShown = notesDocumentShown;
 let normalizeNotes, notesMarkdown, resolveMention; __bind(() => { ({ normalizeNotes, notesMarkdown, resolveMention } = __require("src/core/notes.js")); });
 let renderNotes; __bind(() => { ({ renderNotes } = __require("src/core/notes-markdown.js")); });
 let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let floatingWindow; __bind(() => { ({ floatingWindow } = __require("src/web/floating-window.js")); });
+let floatingWindow, windowToggle; __bind(() => { ({ floatingWindow, windowToggle } = __require("src/web/floating-window.js")); });
 let setHoverTarget; __bind(() => { ({ setHoverTarget } = __require("src/web/hover-preview.js")); });
 let workspaceDesigns; __bind(() => { ({ workspaceDesigns } = __require("src/web/hierarchy.js")); });
 let openDocumentPath; __bind(() => { ({ openDocumentPath } = __require("src/web/document-session.js")); });
@@ -90328,33 +90327,24 @@ async function copyMarkdown() {
   }
 }
 
-function syncButton() {
-  document.getElementById('btn-window-notes')?.setAttribute('aria-pressed', String(notesShown()));
-}
-
-function notesShown() {
-  return !!win && !win.el.hidden;
-}
-
-function show() {
-  if (!win) build();
-  win.el.hidden = false;
-  shownKey = null;
-  renderView();
-  win.chrome.place();
-  // An empty design's notes open ready to write.
-  if (!notes()) startEditing();
-  syncButton();
-}
-
-function hide() {
-  if (!win || win.el.hidden) return;
-  stopEditing();
-  if (editor.hoverFromPanel) setHoverTarget(null);
-  win.el.hidden = true;
-  syncButton();
-  canvasEl.focus({ preventScroll: true });
-}
+const notesWindow = windowToggle({
+  get: () => win,
+  build,
+  buttons: [['btn-window-notes']],
+  onShow: () => {
+    shownKey = null;
+    renderView();
+    win.chrome.place();
+    // An empty design's notes open ready to write.
+    if (!notes()) startEditing();
+  },
+  onHide: () => {
+    stopEditing();
+    if (editor.hoverFromPanel) setHoverTarget(null);
+  },
+});
+const notesShown = notesWindow.shown;
+const { show, hide } = notesWindow;
 
 /** Show the notes, if they are not shown already. */
 function showNotes() {
@@ -90362,10 +90352,7 @@ function showNotes() {
 }
 
 /** Shift+N: show or hide the notes. */
-function toggleNotes() {
-  if (notesShown()) hide();
-  else show();
-}
+const toggleNotes = notesWindow.toggle;
 
 function installNotes() {
   document.getElementById('btn-window-notes')?.addEventListener('click', toggleNotes);
@@ -90386,6 +90373,8 @@ function notesDocumentShown() {
   renderNotesWindow();
 }
 
+__exports.notesShown = notesShown;
+__exports.toggleNotes = toggleNotes;
 };
 
 __modules["src/web/onboarding.js"] = function (__require, __exports) {
@@ -98143,9 +98132,7 @@ function installSignalFlowUi() {
 __modules["src/web/sizing-window.js"] = function (__require, __exports) {
 __exports.renderSizingWindow = renderSizingWindow;
 __exports.pasteText = pasteText;
-__exports.sizingShown = sizingShown;
 __exports.editInSizing = editInSizing;
-__exports.toggleSizing = toggleSizing;
 __exports.installSizing = installSizing;
 __exports.sizingDocumentShown = sizingDocumentShown;
 let MOS_SIZE_TYPES, parseLength, parseMosSize, parseMultiplier; __bind(() => { ({ MOS_SIZE_TYPES, parseLength, parseMosSize, parseMultiplier } = __require("src/core/mos-size.js")); });
@@ -98155,7 +98142,7 @@ let setPartValue; __bind(() => { ({ setPartValue } = __require("src/core/part-mo
 let componentNameIdentity, parseLabelRuns; __bind(() => { ({ componentNameIdentity, parseLabelRuns } = __require("src/core/model.js")); });
 let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let floatingWindow; __bind(() => { ({ floatingWindow } = __require("src/web/floating-window.js")); });
+let floatingWindow, windowToggle; __bind(() => { ({ floatingWindow, windowToggle } = __require("src/web/floating-window.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let commit, markSettingsChanged, redo, render, setLabelSelection, setSelection, undo; __bind(() => { ({ commit, markSettingsChanged, redo, render, setLabelSelection, setSelection, undo } = __require("src/web/main.js")); });
 let appendContextItem, openMenuAt; __bind(() => { ({ appendContextItem, openMenuAt } = __require("src/web/context-menu.js")); });
@@ -99106,39 +99093,30 @@ function build() {
   applyWidths();
 }
 
-function syncButton() {
-  document.getElementById('btn-window-sizing')?.setAttribute('aria-pressed', String(sizingShown()));
-}
-
-function sizingShown() {
-  return !!win && !win.el.hidden;
-}
-
-function show() {
-  if (!win) build();
-  win.el.hidden = false;
-  order = null;
-  redraw();
-  win.chrome.place();
-  // The parts selected on the canvas come in picked.
-  const selected = rows.filter((c) => editor.multi?.has(c.refdes) || c.refdes === editor.selected);
-  if (selected.length) {
-    anchor = { refdes: selected[0].refdes, key: COLUMNS[0].key };
-    focus = { refdes: selected.at(-1).refdes, key: COLUMNS[0].key };
-    paintSelection();
-  }
-  win.grid.focus();
-  syncButton();
-}
-
-function hide() {
-  if (!win || win.el.hidden) return;
-  if (editing) finishEditing({ keep: true });
-  renaming = null;
-  win.el.hidden = true;
-  syncButton();
-  canvasEl.focus({ preventScroll: true });
-}
+const sizingWindow = windowToggle({
+  get: () => win,
+  build,
+  buttons: [['btn-window-sizing']],
+  onShow: () => {
+    order = null;
+    redraw();
+    win.chrome.place();
+    // The parts selected on the canvas come in picked.
+    const selected = rows.filter((c) => editor.multi?.has(c.refdes) || c.refdes === editor.selected);
+    if (selected.length) {
+      anchor = { refdes: selected[0].refdes, key: COLUMNS[0].key };
+      focus = { refdes: selected.at(-1).refdes, key: COLUMNS[0].key };
+      paintSelection();
+    }
+    win.grid.focus();
+  },
+  onHide: () => {
+    if (editing) finishEditing({ keep: true });
+    renaming = null;
+  },
+});
+const sizingShown = sizingWindow.shown;
+const { show, hide } = sizingWindow;
 
 /** Open the window on one part's cell, ready to type into it. */
 function editInSizing(refdes, key) {
@@ -99155,10 +99133,7 @@ function editInSizing(refdes, key) {
 }
 
 /** Shift+Z: the sizing window, open or closed. */
-function toggleSizing() {
-  if (sizingShown()) hide();
-  else show();
-}
+const toggleSizing = sizingWindow.toggle;
 
 function installSizing() {
   document.getElementById('btn-window-sizing')?.addEventListener('click', toggleSizing);
@@ -99178,6 +99153,8 @@ function sizingDocumentShown() {
   if (win) redraw();
 }
 
+__exports.sizingShown = sizingShown;
+__exports.toggleSizing = toggleSizing;
 };
 
 __modules["src/web/sketch-ui.js"] = function (__require, __exports) {

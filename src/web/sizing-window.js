@@ -34,7 +34,7 @@ import { setPartValue } from '../core/part-moves.js';
 import { componentNameIdentity, parseLabelRuns } from '../core/model.js';
 import { canvasEl } from './elements.js';
 import { editor } from './editor-state.js';
-import { floatingWindow } from './floating-window.js';
+import { floatingWindow, windowToggle } from './floating-window.js';
 import { logLine } from './status-bar-ui.js';
 import { commit, markSettingsChanged, redo, render, setLabelSelection, setSelection, undo } from './main.js';
 import { appendContextItem, openMenuAt } from './context-menu.js';
@@ -944,39 +944,30 @@ function build() {
   applyWidths();
 }
 
-function syncButton() {
-  document.getElementById('btn-window-sizing')?.setAttribute('aria-pressed', String(sizingShown()));
-}
-
-export function sizingShown() {
-  return !!win && !win.el.hidden;
-}
-
-function show() {
-  if (!win) build();
-  win.el.hidden = false;
-  order = null;
-  redraw();
-  win.chrome.place();
-  // The parts selected on the canvas come in picked.
-  const selected = rows.filter((c) => editor.multi?.has(c.refdes) || c.refdes === editor.selected);
-  if (selected.length) {
-    anchor = { refdes: selected[0].refdes, key: COLUMNS[0].key };
-    focus = { refdes: selected.at(-1).refdes, key: COLUMNS[0].key };
-    paintSelection();
-  }
-  win.grid.focus();
-  syncButton();
-}
-
-function hide() {
-  if (!win || win.el.hidden) return;
-  if (editing) finishEditing({ keep: true });
-  renaming = null;
-  win.el.hidden = true;
-  syncButton();
-  canvasEl.focus({ preventScroll: true });
-}
+const sizingWindow = windowToggle({
+  get: () => win,
+  build,
+  buttons: [['btn-window-sizing']],
+  onShow: () => {
+    order = null;
+    redraw();
+    win.chrome.place();
+    // The parts selected on the canvas come in picked.
+    const selected = rows.filter((c) => editor.multi?.has(c.refdes) || c.refdes === editor.selected);
+    if (selected.length) {
+      anchor = { refdes: selected[0].refdes, key: COLUMNS[0].key };
+      focus = { refdes: selected.at(-1).refdes, key: COLUMNS[0].key };
+      paintSelection();
+    }
+    win.grid.focus();
+  },
+  onHide: () => {
+    if (editing) finishEditing({ keep: true });
+    renaming = null;
+  },
+});
+export const sizingShown = sizingWindow.shown;
+const { show, hide } = sizingWindow;
 
 /** Open the window on one part's cell, ready to type into it. */
 export function editInSizing(refdes, key) {
@@ -993,10 +984,7 @@ export function editInSizing(refdes, key) {
 }
 
 /** Shift+Z: the sizing window, open or closed. */
-export function toggleSizing() {
-  if (sizingShown()) hide();
-  else show();
-}
+export const toggleSizing = sizingWindow.toggle;
 
 export function installSizing() {
   document.getElementById('btn-window-sizing')?.addEventListener('click', toggleSizing);

@@ -15,7 +15,7 @@ import { calculate, formatResult, replayNames, siResult } from '../core/calculat
 import { CALCULATOR_HISTORY } from '../core/window-state.js';
 import { canvasEl } from './elements.js';
 import { editor } from './editor-state.js';
-import { PLACE, floatingWindow } from './floating-window.js';
+import { PLACE, floatingWindow, windowToggle } from './floating-window.js';
 import { markSettingsChanged, onDocumentShown } from './main.js';
 import { element as el } from './dom.js';
 
@@ -137,35 +137,21 @@ function build() {
   win = { el: node, list, empty, input, chrome };
 }
 
-function syncButton() {
-  document.getElementById('btn-window-calculator')?.setAttribute('aria-pressed', String(calculatorShown()));
-}
-
-export function calculatorShown() {
-  return !!win && !win.el.hidden;
-}
-
-function show() {
-  if (!win) build();
-  win.el.hidden = false;
-  renderList();
-  win.chrome.place();
-  win.input.focus();
-  syncButton();
-}
-
-function hide() {
-  if (!win || win.el.hidden) return;
-  win.el.hidden = true;
-  syncButton();
-  canvasEl.focus({ preventScroll: true });
-}
+const calculatorWindow = windowToggle({
+  get: () => win,
+  build,
+  buttons: [['btn-window-calculator']],
+  onShow: () => {
+    renderList();
+    win.chrome.place();
+    win.input.focus();
+  },
+});
+export const calculatorShown = calculatorWindow.shown;
+const { hide } = calculatorWindow;
 
 /** Shift+E: show or hide the calculator. */
-export function toggleCalculator() {
-  if (calculatorShown()) hide();
-  else show();
-}
+export const toggleCalculator = calculatorWindow.toggle;
 
 export function installCalculator() {
   document.getElementById('btn-window-calculator')?.addEventListener('click', toggleCalculator);
