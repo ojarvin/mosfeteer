@@ -43,9 +43,16 @@ function beaten() {
   return circuit.toJSON();
 }
 
+/** Two phases kept apart, a signal kept apart from one, and a mark on each. */
+function gappedAndMarked() {
+  const circuit = new Circuit();
+  for (const line of ['add switch_open S1 --at 0 0', 'value S1 P1', 'add switch_open S2 --at 400 0', 'value S2 P2', 'timing P1=1010 P2=0101 --add CLK CLK=0110 --gaps P1:P2,P1:CLK', 'timing --mark P2:2,CLK:2,P1:2']) runCommand(circuit, line);
+  return circuit.toJSON();
+}
+
 describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () => {
   let h;
-  before(async () => { h = await start({ docs: { clocked: clockAndQ(), phased: twoPhases(), undrawn: undrawn(), noted: clockAndQ(), beaten: beaten(), repeated: clockAndQ(), ramped: clockAndQ(), bused: clockAndQ(), broken: clockAndQ(), long: longSequence(), sparse: clockAndQ(), leadless: clockAndQ() }, width: 1500, height: 950 }); });
+  before(async () => { h = await start({ docs: { clocked: clockAndQ(), phased: twoPhases(), undrawn: undrawn(), noted: clockAndQ(), beaten: beaten(), repeated: clockAndQ(), ramped: clockAndQ(), bused: clockAndQ(), broken: clockAndQ(), long: longSequence(), sparse: clockAndQ(), leadless: clockAndQ(), gapped: gappedAndMarked(), unphased: gappedAndMarked() }, width: 1500, height: 950 }); });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
   const parts = () => h.evaluate(`window.__circuit().labels.filter((l) => l.timing?.part).map((l) => ({ part: l.timing.part, text: l.text, item: l.timing.item, curve: !!l.curve }))`);
@@ -404,6 +411,41 @@ describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () =
     await gridKey('End');
     await gridKey('b');
     assert.match(await h.evaluate(`document.querySelector('.timing-dialog-status').textContent`), /put the cursor on one/);
+    await h.key('K', { shiftKey: true });
+  });
+  test('a row gone, with what was on it, leaves the rest editable: its annotations come off', async () => {
+    const marks = async () => (await spec()).marks || [];
+    // A signal removed in the editor takes its pairs and its marks with it.
+    await h.open('gapped');
+    await h.key('K', { shiftKey: true });
+    await h.until(`!!document.querySelector('.timing-dialog .timing-grid')`);
+    await h.until(`document.querySelectorAll('.timing-grid-line').length === 3`);
+    await gridKey('End');
+    await gridKey('ArrowDown');
+    await gridKey('ArrowDown');
+    await h.evaluate(`document.querySelector('.timing-dialog button[title="Remove the cursor row"]').click()`);
+    await h.until(specIs('(t) => t.rows.length === 2'));
+    assert.deepEqual((await spec()).gaps, [['P1', 'P2']]);
+    assert.deepEqual(await marks(), [{ row: 'P2', at: 1 }, { row: 'P1', at: 1 }]);
+    await h.click('.timing-note button[aria-label="Remove the mark"]');
+    await h.until(specIs('(t) => t.marks?.length === 1'));
+    assert.equal(await h.evaluate(`document.querySelector('.timing-dialog-status').textContent`), '');
+    await h.key('K', { shiftKey: true });
+    // A switch phase gone from the drawing: its mark waits, and comes off.
+    await h.open('unphased');
+    await h.evaluate(`window.__run('rm S2')`);
+    await h.key('K', { shiftKey: true });
+    await h.until(`!!document.querySelector('.timing-dialog .timing-grid')`);
+    await h.until(`document.querySelectorAll('.timing-note.missing').length === 1`);
+    await h.click('.timing-note.missing button[aria-label="Remove the mark"]');
+    await h.until(specIs('(t) => t.marks?.length === 2'));
+    assert.equal(await h.evaluate(`document.querySelector('.timing-dialog-status').textContent`), '');
+    assert.equal(await h.evaluate(`document.querySelectorAll('.timing-note.missing').length`), 0);
+    // An edit to a slot goes through too.
+    await gridKey('Home');
+    await gridKey(' ');
+    await h.until(specIs(`(t) => t.rows[0].bits === '0010'`));
+    assert.equal(await h.evaluate(`document.querySelector('.timing-dialog-status').textContent`), '');
     await h.key('K', { shiftKey: true });
   });
 });

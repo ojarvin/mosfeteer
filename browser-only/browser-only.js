@@ -63228,7 +63228,7 @@ function openTimingDialog() {
       shift: drawn?.shifts.get(row.key) || { fall: 0, rise: 0 },
     })));
     state.slot = drawn?.slot || DEFAULT_SLOT_CELLS;
-    state.gaps = drawn?.gaps ?? 'none';
+    state.gaps = rowPairs(drawn?.gaps ?? 'none');
     state.lead = drawn?.lead ?? true;
     state.notes = { arrows: [...(drawn?.arrows || [])], marks: [...(drawn?.marks || [])], spans: (drawn?.spans || []).map((span) => ({ ...span })), breaks: (drawn?.breaks || []).map((item) => ({ ...item })) };
     state.pending = null;
@@ -63236,6 +63236,8 @@ function openTimingDialog() {
     state.cursor.row = Math.max(0, Math.min(state.cursor.row, rows.length - 1));
     state.seen = { circuit: editor.circuit, revision: editor.modelRevision };
   };
+  // The pairs kept apart whose rows are both still there.
+  const rowPairs = (gaps) => (Array.isArray(gaps) ? gaps.filter((pair) => pair.every((key) => rows.some((row) => samePhase(row.key, key)))) : gaps);
   readDesign(sources);
   const length = () => Math.max(1, ...rows.map((row) => row.wave.length));
   const at = (row, slot) => (row.wave.length ? row.wave[Math.min(slot, row.wave.length - 1)] : '0');
@@ -63308,7 +63310,7 @@ function openTimingDialog() {
     const known = timingPhases(editor.circuit);
     const add = rows.filter((row) => row.signal && !known.some((phase) => samePhase(phase.key, row.key))).map((row) => row.source);
     const remove = known.filter((phase) => phase.signal && !rows.some((row) => samePhase(row.key, phase.key))).map((phase) => phase.source);
-    return { bits, hold, heights, slot: state.slot, gaps: state.gaps, lead: state.lead, shifts, order, fromBeats: true, add, remove, ...state.notes };
+    return { bits, hold, heights, slot: state.slot, gaps: rowPairs(state.gaps), lead: state.lead, shifts, order, fromBeats: true, add, remove, ...state.notes };
   };
   const redraw = () => {
     const start = snapshot();
@@ -63748,6 +63750,7 @@ function openTimingDialog() {
     state.notes.marks = state.notes.marks.filter((mark) => !on(mark));
     state.notes.arrows = state.notes.arrows.filter((item) => !on(item.from) && !on(item.to));
     state.notes.spans = state.notes.spans.filter((item) => !on(item.from) && !on(item.to));
+    state.gaps = rowPairs(state.gaps);
     if (state.pending && on(state.pending.from)) state.pending = null;
     // A complement that followed it keeps the wave it showed.
     for (const other of rows) {
