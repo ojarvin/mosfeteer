@@ -344,15 +344,21 @@ test('a plot on the drawing is its window\'s spec laid out: the same view, a ste
   assert.ok(Math.abs(curve.points.at(-1).y - swing.pane.y) < 1e-6, JSON.stringify(curve.points.at(-1)));
 });
 
-test('the lowest y number is left out where it crowds the first x number at the corner, and kept where it does not', async () => {
+test('the lowest y number is left out when both axes number the plot\'s corner', async () => {
   const { cornerPruned } = await import('../src/core/plot-scale.js');
-  const ys = [{ text: '−180', x: 95, baseline: 204, anchor: 'end' }, { text: '−160', x: 95, baseline: 150, anchor: 'end' }];
-  assert.deepEqual(cornerPruned(ys, [{ text: '10^{-4}', x: 100, baseline: 213, anchor: 'middle' }], 10).map((n) => n.text), ['−160']);
-  assert.deepEqual(cornerPruned(ys, [{ text: '0', x: 100, baseline: 213, anchor: 'middle' }], 10).map((n) => n.text), ['−180', '−160']);
+  const view = { x: [0, 200], y: [-1, 1.5] };
+  const ys = [{ u: -1 }, { u: -0.5 }, { u: 0 }];
+  assert.deepEqual(cornerPruned(ys, [{ u: 0 }, { u: 50 }], view).map((t) => t.u), [-0.5, 0], 'a narrow 0 beside -1 too');
+  assert.equal(cornerPruned(ys, [{ u: 50 }], view).length, 3, 'no x number at the corner');
+  assert.equal(cornerPruned(ys.slice(1), [{ u: 0 }], view).length, 2, 'no y number at the corner');
   // On the drawing: a log frequency axis starting at a decade, a dB axis at -180.
   const points = Array.from({ length: 40 }, (_, i) => ({ f: 10 ** (-4 + i / 10), db: -175 + 4 * i }));
   const figure = plotFigure(normalizePlot({ kind: 'response', axis: 'normalized', range: { low: -4, high: -0.3 }, traces: [{ label: 'H', color: '#000', points }] }), { width: 720, height: 440, fontSize: 30 });
   const yNumbers = figure.items.filter((item) => item.role === 'number' && item.anchor === 'end').map((item) => item.text);
   assert.equal(figure.ranges.y[0], -180);
   assert.ok(!yNumbers.includes('-180') && yNumbers.includes('-160'), yNumbers.join());
+  // A step plot, its x axis from 0 and its y from -1, the same.
+  const step = plotFigure(normalizePlot({ kind: 'step', unit: 'n', range: { low: 0, high: 100 }, traces: [{ label: 'y', points: Array.from({ length: 101 }, (_, t) => ({ t, y: Math.cos(t / 5) * Math.exp(-t / 30) })) }] }), { width: 720, height: 440, fontSize: 30 });
+  const stepNumbers = step.items.filter((item) => item.role === 'number' && item.anchor === 'end').map((item) => Number(item.text));
+  assert.ok(stepNumbers[0] > step.ranges.y[0], `${stepNumbers} ${step.ranges.y}`);
 });

@@ -29,8 +29,6 @@ import { cursorCurves, cursorLayout, cursorNumber, cursorTitleRow, nearestCurve 
 
 const NS = 'http://www.w3.org/2000/svg';
 const MARGIN = { left: 46, right: 12, top: 10, bottom: 24 };
-/** The axis numbers' size (style.css `.plot-view-svg text`). */
-const NUMBER_SIZE = 12;
 /** The plot pane's corner radius: a card's (--radius-md). */
 const PANE_RADIUS = 8;
 let clipCount = 0;
@@ -181,12 +179,10 @@ export function createPlotView({ height = 230, fill = false, aspect = null, maxH
     }
     for (const tick of xTicks) grid.append(svg('line', { x1: X(tick.u), y1: p.y, x2: X(tick.u), y2: p.y + p.h, class: tick.major ? 'role-grid' : 'role-grid minor' }));
     for (const tick of yTicks) grid.append(svg('line', { x1: p.x, y1: Y(tick.u), x2: p.x + p.w, y2: Y(tick.u), class: 'role-grid' }));
-    // The numbers; the lowest y one left out where it crowds the corner.
-    const xNumbers = xAxis ? xTicks.filter((tick) => tick.major || xTicks.length <= 12).map((tick) => ({ text: tick.text, x: X(tick.u), baseline: p.y + p.h + 15, anchor: 'middle' })) : [];
-    const yNumbers = yTicks.map((tick) => ({ text: tick.text, x: p.x - 5, baseline: Y(tick.u) + 3.5, anchor: 'end' }));
-    for (const { text, x, baseline, anchor } of [...xNumbers, ...cornerPruned(yNumbers, xNumbers, NUMBER_SIZE)]) {
-      grid.append(markupText(text, { x, y: baseline, 'text-anchor': anchor, class: 'role-number' }));
-    }
+    // The numbers; the lowest y one left out when both axes number the corner.
+    const xNumbered = xAxis ? xTicks.filter((tick) => tick.major || xTicks.length <= 12) : [];
+    for (const tick of xNumbered) grid.append(markupText(tick.text, { x: X(tick.u), y: p.y + p.h + 15, 'text-anchor': 'middle', class: 'role-number' }));
+    for (const tick of cornerPruned(yTicks, xNumbered, view)) grid.append(markupText(tick.text, { x: p.x - 5, y: Y(tick.u) + 3.5, 'text-anchor': 'end', class: 'role-number' }));
     root.append(grid);
 
     const body = svg('g', { 'clip-path': `url(#${clipId})` });

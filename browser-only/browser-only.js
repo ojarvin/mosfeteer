@@ -40498,15 +40498,14 @@ function plotFigure(plot, { width = 480, height = 260, fontSize = 11, right } = 
   const yTicks = figureTicks(ys, view.y, yTarget, zoom.y ? null : spec.y.step);
   if (xs === 'log') for (const u of logMinorGrid(view.x[0], view.x[1], { ticks: xTicks.map((t) => t.u), length: pane.w, minDecade: 4 * em })) vertical(u, 'minor');
   if (ys === 'log') for (const u of logMinorGrid(view.y[0], view.y[1], { ticks: yTicks.map((t) => t.u), length: pane.h, minDecade: 3 * em })) horizontal(u, 'minor');
-  const xNumbers = xTicks.filter((tick) => tick.major || xTicks.length <= 12)
-    .map((tick) => ({ text: tick.text, x: X(tick.u), baseline: pane.y + pane.h + 1.3 * em, anchor: 'middle' }));
-  const yNumbers = yTicks.map((tick) => ({ text: tick.text, x: pane.x - 0.45 * em, baseline: Y(tick.u) + 0.36 * em, anchor: 'end' }));
+  const xNumbered = xTicks.filter((tick) => tick.major || xTicks.length <= 12);
   for (const tick of xTicks) {
     vertical(tick.u, tick.major ? 'grid' : 'minor');
     items.push({ type: 'line', x1: X(tick.u), y1: pane.y + pane.h, x2: X(tick.u), y2: pane.y + pane.h - 0.36 * em, role: 'tick' });
   }
   for (const tick of yTicks) horizontal(tick.u, 'grid');
-  for (const { text, x, baseline, anchor } of [...xNumbers, ...cornerPruned(yNumbers, xNumbers, em)]) items.push({ type: 'text', x, y: baseline, text, anchor, role: 'number' });
+  for (const tick of xNumbered) items.push({ type: 'text', x: X(tick.u), y: pane.y + pane.h + 1.3 * em, text: tick.text, anchor: 'middle', role: 'number' });
+  for (const tick of cornerPruned(yTicks, xNumbered, view)) items.push({ type: 'text', x: pane.x - 0.45 * em, y: Y(tick.u) + 0.36 * em, text: tick.text, anchor: 'end', role: 'number' });
   for (const line of spec.hlines || []) {
     const u = toUY(ys, line.y);
     if (Number.isFinite(u) && inY(u)) horizontal(u, line.role || 'zero');
@@ -40582,7 +40581,6 @@ __exports.fitRange = fitRange;
 __exports.seriesPoints = seriesPoints;
 __exports.equalView = equalView;
 __exports.specView = specView;
-__exports.tickNumberBox = tickNumberBox;
 __exports.cornerPruned = cornerPruned;
 __exports.zoomAxes = zoomAxes;
 __exports.zoomAbout = zoomAbout;
@@ -40759,37 +40757,13 @@ function specView(spec, pane, { round = false } = {}) {
   return spec.equal ? equalView(view, pane) : view;
 }
 
-/**
- * Roughly where a tick's number is drawn, as { left, right, top, bottom }:
- * `text` (with `^{}`/`_{}` markup) `size` tall, its baseline at `baseline`,
- * anchored at `x` by `anchor` ('start', 'middle', 'end'). Each character a
- * figure's width; a raised or lowered one smaller, and above or below the
- * line.
- */
-function tickNumberBox(text, { x, baseline, anchor = 'middle', size }) {
-  const scripts = [...String(text).matchAll(/[_^]\{([^{}]*)\}/g)];
-  const plain = String(text).replace(/[_^]\{[^{}]*\}/g, '');
-  const width = 0.55 * size * (plain.length + 0.68 * scripts.reduce((n, m) => n + m[1].length, 0));
-  const left = anchor === 'end' ? x - width : anchor === 'middle' ? x - width / 2 : x;
-  return {
-    left,
-    right: left + width,
-    top: baseline - 0.72 * size - (/\^\{/.test(text) ? 0.3 * size : 0),
-    bottom: baseline + (/_\{/.test(text) ? 0.25 * size : 0.05 * size),
-  };
-}
-
-/** Whether two boxes ({ left, right, top, bottom }) come within `gap`. */
-const boxesCrowd = (a, b, gap = 0) => a.left < b.right + gap && b.left < a.right + gap && a.top < b.bottom + gap && b.top < a.bottom + gap;
-
-/** The y axis's numbers (`ys`, lowest first) without the lowest when it
- *  crowds the x axis's first (`xs`) at the plot's corner, as both start
- *  there: the evenly stepped numbers above say what it was. Numbers are
- *  { text, x, baseline, anchor }, `size` tall. */
-function cornerPruned(ys, xs, size) {
-  if (!ys.length || !xs.length) return ys;
-  const box = (number) => tickNumberBox(number.text, { ...number, size });
-  return boxesCrowd(box(ys[0]), box(xs[0]), 0.15 * size) ? ys.slice(1) : ys;
+/** The y axis's numbered ticks (`ys`, lowest first) without the lowest
+ *  when both axes have a number at the plot's corner: the y axis's at the
+ *  bottom of `view` ({ x, y }, u) and the x axis's first (`xs`) at its left.
+ *  The evenly stepped numbers above say what it was. */
+function cornerPruned(ys, xs, view) {
+  const at = (u, [low, high]) => Math.abs(u - low) <= 1e-9 * Math.max(1, Math.abs(high - low));
+  return ys.length && xs.length && at(ys[0].u, view.y) && at(xs[0].u, view.x) ? ys.slice(1) : ys;
 }
 
 /**
@@ -40887,7 +40861,6 @@ function thinSeries(points, u0, u1, columns) {
 __exports.toU = toU;
 __exports.fromU = fromU;
 __exports.toUY = toUY;
-__exports.boxesCrowd = boxesCrowd;
 };
 
 __modules["src/core/plot-spec.js"] = function (__require, __exports) {
@@ -92883,8 +92856,6 @@ let cursorCurves, cursorLayout, cursorNumber, cursorTitleRow, nearestCurve; __bi
 
 const NS = 'http://www.w3.org/2000/svg';
 const MARGIN = { left: 46, right: 12, top: 10, bottom: 24 };
-/** The axis numbers' size (style.css `.plot-view-svg text`). */
-const NUMBER_SIZE = 12;
 /** The plot pane's corner radius: a card's (--radius-md). */
 const PANE_RADIUS = 8;
 let clipCount = 0;
@@ -93035,12 +93006,10 @@ function createPlotView({ height = 230, fill = false, aspect = null, maxHeight =
     }
     for (const tick of xTicks) grid.append(svg('line', { x1: X(tick.u), y1: p.y, x2: X(tick.u), y2: p.y + p.h, class: tick.major ? 'role-grid' : 'role-grid minor' }));
     for (const tick of yTicks) grid.append(svg('line', { x1: p.x, y1: Y(tick.u), x2: p.x + p.w, y2: Y(tick.u), class: 'role-grid' }));
-    // The numbers; the lowest y one left out where it crowds the corner.
-    const xNumbers = xAxis ? xTicks.filter((tick) => tick.major || xTicks.length <= 12).map((tick) => ({ text: tick.text, x: X(tick.u), baseline: p.y + p.h + 15, anchor: 'middle' })) : [];
-    const yNumbers = yTicks.map((tick) => ({ text: tick.text, x: p.x - 5, baseline: Y(tick.u) + 3.5, anchor: 'end' }));
-    for (const { text, x, baseline, anchor } of [...xNumbers, ...cornerPruned(yNumbers, xNumbers, NUMBER_SIZE)]) {
-      grid.append(markupText(text, { x, y: baseline, 'text-anchor': anchor, class: 'role-number' }));
-    }
+    // The numbers; the lowest y one left out when both axes number the corner.
+    const xNumbered = xAxis ? xTicks.filter((tick) => tick.major || xTicks.length <= 12) : [];
+    for (const tick of xNumbered) grid.append(markupText(tick.text, { x: X(tick.u), y: p.y + p.h + 15, 'text-anchor': 'middle', class: 'role-number' }));
+    for (const tick of cornerPruned(yTicks, xNumbered, view)) grid.append(markupText(tick.text, { x: p.x - 5, y: Y(tick.u) + 3.5, 'text-anchor': 'end', class: 'role-number' }));
     root.append(grid);
 
     const body = svg('g', { 'clip-path': `url(#${clipId})` });
