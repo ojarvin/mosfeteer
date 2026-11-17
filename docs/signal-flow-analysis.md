@@ -151,7 +151,9 @@ picker (`src/web/net-picker.js`), every net in view.
 
 Every plot -- the graph, the step, swing, locus, loop, and time views, the
 optimizer's run, a circuit's Bode plots -- is one interactive plot
-(`src/web/plot-view.js`, its specs in `src/core/plot-spec.js`): drag pans,
+(`src/web/plot-view.js`, its specs in `src/core/plot-spec.js`), and on the
+drawing the same spec, fitted the same way (`specView`), is laid out as a
+figure (`plotFigure`, `src/core/plot-figure.js`): drag pans,
 right-drag zooms to a box (a flat stroke along x only, a tall one along y
 only), a right-click steps back out, Ctrl+wheel or a pinch zooms, a
 double-click (or **Fit**) shows it all, and hovering reads every curve at
@@ -189,7 +191,7 @@ result puts the whole graph there. The choice is saved with the document
 outputs can be compared; each can be hidden or removed, and each result's
 **On the graph** switch takes its response off the graph or puts it back. **Annotate**
 puts it under the drawing at its left edge, as a plot annotation
-(`plot.kind: 'response'`, `responseFigure` in `bode-figure.js`) with the
+(`plot.kind: 'response'`, drawn by `plotFigure`) with the
 traces' names as math labels in their colors against its right edge, children of its
 box, lined up once the browser has measured them (main.js
 `alignLabelColumn`); **Annotate… → Coefficients** puts the coefficients' numbers on the drawing as a table of their own, styled as the parts and noise tables (Coefficient and Value headings over a rule, a row per coefficient, a linked one's value the number it follows, the dither's gains too), right of the circuit under the equations; **Annotate… → Equations** puts the equations on the drawing as the mode's table, a row per input with its transfer function alone (the ratio names the input), right of the circuit and rewritten in place when annotated again ([`figures.md`](figures.md)).
@@ -303,8 +305,7 @@ overloads -- a net tracking the input never trips it, and a quantizer's
 output, stepping between levels, is left out. The integrators' outputs, the quantizer's input, the
 output, and its tone are shown at first; any net can be checked. It runs at
 the coefficients' numbers and again as they move, and **Annotate**
-puts it on the drawing like the graph (`plot.kind: 'swing'`,
-`swingFigure`).
+puts it on the drawing like the graph (`plot.kind: 'swing'`).
 
 The sampled side steps as state-space (H(z) blocks in controllable form,
 junctions and gains one linear map a step, quantizers in the order their

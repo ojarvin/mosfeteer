@@ -14,7 +14,8 @@ import { closedSwitchHighlight, drawnNetPaths, switchState } from './beats.js';
 import { BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth } from './bus.js';
 import { TRANSFER_FUNCTION_TYPES } from './transfer-function.js';
 import { normalizePageGuide, pageGuideFrame } from './page-guide.js';
-import { bodeFigure, dataFigure, locusFigure, responseFigure, stepFigure, swingFigure } from './bode-figure.js';
+import { bodeFigure } from './bode-figure.js';
+import { plotFigure } from './plot-figure.js';
 import { cursorLayout } from './plot-cursors.js';
 import { plotSpec } from './plot-spec.js';
 import { mathRuns } from './math-text.js';
@@ -814,16 +815,8 @@ function plotAnnotationSvg(label, opacity = '') {
   // A response plot (signal-flow analysis) draws each trace in its color;
   // its traces' names are math labels beside it, children of the box.
   // An overloaded run (null) runs off the top.
-  const figure = plot.kind === 'locus'
-    ? locusFigure(plot, { width: w, height: h, fontSize, right })
-    : plot.kind === 'data'
-    ? dataFigure(plot, { width: w, height: h, fontSize, right })
-    : plot.kind === 'step' || plot.kind === 'wave'
-    ? stepFigure(plot, { width: w, height: h, fontSize, right })
-    : plot.kind === 'swing'
-    ? swingFigure({ ...plot, traces: plot.traces.map((t) => ({ ...t, points: t.points.map((p) => ({ a: p.a, db: p.db ?? Infinity })) })) }, { width: w, height: h, fontSize, right })
-    : response
-    ? responseFigure(plot, { width: w, height: h, fontSize, right })
+  const figure = response
+    ? plotFigure(plot, { width: w, height: h, fontSize, right })
     : bodeFigure(plot, { width: w, height: h, phase: plot.phase, numbers: false, corners: plot.corners, quantity: plot.quantity, fontSize });
   const color = escapeSvg(resolveColor(label.style?.color || '#111'));
   const stroke = (role, ink = color) => {

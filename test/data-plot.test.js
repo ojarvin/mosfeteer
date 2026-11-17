@@ -6,7 +6,7 @@ import { loadDocument } from '../src/core/document.js';
 import { svgString } from '../src/core/render.js';
 import { listFigures } from '../src/core/figures.js';
 import { dataPlotFromText, replaceDataPlotTraces, setPlotTracesShown } from '../src/core/data-plot.js';
-import { responseFigure } from '../src/core/bode-figure.js';
+import { plotFigure } from '../src/core/plot-figure.js';
 
 const SCOPE = 'Scope export\nTime (s),CH1 (V),CH2 (V)\n0,0.1,1\n1e-6,0.2,2\n2e-6,0.3,3\n';
 const io = (files) => ({ readDataFile: (file) => {
@@ -207,7 +207,7 @@ test('a response plot\'s own curves and spectra are each shown or hidden: kept i
     ] },
   });
   for (const [i, text] of ['$A$', '$B$', '$S$'].entries()) circuit.addLabel({ text, math: true, parent: box.id, role: 'plot-legend', align: 'left', x: 800, y: 40 + 40 * i });
-  const drawn = () => responseFigure(box.plot).items.filter((item) => item.type === 'path').map((item) => item.trace);
+  const drawn = () => plotFigure(box.plot).items.filter((item) => item.type === 'path').map((item) => item.trace);
   assert.deepEqual([...new Set(drawn())].sort(), [0, 1, 2]);
   assert.equal(setPlotTracesShown(circuit, box, [true, false, true]), true);
   assert.equal(box.plot.traces[1].hidden, true);

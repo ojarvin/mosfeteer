@@ -237,12 +237,11 @@ test('coefficient values and Bode ratios are kept with the document', () => {
 });
 
 test('the response graph fits its dB axis to the curves, in whole 20 dB steps', async () => {
-  const { responseFigure } = await import('../src/core/bode-figure.js');
   const plot = { kind: 'response', axis: 'normalized', range: { low: -4, high: Math.log10(0.5) }, traces: [
     { label: 'a', color: '#3b74e0', points: [{ f: 1e-4, db: -317 }, { f: 0.5, db: 13 }] },
   ] };
-  const figure = responseFigure(plot);
-  assert.deepEqual(figure.ranges.db, [-320, 20]);
+  const figure = plotFigure(plot);
+  assert.deepEqual(figure.ranges.y, [-320, 20]);
 });
 
 test('a short gain coefficient sits in its triangle; a longer one beside it, by one rule at any rotation', async () => {
@@ -703,7 +702,8 @@ test('coefficients paste from the delta-sigma toolbox: vectors name their entrie
 });
 
 import { bandEdges, responsePlot as bandedPlot } from '../src/core/analysis/signal-flow.js';
-import { responseFigure, swingFigure, swingFullScale, swingLimit, swingOverload, swingRunaway } from '../src/core/bode-figure.js';
+import { swingFullScale, swingLimit, swingOverload, swingRunaway } from '../src/core/bode-figure.js';
+import { plotFigure } from '../src/core/plot-figure.js';
 
 test('a simulated spectrum plots alone, its curves all off', () => {
   const background = [{ label: 'sim', color: '#888', points: [{ f: 1 / 1024, db: -100 }, { f: 0.1, db: -60 }, { f: 0.5, db: -40 }] }];
@@ -723,7 +723,7 @@ test('the band: a line at bw for a baseband signal, two at f0 +- bw/2, saved wit
   const integrator = blockTransferFunction(new Circuit().addComponent('tf_z', { value: 'tf([0 1], [1 -1])' }));
   const plot = bandedPlot([{ label: 'H', color: '#3b74e0', value: integrator, variable: 'z' }], 'z', { band: { f0: 0, bw: 0.01 } });
   assert.deepEqual(plot.band, [0.01]);
-  assert.equal(responseFigure(plot).items.filter((item) => item.role === 'band').length, 1);
+  assert.equal(plotFigure(plot).items.filter((item) => item.role === 'band').length, 1);
   const circuit = new Circuit();
   const box = circuit.addAnnotation('box', { x: 0, y: 0, end: { x: 400, y: 200 }, plot });
   circuit.analysisValues.band = { f0: 0.25, bw: 0.02 };
@@ -768,21 +768,21 @@ test('the swing plot marks where the swings run away: a net outgrowing the input
   assert.equal(swingOverload([jittery, tone, stepped]), -2);
   assert.equal(swingRunaway([jittery, tone, stepped]), -2.25);
   assert.equal(swingRunaway([tone, stepped]), -2, 'no knee: the overload');
-  const figure = swingFigure({ range: { low: -60, high: 3 }, traces: [jittery, tone, stepped] });
+  const figure = plotFigure({ kind: 'swing', range: { low: -60, high: 3 }, traces: [jittery, tone, stepped] });
   assert.equal(figure.items.filter((item) => item.role === 'marker' && item.type === 'line').length, 1);
   assert.ok(figure.items.some((item) => item.type === 'text' && item.text === 'runaway -2.25 dBFS'));
   assert.equal(swingRunaway([{ points: [{ a: -20, db: -3 }, { a: 0, db: 1 }] }]), null);
   // A net rising smoothly through full scale first is the limit, named.
   const rising = { label: 'H_{3}', color: '#c98a12', points: [{ a: -10, db: -6 }, { a: -4, db: -2 }, { a: -3, db: 2 }] };
   assert.deepEqual(swingLimit([jittery, tone, stepped, rising]), { a: -3.5, kind: 'full-scale', label: 'H_{3}' });
-  assert.ok(swingFigure({ range: { low: -60, high: 3 }, traces: [jittery, rising] }).items.some((item) => item.text === 'H_{3} full scale -3.5 dBFS'));
+  assert.ok(plotFigure({ kind: 'swing', range: { low: -60, high: 3 }, traces: [jittery, rising] }).items.some((item) => item.text === 'H_{3} full scale -3.5 dBFS'));
   // Nets at full scale from the start (a quantizer's output) never cross.
   assert.equal(swingFullScale([stepped, { points: [{ a: -20, db: 0 }, { a: 0, db: 0.5 }] }]), null);
   // The output's tone follows the input through full scale by design: not a limit.
   const outputTone = { ...rising, tone: true, label: '\\text{tone at } V_{\\text{OUT}}' };
   assert.equal(swingFullScale([outputTone]), null);
   // A TeX name is plot text in the marker, never raw TeX.
-  const named = swingFigure({ range: { low: -60, high: 3 }, traces: [{ ...rising, label: '\\text{peak } V_{\\text{X}}' }] });
+  const named = plotFigure({ kind: 'swing', range: { low: -60, high: 3 }, traces: [{ ...rising, label: '\\text{peak } V_{\\text{X}}' }] });
   assert.ok(named.items.some((item) => item.text === 'peak V_{X} full scale -3.5 dBFS'));
 });
 
@@ -851,7 +851,6 @@ test('the signal-flow settings are saved with the document', () => {
 import { stepPlot, stepResponse } from '../src/core/analysis/step.js';
 import { locusPlot, rootLocus } from '../src/core/analysis/locus.js';
 import { dbfsOffset, dbfsSpectrum, inBand, outputSpectrum } from '../src/core/analysis/spectrum.js';
-import { locusFigure, stepFigure } from '../src/core/bode-figure.js';
 
 test('step responses: exact for s (overshoot of a second-order section), by recursion for z', () => {
   const circuit = new Circuit();
@@ -870,7 +869,7 @@ test('step responses: exact for s (overshoot of a second-order section), by recu
   assert.equal(ntf.unit, 'n');
   const plot = stepPlot([{ label: 'A', color: '#3b74e0', value: tf('tf_z', 'tf([0.5], [1 -0.5])') }]);
   assert.equal(plot.kind, 'step');
-  assert.ok(stepFigure(plot).items.some((item) => item.type === 'path'));
+  assert.ok(plotFigure(plot).items.some((item) => item.type === 'path'));
   const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify((() => { const c = new Circuit(); c.addAnnotation('box', { x: 0, y: 0, end: { x: 400, y: 200 }, plot }); return c; })().toJSON())));
   assert.equal([...loaded.labels.values()][0].plot.traces[0].stairs, true);
 });
@@ -884,7 +883,7 @@ test('the root locus finds where a loop becomes stable and unstable again', () =
   assert.deepEqual(locus.crossings.map((c) => c.becomes), ['stable', 'unstable']);
   assert.ok(Math.abs(locus.crossings[0].k - 1) < 0.02 && Math.abs(locus.crossings[1].k - 2.5) < 0.02);
   const plot = locusPlot(locus, { parameter: 'k_2' });
-  assert.ok(locusFigure(plot).items.some((item) => /^stable for k_2 1(\.0\d)? … 2\.5\d?$/.test(item.text || '')), locusFigure(plot).items.map((i) => i.text).filter(Boolean).join(' | '));
+  assert.ok(plotFigure(plot).items.some((item) => /^stable for k_2 1(\.0\d)? … 2\.5\d?$/.test(item.text || '')), plotFigure(plot).items.map((i) => i.text).filter(Boolean).join(' | '));
 });
 
 test('the simulated spectrum: shaped error on its |NTF|, the SNDR in band', () => {
@@ -920,7 +919,7 @@ test('with a simulated spectrum the response graph is one plot in dBFS: noise le
   assert.equal(plot.units, 'dBFS');
   assert.equal(plot.traces[0].background, true);
   // Everything drawn stays inside the plot, the spectrum's lowest bins included.
-  const figure = responseFigure(plot);
+  const figure = plotFigure(plot);
   for (const item of figure.items.filter((i) => i.type === 'path')) for (const p of item.points) assert.ok(p.x >= figure.pane.x - 1e-6, 'left of the axis');
 });
 
@@ -946,8 +945,8 @@ test('the loop gain at a broken signal: T with NTF = 1/(1 + T), its crossover an
   const again = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON()))).labels.get(box.id).plot;
   assert.equal(again.role, 'loop');
   assert.deepEqual(again.markers, [{ f: 0.283, label: 'PM 24°' }]);
-  assert.ok(responseFigure(again).items.some((item) => item.text === 'PM 24°'));
-  assert.ok(responseFigure(again).items.some((item) => item.text === 'Magnitude |T| (dB)'));
+  assert.ok(plotFigure(again).items.some((item) => item.text === 'PM 24°'));
+  assert.ok(plotFigure(again).items.some((item) => item.text === 'Magnitude |T| (dB)'));
 });
 
 test('a sampled loop breaks only at a sampled signal, a quantizer\'s output offered first', () => {

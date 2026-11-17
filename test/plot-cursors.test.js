@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Circuit, normalizePlot } from '../src/core/model.js';
 import { plotSpec } from '../src/core/plot-spec.js';
 import { cursorLabel, cursorLayout, cursorReadings, cursorTitleRow, cursorValue, curveCrossings, placeCursorLabels, remapCursorTraces } from '../src/core/plot-cursors.js';
-import { dataFigure } from '../src/core/bode-figure.js';
+import { plotFigure } from '../src/core/plot-figure.js';
 import { movePlotTrace, removePlotTrace, setPlotCursors } from '../src/core/data-plot.js';
 import { svgString } from '../src/core/render.js';
 
@@ -173,7 +173,7 @@ test('a marker\'s label: a vertical line\'s over the plot, a horizontal one\'s a
   // A vertical line's label takes a row above the plot.
   assert.equal(cursorTitleRow(plot.cursors), true);
   assert.equal(cursorTitleRow([{ kind: 'horizontal', y: 1, label: 'a' }]), false);
-  const top = (cursors) => dataFigure(data({ cursors }), { width: 400, height: 300, fontSize: 10 }).pane.y;
+  const top = (cursors) => plotFigure(data({ cursors }), { width: 400, height: 300, fontSize: 10 }).pane.y;
   assert.ok(top([{ kind: 'vertical', x: 5, label: 'a' }]) > top([{ kind: 'vertical', x: 5 }]));
 });
 

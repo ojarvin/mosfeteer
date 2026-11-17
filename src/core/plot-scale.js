@@ -119,9 +119,54 @@ export function fitRange(values, { step = null, pad = 0.05, include = [] } = {})
     const around = step || Math.max(Math.abs(low) * 0.1, 1);
     return [low - around, high + around];
   }
-  if (step) return [Math.floor(low / step - 1e-9) * step, Math.ceil(high / step + 1e-9) * step];
+  // A value on a step keeps it as the bound.
+  if (step) return [Math.floor(low / step + 1e-9) * step + 0, Math.ceil(high / step - 1e-9) * step + 0];
   const margin = (high - low) * pad;
   return [low - margin, high + margin];
+}
+
+/** A value on a spec's y axis in u coordinates: on a log axis a value at
+ *  or under zero is a gap (null), as is null itself. */
+export const toUY = (scale, y) => (y === null || scale !== 'log' ? y : y > 0 ? Math.log10(y) : null);
+
+/** A spec series' points in u coordinates, those off the x axis left out. */
+export function seriesPoints(spec, series) {
+  const xs = spec.x.scale || 'linear';
+  const ys = spec.y.scale || 'linear';
+  return series.points.map(([x, y]) => [toU(xs, x), toUY(ys, y)]).filter(([u]) => Number.isFinite(u));
+}
+
+/** A view with equal units per pixel on both axes in a `pane` ({ w, h }),
+ *  growing the tighter one. */
+export function equalView(view, pane) {
+  const per = Math.max((view.x[1] - view.x[0]) / pane.w, (view.y[1] - view.y[0]) / pane.h);
+  const cx = (view.x[0] + view.x[1]) / 2;
+  const cy = (view.y[0] + view.y[1]) / 2;
+  return { x: [cx - (per * pane.w) / 2, cx + (per * pane.w) / 2], y: [cy - (per * pane.h) / 2, cy + (per * pane.h) / 2] };
+}
+
+/**
+ * The view (u coordinates, { x, y }) that shows all of a spec's data in a
+ * `pane` ({ w, h }): its x range, or the data's; y fitted to the curves in
+ * that range -- not a background (a spectrum) nor a band, nothing at or
+ * under `y.floor` -- in whole `y.step`s, else padded, and held under
+ * `y.ceiling`; at equal scales for `equal`. With `round` (the drawing's),
+ * a y axis without a step is rounded out to its ticks.
+ */
+export function specView(spec, pane, { round = false } = {}) {
+  const xs = spec.x.scale || 'linear';
+  const ys = spec.y.scale || 'linear';
+  const x = spec.x.range ? spec.x.range.map((v) => toU(xs, v))
+    : fitRange(spec.series.filter((s) => s.role !== 'band').flatMap((s) => seriesPoints(spec, s).map(([u]) => u)), { pad: spec.equal ? 0.08 : 0, include: (spec.x.include || []).map((v) => toU(xs, v)) });
+  const inX = ([u]) => u >= Math.min(...x) - 1e-9 && u <= Math.max(...x) + 1e-9;
+  let values = spec.series.filter((s) => s.role !== 'background' && s.role !== 'band')
+    .flatMap((s) => seriesPoints(spec, s).filter(inX).map(([, y]) => y))
+    .filter((y) => Number.isFinite(y) && (spec.y.floor === undefined || spec.y.floor === null || y > spec.y.floor));
+  if (spec.y.symmetric) values = values.flatMap((y) => [y, -y]);
+  let y = fitRange(values, { step: spec.y.step, pad: 0.08, include: (spec.y.include || []).map((v) => toUY(ys, v)) });
+  if (Number.isFinite(spec.y.ceiling)) y = [Math.min(y[0], spec.y.ceiling - (spec.y.step || 1)), Math.min(y[1], spec.y.ceiling)];
+  const view = { x: [Math.min(...x), Math.max(...x)], y };
+  return spec.equal ? equalView(view, pane) : view;
 }
 
 /**

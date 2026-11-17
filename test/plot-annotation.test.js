@@ -57,7 +57,8 @@ test('a plot whose range spans implausibly many decades is not kept', () => {
   assert.ok(normalizePlot({ ...plotData(), range: { low: -3, high: 9 } }));
 });
 
-import { responseFigure, stepFigure, swingFigure } from '../src/core/bode-figure.js';
+import { plotFigure } from '../src/core/plot-figure.js';
+import { plotSpec } from '../src/core/plot-spec.js';
 
 test('a plot annotated zoomed keeps its limits: saved, drawn at them, its curves cut to its pane', () => {
   const points = Array.from({ length: 200 }, (_, i) => { const f = 10 ** (-4 + (i * 3.7) / 199); return { f, db: 20 * Math.log10(f) }; });
@@ -67,7 +68,7 @@ test('a plot annotated zoomed keeps its limits: saved, drawn at them, its curves
   // A broken or inverted limit is dropped; a frequency limit must be positive.
   assert.equal(normalizePlot({ ...plot, view: { x: [0.05, 0.01] } }).view, undefined);
   assert.equal(normalizePlot({ ...plot, view: { x: [0, 0.01], y: [-1, 1] } }).view.x, undefined);
-  const figure = responseFigure(kept);
+  const figure = plotFigure(kept);
   const { pane } = figure;
   const curves = figure.items.filter((item) => item.role === 'curve');
   assert.ok(curves.length >= 1);
@@ -75,26 +76,26 @@ test('a plot annotated zoomed keeps its limits: saved, drawn at them, its curves
     assert.ok(p.x >= pane.x - 1e-6 && p.x <= pane.x + pane.w + 1e-6 && p.y >= pane.y - 1e-6 && p.y <= pane.y + pane.h + 1e-6, JSON.stringify(p));
   }
   // Zoomed in x alone, a curve runs from edge to edge of the pane.
-  const wide = responseFigure(normalizePlot({ ...plot, view: { x: [0.0101, 0.0497] } }));
+  const wide = plotFigure(normalizePlot({ ...plot, view: { x: [0.0101, 0.0497] } }));
   const xs = wide.items.filter((item) => item.role === 'curve').flatMap((curve) => curve.points.map((p) => p.x));
   assert.ok(Math.abs(Math.min(...xs) - wide.pane.x) < 1e-6 && Math.abs(Math.max(...xs) - (wide.pane.x + wide.pane.w)) < 1e-6, `${Math.min(...xs)} ${Math.max(...xs)} ${JSON.stringify(wide.pane)}`);
   // The axes read in the zoom: no decade ticks, numbers inside it.
   const numbers = figure.items.filter((item) => item.role === 'number').map((item) => item.text);
   assert.ok(numbers.includes('0.02') && numbers.includes('-40'), JSON.stringify(numbers));
   assert.ok(!numbers.includes('10^{-3}'));
-  assert.deepEqual(figure.ranges.db, [-45, -25]);
+  assert.deepEqual(figure.ranges.y, [-45, -25]);
   // A step plot and a swing plot the same way.
-  const step = stepFigure({ kind: 'step', unit: 'n', range: { low: 0, high: 100 }, traces: [{ color: '#000', points: Array.from({ length: 101 }, (_, t) => ({ t, y: t / 10 })) }], view: { x: [20, 40], y: [1, 5] } });
+  const step = plotFigure({ kind: 'step', unit: 'n', range: { low: 0, high: 100 }, traces: [{ color: '#000', points: Array.from({ length: 101 }, (_, t) => ({ t, y: t / 10 })) }], view: { x: [20, 40], y: [1, 5] } });
   assert.deepEqual(step.ranges.y, [1, 5]);
   for (const curve of step.items.filter((item) => item.role === 'curve')) for (const p of curve.points) assert.ok(p.x >= step.pane.x - 1e-6 && p.x <= step.pane.x + step.pane.w + 1e-6);
-  const swing = swingFigure({ kind: 'swing', range: { low: -60, high: 3 }, traces: [{ color: '#000', points: [{ a: -60, db: -50 }, { a: 0, db: 5 }] }], view: { x: [-20, 0], y: [-20, 0] } });
-  assert.deepEqual(swing.ranges.db, [-20, 0]);
+  const swing = plotFigure({ kind: 'swing', range: { low: -60, high: 3 }, traces: [{ color: '#000', points: [{ a: -60, db: -50 }, { a: 0, db: 5 }] }], view: { x: [-20, 0], y: [-20, 0] } });
+  assert.deepEqual(swing.ranges.y, [-20, 0]);
 });
 
 test('an annotated response plot lines each decade faintly under its numbered lines', () => {
   const points = Array.from({ length: 50 }, (_, i) => { const f = 10 ** (-3 + (i * 2.5) / 49); return { f, db: -20 * Math.log10(f) }; });
   const plot = normalizePlot({ kind: 'response', axis: 'normalized', range: { low: -3, high: Math.log10(0.5) }, traces: [{ label: 'H', color: '#3b74e0', points }] });
-  const figure = responseFigure(plot, { width: 900, height: 500, fontSize: 20 });
+  const figure = plotFigure(plot, { width: 900, height: 500, fontSize: 20 });
   const minor = figure.items.filter((item) => item.role === 'minor');
   const grid = figure.items.filter((item) => item.role === 'grid' && item.x1 === item.x2);
   assert.ok(minor.length >= 16, `${minor.length}`);
@@ -149,7 +150,7 @@ test('a plot from before keeps its colors; plotcolors switches it, moving the le
 
 test('a plot\'s axis titles are outside its frame, the x under its numbers and the y turned up beside them, each naming its unit', () => {
   const plot = normalizePlot({ kind: 'response', axis: 'normalized', range: { low: -3, high: 0 }, traces: [{ label: 'H', color: '#3b74e0', points: [{ f: 0.001, db: 0 }, { f: 1, db: -40 }] }] });
-  const { items, pane } = responseFigure(plot, { width: 720, height: 440, fontSize: 30 });
+  const { items, pane } = plotFigure(plot, { width: 720, height: 440, fontSize: 30 });
   const x = items.find((item) => item.text === 'Frequency (f/f_{s})');
   const y = items.find((item) => item.text === 'Magnitude |H| (dB)');
   assert.ok(x && x.y > pane.y + pane.h && x.anchor === 'middle', JSON.stringify(x));
@@ -202,12 +203,11 @@ test('a data plot keeps its points to six digits, thinned past its limit, and it
 });
 
 test('a data plot draws its traces on log or linear axes, leaving out what a log axis cannot show', async () => {
-  const { dataFigure } = await import('../src/core/bode-figure.js');
   const plot = normalizePlot({
     kind: 'data', x: { label: 'f (Hz)', scale: 'log' }, y: { label: '|H|', scale: 'linear' },
     traces: [{ label: 'a', color: '#ff0000', points: [[-1, 5], [1, 0], [10, -3], [100, -20], [1000, -40]] }],
   });
-  const figure = dataFigure(plot, { width: 480, height: 260, fontSize: 11 });
+  const figure = plotFigure(plot, { width: 480, height: 260, fontSize: 11 });
   const curves = figure.items.filter((item) => item.role === 'curve');
   assert.equal(curves.length, 1);
   assert.equal(curves[0].points.length, 4);
@@ -225,7 +225,6 @@ test('a data plot draws its traces on log or linear axes, leaving out what a log
 });
 
 test('an analysis plot keeps traces added from files and draws them over its own, in their colors or dashed on', async () => {
-  const { responseFigure, stepFigure, locusFigure } = await import('../src/core/bode-figure.js');
   const response = normalizePlot({
     kind: 'response', axis: 'relative', range: { low: 0, high: 3 },
     traces: [{ label: 'H', color: '#3b74e0', points: [{ f: 1, db: 0 }, { f: 1000, db: -60 }] }],
@@ -233,16 +232,16 @@ test('an analysis plot keeps traces added from files and draws them over its own
   });
   // A response's added x is a positive frequency; a lone point is dropped.
   assert.deepEqual(response.extra, [{ label: 'sim', color: '#df4d59', points: [[1, -1], [100, -41.2346], [1000, -80]] }]);
-  const figure = responseFigure(response, { width: 480, height: 260 });
+  const figure = plotFigure(response, { width: 480, height: 260 });
   const added = figure.items.filter((item) => item.role === 'curve' && item.trace === 1);
   assert.equal(added.length, 1);
   assert.equal(added[0].color, '#df4d59');
   // Its values set the range too.
-  assert.ok(figure.ranges.db[0] <= -80);
+  assert.ok(figure.ranges.y[0] <= -80);
   const step = normalizePlot({ kind: 'step', unit: 't', range: { low: 0, high: 2 }, traces: [{ label: 'y', points: [{ t: 0, y: 0 }, { t: 2, y: 1 }] }], extra: [{ label: 's', points: [[0, 0], [1, 2]] }] });
-  assert.ok(stepFigure(step).items.some((item) => item.role === 'curve' && item.trace === 1));
+  assert.ok(plotFigure(step).items.some((item) => item.role === 'curve' && item.trace === 1));
   const locus = normalizePlot({ kind: 'locus', label: 'H', parameter: 'k', points: [{ re: -1, im: 0, t: 0 }, { re: -1, im: 1, t: 1 }], extra: [{ label: 'm', points: [[-1, 0], [-1, 0.5]] }] });
-  assert.ok(locusFigure(locus).items.some((item) => item.type === 'path' && item.trace === 1));
+  assert.ok(plotFigure(locus).items.some((item) => item.type === 'path' && item.trace === 1));
   // In black each added curve takes the next dash, and the legend counts it.
   const { plotCurveCount } = await import('../src/core/model.js');
   assert.equal(plotCurveCount(response), 2);
@@ -253,20 +252,18 @@ test('an analysis plot keeps traces added from files and draws them over its own
 });
 
 test('an analysis plot fits its added traces too: past its own range, on the drawing and in a window', async () => {
-  const { responseFigure, stepFigure, rangeWithExtra } = await import('../src/core/bode-figure.js');
-  const { plotSpec } = await import('../src/core/plot-spec.js');
   const response = normalizePlot({
     kind: 'response', axis: 'relative', range: { low: 0, high: 2 },
     traces: [{ label: 'H', points: [{ f: 1, db: 0 }, { f: 100, db: -20 }] }],
     extra: [{ label: 'sim', points: [[0.5, 0], [3e4, -60]] }],
   });
-  assert.deepEqual(rangeWithExtra(response, { log: true }), [-1, 5]);
-  const numbers = responseFigure(response).items.filter((item) => item.role === 'number').map((item) => item.text);
+  // On a log axis in whole decades, as the plot's own range is.
+  assert.deepEqual(plotSpec(response).x.range, [0.1, 1e5]);
+  const numbers = plotFigure(response).items.filter((item) => item.role === 'number').map((item) => item.text);
   assert.ok(numbers.includes('10^{5}') && numbers.includes('10^{-1}'), numbers.join());
-  assert.deepEqual(plotSpec(response).x.range, [0.5, 3e4]);
   const step = normalizePlot({ kind: 'step', unit: 't', range: { low: 0, high: 1 }, traces: [{ label: 'y', points: [{ t: 0, y: 0 }, { t: 1, y: 1 }] }], extra: [{ label: 's', points: [[0, 0], [3, 1]] }] });
-  assert.deepEqual(rangeWithExtra(step), [0, 3]);
-  assert.ok(stepFigure(step).items.some((item) => item.role === 'number' && item.text === '3'));
+  assert.deepEqual(plotSpec(step).x.range, [0, 3]);
+  assert.ok(plotFigure(step).items.some((item) => item.role === 'number' && item.text === '3'));
 });
 
 test('a simulated spectrum behind a response has a legend entry after the curves, its sample gray', async () => {
@@ -327,4 +324,22 @@ test('a legend beside its plot is a cell from the plot: in black its line sample
       : legend.map((label) => label.bbox().x + 20);
     assert.deepEqual(starts, [740, 740], black ? 'the samples' : 'the text');
   }
+});
+
+test('a plot on the drawing is its window\'s spec laid out: the same view, a stepped axis numbered at both ends', async () => {
+  const { specView } = await import('../src/core/plot-scale.js');
+  const points = Array.from({ length: 40 }, (_, i) => { const f = 10 ** (-4 + i / 10); return { f, db: 44 - 70 * (i / 39) }; });
+  const plot = normalizePlot({ kind: 'response', axis: 'relative', range: { low: -4, high: -0.1 }, traces: [{ label: 'H', color: '#3b74e0', points }] });
+  const figure = plotFigure(plot, { width: 720, height: 440, fontSize: 38 });
+  // The window's view of the same spec: x the plot's range, y in whole 20 dB.
+  assert.deepEqual(figure.ranges, specView(plotSpec(plot), figure.pane));
+  assert.deepEqual(figure.ranges.y, [-40, 60]);
+  // Thinned as it crowds, a 20 dB axis keeps steps that land on -40 and 60.
+  const numbers = figure.items.filter((item) => item.role === 'number' && item.anchor === 'end').map((item) => Number(item.text.replace('−', '-')));
+  assert.equal(numbers[0], -40);
+  assert.equal(numbers.at(-1), 60);
+  // A swing's runaway (no value) runs off the top of the pane.
+  const swing = plotFigure({ kind: 'swing', range: { low: -60, high: 0 }, traces: [{ color: '#000', points: [{ a: -60, db: -20 }, { a: -10, db: -10 }, { a: 0, db: null }] }] });
+  const curve = swing.items.find((item) => item.role === 'curve');
+  assert.ok(Math.abs(curve.points.at(-1).y - swing.pane.y) < 1e-6, JSON.stringify(curve.points.at(-1)));
 });

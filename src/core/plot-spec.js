@@ -5,11 +5,14 @@
  * plot annotation keeps (bode-figure.js lays that out for the drawing) is
  * turned into a spec here, so a window's plot and the drawing's agree.
  *
- * A spec: `{ key, title, x: { scale, label, range?, step? }, y: { ... },
+ * A spec: `{ key, title, x: { scale, label, title?, range?, step? }, y: { ... },
  * equal?, series: [{ points: [[x, y]], color, role, stairs?, dots?, label }],
  * vlines: [{ x, role, label? }], hlines: [{ y, role, label? }],
  * crosses: [{ x, y }], notes: [{ text, role }] }`. Roles: curve, background,
- * asymptote, start (a run's starting point), band, marker, zero.
+ * asymptote, start (a run's starting point), band, marker, zero. An axis's
+ * `label` is its short name in a window; `title`, when it has one, the
+ * name a figure on the drawing sets under or beside it (bode-figure.js's
+ * plotFigure), the quantity and its unit.
  */
 
 import { locusNotes, swingLimit, swingLimitText } from './bode-figure.js';
@@ -36,8 +39,14 @@ export function responseSpec(plot) {
   return {
     key: `response:${plot.role || ''}:${phase ? 'phase' : plot.units || 'db'}:${plot.axis}`,
     title: phase ? 'Phase responses' : 'Magnitude responses',
-    x: { scale: 'log', label: plot.axis === 'normalized' ? 'f/f_{s}' : 'ω', range: [pow10(plot.range.low), pow10(plot.range.high)] },
-    y: { scale: 'linear', label: phase ? `∠${name} (°)` : plot.units === 'dBFS' ? 'dBFS' : `|${name}| (dB)`, step: phase ? 45 : 20, floor: phase ? null : -400 },
+    x: { scale: 'log', label: plot.axis === 'normalized' ? 'f/f_{s}' : 'ω', title: plot.axis === 'normalized' ? 'Frequency (f/f_{s})' : 'Angular frequency (rad/s)', range: [pow10(plot.range.low), pow10(plot.range.high)] },
+    y: {
+      scale: 'linear',
+      label: phase ? `∠${name} (°)` : plot.units === 'dBFS' ? 'dBFS' : `|${name}| (dB)`,
+      title: phase ? `Phase ∠${name} (°)` : plot.units === 'dBFS' ? 'Magnitude (dBFS)' : `Magnitude |${name}| (dB)`,
+      step: phase ? 45 : 20,
+      floor: phase ? null : -400,
+    },
     series: plot.traces.map((trace, index) => ({ trace, index })).filter(({ trace }) => !trace.hidden).map(({ trace, index }) => ({
       trace: index,
       label: trace.label,
@@ -53,13 +62,13 @@ export function responseSpec(plot) {
   };
 }
 
-/** Step responses (step.js `stepPlot`). */
+/** Step responses (step.js `stepPlot`), or waveforms in time (`kind: 'wave'`). */
 export function stepSpec(plot) {
   return {
     key: `step:${plot.unit}`,
     title: 'Step responses',
-    x: { scale: 'linear', label: plot.unit === 'n' ? 'n (t/T_{s})' : 't', range: [plot.range.low, plot.range.high] },
-    y: { scale: 'linear', label: 'step response', include: [0] },
+    x: { scale: 'linear', label: plot.unit === 'n' ? 'n (t/T_{s})' : 't', title: plot.unit === 'n' ? 'Sample n (t/T_{s})' : 'Time (s)', range: [plot.range.low, plot.range.high] },
+    y: { scale: 'linear', label: 'step response', title: plot.kind === 'wave' ? 'Value (arb. units)' : 'Step response (arb. units)', include: [0] },
     series: plot.traces.map((trace, index) => ({
       trace: index,
       label: trace.label,
@@ -73,13 +82,15 @@ export function stepSpec(plot) {
   };
 }
 
-/** A spec's x range widened to hold a plot's added traces (`extra`). */
+/** A spec's x range widened to hold a plot's added traces (`extra`): on
+ *  a log axis in whole decades, as the plot's own range is. */
 function withExtraRange(spec, plot) {
   if (!plot.extra || !spec.x.range) return spec;
   const log = spec.x.scale === 'log';
   const xs = plot.extra.flatMap((trace) => trace.points.map((p) => p[0])).filter((v) => Number.isFinite(v) && (!log || v > 0));
   if (!xs.length) return spec;
-  return { ...spec, x: { ...spec.x, range: [Math.min(spec.x.range[0], ...xs), Math.max(spec.x.range[1], ...xs)] } };
+  const [low, high] = log ? [pow10(Math.floor(Math.log10(Math.min(...xs)) + 1e-9)), pow10(Math.ceil(Math.log10(Math.max(...xs)) - 1e-9))] : [Math.min(...xs), Math.max(...xs)];
+  return { ...spec, x: { ...spec.x, range: [Math.min(spec.x.range[0], low), Math.max(spec.x.range[1], high)] } };
 }
 
 /** A data plot (columns read from a file, core/data-plot.js), each axis
@@ -102,16 +113,17 @@ export function swingSpec(plot) {
   return {
     key: 'swing',
     title: 'Peak against input amplitude',
-    x: { scale: 'linear', label: 'input (dBFS)', range: [plot.range.low, plot.range.high], step: 10 },
-    y: { scale: 'linear', label: 'peak (dBFS)', step: 10, include: [-10, 10], ceiling: 40, floor: -200 },
+    x: { scale: 'linear', label: 'input (dBFS)', title: 'Input amplitude (dBFS)', range: [plot.range.low, plot.range.high], step: 10 },
+    y: { scale: 'linear', label: 'peak (dBFS)', title: 'Peak swing (dBFS)', step: 10, include: [-10, 10], ceiling: 40, floor: -200 },
+    // A run that blew up (no value) runs off the top.
     series: plot.traces.map((trace, index) => ({
       trace: index,
       label: trace.label,
       color: trace.color,
       role: 'curve',
-      points: trace.points.map((p) => [p.a, Number.isFinite(p.db) ? p.db : null]),
+      points: trace.points.map((p) => [p.a, Number.isFinite(p.db) ? p.db : Infinity]),
     })),
-    vlines: limit ? [{ x: limit.a, role: 'marker', label: swingLimitText(limit) }] : [],
+    vlines: [{ x: 0, role: 'zero' }, ...(limit ? [{ x: limit.a, role: 'marker', label: swingLimitText(limit) }] : [])],
     hlines: [{ y: 0, role: 'zero' }],
   };
 }
@@ -127,8 +139,8 @@ export function locusSpec(plot) {
     key: `locus:${plot.variable}`,
     title: 'Root locus',
     equal: true,
-    x: { scale: 'linear', label: z ? 'Re z' : 'Re s', include: reach },
-    y: { scale: 'linear', label: z ? 'Im z' : 'Im s', include: z ? [-1.1, 1.1] : [], symmetric: true },
+    x: { scale: 'linear', label: z ? 'Re z' : 'Re s', title: z ? 'Real part (Re z)' : 'Real part (Re s)', include: reach },
+    y: { scale: 'linear', label: z ? 'Im z' : 'Im s', title: z ? 'Imaginary part (Im z)' : 'Imaginary part (Im s)', include: z ? [-1.1, 1.1] : [], symmetric: true },
     series: [
       ...(z ? [{ role: 'band', points: Array.from({ length: 97 }, (_, i) => [Math.cos((i * Math.PI) / 48), Math.sin((i * Math.PI) / 48)]), parametric: true }] : []),
       { trace: 0, label: plot.label, color: plot.color, role: 'curve', dots: shown.map((p) => p.t), points: shown.map((p) => [p.re, p.im]) },

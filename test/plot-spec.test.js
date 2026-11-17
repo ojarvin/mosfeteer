@@ -20,8 +20,8 @@ test('steps, swings, loci, Bode sketches, and waveforms all become specs', () =>
   const step = stepSpec({ unit: 'n', range: { low: 0, high: 10 }, traces: [{ label: 'a', color: '#111', stairs: true, points: [{ t: 0, y: 0 }, { t: 1, y: 1 }] }] });
   assert.equal(step.series[0].stairs, true);
   const swing = swingSpec({ range: { low: -60, high: 3 }, traces: [{ label: 'x', color: '#111', points: [{ a: -60, db: -50 }, { a: -10, db: -1 }, { a: 0, db: 2 }] }] });
-  assert.equal(swing.vlines[0].role, 'marker');
-  assert.match(swing.vlines[0].label, /full scale/);
+  assert.deepEqual(swing.vlines.map((line) => line.role), ['zero', 'marker'], 'no input, and where to stop');
+  assert.match(swing.vlines[1].label, /full scale/);
   const locus = locusSpec({ variable: 'z', parameter: 'k', label: 'H', color: '#111', from: 0, to: 2, points: [{ re: 0.5, im: 0.1, t: 0 }, { re: 9, im: 0, t: 1 }], current: [{ re: 0.4, im: 0 }], crossings: [{ k: 1.5, becomes: 'unstable' }] });
   assert.equal(locus.equal, true);
   assert.equal(locus.series.find((s) => s.role === 'curve').points.length, 1, 'a pole far outside the unit circle is left out');

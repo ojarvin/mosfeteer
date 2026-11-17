@@ -22086,13 +22086,12 @@ __exports.SWITCH_TYPES = SWITCH_TYPES;
 };
 
 __modules["src/core/bode-figure.js"] = function (__require, __exports) {
-__exports.rangeWithExtra = rangeWithExtra;
+__exports.axisTitles = axisTitles;
+__exports.framePane = framePane;
+__exports.frameAxes = frameAxes;
+__exports.clipToPane = clipToPane;
 __exports.bodeFigure = bodeFigure;
 __exports.cornerNames = cornerNames;
-__exports.responseFigure = responseFigure;
-__exports.stepFigure = stepFigure;
-__exports.dataFigure = dataFigure;
-__exports.swingFigure = swingFigure;
 __exports.swingLimitText = swingLimitText;
 __exports.plainTex = plainTex;
 __exports.swingOverload = swingOverload;
@@ -22100,8 +22099,7 @@ __exports.swingRunaway = swingRunaway;
 __exports.swingFullScale = swingFullScale;
 __exports.swingLimit = swingLimit;
 __exports.locusNotes = locusNotes;
-__exports.locusFigure = locusFigure;
-let axisTicks, fitRange, logMinorGrid, toU; __bind(() => { ({ axisTicks, fitRange, logMinorGrid, toU } = __require("src/core/plot-scale.js")); });
+let logMinorGrid; __bind(() => { ({ logMinorGrid } = __require("src/core/plot-scale.js")); });
 let cursorTitleRow; __bind(() => { ({ cursorTitleRow } = __require("src/core/plot-cursors.js")); });
 /**
  * The layout of a Bode sketch as plain drawing items in a box: lines, paths,
@@ -22114,6 +22112,10 @@ let cursorTitleRow; __bind(() => { ({ cursorTitleRow } = __require("src/core/plo
  * role }`, `{ type: 'text', x, y, text, anchor, role }`, `{ type: 'dot', x, y,
  * role }`. Roles: axis, zero (the 0 dB line), tick, grid, curve, asymptote,
  * corner, label, number. `zero` also marks the phase's multiples of 180°.
+ *
+ * Its frame -- the pane, its axes, the axis titles, cutting to the pane --
+ * is every plot's on the drawing (plot-figure.js lays out the rest from
+ * their specs); what a swing or a root locus marks is here too.
  */
 
 
@@ -22205,12 +22207,12 @@ function clipSegment(a, b, p) {
   return [{ x: a.x + t0 * dx, y: a.y + t0 * dy }, { x: a.x + t1 * dx, y: a.y + t1 * dy }];
 }
 
-/** A zoomed plot's curves cut to its pane: each path in its pieces inside. */
+/** Items cut to a pane: each path in its pieces inside, a dot outside left out. */
 function clipToPane(items, pane) {
   const near = (a, b) => Math.abs(a.x - b.x) < 1e-9 && Math.abs(a.y - b.y) < 1e-9;
   return items.flatMap((item) => {
     if (item.type === 'dot') return item.x < pane.x || item.x > pane.x + pane.w || item.y < pane.y || item.y > pane.y + pane.h ? [] : [item];
-    if (item.type !== 'path' || !['curve', 'spectrum'].includes(item.role)) return [item];
+    if (item.type !== 'path') return [item];
     const pieces = [];
     let current = null;
     for (let i = 1; i < item.points.length; i++) {
@@ -22222,37 +22224,6 @@ function clipToPane(items, pane) {
     }
     return pieces.map((points) => ({ ...item, points }));
   });
-}
-
-/** A plot's traces added from files (`plot.extra`, [x, y] in its own
- *  units): each a curve placed by `x` and `y`, cut to the pane, numbered
- *  after the plot's own `base` curves. */
-function extraPaths(plot, x, y, pane, base) {
-  const items = [];
-  (plot.extra || []).forEach((trace, k) => {
-    const points = trace.points.map(([px, py]) => ({ x: x(px), y: y(py) })).filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
-    if (points.length > 1) items.push(...clipToPane([{ type: 'path', points, role: 'curve', color: trace.color, trace: base + k }], pane));
-  });
-  return items;
-}
-
-/** The x range [low, high] that holds a plot's own range and its added
- *  traces: on a log axis (`log`) in decades, whole ones, as the plot's is. */
-function rangeWithExtra(plot, { log = false } = {}) {
-  const xs = (plot.extra || []).flatMap((trace) => trace.points.map((p) => p[0])).filter((v) => Number.isFinite(v) && (!log || v > 0));
-  const low = plot.range.low;
-  const high = plot.range.high;
-  if (!xs.length) return [low, high];
-  if (log) return [Math.min(low, Math.floor(Math.log10(Math.min(...xs)) + 1e-9)), Math.max(high, Math.ceil(Math.log10(Math.max(...xs)) - 1e-9))];
-  return [Math.min(low, Math.min(...xs)), Math.max(high, Math.max(...xs))];
-}
-
-/** The y values of a plot's added traces, for the range it fits. */
-const extraValues = (plot) => (plot.extra || []).flatMap((trace) => trace.points.map((p) => p[1]));
-
-/** The ticks of a zoomed axis (plot-scale.js), about one per `room` px. */
-function zoomTicks(scale, low, high, length, room) {
-  return axisTicks(scale, low, high, { target: Math.max(2, Math.round(length / room)) });
 }
 
 /**
@@ -22406,271 +22377,6 @@ function cornerNames(poles, zeros) {
   return [...named(poles, 'p'), ...named(zeros, 'z')];
 }
 
-/**
- * Lay out a plot of several magnitude responses (a `kind: 'response'` plot,
- * signal-flow analysis): dB against log frequency, a curve per trace in the
- * trace's color (`item.color`), numbered axes, and the frequency unit --
- * f/f_{s} for sampled systems, relative ω otherwise. Curve items carry
- * `trace`, their index. The traces' names go beside the figure, not in it.
- */
-function responseFigure(plot, { width = 480, height = 260, fontSize = 11, right } = {}) {
-  const items = [];
-  const em = fontSize;
-  // A zoomed plot keeps the limits it was annotated at (`view`).
-  const view = plot.view || {};
-  const [low, high] = view.x ? view.x.map(Math.log10) : rangeWithExtra(plot, { log: true });
-  const pane = framePane(width, height, em, plot, right);
-  const x = (f) => pane.x + ((Math.log10(f) - low) / (high - low)) * pane.w;
-  // The axis fits every curve, in whole 20 dB steps; its ticks spread out on
-  // a wide range (a high-order noise shaper reaches far down).
-  // A phase plot: degrees in steps of 45 (90, 180 on a wide range).
-  const phase = plot.quantity === 'phase';
-  // A background trace (a simulated spectrum) does not set the axis.
-  const values = [...plot.traces.filter((trace) => !trace.background && !trace.hidden).flatMap((trace) => trace.points.map((p) => p.db)), ...extraValues(plot)].filter((db) => db > -1000 && Number.isFinite(db));
-  let [dbLow, dbHigh] = view.y || niceRange(values, phase ? 45 : 20, 0);
-  const span = dbHigh - dbLow;
-  const step = phase ? (span > 720 ? 180 : span > 360 ? 90 : 45) : span > 400 ? 100 : span > 200 ? 50 : span > 100 ? 40 : 20;
-  const y = (db) => pane.y + ((dbHigh - clamp(db, dbLow, dbHigh)) / (dbHigh - dbLow)) * pane.h;
-  frameAxes(items, pane);
-  if (dbLow < 0 && dbHigh > 0) items.push({ type: 'line', x1: pane.x, y1: y(0), x2: pane.x + pane.w, y2: y(0), role: 'zero' });
-  const xTicks = view.x
-    ? zoomTicks('log', low, high, pane.w, 6 * em).map((tick) => ({ at: pane.x + ((tick.u - low) / (high - low)) * pane.w, text: tick.text }))
-    : Array.from({ length: Math.max(0, Math.floor(high) - Math.ceil(low) + 1) }, (_, i) => Math.ceil(low) + i)
-      .map((decade) => ({ at: x(10 ** decade), text: decade === 0 ? '1' : decade === 1 ? '10' : `10^{${decade}}` }));
-  // Faint lines through each decade, under the numbered ones.
-  const xAt = (u) => pane.x + ((u - low) / (high - low)) * pane.w;
-  const ticked = xTicks.map(({ at }) => low + ((at - pane.x) / pane.w) * (high - low));
-  for (const u of logMinorGrid(low, high, { ticks: ticked, length: pane.w, minDecade: 4 * em })) {
-    items.push({ type: 'line', x1: xAt(u), y1: pane.y, x2: xAt(u), y2: pane.y + pane.h, role: 'minor' });
-  }
-  for (const { at, text } of xTicks) {
-    items.push({ type: 'line', x1: at, y1: pane.y, x2: at, y2: pane.y + pane.h, role: 'grid' });
-    items.push({ type: 'line', x1: at, y1: pane.y + pane.h, x2: at, y2: pane.y + pane.h - 0.36 * em, role: 'tick' });
-    items.push({ type: 'text', x: at, y: pane.y + pane.h + 1.3 * em, text, anchor: 'middle', role: 'number' });
-  }
-  const yTicks = view.y
-    ? zoomTicks('linear', dbLow, dbHigh, pane.h, 2.5 * em).map((tick) => ({ v: tick.u, text: tick.text }))
-    : Array.from({ length: Math.max(0, Math.floor((dbHigh - Math.ceil(dbLow / step) * step) / step) + 1) }, (_, i) => Math.ceil(dbLow / step) * step + i * step).map((db) => ({ v: db, text: `${db}` }));
-  for (const { v, text } of yTicks) {
-    items.push({ type: 'line', x1: pane.x, y1: y(v), x2: pane.x + pane.w, y2: y(v), role: 'grid' });
-    items.push({ type: 'text', x: pane.x - 0.45 * em, y: y(v) + 0.36 * em, text, anchor: 'end', role: 'number' });
-  }
-  plot.traces.forEach((trace, index) => {
-    if (trace.hidden) return;
-    // Only what lies in the frequency range (a spectrum's lowest bins may not).
-    // Zoomed, a point either side of the range too: the curve runs to the
-    // pane's edge, where clipToPane cuts it.
-    const inRange = (p) => p && Math.log10(p.f) >= low - 1e-9 && Math.log10(p.f) <= high + 1e-9;
-    const samples = trace.points.filter((p, i, all) => inRange(p) || (view.x && (inRange(all[i - 1]) || inRange(all[i + 1])))).map((p) => ({ f: p.f, value: p.db }));
-    for (const path of clippedPaths(samples, (s) => x(s.f), y, dbLow, dbHigh, trace.background ? 'spectrum' : 'curve')) items.push({ ...path, color: trace.color, trace: index });
-  });
-  items.push(...extraPaths(plot, (f) => (f > 0 ? x(f) : NaN), (db) => pane.y + ((dbHigh - db) / (dbHigh - dbLow)) * pane.h, pane, plot.traces.length));
-  // Marked frequencies (a loop's crossover, a Bode graph's corners), labeled
-  // at the top; a label close to the one before goes a line lower.
-  let previous = null;
-  let row = 0;
-  for (const marker of [...(plot.markers || [])].sort((a, b) => a.f - b.f)) {
-    if (!(marker.f > 0) || Math.log10(marker.f) <= low || Math.log10(marker.f) >= high) continue;
-    items.push({ type: 'line', x1: x(marker.f), y1: pane.y, x2: x(marker.f), y2: pane.y + pane.h, role: 'marker' });
-    if (marker.label) {
-      const right = x(marker.f) > pane.x + pane.w / 2;
-      row = previous !== null && x(marker.f) - previous < 3 * em ? row + 1 : 0;
-      previous = x(marker.f);
-      items.push({ type: 'text', x: x(marker.f) + (right ? -0.35 : 0.35) * em, y: pane.y + (1.2 + 1.2 * row) * em, text: marker.label, anchor: right ? 'end' : 'start', role: 'marker' });
-    }
-  }
-  // The signal band's edges.
-  for (const f of plot.band || []) {
-    if (Math.log10(f) <= low || Math.log10(f) >= high) continue;
-    items.push({ type: 'line', x1: x(f), y1: pane.y, x2: x(f), y2: pane.y + pane.h, role: 'band' });
-  }
-  const name = plot.role === 'loop' ? 'T' : 'H';
-  axisTitles(items, pane, em, {
-    x: plot.axis === 'normalized' ? 'Frequency (f/f_{s})' : 'Angular frequency (rad/s)',
-    y: phase ? `Phase ∠${name} (°)` : plot.units === 'dBFS' ? 'Magnitude (dBFS)' : `Magnitude |${name}| (dB)`,
-  });
-  const toPx = { x: xAt, y: (db) => pane.y + ((dbHigh - db) / (dbHigh - dbLow)) * pane.h };
-  return { width, height, items: plot.view ? clipToPane(items, pane) : items, pane, ranges: { db: [dbLow, dbHigh] }, toPx };
-}
-
-/**
- * A step-response plot: each trace's output against time, linear axes, a
- * sampled trace as stairs. `plot`: `{ unit: 'n' | 't', range: { low, high },
- * traces: [{ color, stairs, points: [{ t, y }] }] }`.
- */
-function stepFigure(plot, { width = 480, height = 260, fontSize = 11, right } = {}) {
-  const items = [];
-  const em = fontSize;
-  const pane = framePane(width, height, em, plot, right);
-  const view = plot.view || {};
-  const [low, high] = view.x || rangeWithExtra(plot);
-  const x = (t) => pane.x + ((t - low) / (high - low || 1)) * pane.w;
-  const values = [...plot.traces.flatMap((trace) => trace.points.map((p) => p.y)), ...extraValues(plot)].filter(Number.isFinite);
-  const yTop = Math.max(0, ...values);
-  const yBottom = Math.min(0, ...values);
-  const span = yTop - yBottom || 1;
-  const ystep = niceStep(span / 4);
-  // A little room above and below, clear of the axis title.
-  const [yLow, yHigh] = view.y || [Math.floor((yBottom - (yBottom < 0 ? 0.08 * span : 0)) / ystep) * ystep, Math.ceil((yTop + 0.08 * span) / ystep) * ystep || ystep];
-  // Zoomed, a curve runs out of the pane (cut there) rather than along its edge.
-  const y = view.y ? (v) => pane.y + ((yHigh - v) / (yHigh - yLow)) * pane.h : (v) => pane.y + ((yHigh - Math.max(yLow, Math.min(yHigh, v))) / (yHigh - yLow)) * pane.h;
-  frameAxes(items, pane);
-  if (yLow < 0 && yHigh > 0) items.push({ type: 'line', x1: pane.x, y1: y(0), x2: pane.x + pane.w, y2: y(0), role: 'zero' });
-  const xstep = niceStep((high - low) / 5);
-  const xTicks = view.x
-    ? zoomTicks('linear', low, high, pane.w, 6 * em).map((tick) => ({ v: tick.u, text: tick.text }))
-    : Array.from({ length: Math.max(0, Math.floor((high + 1e-9 - Math.ceil(low / xstep) * xstep) / xstep) + 1) }, (_, i) => Math.ceil(low / xstep) * xstep + i * xstep).map((t) => ({ v: t, text: `${Number(t.toPrecision(3))}` }));
-  for (const { v: t, text } of xTicks) {
-    items.push({ type: 'line', x1: x(t), y1: pane.y, x2: x(t), y2: pane.y + pane.h, role: 'grid' });
-    items.push({ type: 'text', x: x(t), y: pane.y + pane.h + 1.3 * em, text, anchor: 'middle', role: 'number' });
-  }
-  const yTicks = view.y
-    ? zoomTicks('linear', yLow, yHigh, pane.h, 2.5 * em).map((tick) => ({ v: tick.u, text: tick.text }))
-    : Array.from({ length: Math.max(0, Math.floor((yHigh + 1e-9 - yLow) / ystep) + 1) }, (_, i) => yLow + i * ystep).map((v) => ({ v, text: `${Number(v.toPrecision(3))}` }));
-  for (const { v, text } of yTicks) {
-    items.push({ type: 'line', x1: pane.x, y1: y(v), x2: pane.x + pane.w, y2: y(v), role: 'grid' });
-    items.push({ type: 'text', x: pane.x - 0.45 * em, y: y(v) + 0.36 * em, text, anchor: 'end', role: 'number' });
-  }
-  plot.traces.forEach((trace, index) => {
-    const points = [];
-    trace.points.forEach((p, i) => {
-      if (!Number.isFinite(p.y)) return;
-      // A sampled response holds each value until the next sample.
-      if (trace.stairs && i > 0) points.push({ x: x(p.t), y: y(trace.points[i - 1].y) });
-      points.push({ x: x(p.t), y: y(p.y) });
-    });
-    if (points.length > 1) items.push({ type: 'path', points, role: 'curve', color: trace.color, trace: index });
-  });
-  items.push(...extraPaths(plot, x, (v) => pane.y + ((yHigh - v) / (yHigh - yLow)) * pane.h, pane, plot.traces.length));
-  axisTitles(items, pane, em, {
-    x: plot.unit === 'n' ? 'Sample n (t/T_{s})' : 'Time (s)',
-    y: plot.kind === 'wave' ? 'Value (arb. units)' : 'Step response (arb. units)',
-  });
-  return { width, height, items: plot.view ? clipToPane(items, pane) : items, pane, ranges: { y: [yLow, yHigh] }, toPx: { x, y: (v) => pane.y + ((yHigh - v) / (yHigh - yLow)) * pane.h } };
-}
-
-/**
- * A data plot (columns read from a file): each trace's points joined in
- * file order, each axis linear or log as the plot says, fitted to the data
- * unless the plot is zoomed (`view`). A log axis leaves out the points at or
- * under zero. `plot`: `{ x: { label, scale }, y: { label, scale }, traces:
- * [{ color, points: [[x, y]] }], view? }`.
- */
-function dataFigure(plot, { width = 480, height = 260, fontSize = 11, right } = {}) {
-  const items = [];
-  const em = fontSize;
-  const pane = framePane(width, height, em, plot, right);
-  const xs = plot.x?.scale === 'log' ? 'log' : 'linear';
-  const ys = plot.y?.scale === 'log' ? 'log' : 'linear';
-  const curves = plot.traces.map((trace) => trace.points.map(([px, py]) => [toU(xs, px), toU(ys, py)])
-    .map(([u, v]) => (Number.isFinite(u) && Number.isFinite(v) ? [u, v] : null)));
-  const all = curves.flat().filter(Boolean);
-  const range = (view, scale, index) => (view ? view.map((v) => toU(scale, v)) : fitRange(all.map((p) => p[index]), { pad: index ? 0.05 : 0 }));
-  const [x0, x1] = range(plot.view?.x, xs, 0);
-  const [y0, y1] = range(plot.view?.y, ys, 1);
-  const x = (u) => pane.x + ((u - x0) / (x1 - x0 || 1)) * pane.w;
-  const y = (v) => pane.y + ((y1 - v) / (y1 - y0 || 1)) * pane.h;
-  frameAxes(items, pane);
-  if (ys === 'linear' && y0 < 0 && y1 > 0) items.push({ type: 'line', x1: pane.x, y1: y(0), x2: pane.x + pane.w, y2: y(0), role: 'zero' });
-  const xTicks = zoomTicks(xs, x0, x1, pane.w, 6 * em);
-  const yTicks = zoomTicks(ys, y0, y1, pane.h, 2.5 * em);
-  // Faint lines through each decade of a log axis, under the numbered ones.
-  if (xs === 'log') {
-    for (const u of logMinorGrid(x0, x1, { ticks: xTicks.map((t) => t.u), length: pane.w, minDecade: 4 * em })) items.push({ type: 'line', x1: x(u), y1: pane.y, x2: x(u), y2: pane.y + pane.h, role: 'minor' });
-  }
-  if (ys === 'log') {
-    for (const u of logMinorGrid(y0, y1, { ticks: yTicks.map((t) => t.u), length: pane.h, minDecade: 3 * em })) items.push({ type: 'line', x1: pane.x, y1: y(u), x2: pane.x + pane.w, y2: y(u), role: 'minor' });
-  }
-  for (const tick of xTicks) {
-    items.push({ type: 'line', x1: x(tick.u), y1: pane.y, x2: x(tick.u), y2: pane.y + pane.h, role: 'grid' });
-    items.push({ type: 'text', x: x(tick.u), y: pane.y + pane.h + 1.3 * em, text: tick.text, anchor: 'middle', role: 'number' });
-  }
-  for (const tick of yTicks) {
-    items.push({ type: 'line', x1: pane.x, y1: y(tick.u), x2: pane.x + pane.w, y2: y(tick.u), role: 'grid' });
-    items.push({ type: 'text', x: pane.x - 0.45 * em, y: y(tick.u) + 0.36 * em, text: tick.text, anchor: 'end', role: 'number' });
-  }
-  curves.forEach((points, index) => {
-    // A point a log axis cannot show breaks the line there.
-    let current = [];
-    const flush = () => {
-      if (current.length > 1) items.push({ type: 'path', points: current, role: 'curve', color: plot.traces[index].color, trace: index });
-      current = [];
-    };
-    for (const p of points) {
-      if (!p) flush();
-      else current.push({ x: x(p[0]), y: y(p[1]) });
-    }
-    flush();
-  });
-  axisTitles(items, pane, em, { x: plot.x?.label || '', y: plot.y?.label || '' });
-  return { width, height, items: clipToPane(items, pane), pane, ranges: { x: [x0, x1], y: [y0, y1] }, toPx: { x, y } };
-}
-
-/** 1, 2, or 5 times a power of ten, near `rough`. */
-function niceStep(rough) {
-  if (!(rough > 0)) return 1;
-  const power = 10 ** Math.floor(Math.log10(rough));
-  const unit = rough / power;
-  return (unit < 1.5 ? 1 : unit < 3.5 ? 2 : unit < 7.5 ? 5 : 10) * power;
-}
-
-/**
- * A swing plot (signal-flow simulation): each net's peak against the input
- * amplitude, both in dB of full scale, a 0 dB line at full scale. `plot`:
- * `{ range: { low, high } (input dBFS), traces: [{ color, points: [{ a, db }] }] }`.
- */
-function swingFigure(plot, { width = 480, height = 260, fontSize = 11, right } = {}) {
-  const items = [];
-  const em = fontSize;
-  const view = plot.view || {};
-  const [low, high] = view.x || rangeWithExtra(plot);
-  const pane = framePane(width, height, em, plot, right);
-  const x = (a) => pane.x + ((a - low) / (high - low)) * pane.w;
-  // The peaks fit in whole 10 dB steps; a loop blowing up runs off the top.
-  const values = [...plot.traces.flatMap((trace) => trace.points.map((p) => p.db)), ...extraValues(plot)].filter((db) => Number.isFinite(db) && db > -200);
-  let [dbLow, dbHigh] = niceRange(values.length ? values : [-40, 0], 10, 0);
-  dbHigh = Math.min(Math.max(dbHigh, 10), 40);
-  dbLow = Math.min(dbLow, -10);
-  if (view.y) [dbLow, dbHigh] = view.y;
-  const step = dbHigh - dbLow > 80 ? 20 : 10;
-  const y = (db) => pane.y + ((dbHigh - clamp(db, dbLow, dbHigh)) / (dbHigh - dbLow)) * pane.h;
-  frameAxes(items, pane);
-  if (dbLow < 0 && dbHigh > 0) items.push({ type: 'line', x1: pane.x, y1: y(0), x2: pane.x + pane.w, y2: y(0), role: 'zero' });
-  if (low < 0 && high > 0) items.push({ type: 'line', x1: x(0), y1: pane.y, x2: x(0), y2: pane.y + pane.h, role: 'zero' });
-  const xStep = high - low > 60 ? 20 : 10;
-  const xTicks = view.x
-    ? zoomTicks('linear', low, high, pane.w, 6 * em).map((tick) => ({ v: tick.u, text: tick.text }))
-    : Array.from({ length: Math.max(0, Math.floor((high - Math.ceil(low / xStep) * xStep) / xStep) + 1) }, (_, i) => Math.ceil(low / xStep) * xStep + i * xStep).map((a) => ({ v: a, text: `${a}` }));
-  for (const { v: a, text } of xTicks) {
-    items.push({ type: 'line', x1: x(a), y1: pane.y, x2: x(a), y2: pane.y + pane.h, role: 'grid' });
-    items.push({ type: 'line', x1: x(a), y1: pane.y + pane.h, x2: x(a), y2: pane.y + pane.h - 0.36 * em, role: 'tick' });
-    items.push({ type: 'text', x: x(a), y: pane.y + pane.h + 1.3 * em, text, anchor: 'middle', role: 'number' });
-  }
-  const yTicks = view.y
-    ? zoomTicks('linear', dbLow, dbHigh, pane.h, 2.5 * em).map((tick) => ({ v: tick.u, text: tick.text }))
-    : Array.from({ length: Math.max(0, Math.floor((dbHigh - Math.ceil(dbLow / step) * step) / step) + 1) }, (_, i) => Math.ceil(dbLow / step) * step + i * step).map((db) => ({ v: db, text: `${db}` }));
-  for (const { v: db, text } of yTicks) {
-    items.push({ type: 'line', x1: pane.x, y1: y(db), x2: pane.x + pane.w, y2: y(db), role: 'grid' });
-    items.push({ type: 'text', x: pane.x - 0.45 * em, y: y(db) + 0.36 * em, text, anchor: 'end', role: 'number' });
-  }
-  // The amplitude not to operate at: a net reaching full scale, or the
-  // swings running away, whichever comes first.
-  const limit = swingLimit(plot.traces);
-  if (limit && limit.a > low && limit.a < high) {
-    items.push({ type: 'line', x1: x(limit.a), y1: pane.y, x2: x(limit.a), y2: pane.y + pane.h, role: 'marker' });
-    // At the top, clear of the axis titles: left of the line in the right half, else right of it.
-    const right = x(limit.a) > pane.x + pane.w / 2;
-    items.push({ type: 'text', x: x(limit.a) + (right ? -0.35 : 0.35) * em, y: pane.y + 1.2 * em, text: swingLimitText(limit), anchor: right ? 'end' : 'start', role: 'marker' });
-  }
-  plot.traces.forEach((trace, index) => {
-    const samples = trace.points.map((p) => ({ f: p.a, value: Number.isFinite(p.db) ? p.db : dbHigh + 100 }));
-    for (const path of clippedPaths(samples, (s) => x(s.f), y, dbLow, dbHigh, 'curve')) items.push({ ...path, color: trace.color, trace: index });
-  });
-  items.push(...extraPaths(plot, x, (db) => pane.y + ((dbHigh - db) / (dbHigh - dbLow)) * pane.h, pane, plot.traces.length));
-  axisTitles(items, pane, em, { x: 'Input amplitude (dBFS)', y: 'Peak swing (dBFS)' });
-  return { width, height, items: plot.view ? clipToPane(items, pane) : items, pane, ranges: { db: [dbLow, dbHigh] }, toPx: { x, y: (db) => pane.y + ((dbHigh - db) / (dbHigh - dbLow)) * pane.h } };
-}
-
 /** A swing limit (swingLimit) as its marker names it. */
 function swingLimitText(limit) {
   return limit.kind === 'full-scale'
@@ -22767,12 +22473,6 @@ function swingLimit(traces) {
   return runaway === null ? null : { a: runaway, kind: 'runaway', label: '' };
 }
 
-/**
- * A root-locus plot: the complex plane, equal scales, the unit circle (z)
- * or the j omega axis (s) as the stability boundary, the swept poles as
- * dots from light (the sweep's start) to full color (its end), the
- * current value's poles as crosses. `plot`: locus.js's `locusPlot`.
- */
 /** A root locus's notes: the range it was swept over, then where it is
  *  stable (between its crossings), or no second one without crossings. */
 function locusNotes(plot) {
@@ -22786,52 +22486,6 @@ function locusNotes(plot) {
     ? `stable for ${plot.parameter} ${number(Math.min(stableFrom.k, unstableAt.k))} … ${number(Math.max(stableFrom.k, unstableAt.k))}`
     : stableFrom ? `stable from ${plot.parameter} = ${number(stableFrom.k)}` : `unstable from ${plot.parameter} = ${number(unstableAt.k)}`);
   return notes;
-}
-
-function locusFigure(plot, { width = 480, height = 260, fontSize = 11, right } = {}) {
-  const items = [];
-  const em = fontSize;
-  const pane = framePane(width, height, em, plot, right);
-  const z = plot.variable === 'z';
-  // In z the view stays near the unit circle: a pole far outside is
-  // unstable either way, and following it would shrink the circle away.
-  const near = (p) => !z || Math.hypot(p.re, p.im) <= 2.5;
-  const all = [...plot.points, ...plot.current, ...(plot.extra || []).flatMap((trace) => trace.points.map(([re, im]) => ({ re, im })))].filter(near);
-  let reLow = Math.min(...all.map((p) => p.re), z ? -1.1 : 0);
-  let reHigh = Math.max(...all.map((p) => p.re), z ? 1.1 : 0);
-  let imHigh = Math.max(...all.map((p) => Math.abs(p.im)), z ? 1.1 : 0);
-  if (!Number.isFinite(reLow) || !Number.isFinite(reHigh)) { reLow = -1; reHigh = 1; }
-  // Equal scales: the axis that needs more room per pixel sets both.
-  const spanRe = Math.max(reHigh - reLow, 1e-9) * 1.1;
-  const spanIm = Math.max(2 * imHigh, 1e-9) * 1.1;
-  const scale = Math.max(spanRe / pane.w, spanIm / pane.h);
-  const cx = (reLow + reHigh) / 2;
-  const x = (re) => pane.x + pane.w / 2 + (re - cx) / scale;
-  const y = (im) => pane.y + pane.h / 2 - im / scale;
-  frameAxes(items, pane);
-  // The real and imaginary axes through the origin, when in view.
-  if (y(0) > pane.y && y(0) < pane.y + pane.h) items.push({ type: 'line', x1: pane.x, y1: y(0), x2: pane.x + pane.w, y2: y(0), role: 'grid' });
-  if (x(0) > pane.x && x(0) < pane.x + pane.w) items.push({ type: 'line', x1: x(0), y1: pane.y, x2: x(0), y2: pane.y + pane.h, role: z ? 'grid' : 'band' });
-  if (z) {
-    const circle = Array.from({ length: 97 }, (_, i) => ({ x: x(Math.cos((i * Math.PI) / 48)), y: y(Math.sin((i * Math.PI) / 48)) }));
-    items.push({ type: 'path', points: circle, role: 'band' });
-  }
-  for (const p of plot.points) {
-    if (x(p.re) < pane.x || x(p.re) > pane.x + pane.w || y(p.im) < pane.y || y(p.im) > pane.y + pane.h) continue;
-    items.push({ type: 'dot', x: x(p.re), y: y(p.im), r: 0.17 * em, color: plot.color, opacity: 0.2 + 0.8 * p.t, role: 'curve' });
-  }
-  // Added traces as lines over the swept poles: [Re, Im] points.
-  items.push(...extraPaths(plot, x, y, pane, 1));
-  const arm = 0.4 * em;
-  for (const p of plot.current) {
-    items.push({ type: 'line', x1: x(p.re) - arm, y1: y(p.im) - arm, x2: x(p.re) + arm, y2: y(p.im) + arm, role: 'marker' });
-    items.push({ type: 'line', x1: x(p.re) - arm, y1: y(p.im) + arm, x2: x(p.re) + arm, y2: y(p.im) - arm, role: 'marker' });
-  }
-  const [range, stability] = locusNotes(plot);
-  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: range, anchor: 'start', role: 'label' });
-  if (stability) items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 2.1 * em, text: stability, anchor: 'start', role: 'marker' });
-  axisTitles(items, pane, em, { x: z ? 'Real part (Re z)' : 'Real part (Re s)', y: z ? 'Imaginary part (Im z)' : 'Imaginary part (Im s)' });
-  return { width, height, items, pane, toPx: { x, y } };
 }
 
 };
@@ -40754,12 +40408,180 @@ function plotCsv(plot, { traces = null, separator = ',', decimal = '.' } = {}) {
 
 };
 
+__modules["src/core/plot-figure.js"] = function (__require, __exports) {
+__exports.plotFigure = plotFigure;
+let axisTitles, clipToPane, frameAxes, framePane; __bind(() => { ({ axisTitles, clipToPane, frameAxes, framePane } = __require("src/core/bode-figure.js")); });
+let plotSpec; __bind(() => { ({ plotSpec } = __require("src/core/plot-spec.js")); });
+let axisTicks, logMinorGrid, niceStep, seriesPoints, specView, tickText, toU, toUY; __bind(() => { ({ axisTicks, logMinorGrid, niceStep, seriesPoints, specView, tickText, toU, toUY } = __require("src/core/plot-scale.js")); });
+/**
+ * A plot on the drawing laid out from the spec its window shows
+ * (plot-spec.js `plotSpec`): one layout for every kind -- responses,
+ * steps and waveforms, swing, root locus, data -- as plain drawing items
+ * (bode-figure.js's: lines, paths, dots, texts with `_{}`/`^{}` markup),
+ * set as a journal figure: the axes left and below, numbered, their titles
+ * outside the numbers, the curves cut to the pane. The view is the
+ * window's (plot-scale.js `specView`), its y axis rounded out to its ticks,
+ * or the one the plot was zoomed to (`plot.view`, in its data's units).
+ *
+ * Items carry their roles (render.js strokes them): axis, grid, minor,
+ * tick, number, label, zero, band, marker, corner, curve, spectrum,
+ * asymptote. A curve's path or dot also carries `color` and `trace`, the
+ * index of its series' trace.
+ */
+
+
+
+
+
+/** Whole multiples a stepped axis (dB, degrees) ticks in, as it crowds:
+ *  20 dB then 40, 50, 80, 100; 45° then 90, 180; 10 dB then 20, 40. */
+const STEP_MULTIPLES = [1, 2, 2.5, 4, 5, 10, 20, 50, 100];
+
+/** Whether `value` is 1, 2 or 5 times a power of ten. */
+const round125 = (value) => [1, 2, 5].some((m) => Math.abs(value / 10 ** Math.floor(Math.log10(value) + 1e-9) - m) < 1e-9);
+
+/** An axis's ticks over `range` (u), about `target` of them: a log axis
+ *  as plot-scale.js ticks it, which numbers each decade it can; a linear
+ *  one with a `step` in whole multiples of it that fall on both its ends,
+ *  so its numbers reach them. */
+function figureTicks(scale, [low, high], target, step) {
+  if (!step || scale !== 'linear') return axisTicks(scale, low, high, { target });
+  const onEnds = (s) => [low, high].every((v) => Math.abs(v / s - Math.round(v / s)) < 1e-9);
+  const choices = STEP_MULTIPLES.map((m) => m * step).filter((s, i) => (STEP_MULTIPLES[i] !== 2.5 || round125(s)) && (!Number.isInteger(step) || Number.isInteger(s)) && onEnds(s) && (high - low) / s >= 2);
+  const every = choices.find((s) => (high - low) / s < target + 1) ?? choices.at(-1) ?? niceStep((high - low) / target);
+  const ticks = [];
+  for (let v = Math.ceil(low / every - 1e-9) * every; v <= high + every * 1e-9; v += every) ticks.push({ u: v + 0, text: tickText(v + 0, every), major: true });
+  return ticks;
+}
+
+/** A series' role as the drawing strokes it. */
+const ITEM_ROLE = { background: 'spectrum', band: 'band', asymptote: 'asymptote' };
+
+/**
+ * Lay out `plot` (an analysis plot or a data plot, as a plot annotation
+ * keeps it) in a `width` x `height` box, its text `fontSize` tall; `right`
+ * is the room right of the pane. Returns { width, height, items, pane,
+ * ranges: { x, y } (u coordinates), toPx: { x(u), y(u) } }.
+ */
+function plotFigure(plot, { width = 480, height = 260, fontSize = 11, right } = {}) {
+  const spec = plotSpec(plot);
+  const em = fontSize;
+  const items = [];
+  const pane = framePane(width, height, em, plot, right);
+  const xs = spec.x.scale || 'linear';
+  const ys = spec.y.scale || 'linear';
+  // A zoomed plot keeps the limits it was annotated at; else it shows all
+  // its data, a linear y axis without whole steps of its own (dB, degrees)
+  // rounded out to its ticks.
+  const fitted = specView(spec, pane);
+  const zoom = plot.view || {};
+  const xTarget = Math.max(2, Math.round(pane.w / ((xs === 'log' ? 3 : 6) * em)));
+  const yTarget = Math.max(2, Math.round(pane.h / (3 * em)));
+  const view = { x: zoom.x ? zoom.x.map((v) => toU(xs, v)) : fitted.x, y: zoom.y ? zoom.y.map((v) => toUY(ys, v)) : fitted.y };
+  if (!zoom.y && !spec.equal && !spec.y.step && ys === 'linear') {
+    const ticks = figureTicks(ys, view.y, yTarget, spec.y.step);
+    const step = ticks.length > 1 ? ticks[1].u - ticks[0].u : 0;
+    if (step > 0) view.y = [Math.floor(view.y[0] / step + 1e-9) * step + 0, Math.ceil(view.y[1] / step - 1e-9) * step + 0];
+  }
+  const X = (u) => pane.x + ((u - view.x[0]) / (view.x[1] - view.x[0] || 1)) * pane.w;
+  const Y = (u) => pane.y + ((view.y[1] - u) / (view.y[1] - view.y[0] || 1)) * pane.h;
+  const inX = (u) => u > view.x[0] + 1e-9 && u < view.x[1] - 1e-9;
+  const inY = (u) => u > view.y[0] + 1e-9 && u < view.y[1] - 1e-9;
+  const vertical = (u, role) => items.push({ type: 'line', x1: X(u), y1: pane.y, x2: X(u), y2: pane.y + pane.h, role });
+  const horizontal = (u, role) => items.push({ type: 'line', x1: pane.x, y1: Y(u), x2: pane.x + pane.w, y2: Y(u), role });
+
+  frameAxes(items, pane);
+  // The grid: faint lines through each decade of a log axis, under the
+  // numbered ones; numbers under the x axis and left of the y axis.
+  // Zoomed in, an axis ticks what it shows rather than its whole steps.
+  const xTicks = figureTicks(xs, view.x, xTarget, zoom.x ? null : spec.x.step);
+  const yTicks = figureTicks(ys, view.y, yTarget, zoom.y ? null : spec.y.step);
+  if (xs === 'log') for (const u of logMinorGrid(view.x[0], view.x[1], { ticks: xTicks.map((t) => t.u), length: pane.w, minDecade: 4 * em })) vertical(u, 'minor');
+  if (ys === 'log') for (const u of logMinorGrid(view.y[0], view.y[1], { ticks: yTicks.map((t) => t.u), length: pane.h, minDecade: 3 * em })) horizontal(u, 'minor');
+  for (const tick of xTicks) {
+    vertical(tick.u, tick.major ? 'grid' : 'minor');
+    items.push({ type: 'line', x1: X(tick.u), y1: pane.y + pane.h, x2: X(tick.u), y2: pane.y + pane.h - 0.36 * em, role: 'tick' });
+    if (tick.major || xTicks.length <= 12) items.push({ type: 'text', x: X(tick.u), y: pane.y + pane.h + 1.3 * em, text: tick.text, anchor: 'middle', role: 'number' });
+  }
+  for (const tick of yTicks) {
+    horizontal(tick.u, 'grid');
+    items.push({ type: 'text', x: pane.x - 0.45 * em, y: Y(tick.u) + 0.36 * em, text: tick.text, anchor: 'end', role: 'number' });
+  }
+  for (const line of spec.hlines || []) {
+    const u = toUY(ys, line.y);
+    if (Number.isFinite(u) && inY(u)) horizontal(u, line.role || 'zero');
+  }
+  // Marked lines, named at the top inside the pane: left of the line in the
+  // right half, else right of it; a name close to the one before a line lower.
+  let previous = null;
+  let row = 0;
+  const marks = (spec.vlines || []).map((line) => ({ ...line, u: toU(xs, line.x) })).filter((line) => Number.isFinite(line.u) && inX(line.u)).sort((a, b) => a.u - b.u);
+  for (const line of marks) {
+    vertical(line.u, line.role || 'marker');
+    if (!line.label) continue;
+    const at = X(line.u);
+    const right = at > pane.x + pane.w / 2;
+    row = previous !== null && at - previous < 3 * em ? row + 1 : 0;
+    previous = at;
+    items.push({ type: 'text', x: at + (right ? -0.35 : 0.35) * em, y: pane.y + (1.2 + 1.2 * row) * em, text: line.label, anchor: right ? 'end' : 'start', role: line.role || 'marker' });
+  }
+  // The curves, cut to the pane; a value off the top (Infinity) runs up out
+  // of it, and far values are pinned near it so their slope stays.
+  const pin = (v, low, high) => Math.max(low - 4 * (high - low), Math.min(high + 4 * (high - low), v));
+  const py = (u) => (u === Infinity ? pane.y - 4 * pane.h : pin(Y(u), pane.y, pane.y + pane.h));
+  const curves = [];
+  for (const series of spec.series) {
+    const role = ITEM_ROLE[series.role] || 'curve';
+    const own = series.trace !== undefined ? { color: series.color, trace: series.trace } : {};
+    const points = seriesPoints(spec, series);
+    if (series.dots) {
+      points.forEach(([u, v], i) => {
+        if (!Number.isFinite(v)) return;
+        items.push({ type: 'dot', x: X(u), y: Y(v), r: 0.17 * em, opacity: 0.2 + 0.8 * (series.dots[i] ?? 1), role, ...own });
+      });
+      continue;
+    }
+    let current = [];
+    const flush = () => {
+      if (current.length > 1) curves.push({ type: 'path', points: current, role, ...own });
+      current = [];
+    };
+    let last = null;
+    for (const [u, v] of points) {
+      if (v === null || Number.isNaN(v) || v === -Infinity) { flush(); last = null; continue; }
+      const x = pin(X(u), pane.x, pane.x + pane.w);
+      // A sampled series holds each value until the next sample.
+      if (series.stairs && last !== null) current.push({ x, y: last });
+      current.push({ x, y: py(v) });
+      last = py(v);
+    }
+    flush();
+  }
+  items.push(...clipToPane(curves, pane).filter((item) => item.type !== 'path' || item.points.length > 1));
+  const arm = 0.4 * em;
+  for (const cross of spec.crosses || []) {
+    const cx = X(toU(xs, cross.x));
+    const cy = Y(toUY(ys, cross.y));
+    if (cx < pane.x || cx > pane.x + pane.w || cy < pane.y || cy > pane.y + pane.h) continue;
+    items.push({ type: 'line', x1: cx - arm, y1: cy - arm, x2: cx + arm, y2: cy + arm, role: 'marker' });
+    items.push({ type: 'line', x1: cx - arm, y1: cy + arm, x2: cx + arm, y2: cy - arm, role: 'marker' });
+  }
+  (spec.notes || []).forEach((note, i) => items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + (0.9 + 1.2 * i) * em, text: note.text, anchor: 'start', role: note.role || 'label' }));
+  axisTitles(items, pane, em, { x: spec.x.title ?? spec.x.label ?? '', y: spec.y.title ?? spec.y.label ?? '' });
+  return { width, height, items: items.filter((item) => item.type !== 'dot' || clipToPane([item], pane).length), pane, ranges: { x: view.x, y: view.y }, toPx: { x: X, y: Y } };
+}
+
+};
+
 __modules["src/core/plot-scale.js"] = function (__require, __exports) {
 __exports.niceStep = niceStep;
 __exports.tickText = tickText;
 __exports.axisTicks = axisTicks;
 __exports.logMinorGrid = logMinorGrid;
 __exports.fitRange = fitRange;
+__exports.seriesPoints = seriesPoints;
+__exports.equalView = equalView;
+__exports.specView = specView;
 __exports.zoomAxes = zoomAxes;
 __exports.zoomAbout = zoomAbout;
 __exports.valueAt = valueAt;
@@ -40885,9 +40707,54 @@ function fitRange(values, { step = null, pad = 0.05, include = [] } = {}) {
     const around = step || Math.max(Math.abs(low) * 0.1, 1);
     return [low - around, high + around];
   }
-  if (step) return [Math.floor(low / step - 1e-9) * step, Math.ceil(high / step + 1e-9) * step];
+  // A value on a step keeps it as the bound.
+  if (step) return [Math.floor(low / step + 1e-9) * step + 0, Math.ceil(high / step - 1e-9) * step + 0];
   const margin = (high - low) * pad;
   return [low - margin, high + margin];
+}
+
+/** A value on a spec's y axis in u coordinates: on a log axis a value at
+ *  or under zero is a gap (null), as is null itself. */
+const toUY = (scale, y) => (y === null || scale !== 'log' ? y : y > 0 ? Math.log10(y) : null);
+
+/** A spec series' points in u coordinates, those off the x axis left out. */
+function seriesPoints(spec, series) {
+  const xs = spec.x.scale || 'linear';
+  const ys = spec.y.scale || 'linear';
+  return series.points.map(([x, y]) => [toU(xs, x), toUY(ys, y)]).filter(([u]) => Number.isFinite(u));
+}
+
+/** A view with equal units per pixel on both axes in a `pane` ({ w, h }),
+ *  growing the tighter one. */
+function equalView(view, pane) {
+  const per = Math.max((view.x[1] - view.x[0]) / pane.w, (view.y[1] - view.y[0]) / pane.h);
+  const cx = (view.x[0] + view.x[1]) / 2;
+  const cy = (view.y[0] + view.y[1]) / 2;
+  return { x: [cx - (per * pane.w) / 2, cx + (per * pane.w) / 2], y: [cy - (per * pane.h) / 2, cy + (per * pane.h) / 2] };
+}
+
+/**
+ * The view (u coordinates, { x, y }) that shows all of a spec's data in a
+ * `pane` ({ w, h }): its x range, or the data's; y fitted to the curves in
+ * that range -- not a background (a spectrum) nor a band, nothing at or
+ * under `y.floor` -- in whole `y.step`s, else padded, and held under
+ * `y.ceiling`; at equal scales for `equal`. With `round` (the drawing's),
+ * a y axis without a step is rounded out to its ticks.
+ */
+function specView(spec, pane, { round = false } = {}) {
+  const xs = spec.x.scale || 'linear';
+  const ys = spec.y.scale || 'linear';
+  const x = spec.x.range ? spec.x.range.map((v) => toU(xs, v))
+    : fitRange(spec.series.filter((s) => s.role !== 'band').flatMap((s) => seriesPoints(spec, s).map(([u]) => u)), { pad: spec.equal ? 0.08 : 0, include: (spec.x.include || []).map((v) => toU(xs, v)) });
+  const inX = ([u]) => u >= Math.min(...x) - 1e-9 && u <= Math.max(...x) + 1e-9;
+  let values = spec.series.filter((s) => s.role !== 'background' && s.role !== 'band')
+    .flatMap((s) => seriesPoints(spec, s).filter(inX).map(([, y]) => y))
+    .filter((y) => Number.isFinite(y) && (spec.y.floor === undefined || spec.y.floor === null || y > spec.y.floor));
+  if (spec.y.symmetric) values = values.flatMap((y) => [y, -y]);
+  let y = fitRange(values, { step: spec.y.step, pad: 0.08, include: (spec.y.include || []).map((v) => toUY(ys, v)) });
+  if (Number.isFinite(spec.y.ceiling)) y = [Math.min(y[0], spec.y.ceiling - (spec.y.step || 1)), Math.min(y[1], spec.y.ceiling)];
+  const view = { x: [Math.min(...x), Math.max(...x)], y };
+  return spec.equal ? equalView(view, pane) : view;
 }
 
 /**
@@ -40984,6 +40851,7 @@ function thinSeries(points, u0, u1, columns) {
 
 __exports.toU = toU;
 __exports.fromU = fromU;
+__exports.toUY = toUY;
 };
 
 __modules["src/core/plot-spec.js"] = function (__require, __exports) {
@@ -41004,11 +40872,14 @@ let locusNotes, swingLimit, swingLimitText; __bind(() => { ({ locusNotes, swingL
  * plot annotation keeps (bode-figure.js lays that out for the drawing) is
  * turned into a spec here, so a window's plot and the drawing's agree.
  *
- * A spec: `{ key, title, x: { scale, label, range?, step? }, y: { ... },
+ * A spec: `{ key, title, x: { scale, label, title?, range?, step? }, y: { ... },
  * equal?, series: [{ points: [[x, y]], color, role, stairs?, dots?, label }],
  * vlines: [{ x, role, label? }], hlines: [{ y, role, label? }],
  * crosses: [{ x, y }], notes: [{ text, role }] }`. Roles: curve, background,
- * asymptote, start (a run's starting point), band, marker, zero.
+ * asymptote, start (a run's starting point), band, marker, zero. An axis's
+ * `label` is its short name in a window; `title`, when it has one, the
+ * name a figure on the drawing sets under or beside it (bode-figure.js's
+ * plotFigure), the quantity and its unit.
  */
 
 
@@ -41035,8 +40906,14 @@ function responseSpec(plot) {
   return {
     key: `response:${plot.role || ''}:${phase ? 'phase' : plot.units || 'db'}:${plot.axis}`,
     title: phase ? 'Phase responses' : 'Magnitude responses',
-    x: { scale: 'log', label: plot.axis === 'normalized' ? 'f/f_{s}' : 'ω', range: [pow10(plot.range.low), pow10(plot.range.high)] },
-    y: { scale: 'linear', label: phase ? `∠${name} (°)` : plot.units === 'dBFS' ? 'dBFS' : `|${name}| (dB)`, step: phase ? 45 : 20, floor: phase ? null : -400 },
+    x: { scale: 'log', label: plot.axis === 'normalized' ? 'f/f_{s}' : 'ω', title: plot.axis === 'normalized' ? 'Frequency (f/f_{s})' : 'Angular frequency (rad/s)', range: [pow10(plot.range.low), pow10(plot.range.high)] },
+    y: {
+      scale: 'linear',
+      label: phase ? `∠${name} (°)` : plot.units === 'dBFS' ? 'dBFS' : `|${name}| (dB)`,
+      title: phase ? `Phase ∠${name} (°)` : plot.units === 'dBFS' ? 'Magnitude (dBFS)' : `Magnitude |${name}| (dB)`,
+      step: phase ? 45 : 20,
+      floor: phase ? null : -400,
+    },
     series: plot.traces.map((trace, index) => ({ trace, index })).filter(({ trace }) => !trace.hidden).map(({ trace, index }) => ({
       trace: index,
       label: trace.label,
@@ -41052,13 +40929,13 @@ function responseSpec(plot) {
   };
 }
 
-/** Step responses (step.js `stepPlot`). */
+/** Step responses (step.js `stepPlot`), or waveforms in time (`kind: 'wave'`). */
 function stepSpec(plot) {
   return {
     key: `step:${plot.unit}`,
     title: 'Step responses',
-    x: { scale: 'linear', label: plot.unit === 'n' ? 'n (t/T_{s})' : 't', range: [plot.range.low, plot.range.high] },
-    y: { scale: 'linear', label: 'step response', include: [0] },
+    x: { scale: 'linear', label: plot.unit === 'n' ? 'n (t/T_{s})' : 't', title: plot.unit === 'n' ? 'Sample n (t/T_{s})' : 'Time (s)', range: [plot.range.low, plot.range.high] },
+    y: { scale: 'linear', label: 'step response', title: plot.kind === 'wave' ? 'Value (arb. units)' : 'Step response (arb. units)', include: [0] },
     series: plot.traces.map((trace, index) => ({
       trace: index,
       label: trace.label,
@@ -41072,13 +40949,15 @@ function stepSpec(plot) {
   };
 }
 
-/** A spec's x range widened to hold a plot's added traces (`extra`). */
+/** A spec's x range widened to hold a plot's added traces (`extra`): on
+ *  a log axis in whole decades, as the plot's own range is. */
 function withExtraRange(spec, plot) {
   if (!plot.extra || !spec.x.range) return spec;
   const log = spec.x.scale === 'log';
   const xs = plot.extra.flatMap((trace) => trace.points.map((p) => p[0])).filter((v) => Number.isFinite(v) && (!log || v > 0));
   if (!xs.length) return spec;
-  return { ...spec, x: { ...spec.x, range: [Math.min(spec.x.range[0], ...xs), Math.max(spec.x.range[1], ...xs)] } };
+  const [low, high] = log ? [pow10(Math.floor(Math.log10(Math.min(...xs)) + 1e-9)), pow10(Math.ceil(Math.log10(Math.max(...xs)) - 1e-9))] : [Math.min(...xs), Math.max(...xs)];
+  return { ...spec, x: { ...spec.x, range: [Math.min(spec.x.range[0], low), Math.max(spec.x.range[1], high)] } };
 }
 
 /** A data plot (columns read from a file, core/data-plot.js), each axis
@@ -41101,16 +40980,17 @@ function swingSpec(plot) {
   return {
     key: 'swing',
     title: 'Peak against input amplitude',
-    x: { scale: 'linear', label: 'input (dBFS)', range: [plot.range.low, plot.range.high], step: 10 },
-    y: { scale: 'linear', label: 'peak (dBFS)', step: 10, include: [-10, 10], ceiling: 40, floor: -200 },
+    x: { scale: 'linear', label: 'input (dBFS)', title: 'Input amplitude (dBFS)', range: [plot.range.low, plot.range.high], step: 10 },
+    y: { scale: 'linear', label: 'peak (dBFS)', title: 'Peak swing (dBFS)', step: 10, include: [-10, 10], ceiling: 40, floor: -200 },
+    // A run that blew up (no value) runs off the top.
     series: plot.traces.map((trace, index) => ({
       trace: index,
       label: trace.label,
       color: trace.color,
       role: 'curve',
-      points: trace.points.map((p) => [p.a, Number.isFinite(p.db) ? p.db : null]),
+      points: trace.points.map((p) => [p.a, Number.isFinite(p.db) ? p.db : Infinity]),
     })),
-    vlines: limit ? [{ x: limit.a, role: 'marker', label: swingLimitText(limit) }] : [],
+    vlines: [{ x: 0, role: 'zero' }, ...(limit ? [{ x: limit.a, role: 'marker', label: swingLimitText(limit) }] : [])],
     hlines: [{ y: 0, role: 'zero' }],
   };
 }
@@ -41126,8 +41006,8 @@ function locusSpec(plot) {
     key: `locus:${plot.variable}`,
     title: 'Root locus',
     equal: true,
-    x: { scale: 'linear', label: z ? 'Re z' : 'Re s', include: reach },
-    y: { scale: 'linear', label: z ? 'Im z' : 'Im s', include: z ? [-1.1, 1.1] : [], symmetric: true },
+    x: { scale: 'linear', label: z ? 'Re z' : 'Re s', title: z ? 'Real part (Re z)' : 'Real part (Re s)', include: reach },
+    y: { scale: 'linear', label: z ? 'Im z' : 'Im s', title: z ? 'Imaginary part (Im z)' : 'Imaginary part (Im s)', include: z ? [-1.1, 1.1] : [], symmetric: true },
     series: [
       ...(z ? [{ role: 'band', points: Array.from({ length: 97 }, (_, i) => [Math.cos((i * Math.PI) / 48), Math.sin((i * Math.PI) / 48)]), parametric: true }] : []),
       { trace: 0, label: plot.label, color: plot.color, role: 'curve', dots: shown.map((p) => p.t), points: shown.map((p) => [p.re, p.im]) },
@@ -41395,11 +41275,13 @@ let closedSwitchHighlight, drawnNetPaths, switchState; __bind(() => { ({ closedS
 let BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth; __bind(() => { ({ BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth } = __require("src/core/bus.js")); });
 let TRANSFER_FUNCTION_TYPES; __bind(() => { ({ TRANSFER_FUNCTION_TYPES } = __require("src/core/transfer-function.js")); });
 let normalizePageGuide, pageGuideFrame; __bind(() => { ({ normalizePageGuide, pageGuideFrame } = __require("src/core/page-guide.js")); });
-let bodeFigure, dataFigure, locusFigure, responseFigure, stepFigure, swingFigure; __bind(() => { ({ bodeFigure, dataFigure, locusFigure, responseFigure, stepFigure, swingFigure } = __require("src/core/bode-figure.js")); });
+let bodeFigure; __bind(() => { ({ bodeFigure } = __require("src/core/bode-figure.js")); });
+let plotFigure; __bind(() => { ({ plotFigure } = __require("src/core/plot-figure.js")); });
 let cursorLayout; __bind(() => { ({ cursorLayout } = __require("src/core/plot-cursors.js")); });
 let plotSpec; __bind(() => { ({ plotSpec } = __require("src/core/plot-spec.js")); });
 let mathRuns; __bind(() => { ({ mathRuns } = __require("src/core/math-text.js")); });
 let joinSegments, stackOutline, stackedBoxes, wireEchoes; __bind(() => { ({ joinSegments, stackOutline, stackedBoxes, wireEchoes } = __require("src/core/box-stack.js")); });
+
 
 
 
@@ -42216,16 +42098,8 @@ function plotAnnotationSvg(label, opacity = '') {
   // A response plot (signal-flow analysis) draws each trace in its color;
   // its traces' names are math labels beside it, children of the box.
   // An overloaded run (null) runs off the top.
-  const figure = plot.kind === 'locus'
-    ? locusFigure(plot, { width: w, height: h, fontSize, right })
-    : plot.kind === 'data'
-    ? dataFigure(plot, { width: w, height: h, fontSize, right })
-    : plot.kind === 'step' || plot.kind === 'wave'
-    ? stepFigure(plot, { width: w, height: h, fontSize, right })
-    : plot.kind === 'swing'
-    ? swingFigure({ ...plot, traces: plot.traces.map((t) => ({ ...t, points: t.points.map((p) => ({ a: p.a, db: p.db ?? Infinity })) })) }, { width: w, height: h, fontSize, right })
-    : response
-    ? responseFigure(plot, { width: w, height: h, fontSize, right })
+  const figure = response
+    ? plotFigure(plot, { width: w, height: h, fontSize, right })
     : bodeFigure(plot, { width: w, height: h, phase: plot.phase, numbers: false, corners: plot.corners, quantity: plot.quantity, fontSize });
   const color = escapeSvg(resolveColor(label.style?.color || '#111'));
   const stroke = (role, ink = color) => {
@@ -92940,7 +92814,7 @@ __modules["src/web/plot-view.js"] = function (__require, __exports) {
 __exports.createPlotView = createPlotView;
 __exports.linkPlots = linkPlots;
 let mathRuns; __bind(() => { ({ mathRuns } = __require("src/core/math-text.js")); });
-let axisTicks, fitRange, logMinorGrid, fromU, thinSeries, toU, valueAt, zoomAbout, zoomAxes; __bind(() => { ({ axisTicks, fitRange, logMinorGrid, fromU, thinSeries, toU, valueAt, zoomAbout, zoomAxes } = __require("src/core/plot-scale.js")); });
+let axisTicks, equalView, fromU, logMinorGrid, seriesPoints, specView, thinSeries, toU, toUY, valueAt, zoomAbout, zoomAxes; __bind(() => { ({ axisTicks, equalView, fromU, logMinorGrid, seriesPoints, specView, thinSeries, toU, toUY, valueAt, zoomAbout, zoomAxes } = __require("src/core/plot-scale.js")); });
 let cursorCurves, cursorLayout, cursorNumber, cursorTitleRow, nearestCurve; __bind(() => { ({ cursorCurves, cursorLayout, cursorNumber, cursorTitleRow, nearestCurve } = __require("src/core/plot-cursors.js")); });
 /**
  * The one interactive plot every analysis view uses (responses, steps,
@@ -93058,33 +92932,10 @@ function createPlotView({ height = 230, fill = false, aspect = null, maxHeight =
   const top = () => margin.top + (cursorTitleRow(spec?.cursors) ? 15 : 0);
   const pane = () => ({ x: margin.left, y: top(), w: Math.max(10, size.w - margin.left - margin.right), h: Math.max(10, size.h - top() - margin.bottom) });
   // On a log y axis a value at or under zero is a gap.
-  const uY = (y) => (y === null || scaleY() === 'linear' ? y : y > 0 ? Math.log10(y) : null);
-  const uPoints = (series) => series.points.map(([x, y]) => [toU(scaleX(), x), uY(y)]).filter(([u]) => Number.isFinite(u));
-
+  const uY = (y) => toUY(scaleY(), y);
+  const uPoints = (series) => seriesPoints(spec, series);
   /** The view that shows all the data. */
-  function autoView() {
-    const p = pane();
-    const xs = spec.x.range ? spec.x.range.map((v) => toU(scaleX(), v))
-      : fitRange(spec.series.filter((s) => s.role !== 'band').flatMap((s) => uPoints(s).map(([u]) => u)), { pad: spec.equal ? 0.08 : 0, include: (spec.x.include || []).map((v) => toU(scaleX(), v)) });
-    const inX = ([u]) => u >= Math.min(...xs) - 1e-9 && u <= Math.max(...xs) + 1e-9;
-    let ys = spec.series.filter((s) => s.role !== 'background' && s.role !== 'band')
-      .flatMap((s) => uPoints(s).filter(inX).map(([, y]) => y))
-      .filter((y) => Number.isFinite(y) && (spec.y.floor === undefined || spec.y.floor === null || y > spec.y.floor));
-    if (spec.y.symmetric) ys = ys.flatMap((y) => [y, -y]);
-    let yr = fitRange(ys, { step: spec.y.step, pad: 0.08, include: (spec.y.include || []).map(uY) });
-    if (Number.isFinite(spec.y.ceiling)) yr = [Math.min(yr[0], spec.y.ceiling - (spec.y.step || 1)), Math.min(yr[1], spec.y.ceiling)];
-    let next = { x: [Math.min(...xs), Math.max(...xs)], y: yr };
-    if (spec.equal) next = equalized(next, p);
-    return next;
-  }
-
-  /** Equal units per pixel on both axes, growing the tighter one. */
-  function equalized(v, p) {
-    const per = Math.max((v.x[1] - v.x[0]) / p.w, (v.y[1] - v.y[0]) / p.h);
-    const cx = (v.x[0] + v.x[1]) / 2;
-    const cy = (v.y[0] + v.y[1]) / 2;
-    return { x: [cx - (per * p.w) / 2, cx + (per * p.w) / 2], y: [cy - (per * p.h) / 2, cy + (per * p.h) / 2] };
-  }
+  const autoView = () => specView(spec, pane());
 
   const X = (u) => { const p = pane(); return p.x + ((u - view.x[0]) / (view.x[1] - view.x[0])) * p.w; };
   const Y = (u) => { const p = pane(); return p.y + ((view.y[1] - u) / (view.y[1] - view.y[0])) * p.h; };
@@ -93411,7 +93262,7 @@ function createPlotView({ height = 230, fill = false, aspect = null, maxHeight =
         const xs = [atX(from.x), atX(to.x)].sort((a, b) => a - b);
         const ys = [atY(from.y), atY(to.y)].sort((a, b) => a - b);
         let next = { x: axes === 'y' ? view.x : xs, y: axes === 'x' ? view.y : ys };
-        if (spec.equal) next = equalized(next, pane());
+        if (spec.equal) next = equalView(next, pane());
         setView(next);
         return;
       }

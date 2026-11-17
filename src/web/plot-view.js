@@ -24,7 +24,7 @@
  */
 
 import { mathRuns } from '../core/math-text.js';
-import { axisTicks, fitRange, logMinorGrid, fromU, thinSeries, toU, valueAt, zoomAbout, zoomAxes } from '../core/plot-scale.js';
+import { axisTicks, equalView, fromU, logMinorGrid, seriesPoints, specView, thinSeries, toU, toUY, valueAt, zoomAbout, zoomAxes } from '../core/plot-scale.js';
 import { cursorCurves, cursorLayout, cursorNumber, cursorTitleRow, nearestCurve } from '../core/plot-cursors.js';
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -114,33 +114,10 @@ export function createPlotView({ height = 230, fill = false, aspect = null, maxH
   const top = () => margin.top + (cursorTitleRow(spec?.cursors) ? 15 : 0);
   const pane = () => ({ x: margin.left, y: top(), w: Math.max(10, size.w - margin.left - margin.right), h: Math.max(10, size.h - top() - margin.bottom) });
   // On a log y axis a value at or under zero is a gap.
-  const uY = (y) => (y === null || scaleY() === 'linear' ? y : y > 0 ? Math.log10(y) : null);
-  const uPoints = (series) => series.points.map(([x, y]) => [toU(scaleX(), x), uY(y)]).filter(([u]) => Number.isFinite(u));
-
+  const uY = (y) => toUY(scaleY(), y);
+  const uPoints = (series) => seriesPoints(spec, series);
   /** The view that shows all the data. */
-  function autoView() {
-    const p = pane();
-    const xs = spec.x.range ? spec.x.range.map((v) => toU(scaleX(), v))
-      : fitRange(spec.series.filter((s) => s.role !== 'band').flatMap((s) => uPoints(s).map(([u]) => u)), { pad: spec.equal ? 0.08 : 0, include: (spec.x.include || []).map((v) => toU(scaleX(), v)) });
-    const inX = ([u]) => u >= Math.min(...xs) - 1e-9 && u <= Math.max(...xs) + 1e-9;
-    let ys = spec.series.filter((s) => s.role !== 'background' && s.role !== 'band')
-      .flatMap((s) => uPoints(s).filter(inX).map(([, y]) => y))
-      .filter((y) => Number.isFinite(y) && (spec.y.floor === undefined || spec.y.floor === null || y > spec.y.floor));
-    if (spec.y.symmetric) ys = ys.flatMap((y) => [y, -y]);
-    let yr = fitRange(ys, { step: spec.y.step, pad: 0.08, include: (spec.y.include || []).map(uY) });
-    if (Number.isFinite(spec.y.ceiling)) yr = [Math.min(yr[0], spec.y.ceiling - (spec.y.step || 1)), Math.min(yr[1], spec.y.ceiling)];
-    let next = { x: [Math.min(...xs), Math.max(...xs)], y: yr };
-    if (spec.equal) next = equalized(next, p);
-    return next;
-  }
-
-  /** Equal units per pixel on both axes, growing the tighter one. */
-  function equalized(v, p) {
-    const per = Math.max((v.x[1] - v.x[0]) / p.w, (v.y[1] - v.y[0]) / p.h);
-    const cx = (v.x[0] + v.x[1]) / 2;
-    const cy = (v.y[0] + v.y[1]) / 2;
-    return { x: [cx - (per * p.w) / 2, cx + (per * p.w) / 2], y: [cy - (per * p.h) / 2, cy + (per * p.h) / 2] };
-  }
+  const autoView = () => specView(spec, pane());
 
   const X = (u) => { const p = pane(); return p.x + ((u - view.x[0]) / (view.x[1] - view.x[0])) * p.w; };
   const Y = (u) => { const p = pane(); return p.y + ((view.y[1] - u) / (view.y[1] - view.y[0])) * p.h; };
@@ -467,7 +444,7 @@ export function createPlotView({ height = 230, fill = false, aspect = null, maxH
         const xs = [atX(from.x), atX(to.x)].sort((a, b) => a - b);
         const ys = [atY(from.y), atY(to.y)].sort((a, b) => a - b);
         let next = { x: axes === 'y' ? view.x : xs, y: axes === 'x' ? view.y : ys };
-        if (spec.equal) next = equalized(next, pane());
+        if (spec.equal) next = equalView(next, pane());
         setView(next);
         return;
       }
