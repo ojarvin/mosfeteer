@@ -16,7 +16,7 @@
 
 import { axisTitles, clipToPane, frameAxes, framePane } from './bode-figure.js';
 import { plotSpec } from './plot-spec.js';
-import { axisTicks, logMinorGrid, niceStep, seriesPoints, specView, tickText, toU, toUY } from './plot-scale.js';
+import { axisTicks, cornerPruned, logMinorGrid, niceStep, seriesPoints, specView, tickText, toU, toUY } from './plot-scale.js';
 
 /** Whole multiples a stepped axis (dB, degrees) ticks in, as it crowds:
  *  20 dB then 40, 50, 80, 100; 45° then 90, 180; 10 dB then 20, 40. */
@@ -83,15 +83,15 @@ export function plotFigure(plot, { width = 480, height = 260, fontSize = 11, rig
   const yTicks = figureTicks(ys, view.y, yTarget, zoom.y ? null : spec.y.step);
   if (xs === 'log') for (const u of logMinorGrid(view.x[0], view.x[1], { ticks: xTicks.map((t) => t.u), length: pane.w, minDecade: 4 * em })) vertical(u, 'minor');
   if (ys === 'log') for (const u of logMinorGrid(view.y[0], view.y[1], { ticks: yTicks.map((t) => t.u), length: pane.h, minDecade: 3 * em })) horizontal(u, 'minor');
+  const xNumbers = xTicks.filter((tick) => tick.major || xTicks.length <= 12)
+    .map((tick) => ({ text: tick.text, x: X(tick.u), baseline: pane.y + pane.h + 1.3 * em, anchor: 'middle' }));
+  const yNumbers = yTicks.map((tick) => ({ text: tick.text, x: pane.x - 0.45 * em, baseline: Y(tick.u) + 0.36 * em, anchor: 'end' }));
   for (const tick of xTicks) {
     vertical(tick.u, tick.major ? 'grid' : 'minor');
     items.push({ type: 'line', x1: X(tick.u), y1: pane.y + pane.h, x2: X(tick.u), y2: pane.y + pane.h - 0.36 * em, role: 'tick' });
-    if (tick.major || xTicks.length <= 12) items.push({ type: 'text', x: X(tick.u), y: pane.y + pane.h + 1.3 * em, text: tick.text, anchor: 'middle', role: 'number' });
   }
-  for (const tick of yTicks) {
-    horizontal(tick.u, 'grid');
-    items.push({ type: 'text', x: pane.x - 0.45 * em, y: Y(tick.u) + 0.36 * em, text: tick.text, anchor: 'end', role: 'number' });
-  }
+  for (const tick of yTicks) horizontal(tick.u, 'grid');
+  for (const { text, x, baseline, anchor } of [...xNumbers, ...cornerPruned(yNumbers, xNumbers, em)]) items.push({ type: 'text', x, y: baseline, text, anchor, role: 'number' });
   for (const line of spec.hlines || []) {
     const u = toUY(ys, line.y);
     if (Number.isFinite(u) && inY(u)) horizontal(u, line.role || 'zero');

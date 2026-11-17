@@ -40412,7 +40412,7 @@ __modules["src/core/plot-figure.js"] = function (__require, __exports) {
 __exports.plotFigure = plotFigure;
 let axisTitles, clipToPane, frameAxes, framePane; __bind(() => { ({ axisTitles, clipToPane, frameAxes, framePane } = __require("src/core/bode-figure.js")); });
 let plotSpec; __bind(() => { ({ plotSpec } = __require("src/core/plot-spec.js")); });
-let axisTicks, logMinorGrid, niceStep, seriesPoints, specView, tickText, toU, toUY; __bind(() => { ({ axisTicks, logMinorGrid, niceStep, seriesPoints, specView, tickText, toU, toUY } = __require("src/core/plot-scale.js")); });
+let axisTicks, cornerPruned, logMinorGrid, niceStep, seriesPoints, specView, tickText, toU, toUY; __bind(() => { ({ axisTicks, cornerPruned, logMinorGrid, niceStep, seriesPoints, specView, tickText, toU, toUY } = __require("src/core/plot-scale.js")); });
 /**
  * A plot on the drawing laid out from the spec its window shows
  * (plot-spec.js `plotSpec`): one layout for every kind -- responses,
@@ -40498,15 +40498,15 @@ function plotFigure(plot, { width = 480, height = 260, fontSize = 11, right } = 
   const yTicks = figureTicks(ys, view.y, yTarget, zoom.y ? null : spec.y.step);
   if (xs === 'log') for (const u of logMinorGrid(view.x[0], view.x[1], { ticks: xTicks.map((t) => t.u), length: pane.w, minDecade: 4 * em })) vertical(u, 'minor');
   if (ys === 'log') for (const u of logMinorGrid(view.y[0], view.y[1], { ticks: yTicks.map((t) => t.u), length: pane.h, minDecade: 3 * em })) horizontal(u, 'minor');
+  const xNumbers = xTicks.filter((tick) => tick.major || xTicks.length <= 12)
+    .map((tick) => ({ text: tick.text, x: X(tick.u), baseline: pane.y + pane.h + 1.3 * em, anchor: 'middle' }));
+  const yNumbers = yTicks.map((tick) => ({ text: tick.text, x: pane.x - 0.45 * em, baseline: Y(tick.u) + 0.36 * em, anchor: 'end' }));
   for (const tick of xTicks) {
     vertical(tick.u, tick.major ? 'grid' : 'minor');
     items.push({ type: 'line', x1: X(tick.u), y1: pane.y + pane.h, x2: X(tick.u), y2: pane.y + pane.h - 0.36 * em, role: 'tick' });
-    if (tick.major || xTicks.length <= 12) items.push({ type: 'text', x: X(tick.u), y: pane.y + pane.h + 1.3 * em, text: tick.text, anchor: 'middle', role: 'number' });
   }
-  for (const tick of yTicks) {
-    horizontal(tick.u, 'grid');
-    items.push({ type: 'text', x: pane.x - 0.45 * em, y: Y(tick.u) + 0.36 * em, text: tick.text, anchor: 'end', role: 'number' });
-  }
+  for (const tick of yTicks) horizontal(tick.u, 'grid');
+  for (const { text, x, baseline, anchor } of [...xNumbers, ...cornerPruned(yNumbers, xNumbers, em)]) items.push({ type: 'text', x, y: baseline, text, anchor, role: 'number' });
   for (const line of spec.hlines || []) {
     const u = toUY(ys, line.y);
     if (Number.isFinite(u) && inY(u)) horizontal(u, line.role || 'zero');
@@ -40582,6 +40582,8 @@ __exports.fitRange = fitRange;
 __exports.seriesPoints = seriesPoints;
 __exports.equalView = equalView;
 __exports.specView = specView;
+__exports.tickNumberBox = tickNumberBox;
+__exports.cornerPruned = cornerPruned;
 __exports.zoomAxes = zoomAxes;
 __exports.zoomAbout = zoomAbout;
 __exports.valueAt = valueAt;
@@ -40758,6 +40760,39 @@ function specView(spec, pane, { round = false } = {}) {
 }
 
 /**
+ * Roughly where a tick's number is drawn, as { left, right, top, bottom }:
+ * `text` (with `^{}`/`_{}` markup) `size` tall, its baseline at `baseline`,
+ * anchored at `x` by `anchor` ('start', 'middle', 'end'). Each character a
+ * figure's width; a raised or lowered one smaller, and above or below the
+ * line.
+ */
+function tickNumberBox(text, { x, baseline, anchor = 'middle', size }) {
+  const scripts = [...String(text).matchAll(/[_^]\{([^{}]*)\}/g)];
+  const plain = String(text).replace(/[_^]\{[^{}]*\}/g, '');
+  const width = 0.55 * size * (plain.length + 0.68 * scripts.reduce((n, m) => n + m[1].length, 0));
+  const left = anchor === 'end' ? x - width : anchor === 'middle' ? x - width / 2 : x;
+  return {
+    left,
+    right: left + width,
+    top: baseline - 0.72 * size - (/\^\{/.test(text) ? 0.3 * size : 0),
+    bottom: baseline + (/_\{/.test(text) ? 0.25 * size : 0.05 * size),
+  };
+}
+
+/** Whether two boxes ({ left, right, top, bottom }) come within `gap`. */
+const boxesCrowd = (a, b, gap = 0) => a.left < b.right + gap && b.left < a.right + gap && a.top < b.bottom + gap && b.top < a.bottom + gap;
+
+/** The y axis's numbers (`ys`, lowest first) without the lowest when it
+ *  crowds the x axis's first (`xs`) at the plot's corner, as both start
+ *  there: the evenly stepped numbers above say what it was. Numbers are
+ *  { text, x, baseline, anchor }, `size` tall. */
+function cornerPruned(ys, xs, size) {
+  if (!ys.length || !xs.length) return ys;
+  const box = (number) => tickNumberBox(number.text, { ...number, size });
+  return boxesCrowd(box(ys[0]), box(xs[0]), 0.15 * size) ? ys.slice(1) : ys;
+}
+
+/**
  * Which way a dragged box zooms: 'x' when it is a flat stroke (only the
  * horizontal axis), 'y' when it is a tall one, 'both' for a box, null when
  * it is too small to mean anything. In pixels.
@@ -40852,6 +40887,7 @@ function thinSeries(points, u0, u1, columns) {
 __exports.toU = toU;
 __exports.fromU = fromU;
 __exports.toUY = toUY;
+__exports.boxesCrowd = boxesCrowd;
 };
 
 __modules["src/core/plot-spec.js"] = function (__require, __exports) {
@@ -92814,7 +92850,7 @@ __modules["src/web/plot-view.js"] = function (__require, __exports) {
 __exports.createPlotView = createPlotView;
 __exports.linkPlots = linkPlots;
 let mathRuns; __bind(() => { ({ mathRuns } = __require("src/core/math-text.js")); });
-let axisTicks, equalView, fromU, logMinorGrid, seriesPoints, specView, thinSeries, toU, toUY, valueAt, zoomAbout, zoomAxes; __bind(() => { ({ axisTicks, equalView, fromU, logMinorGrid, seriesPoints, specView, thinSeries, toU, toUY, valueAt, zoomAbout, zoomAxes } = __require("src/core/plot-scale.js")); });
+let axisTicks, cornerPruned, equalView, fromU, logMinorGrid, seriesPoints, specView, thinSeries, toU, toUY, valueAt, zoomAbout, zoomAxes; __bind(() => { ({ axisTicks, cornerPruned, equalView, fromU, logMinorGrid, seriesPoints, specView, thinSeries, toU, toUY, valueAt, zoomAbout, zoomAxes } = __require("src/core/plot-scale.js")); });
 let cursorCurves, cursorLayout, cursorNumber, cursorTitleRow, nearestCurve; __bind(() => { ({ cursorCurves, cursorLayout, cursorNumber, cursorTitleRow, nearestCurve } = __require("src/core/plot-cursors.js")); });
 /**
  * The one interactive plot every analysis view uses (responses, steps,
@@ -92847,6 +92883,8 @@ let cursorCurves, cursorLayout, cursorNumber, cursorTitleRow, nearestCurve; __bi
 
 const NS = 'http://www.w3.org/2000/svg';
 const MARGIN = { left: 46, right: 12, top: 10, bottom: 24 };
+/** The axis numbers' size (style.css `.plot-view-svg text`). */
+const NUMBER_SIZE = 12;
 /** The plot pane's corner radius: a card's (--radius-md). */
 const PANE_RADIUS = 8;
 let clipCount = 0;
@@ -92995,15 +93033,13 @@ function createPlotView({ height = 230, fill = false, aspect = null, maxHeight =
         grid.append(svg('line', { x1: p.x, y1: Y(u), x2: p.x + p.w, y2: Y(u), class: 'role-grid faint' }));
       }
     }
-    for (const tick of xTicks) {
-      const at = X(tick.u);
-      grid.append(svg('line', { x1: at, y1: p.y, x2: at, y2: p.y + p.h, class: tick.major ? 'role-grid' : 'role-grid minor' }));
-      if (xAxis && (tick.major || xTicks.length <= 12)) grid.append(markupText(tick.text, { x: at, y: p.y + p.h + 15, 'text-anchor': 'middle', class: 'role-number' }));
-    }
-    for (const tick of yTicks) {
-      const at = Y(tick.u);
-      grid.append(svg('line', { x1: p.x, y1: at, x2: p.x + p.w, y2: at, class: 'role-grid' }));
-      grid.append(markupText(tick.text, { x: p.x - 5, y: at + 3.5, 'text-anchor': 'end', class: 'role-number' }));
+    for (const tick of xTicks) grid.append(svg('line', { x1: X(tick.u), y1: p.y, x2: X(tick.u), y2: p.y + p.h, class: tick.major ? 'role-grid' : 'role-grid minor' }));
+    for (const tick of yTicks) grid.append(svg('line', { x1: p.x, y1: Y(tick.u), x2: p.x + p.w, y2: Y(tick.u), class: 'role-grid' }));
+    // The numbers; the lowest y one left out where it crowds the corner.
+    const xNumbers = xAxis ? xTicks.filter((tick) => tick.major || xTicks.length <= 12).map((tick) => ({ text: tick.text, x: X(tick.u), baseline: p.y + p.h + 15, anchor: 'middle' })) : [];
+    const yNumbers = yTicks.map((tick) => ({ text: tick.text, x: p.x - 5, baseline: Y(tick.u) + 3.5, anchor: 'end' }));
+    for (const { text, x, baseline, anchor } of [...xNumbers, ...cornerPruned(yNumbers, xNumbers, NUMBER_SIZE)]) {
+      grid.append(markupText(text, { x, y: baseline, 'text-anchor': anchor, class: 'role-number' }));
     }
     root.append(grid);
 

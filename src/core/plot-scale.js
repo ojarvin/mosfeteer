@@ -170,6 +170,39 @@ export function specView(spec, pane, { round = false } = {}) {
 }
 
 /**
+ * Roughly where a tick's number is drawn, as { left, right, top, bottom }:
+ * `text` (with `^{}`/`_{}` markup) `size` tall, its baseline at `baseline`,
+ * anchored at `x` by `anchor` ('start', 'middle', 'end'). Each character a
+ * figure's width; a raised or lowered one smaller, and above or below the
+ * line.
+ */
+export function tickNumberBox(text, { x, baseline, anchor = 'middle', size }) {
+  const scripts = [...String(text).matchAll(/[_^]\{([^{}]*)\}/g)];
+  const plain = String(text).replace(/[_^]\{[^{}]*\}/g, '');
+  const width = 0.55 * size * (plain.length + 0.68 * scripts.reduce((n, m) => n + m[1].length, 0));
+  const left = anchor === 'end' ? x - width : anchor === 'middle' ? x - width / 2 : x;
+  return {
+    left,
+    right: left + width,
+    top: baseline - 0.72 * size - (/\^\{/.test(text) ? 0.3 * size : 0),
+    bottom: baseline + (/_\{/.test(text) ? 0.25 * size : 0.05 * size),
+  };
+}
+
+/** Whether two boxes ({ left, right, top, bottom }) come within `gap`. */
+export const boxesCrowd = (a, b, gap = 0) => a.left < b.right + gap && b.left < a.right + gap && a.top < b.bottom + gap && b.top < a.bottom + gap;
+
+/** The y axis's numbers (`ys`, lowest first) without the lowest when it
+ *  crowds the x axis's first (`xs`) at the plot's corner, as both start
+ *  there: the evenly stepped numbers above say what it was. Numbers are
+ *  { text, x, baseline, anchor }, `size` tall. */
+export function cornerPruned(ys, xs, size) {
+  if (!ys.length || !xs.length) return ys;
+  const box = (number) => tickNumberBox(number.text, { ...number, size });
+  return boxesCrowd(box(ys[0]), box(xs[0]), 0.15 * size) ? ys.slice(1) : ys;
+}
+
+/**
  * Which way a dragged box zooms: 'x' when it is a flat stroke (only the
  * horizontal axis), 'y' when it is a tall one, 'both' for a box, null when
  * it is too small to mean anything. In pixels.

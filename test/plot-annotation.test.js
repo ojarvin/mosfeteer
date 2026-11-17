@@ -334,12 +334,25 @@ test('a plot on the drawing is its window\'s spec laid out: the same view, a ste
   // The window's view of the same spec: x the plot's range, y in whole 20 dB.
   assert.deepEqual(figure.ranges, specView(plotSpec(plot), figure.pane));
   assert.deepEqual(figure.ranges.y, [-40, 60]);
-  // Thinned as it crowds, a 20 dB axis keeps steps that land on -40 and 60.
-  const numbers = figure.items.filter((item) => item.role === 'number' && item.anchor === 'end').map((item) => Number(item.text.replace('−', '-')));
-  assert.equal(numbers[0], -40);
-  assert.equal(numbers.at(-1), 60);
+  // Thinned as it crowds, a 20 dB axis keeps steps that land on -40 and 60
+  // (-40 itself left out, at the corner beside 10^{-4}).
+  const numbers = figure.items.filter((item) => item.role === 'number' && item.anchor === 'end').map((item) => Number(item.text));
+  assert.deepEqual(numbers, [-20, 0, 20, 40, 60]);
   // A swing's runaway (no value) runs off the top of the pane.
   const swing = plotFigure({ kind: 'swing', range: { low: -60, high: 0 }, traces: [{ color: '#000', points: [{ a: -60, db: -20 }, { a: -10, db: -10 }, { a: 0, db: null }] }] });
   const curve = swing.items.find((item) => item.role === 'curve');
   assert.ok(Math.abs(curve.points.at(-1).y - swing.pane.y) < 1e-6, JSON.stringify(curve.points.at(-1)));
+});
+
+test('the lowest y number is left out where it crowds the first x number at the corner, and kept where it does not', async () => {
+  const { cornerPruned } = await import('../src/core/plot-scale.js');
+  const ys = [{ text: '−180', x: 95, baseline: 204, anchor: 'end' }, { text: '−160', x: 95, baseline: 150, anchor: 'end' }];
+  assert.deepEqual(cornerPruned(ys, [{ text: '10^{-4}', x: 100, baseline: 213, anchor: 'middle' }], 10).map((n) => n.text), ['−160']);
+  assert.deepEqual(cornerPruned(ys, [{ text: '0', x: 100, baseline: 213, anchor: 'middle' }], 10).map((n) => n.text), ['−180', '−160']);
+  // On the drawing: a log frequency axis starting at a decade, a dB axis at -180.
+  const points = Array.from({ length: 40 }, (_, i) => ({ f: 10 ** (-4 + i / 10), db: -175 + 4 * i }));
+  const figure = plotFigure(normalizePlot({ kind: 'response', axis: 'normalized', range: { low: -4, high: -0.3 }, traces: [{ label: 'H', color: '#000', points }] }), { width: 720, height: 440, fontSize: 30 });
+  const yNumbers = figure.items.filter((item) => item.role === 'number' && item.anchor === 'end').map((item) => item.text);
+  assert.equal(figure.ranges.y[0], -180);
+  assert.ok(!yNumbers.includes('-180') && yNumbers.includes('-160'), yNumbers.join());
 });
