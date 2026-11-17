@@ -20,12 +20,10 @@ import {
   DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, baseSymbols, bodeSketch, evaluateExpression, expressionSymbols, numericCoefficients,
   responseAt, sketchParameters, sketchValues, withDerivedValues,
 } from '../core/analysis/bode.js';
-import { TRACE_COLORS } from '../core/analysis/signal-flow.js';
 import { renderExpression } from '../core/analysis/present.js';
 import { negate } from '../core/analysis/rational.js';
 import { cornerNames } from '../core/bode-figure.js';
 import { axisName, bodeSpecs, responseSpec } from '../core/plot-spec.js';
-import { createPlotView, linkPlots } from './plot-view.js';
 import { valueRow as sharedValueRow } from './value-row.js';
 import { texToMathML } from '../core/render.js';
 import { element as el } from './dom.js';
@@ -34,8 +32,8 @@ import { markSettingsChanged, onDocumentShown, render } from './main.js';
 import { installPlotsWindow, offerPlots, plotsShown } from './plots-window.js';
 import { matchPlotTraces, placeResponsePlot, registerPlotUpdater } from './signal-flow-ui.js';
 import { registerAnnotations } from './annotate-menu.js';
-import { bodeGraphActions } from './bode-actions.js';
-import { differing, differingNames, heldName, holdKey, liveName, saveHolds, savedHolds, traceLegendRow } from './trace-hold.js';
+import { bodeGraphFooter, bodeGraphPair, showBodeGraphs } from './bode-actions.js';
+import { differing, differingNames, freeTraceColor, heldName, heldTraces, holdKey, liveName } from './trace-hold.js';
 
 const EMPTY_TEXT = 'Derive in the analysis window (Shift+S) to plot its gain here.';
 const QUANTITIES = {
@@ -270,15 +268,11 @@ function addTrace(report, key) {
     old.label = fresh.label;
     return;
   }
-  const used = new Set(traces.map((trace) => trace.color));
-  fresh.color = TRACE_COLORS.find((color) => !used.has(color)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
+  fresh.color = freeTraceColor(new Set(traces.map((trace) => trace.color)), traces.length);
   traces.push(fresh);
   // Its held copies, saved with the design, come back with it.
   restoreHolds();
 }
-
-// The traces drawn, each held one named by the values it was held at.
-const shownTraces = () => traces.filter((trace) => trace.on).map((trace) => ({ ...trace, label: trace.held ? heldLabel(trace) : liveLabel(trace) }));
 
 /** The ratios now, as a held trace keeps them: by name. */
 const ratioValues = (r) => ({ intrinsicGain: r.intrinsicGain, parasiticRatio: r.parasiticRatio, ...Object.fromEntries(Object.entries(r.multipliers).map(([name, value]) => [`×${name}`, value])) });
@@ -313,14 +307,15 @@ function liveLabel(trace) {
 }
 
 // Held traces are saved with the design (trace-hold.js): a record each, by
-// the trace it was held from, made into a trace as a Derive brings it back.
-const holds = () => savedHolds('small-signal');
-const holdsChanged = (records) => saveHolds('small-signal', records);
+// the trace it was held from, made into a trace as a Derive brings it back;
+// the traces drawn, each held one named by the Values it was held at.
+const { holds, holdsChanged, label: traceLabel, shown: shownTraces, restore: restoreHolds } = heldTraces('small-signal', {
+  traces: () => traces, heldLabel, liveLabel, heldFrom, liveOf: (trace) => trace.id, skip: (record) => !record.ratios,
+});
 
 /** Hold a trace: a copy at the Values now, in a color of its own. */
 function holdTrace(trace) {
-  const used = new Set(traces.map((t) => t.color));
-  const color = TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
+  const color = freeTraceColor(new Set(traces.map((t) => t.color)), traces.length);
   const record = { key: holdKey(), of: trace.id, base: trace.label, color, values: {}, ratios: { intrinsicGain: ratios.intrinsicGain, parasiticRatio: ratios.parasiticRatio, multipliers: { ...ratios.multipliers } } };
   holdsChanged([...holds(), record]);
   traces.push(heldFrom(record, trace));
@@ -333,14 +328,6 @@ function heldFrom(record, live) {
   return { ...live, id: `${live.id}\n${record.key}`, color: record.color, on: record.on !== false, held: { ratios: record.ratios, base: record.base, key: record.key, of: record.of } };
 }
 
-/** The held traces whose live one is on the graph again, from their records. */
-function restoreHolds() {
-  for (const record of holds()) {
-    if (!record.ratios || traces.some((trace) => trace.held?.key === record.key)) continue;
-    const live = traces.find((trace) => !trace.held && trace.id === record.of);
-    if (live) traces.push(heldFrom(record, live));
-  }
-}
 
 // ----- the Plots window ------------------------------------------------------------------
 
@@ -348,16 +335,7 @@ let plotsEl = null;
 // Magnitude over phase, one frequency axis: the two plots pan and zoom
 // along x together, and only the lower one numbers it.
 let graphs = null;
-function stackedGraphs() {
-  if (!graphs) {
-    graphs = {
-      magnitude: createPlotView({ height: 200, aspect: 0.42, xAxis: false, className: 'bode-magnitude' }),
-      phase: createPlotView({ height: 140, aspect: 0.3, className: 'bode-phase' }),
-    };
-    linkPlots(graphs.magnitude, graphs.phase);
-  }
-  return graphs;
-}
+const stackedGraphs = () => (graphs ||= bodeGraphPair());
 
 
 /** The sketches of the shown traces, at the current values. */
@@ -437,15 +415,21 @@ function renderPlots() {
   list.replaceChildren();
   const sketches = shownSketches();
   // The plots stay in place while they redraw (a zoomed view stays too).
-  const { magnitude, phase } = stackedGraphs();
-  if (sketches.length) {
-    if (magnitude.el.parentNode !== host) host.replaceChildren(magnitude.el, phase.el);
-    magnitude.set(graphSpec(sketches, 'magnitude'));
-    phase.set(graphSpec(sketches, 'phase'));
-  } else {
-    host.replaceChildren(el('p', { class: 'field-hint', text: traces.length ? 'Check a trace below to plot it.' : '' }));
-  }
-  renderLegend();
+  showBodeGraphs(host, stackedGraphs(), sketches.length ? { magnitude: graphSpec(sketches, 'magnitude'), phase: graphSpec(sketches, 'phase') } : null, traces.length > 0);
+  bodeGraphFooter({
+    legend: plotsEl.querySelector('.bode-legend'),
+    actions: plotsEl.querySelector('.bode-plots-actions'),
+    traces,
+    label: traceLabel,
+    holds,
+    holdsChanged,
+    hold: holdTrace,
+    redraw: renderPlots,
+    setTraces: (next) => { traces = next; renderValues(); renderPlots(); },
+    annotate: annotateGraph,
+    ready: shownTraces().length > 0,
+    state: graphChoice,
+  });
   for (const entry of sketches) appendCorners(list, entry, sketches.length > 1);
 }
 
@@ -475,27 +459,6 @@ function addButtons() {
     }));
   }
   return row;
-}
-
-function renderLegend() {
-  const legend = plotsEl.querySelector('.bode-legend');
-  legend.replaceChildren();
-  for (const trace of traces) {
-    legend.append(traceLegendRow(trace, {
-      label: trace.held ? heldLabel(trace) : liveLabel(trace), holds, holdsChanged,
-      onHold: () => holdTrace(trace),
-      onShow: renderPlots,
-      onRemove: () => { traces = traces.filter((t) => t !== trace); renderValues(); renderPlots(); },
-    }));
-  }
-  const actions = plotsEl.querySelector('.bode-plots-actions');
-  actions.hidden = !traces.length;
-  actions.replaceChildren(...bodeGraphActions({
-    clear: () => { traces = []; holdsChanged([]); renderValues(); renderPlots(); },
-    annotate: annotateGraph,
-    ready: shownTraces().length > 0,
-    state: graphChoice,
-  }));
 }
 
 /** A trace's corners, its unity-gain or crossover, and what it was solved by. */

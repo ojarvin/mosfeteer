@@ -13,16 +13,15 @@
 
 import { STRAY, analyzeSwitchedCap, switchedCapNoiseFigures, switchedCapPhases, switchedCapStrays } from '../core/analysis/switched-cap.js';
 import { calculate, siResult } from '../core/calculator.js';
-import { TRACE_COLORS, complexText, transferTex, numericRootsOf, responsePlot, resultSymbols, withCoefficients } from '../core/analysis/signal-flow.js';
+import { complexText, transferTex, numericRootsOf, responsePlot, resultSymbols, withCoefficients } from '../core/analysis/signal-flow.js';
 import { symbolText } from '../core/analysis/present.js';
 import { responseSpec } from '../core/plot-spec.js';
 import { plainTexText } from '../core/render.js';
 import { switchState } from '../core/beats.js';
 import { canonicalNetName } from '../core/model.js';
 import { setPartValue } from '../core/part-moves.js';
-import { createPlotView, linkPlots } from './plot-view.js';
 import { installPlotsWindow, offerPlots } from './plots-window.js';
-import { matchPlotTraces, placeResponsePlot, registerAnalysisMode, registerPlotUpdater } from './signal-flow-ui.js';
+import { matchPlotTraces, modeDerive, placeResponsePlot, registerAnalysisMode, registerPlotUpdater } from './signal-flow-ui.js';
 import { valueRow } from './value-row.js';
 import { PER_DECADE } from './e-series.js';
 import { editor } from './editor-state.js';
@@ -31,9 +30,9 @@ import { logLine } from './status-bar-ui.js';
 import { element as el, mathSpan, onFieldCommit } from './dom.js';
 import { annotateMathFigure } from './figure-annotate.js';
 import { registerAnnotations } from './annotate-menu.js';
-import { bodeGraphActions } from './bode-actions.js';
+import { bodeGraphFooter, bodeGraphPair, showBodeGraphs } from './bode-actions.js';
 import { deriving } from './analysis-busy.js';
-import { differing, differingNames, heldName, holdKey, liveName, saveHolds, savedHolds, traceLegendRow } from './trace-hold.js';
+import { differing, differingNames, freeTraceColor, heldName, heldTraces, holdKey, liveName } from './trace-hold.js';
 
 // A design this window never changed keeps no settings of its own: its
 // defaults are held aside, and join the design with its first change
@@ -243,8 +242,7 @@ function addTrace(result) {
     Object.assign(existing, { value: result.value, gains: result.gains, on: true }, stepping);
     return;
   }
-  const used = new Set(traces.map((trace) => trace.color));
-  const color = TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
+  const color = freeTraceColor(new Set(traces.map((trace) => trace.color)), traces.length);
   traces.push({ id: `sc-${traces.length}-${result.equation}`, label: result.label, equation: result.equation, color, value: result.value, gains: result.gains, on: true, ...stepping });
   // Its held copies, saved with the design, come back with it.
   restoreHolds();
@@ -528,9 +526,6 @@ function annotateNoise() {
 
 // ----- the graph -------------------------------------------------------------------------
 
-// The traces drawn, each held one named by the values it was held at.
-const shownTraces = () => traces.filter((trace) => trace.on).map((trace) => ({ ...trace, label: trace.held ? heldLabel(trace) : liveLabel(trace) }));
-
 /** A live trace's name beside its held copies: its Values now for the
  *  names theirs give. */
 function liveLabel(trace) {
@@ -544,15 +539,16 @@ function heldLabel(trace) {
 }
 
 // Held traces are saved with the design (trace-hold.js): a record each, by
-// the equation it was held from, made into a trace as that one comes back.
-const holds = () => savedHolds('switched-cap');
-const holdsChanged = (records) => saveHolds('switched-cap', records);
+// the equation it was held from, made into a trace as that one comes back;
+// the traces drawn, each held one named by the values it was held at.
+const { holds, holdsChanged, label: traceLabel, shown: shownTraces, restore: restoreHolds } = heldTraces('switched-cap', {
+  traces: () => traces, heldLabel, liveLabel, heldFrom, liveOf: (trace) => trace.equation,
+});
 
 /** Hold a trace: a copy at the values now, in a color of its own. */
 function holdTrace(trace) {
   const values = Object.fromEntries(resultSymbols(trace.value, trace.variable || 'z').map((name) => [name, capacitance(name)]));
-  const used = new Set(traces.map((t) => t.color));
-  const color = TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
+  const color = freeTraceColor(new Set(traces.map((t) => t.color)), traces.length);
   const record = { key: holdKey(), of: trace.equation, base: trace.label, color, values };
   holdsChanged([...holds(), record]);
   traces.push(heldFrom(record, trace));
@@ -564,14 +560,6 @@ function heldFrom(record, live) {
   return { ...live, id: `${live.id}\n${record.key}`, value: withCoefficients(live.value, record.values), gains: [], color: record.color, on: record.on !== false, held: { values: record.values, base: record.base, key: record.key, of: record.of } };
 }
 
-/** The held traces whose live one is on the graph again, from their records. */
-function restoreHolds() {
-  for (const record of holds()) {
-    if (traces.some((trace) => trace.held?.key === record.key)) continue;
-    const live = traces.find((trace) => !trace.held && trace.equation === record.of);
-    if (live) traces.push(heldFrom(record, live));
-  }
-}
 
 /** The graph's plot: the shown traces at the numbers, magnitude or phase. */
 function graphPlot(quantity = 'magnitude') {
@@ -580,16 +568,7 @@ function graphPlot(quantity = 'magnitude') {
   return responsePlot(shown.map((trace) => ({ ...trace, value: numbered(trace.value), variable: trace.variable || 'z' })), 'z', { quantity });
 }
 
-function stackedGraphs() {
-  if (!graphs) {
-    graphs = {
-      magnitude: createPlotView({ height: 200, aspect: 0.42, xAxis: false, className: 'bode-magnitude' }),
-      phase: createPlotView({ height: 140, aspect: 0.3, className: 'bode-phase' }),
-    };
-    linkPlots(graphs.magnitude, graphs.phase);
-  }
-  return graphs;
-}
+const stackedGraphs = () => (graphs ||= bodeGraphPair());
 
 /** The Plots window's view of this mode: as the Bode graph -- magnitude
  *  over phase, a legend to show or take off each trace, then Clear and
@@ -601,30 +580,21 @@ function renderPlots() {
   plotsEl.querySelector('.sc-plots-empty').hidden = traces.length > 0;
   head.hidden = true;
   const plot = graphPlot();
-  // The plots stay in place while they redraw (a zoomed view stays too).
-  const { magnitude, phase } = stackedGraphs();
-  if (plot) {
-    if (magnitude.el.parentNode !== host) host.replaceChildren(magnitude.el, phase.el);
-    magnitude.set(responseSpec(plot));
-    phase.set(responseSpec(graphPlot('phase')));
-  } else {
-    host.replaceChildren(el('p', { class: 'field-hint', text: traces.length ? 'Check a trace below to plot it.' : '' }));
-  }
-  const legend = plotsEl.querySelector('.sc-legend');
-  legend.replaceChildren(...traces.map((trace) => traceLegendRow(trace, {
-    label: trace.held ? heldLabel(trace) : liveLabel(trace), holds, holdsChanged,
-    onHold: () => holdTrace(trace),
-    onShow: renderPlots,
-    onRemove: () => { traces = traces.filter((t) => t !== trace); renderValues(); renderPlots(); },
-  })));
-  const actions = plotsEl.querySelector('.sc-plots-actions');
-  actions.hidden = !traces.length;
-  actions.replaceChildren(...bodeGraphActions({
-    clear: () => { traces = []; holdsChanged([]); renderValues(); renderPlots(); },
+  showBodeGraphs(host, stackedGraphs(), plot ? { magnitude: responseSpec(plot), phase: responseSpec(graphPlot('phase')) } : null, traces.length > 0);
+  bodeGraphFooter({
+    legend: plotsEl.querySelector('.sc-legend'),
+    actions: plotsEl.querySelector('.sc-plots-actions'),
+    traces,
+    label: traceLabel,
+    holds,
+    holdsChanged,
+    hold: holdTrace,
+    redraw: renderPlots,
+    setTraces: (next) => { traces = next; renderValues(); renderPlots(); },
     annotate: annotateGraph,
     ready: !!plot,
     state: graphChoice,
-  }));
+  });
 }
 
 // Annotate graph puts the phase on the drawing too, as a plot of its own.
@@ -734,23 +704,11 @@ export function installSwitchedCapUi() {
     { label: 'Bode magnitude', identity: { kind: 'plot', source: 'switched-cap', key: /^response::/ }, available: !!graphPlot(), run: () => annotateGraph({ phase: false }) },
     { label: 'Bode phase', identity: { kind: 'plot', source: 'switched-cap', key: /^response:phase:/ }, available: !!graphPlot(), run: () => annotateGraph({ magnitude: false, phase: true }) },
   ]);
-  const actions = [
-    el('button', { type: 'button', class: 'primary-action sc-derive', 'data-icon': 'check', text: 'Derive', title: 'Derive (Enter)', onclick: derive }),
-  ];
-  // Enter in a field derives here.
-  section.addEventListener('keydown', (ev) => {
-    if (ev.key !== 'Enter' || ev.target.tagName === 'BUTTON') return;
-    ev.preventDefault();
-    derive();
-  });
   // The drawing may have changed while the window was open.
-  let filled = -1;
-  section.addEventListener('pointerenter', () => {
-    if (filled === editor.modelRevision) return;
-    filled = editor.modelRevision;
+  const actions = [modeDerive(section, { className: 'sc-derive', derive, refill: () => {
     fillForm();
     if (latest) section.querySelector('.sc-stale').hidden = latest.revision === editor.modelRevision;
-  });
+  } })];
   registerAnalysisMode({
     mode: 'switched-cap',
     label: 'Switched-cap',

@@ -6,6 +6,7 @@
  * this is where they are kept, their name, and their button.
  */
 
+import { TRACE_COLORS } from '../core/analysis/signal-flow.js';
 import { texToMathML } from '../core/render.js';
 import { element as el } from './dom.js';
 import { editor } from './editor-state.js';
@@ -14,17 +15,51 @@ import { markSettingsChanged } from './main.js';
 /** An analysis's held traces as the design keeps them (`Circuit#windows.holds`,
  *  window-state.js): records, remade into traces as a Derive brings back
  *  the trace each was held from. */
-export function savedHolds(mode) {
+function savedHolds(mode) {
   return editor.circuit.windows.holds?.[mode] || [];
 }
 
 /** Keep `records` as an analysis's held traces. */
-export function saveHolds(mode, records) {
+function saveHolds(mode, records) {
   const holds = { ...(editor.circuit.windows.holds || {}) };
   if (records.length) holds[mode] = records;
   else delete holds[mode];
   editor.circuit.windows.holds = holds;
   markSettingsChanged();
+}
+
+/**
+ * A graph's held traces for analysis `mode`: `traces()` the graph's list;
+ * `heldLabel(trace)` and `liveLabel(trace)` name a held and a live one;
+ * `liveOf(trace)` is what a record's `of` names a live trace by;
+ * `heldFrom(record, live)` makes a held trace; `skip(record)` a record that
+ * is not a trace of this list. Returns { holds, holdsChanged, label(trace),
+ * shown(), restore() }: `shown()` the traces checked, each named, and
+ * `restore()` the held traces whose live one is on the graph again (a
+ * Derive brought it back), made from their records.
+ */
+export function heldTraces(mode, { traces, heldLabel, liveLabel, liveOf, heldFrom, skip = () => false }) {
+  const holds = () => savedHolds(mode);
+  const label = (trace) => (trace.held ? heldLabel(trace) : liveLabel(trace));
+  return {
+    holds,
+    holdsChanged: (records) => saveHolds(mode, records),
+    label,
+    shown: () => traces().filter((trace) => trace.on).map((trace) => ({ ...trace, label: label(trace) })),
+    restore() {
+      const list = traces();
+      for (const record of holds()) {
+        if (skip(record) || list.some((trace) => trace.held?.key === record.key)) continue;
+        const live = list.find((trace) => !trace.held && liveOf(trace) === record.of);
+        if (live) list.push(heldFrom(record, live));
+      }
+    },
+  };
+}
+
+/** A trace color none of `used` (a Set) has, else the next round the palette after `count` traces. */
+export function freeTraceColor(used, count) {
+  return TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[count % TRACE_COLORS.length];
 }
 
 /** A new held trace's key, unlike any saved before. */

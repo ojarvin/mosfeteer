@@ -64462,16 +64462,47 @@ __exports.beatLabel = beatLabel;
 };
 
 __modules["src/web/bode-actions.js"] = function (__require, __exports) {
-__exports.bodeGraphActions = bodeGraphActions;
+__exports.bodeGraphPair = bodeGraphPair;
+__exports.showBodeGraphs = showBodeGraphs;
+__exports.bodeGraphFooter = bodeGraphFooter;
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
+let createPlotView, linkPlots; __bind(() => { ({ createPlotView, linkPlots } = __require("src/web/plot-view.js")); });
+let traceLegendRow; __bind(() => { ({ traceLegendRow } = __require("src/web/trace-hold.js")); });
 /**
- * The actions under a Bode graph -- magnitude over phase -- in the Plots
- * window, one row for every mode that draws one (the small-signal and the
- * switched-capacitor modes): Clear graph, Annotate graph, and with phase,
- * which puts the phase on the drawing too, as a plot of its own.
+ * A Bode graph -- magnitude over phase -- in the Plots window, as every
+ * mode that draws one has it (the small-signal and the
+ * switched-capacitor modes): the two plots, the legend under them, and the
+ * actions row: Clear graph, Annotate graph, and with phase, which puts the
+ * phase on the drawing too, as a plot of its own.
  */
 
 
+
+
+
+/** A mode's magnitude and phase plots: one frequency axis, the two pan and
+ *  zoom along x together, and only the lower one numbers it. */
+function bodeGraphPair() {
+  const pair = {
+    magnitude: createPlotView({ height: 200, aspect: 0.42, xAxis: false, className: 'bode-magnitude' }),
+    phase: createPlotView({ height: 140, aspect: 0.3, className: 'bode-phase' }),
+  };
+  linkPlots(pair.magnitude, pair.phase);
+  return pair;
+}
+
+/** Draw `specs` ({ magnitude, phase }) in `host`, the plots staying in
+ *  place while they redraw (a zoomed view stays too); with none, a hint to
+ *  check a trace, while there are traces. */
+function showBodeGraphs(host, pair, specs, hasTraces) {
+  if (!specs) {
+    host.replaceChildren(el('p', { class: 'field-hint', text: hasTraces ? 'Check a trace below to plot it.' : '' }));
+    return;
+  }
+  if (pair.magnitude.el.parentNode !== host) host.replaceChildren(pair.magnitude.el, pair.phase.el);
+  pair.magnitude.set(specs.magnitude);
+  pair.phase.set(specs.phase);
+}
 
 /**
  * The row's controls. `clear()` empties the graph; `annotate({ magnitude,
@@ -64490,6 +64521,29 @@ function bodeGraphActions({ clear, annotate, ready, state }) {
   ];
 }
 
+/**
+ * Under the graph: a legend row per trace of `traces` (named by
+ * `label(trace)`; `hold(trace)` holds one; `redraw()` after one is shown or
+ * hidden), then the actions, hidden with no traces. `setTraces(list)` takes
+ * the mode's traces to `list` and redraws; Clear graph also drops the held
+ * records (`holds`, `holdsChanged`).
+ */
+function bodeGraphFooter({ legend, actions, traces, label, holds, holdsChanged, hold, redraw, setTraces, annotate, ready, state }) {
+  legend.replaceChildren(...traces.map((trace) => traceLegendRow(trace, {
+    label: label(trace), holds, holdsChanged,
+    onHold: () => hold(trace),
+    onShow: redraw,
+    onRemove: () => setTraces(traces.filter((t) => t !== trace)),
+  })));
+  actions.hidden = !traces.length;
+  actions.replaceChildren(...bodeGraphActions({
+    clear: () => { holdsChanged([]); setTraces([]); },
+    annotate,
+    ready,
+    state,
+  }));
+}
+
 };
 
 __modules["src/web/bode-ui.js"] = function (__require, __exports) {
@@ -64499,12 +64553,10 @@ __exports.installBodeUi = installBodeUi;
 __exports.bodeSnapshot = bodeSnapshot;
 let PER_DECADE; __bind(() => { ({ PER_DECADE } = __require("src/web/e-series.js")); });
 let DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, baseSymbols, bodeSketch, evaluateExpression, expressionSymbols, numericCoefficients, responseAt, sketchParameters, sketchValues, withDerivedValues; __bind(() => { ({ DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, baseSymbols, bodeSketch, evaluateExpression, expressionSymbols, numericCoefficients, responseAt, sketchParameters, sketchValues, withDerivedValues } = __require("src/core/analysis/bode.js")); });
-let TRACE_COLORS; __bind(() => { ({ TRACE_COLORS } = __require("src/core/analysis/signal-flow.js")); });
 let renderExpression; __bind(() => { ({ renderExpression } = __require("src/core/analysis/present.js")); });
 let negate; __bind(() => { ({ negate } = __require("src/core/analysis/rational.js")); });
 let cornerNames; __bind(() => { ({ cornerNames } = __require("src/core/bode-figure.js")); });
 let axisName, bodeSpecs, responseSpec; __bind(() => { ({ axisName, bodeSpecs, responseSpec } = __require("src/core/plot-spec.js")); });
-let createPlotView, linkPlots; __bind(() => { ({ createPlotView, linkPlots } = __require("src/web/plot-view.js")); });
 let sharedValueRow; __bind(() => { ({ valueRow: sharedValueRow } = __require("src/web/value-row.js")); });
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
@@ -64513,8 +64565,8 @@ let markSettingsChanged, onDocumentShown, render; __bind(() => { ({ markSettings
 let installPlotsWindow, offerPlots, plotsShown; __bind(() => { ({ installPlotsWindow, offerPlots, plotsShown } = __require("src/web/plots-window.js")); });
 let matchPlotTraces, placeResponsePlot, registerPlotUpdater; __bind(() => { ({ matchPlotTraces, placeResponsePlot, registerPlotUpdater } = __require("src/web/signal-flow-ui.js")); });
 let registerAnnotations; __bind(() => { ({ registerAnnotations } = __require("src/web/annotate-menu.js")); });
-let bodeGraphActions; __bind(() => { ({ bodeGraphActions } = __require("src/web/bode-actions.js")); });
-let differing, differingNames, heldName, holdKey, liveName, saveHolds, savedHolds, traceLegendRow; __bind(() => { ({ differing, differingNames, heldName, holdKey, liveName, saveHolds, savedHolds, traceLegendRow } = __require("src/web/trace-hold.js")); });
+let bodeGraphFooter, bodeGraphPair, showBodeGraphs; __bind(() => { ({ bodeGraphFooter, bodeGraphPair, showBodeGraphs } = __require("src/web/bode-actions.js")); });
+let differing, differingNames, freeTraceColor, heldName, heldTraces, holdKey, liveName; __bind(() => { ({ differing, differingNames, freeTraceColor, heldName, heldTraces, holdKey, liveName } = __require("src/web/trace-hold.js")); });
 /**
  * The small-signal analysis's Bode plots, laid out as the signal-flow
  * analysis lays out its own: the graph in the Plots window (plots-window.js,
@@ -64531,8 +64583,6 @@ let differing, differingNames, heldName, holdKey, liveName, saveHolds, savedHold
  * on the symbolic solve, fail with it, or take its approximations. The
  * loop gain is drawn from its derived coefficients.
  */
-
-
 
 
 
@@ -64784,15 +64834,11 @@ function addTrace(report, key) {
     old.label = fresh.label;
     return;
   }
-  const used = new Set(traces.map((trace) => trace.color));
-  fresh.color = TRACE_COLORS.find((color) => !used.has(color)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
+  fresh.color = freeTraceColor(new Set(traces.map((trace) => trace.color)), traces.length);
   traces.push(fresh);
   // Its held copies, saved with the design, come back with it.
   restoreHolds();
 }
-
-// The traces drawn, each held one named by the values it was held at.
-const shownTraces = () => traces.filter((trace) => trace.on).map((trace) => ({ ...trace, label: trace.held ? heldLabel(trace) : liveLabel(trace) }));
 
 /** The ratios now, as a held trace keeps them: by name. */
 const ratioValues = (r) => ({ intrinsicGain: r.intrinsicGain, parasiticRatio: r.parasiticRatio, ...Object.fromEntries(Object.entries(r.multipliers).map(([name, value]) => [`×${name}`, value])) });
@@ -64827,14 +64873,15 @@ function liveLabel(trace) {
 }
 
 // Held traces are saved with the design (trace-hold.js): a record each, by
-// the trace it was held from, made into a trace as a Derive brings it back.
-const holds = () => savedHolds('small-signal');
-const holdsChanged = (records) => saveHolds('small-signal', records);
+// the trace it was held from, made into a trace as a Derive brings it back;
+// the traces drawn, each held one named by the Values it was held at.
+const { holds, holdsChanged, label: traceLabel, shown: shownTraces, restore: restoreHolds } = heldTraces('small-signal', {
+  traces: () => traces, heldLabel, liveLabel, heldFrom, liveOf: (trace) => trace.id, skip: (record) => !record.ratios,
+});
 
 /** Hold a trace: a copy at the Values now, in a color of its own. */
 function holdTrace(trace) {
-  const used = new Set(traces.map((t) => t.color));
-  const color = TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
+  const color = freeTraceColor(new Set(traces.map((t) => t.color)), traces.length);
   const record = { key: holdKey(), of: trace.id, base: trace.label, color, values: {}, ratios: { intrinsicGain: ratios.intrinsicGain, parasiticRatio: ratios.parasiticRatio, multipliers: { ...ratios.multipliers } } };
   holdsChanged([...holds(), record]);
   traces.push(heldFrom(record, trace));
@@ -64847,14 +64894,6 @@ function heldFrom(record, live) {
   return { ...live, id: `${live.id}\n${record.key}`, color: record.color, on: record.on !== false, held: { ratios: record.ratios, base: record.base, key: record.key, of: record.of } };
 }
 
-/** The held traces whose live one is on the graph again, from their records. */
-function restoreHolds() {
-  for (const record of holds()) {
-    if (!record.ratios || traces.some((trace) => trace.held?.key === record.key)) continue;
-    const live = traces.find((trace) => !trace.held && trace.id === record.of);
-    if (live) traces.push(heldFrom(record, live));
-  }
-}
 
 // ----- the Plots window ------------------------------------------------------------------
 
@@ -64862,16 +64901,7 @@ let plotsEl = null;
 // Magnitude over phase, one frequency axis: the two plots pan and zoom
 // along x together, and only the lower one numbers it.
 let graphs = null;
-function stackedGraphs() {
-  if (!graphs) {
-    graphs = {
-      magnitude: createPlotView({ height: 200, aspect: 0.42, xAxis: false, className: 'bode-magnitude' }),
-      phase: createPlotView({ height: 140, aspect: 0.3, className: 'bode-phase' }),
-    };
-    linkPlots(graphs.magnitude, graphs.phase);
-  }
-  return graphs;
-}
+const stackedGraphs = () => (graphs ||= bodeGraphPair());
 
 
 /** The sketches of the shown traces, at the current values. */
@@ -64951,15 +64981,21 @@ function renderPlots() {
   list.replaceChildren();
   const sketches = shownSketches();
   // The plots stay in place while they redraw (a zoomed view stays too).
-  const { magnitude, phase } = stackedGraphs();
-  if (sketches.length) {
-    if (magnitude.el.parentNode !== host) host.replaceChildren(magnitude.el, phase.el);
-    magnitude.set(graphSpec(sketches, 'magnitude'));
-    phase.set(graphSpec(sketches, 'phase'));
-  } else {
-    host.replaceChildren(el('p', { class: 'field-hint', text: traces.length ? 'Check a trace below to plot it.' : '' }));
-  }
-  renderLegend();
+  showBodeGraphs(host, stackedGraphs(), sketches.length ? { magnitude: graphSpec(sketches, 'magnitude'), phase: graphSpec(sketches, 'phase') } : null, traces.length > 0);
+  bodeGraphFooter({
+    legend: plotsEl.querySelector('.bode-legend'),
+    actions: plotsEl.querySelector('.bode-plots-actions'),
+    traces,
+    label: traceLabel,
+    holds,
+    holdsChanged,
+    hold: holdTrace,
+    redraw: renderPlots,
+    setTraces: (next) => { traces = next; renderValues(); renderPlots(); },
+    annotate: annotateGraph,
+    ready: shownTraces().length > 0,
+    state: graphChoice,
+  });
   for (const entry of sketches) appendCorners(list, entry, sketches.length > 1);
 }
 
@@ -64989,27 +65025,6 @@ function addButtons() {
     }));
   }
   return row;
-}
-
-function renderLegend() {
-  const legend = plotsEl.querySelector('.bode-legend');
-  legend.replaceChildren();
-  for (const trace of traces) {
-    legend.append(traceLegendRow(trace, {
-      label: trace.held ? heldLabel(trace) : liveLabel(trace), holds, holdsChanged,
-      onHold: () => holdTrace(trace),
-      onShow: renderPlots,
-      onRemove: () => { traces = traces.filter((t) => t !== trace); renderValues(); renderPlots(); },
-    }));
-  }
-  const actions = plotsEl.querySelector('.bode-plots-actions');
-  actions.hidden = !traces.length;
-  actions.replaceChildren(...bodeGraphActions({
-    clear: () => { traces = []; holdsChanged([]); renderValues(); renderPlots(); },
-    annotate: annotateGraph,
-    ready: shownTraces().length > 0,
-    state: graphChoice,
-  }));
 }
 
 /** A trace's corners, its unity-gain or crossover, and what it was solved by. */
@@ -80386,7 +80401,7 @@ function installLogicSynthesisUi() {
 __modules["src/web/logic-ui.js"] = function (__require, __exports) {
 __exports.installLogicUi = installLogicUi;
 let analyzeLogic, logicNameTex; __bind(() => { ({ analyzeLogic, logicNameTex } = __require("src/core/analysis/logic.js")); });
-let registerAnalysisMode; __bind(() => { ({ registerAnalysisMode } = __require("src/web/signal-flow-ui.js")); });
+let modeDerive, registerAnalysisMode; __bind(() => { ({ modeDerive, registerAnalysisMode } = __require("src/web/signal-flow-ui.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let markSettingsChanged, onDocumentShown; __bind(() => { ({ markSettingsChanged, onDocumentShown } = __require("src/web/main.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
@@ -80573,22 +80588,11 @@ function installLogicUi() {
     { label: 'Table', identity: { kind: 'table', source: 'logic' }, available: !!latest?.result.ok && tableFits(latest.result), run: annotateTable },
     { label: 'Equations', identity: { kind: 'equations', source: 'logic' }, available: !!latest?.result.ok && latest.result.expressions.some((expression) => expression.tex), run: annotateEquations },
   ]);
-  const actions = [
-    el('button', { type: 'button', class: 'primary-action logic-derive', 'data-icon': 'check', text: 'Derive', title: 'Derive (Enter)', onclick: derive }),
-  ];
-  section.addEventListener('keydown', (ev) => {
-    if (ev.key !== 'Enter' || ev.target.tagName === 'BUTTON') return;
-    ev.preventDefault();
-    derive();
-  });
   // The drawing may have changed while the window was open.
-  let filled = -1;
-  section.addEventListener('pointerenter', () => {
-    if (filled === editor.modelRevision) return;
-    filled = editor.modelRevision;
+  const actions = [modeDerive(section, { className: 'logic-derive', derive, refill: () => {
     renderSignals();
     if (latest) section.querySelector('.logic-stale').hidden = latest.revision === editor.modelRevision;
-  });
+  } })];
   registerAnalysisMode({
     mode: 'logic',
     label: 'Logic',
@@ -96036,6 +96040,7 @@ function installSidePanel() {
 };
 
 __modules["src/web/signal-flow-ui.js"] = function (__require, __exports) {
+__exports.modeDerive = modeDerive;
 __exports.registerAnalysisMode = registerAnalysisMode;
 __exports.signalFlowSettingsRestored = signalFlowSettingsRestored;
 __exports.placeResponsePlot = placeResponsePlot;
@@ -96078,7 +96083,7 @@ let controlPair, el, mathSpan, onFieldCommit; __bind(() => { ({ controlPair, ele
 let netPicker; __bind(() => { ({ netPicker } = __require("src/web/net-picker.js")); });
 let deriving; __bind(() => { ({ deriving } = __require("src/web/analysis-busy.js")); });
 let startWorker; __bind(() => { ({ startWorker } = __require("src/web/worker-thread.js")); });
-let differing, differingNames, heldName, heldNumber, holdButton, holdKey, liveName, saveHolds, savedHolds, traceLegendRow; __bind(() => { ({ differing, differingNames, heldName, heldNumber, holdButton, holdKey, liveName, saveHolds, savedHolds, traceLegendRow } = __require("src/web/trace-hold.js")); });
+let differing, differingNames, freeTraceColor, heldName, heldNumber, heldTraces, holdButton, holdKey, liveName, traceLegendRow; __bind(() => { ({ differing, differingNames, freeTraceColor, heldName, heldNumber, heldTraces, holdButton, holdKey, liveName, traceLegendRow } = __require("src/web/trace-hold.js")); });
 let installSweepPlot, progressText, showSweep, sweepPlotPoints, sweepPlotProblem, sweepPlotUpdate, sweepSection; __bind(() => { ({ installSweepPlot, progressText, showSweep, sweepPlotPoints, sweepPlotProblem, sweepPlotUpdate, sweepSection } = __require("src/web/sweep-plot.js")); });
 let openRunWindow; __bind(() => { ({ openRunWindow } = __require("src/web/optimize-window.js")); });
 let simulatedSpectrum; __bind(() => { ({ simulatedSpectrum } = __require("src/core/analysis/spectrum-run.js")); });
@@ -96157,11 +96162,14 @@ let traces = [];
 // Held traces and spectra are saved with the design (trace-hold.js): a
 // held spectrum is its record, { key, kind: 'spectrum', points, values,
 // amplitude, color, on }; a held trace is made from its record as the trace
-// it was held from comes back.
-const holds = () => savedHolds('signal-flow');
+// it was held from comes back. The traces drawn, each held one named by
+// the numbers it was held at.
+const { holds, holdsChanged: saveHeld, label: traceLabel, shown: shownTraces, restore: restoreHolds } = heldTraces('signal-flow', {
+  traces: () => traces, heldLabel, liveLabel, heldFrom, liveOf: (trace) => trace.id, skip: (record) => record.kind === 'spectrum',
+});
 const heldSpectraList = () => holds().filter((record) => record.kind === 'spectrum');
 /** The held records changed (a hold, a removal, a box ticked): saved. */
-const holdsChanged = (records = holds()) => saveHolds('signal-flow', records);
+const holdsChanged = (records = holds()) => saveHeld(records);
 // Whether the live simulated spectrum is drawn (its legend row's box): hidden, it still runs.
 let liveSpectrumOn = true;
 // Numbers for the symbols in the results (a_1, k), 1 until set: the graph and
@@ -96220,6 +96228,24 @@ function circuitParts() {
 // (switched-cap-ui.js): { mode, label, hint, title, section, actions,
 // suggested(circuit), shown() }.
 const extraModes = [];
+
+/** A mode's Derive: its footer button (`className`), and Enter in a field
+ *  of its `section` (never submitting the circuit form). `refill()` runs
+ *  when the pointer comes back to the section after the drawing changed. */
+function modeDerive(section, { className, derive, refill }) {
+  section.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter' || ev.target.tagName === 'BUTTON') return;
+    ev.preventDefault();
+    derive();
+  });
+  let filled = -1;
+  section.addEventListener('pointerenter', () => {
+    if (filled === editor.modelRevision) return;
+    filled = editor.modelRevision;
+    refill();
+  });
+  return el('button', { type: 'button', class: `primary-action ${className}`, 'data-icon': 'check', text: 'Derive', title: 'Derive (Enter)', onclick: derive });
+}
 
 /** Add a mode to the window: its button on the mode bar, its section after
  *  the others, its buttons in the footer. */
@@ -97070,10 +97096,7 @@ function liveSpectrumLabel() {
   return liveName('\\text{simulated output}', heldSpectraList().filter((held) => held.on !== false).flatMap((held) => differingNames(held.values, current)), current);
 }
 
-const nextTraceColor = () => {
-  const used = new Set([...traces.map((trace) => trace.color), ...heldSpectraList().map((held) => held.color)]);
-  return TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[(traces.length + heldSpectraList().length) % TRACE_COLORS.length];
-};
+const nextTraceColor = () => freeTraceColor(new Set([...traces, ...heldSpectraList()].map((item) => item.color)), traces.length + heldSpectraList().length);
 
 /** Hold a trace: a copy at the numbers now, in a color of its own, that
  *  the sliders leave as it is. */
@@ -97101,15 +97124,6 @@ function heldFrom(record, live, value = live.value) {
   };
 }
 
-/** The held traces whose live one is on the graph again (a Derive brought
- *  it back), made from their records. */
-function restoreHolds() {
-  for (const record of holds()) {
-    if (record.kind === 'spectrum' || traces.some((trace) => trace.held?.key === record.key)) continue;
-    const live = traces.find((trace) => !trace.held && trace.id === record.of);
-    if (live) traces.push(heldFrom(record, live));
-  }
-}
 
 /** Hold the simulated spectrum: a copy at the numbers now, drawn behind
  *  the live one. */
@@ -97299,8 +97313,6 @@ function showSpectrum(request, result) {
   const status = plots.querySelector('.signal-flow-spectrum-status');
   if (status) status.textContent = spectrumStatus();
 }
-// The traces drawn, each held one named by the numbers it was held at.
-const shownTraces = () => traces.filter((trace) => trace.on).map((trace) => ({ ...trace, label: trace.held ? heldLabel(trace) : liveLabel(trace) }));
 const hasQuantizer = () => [...editor.circuit.components.values()].some((c) => c.type === 'quantizer');
 
 /** Redraw the graph's plot alone, its controls left as they are (but a
@@ -97364,8 +97376,7 @@ function bandControls() {
 function addTrace(entry, variable, output) {
   const id = `${output.key}\n${entry.input}\n${entry.equation}`;
   if (traces.some((trace) => trace.id === id)) return;
-  const used = new Set(traces.map((trace) => trace.color));
-  const color = TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
+  const color = freeTraceColor(new Set(traces.map((trace) => trace.color)), traces.length);
   // A trace is named by its ratio (OUT/IN); the equation can be annotated on its own.
   traces.push({ id, label: entry.label, equation: entry.equation, color, value: entry.value, variable, on: true, noise: !!entry.quantizer, input: entry.input, output: output.key, ...(output.decimation > 1 ? { decimation: output.decimation } : {}) });
   // Its held copies, saved with the design, come back with it.
@@ -97462,7 +97473,7 @@ function renderGraph() {
   const legend = el('div', { class: 'signal-flow-legend' });
   for (const trace of traces) {
     legend.append(traceLegendRow(trace, {
-      label: trace.held ? heldLabel(trace) : liveLabel(trace), holds, holdsChanged,
+      label: traceLabel(trace), holds, holdsChanged,
       onHold: () => holdTrace(trace),
       onShow: renderGraph,
       onRemove: () => { traces = traces.filter((t) => t !== trace); renderCoefficients(); renderGraph(); },
@@ -97852,7 +97863,7 @@ function plotUpdate(plot) {
     const matched = stored.map((trace) => {
       // A live one's name may carry its numbers then (`OUT/IN,\\ a = 1`).
       const current = trace.hold ? traces.find((t) => t.held?.key === trace.hold) : traces.find((t) => !t.held && (t.label === trace.label || trace.label.startsWith(`${t.label},`)));
-      return current ? { ...current, label: current.held ? heldLabel(current) : liveLabel(current), color: trace.color } : null;
+      return current ? { ...current, label: traceLabel(current), color: trace.color } : null;
     });
     if (!matched.length || matched.some((t) => !t)) return null;
     const view = plot.kind === 'step' ? 'step' : plot.quantity === 'phase' ? 'phase' : 'magnitude';
@@ -98090,27 +98101,13 @@ function installSignalFlowUi() {
   ]);
   // Every analysis's plots, from whichever mode the window is in.
   for (const other of ['circuit', 'switched-cap']) registerAnnotations(other, () => [updateAllItem()]);
-  actions = [
-    el('button', { type: 'button', class: 'primary-action signal-flow-derive', 'data-icon': 'check', text: 'Derive', title: 'Derive (Enter)', onclick: derive }),
-  ];
+  // The diagram may have changed while the window was open: the signals
+  // and sources are read again when the pointer comes back to it.
+  actions = [modeDerive(section, { className: 'signal-flow-derive', derive, refill: fillForm })];
   for (const button of actions) if (button.dataset.icon && !button.querySelector('.button-icon')) button.prepend(buttonIcon(button.dataset.icon));
   document.getElementById('analysis-submit')?.before(...actions);
   scroll.prepend(modeBar);
   modeBar.after(section);
-  // Enter in a field derives here; it must not submit the circuit form.
-  section.addEventListener('keydown', (ev) => {
-    if (ev.key !== 'Enter' || ev.target.tagName === 'BUTTON') return;
-    ev.preventDefault();
-    derive();
-  });
-  // The diagram may have changed while the window was open: refresh the
-  // signals and sources when the pointer comes back to it.
-  let filledRevision = -1;
-  section.addEventListener('pointerenter', () => {
-    if (filledRevision === editor.modelRevision) return;
-    filledRevision = editor.modelRevision;
-    fillForm();
-  });
   plots = el('div', { class: 'signal-flow-plots-view' }, [
     el('p', { class: 'field-hint signal-flow-plots-empty', text: 'Draw a signal-flow diagram (H(s), H(z), sums, gains, quantizers), then Derive in the analysis window (Shift+S).' }),
     el('div', { class: 'signal-flow-graph-head signal-flow-plots-head' }),
@@ -101161,16 +101158,15 @@ __modules["src/web/switched-cap-ui.js"] = function (__require, __exports) {
 __exports.installSwitchedCapUi = installSwitchedCapUi;
 let STRAY, analyzeSwitchedCap, switchedCapNoiseFigures, switchedCapPhases, switchedCapStrays; __bind(() => { ({ STRAY, analyzeSwitchedCap, switchedCapNoiseFigures, switchedCapPhases, switchedCapStrays } = __require("src/core/analysis/switched-cap.js")); });
 let calculate, siResult; __bind(() => { ({ calculate, siResult } = __require("src/core/calculator.js")); });
-let TRACE_COLORS, complexText, transferTex, numericRootsOf, responsePlot, resultSymbols, withCoefficients; __bind(() => { ({ TRACE_COLORS, complexText, transferTex, numericRootsOf, responsePlot, resultSymbols, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
+let complexText, transferTex, numericRootsOf, responsePlot, resultSymbols, withCoefficients; __bind(() => { ({ complexText, transferTex, numericRootsOf, responsePlot, resultSymbols, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
 let symbolText; __bind(() => { ({ symbolText } = __require("src/core/analysis/present.js")); });
 let responseSpec; __bind(() => { ({ responseSpec } = __require("src/core/plot-spec.js")); });
 let plainTexText; __bind(() => { ({ plainTexText } = __require("src/core/render.js")); });
 let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js")); });
 let canonicalNetName; __bind(() => { ({ canonicalNetName } = __require("src/core/model.js")); });
 let setPartValue; __bind(() => { ({ setPartValue } = __require("src/core/part-moves.js")); });
-let createPlotView, linkPlots; __bind(() => { ({ createPlotView, linkPlots } = __require("src/web/plot-view.js")); });
 let installPlotsWindow, offerPlots; __bind(() => { ({ installPlotsWindow, offerPlots } = __require("src/web/plots-window.js")); });
-let matchPlotTraces, placeResponsePlot, registerAnalysisMode, registerPlotUpdater; __bind(() => { ({ matchPlotTraces, placeResponsePlot, registerAnalysisMode, registerPlotUpdater } = __require("src/web/signal-flow-ui.js")); });
+let matchPlotTraces, modeDerive, placeResponsePlot, registerAnalysisMode, registerPlotUpdater; __bind(() => { ({ matchPlotTraces, modeDerive, placeResponsePlot, registerAnalysisMode, registerPlotUpdater } = __require("src/web/signal-flow-ui.js")); });
 let valueRow; __bind(() => { ({ valueRow } = __require("src/web/value-row.js")); });
 let PER_DECADE; __bind(() => { ({ PER_DECADE } = __require("src/web/e-series.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
@@ -101179,9 +101175,9 @@ let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")
 let el, mathSpan, onFieldCommit; __bind(() => { ({ element: el, mathSpan, onFieldCommit } = __require("src/web/dom.js")); });
 let annotateMathFigure; __bind(() => { ({ annotateMathFigure } = __require("src/web/figure-annotate.js")); });
 let registerAnnotations; __bind(() => { ({ registerAnnotations } = __require("src/web/annotate-menu.js")); });
-let bodeGraphActions; __bind(() => { ({ bodeGraphActions } = __require("src/web/bode-actions.js")); });
+let bodeGraphFooter, bodeGraphPair, showBodeGraphs; __bind(() => { ({ bodeGraphFooter, bodeGraphPair, showBodeGraphs } = __require("src/web/bode-actions.js")); });
 let deriving; __bind(() => { ({ deriving } = __require("src/web/analysis-busy.js")); });
-let differing, differingNames, heldName, holdKey, liveName, saveHolds, savedHolds, traceLegendRow; __bind(() => { ({ differing, differingNames, heldName, holdKey, liveName, saveHolds, savedHolds, traceLegendRow } = __require("src/web/trace-hold.js")); });
+let differing, differingNames, freeTraceColor, heldName, heldTraces, holdKey, liveName; __bind(() => { ({ differing, differingNames, freeTraceColor, heldName, heldTraces, holdKey, liveName } = __require("src/web/trace-hold.js")); });
 /**
  * The analysis window's switched-capacitor mode: a drawn SC circuit's exact
  * H(z) (core/analysis/switched-cap.js), beside the circuit and signal-flow
@@ -101194,7 +101190,6 @@ let differing, differingNames, heldName, holdKey, liveName, saveHolds, savedHold
  * or phase over f/f_s, a legend to show or take off each, Annotate graph to
  * put it on the drawing.
  */
-
 
 
 
@@ -101427,8 +101422,7 @@ function addTrace(result) {
     Object.assign(existing, { value: result.value, gains: result.gains, on: true }, stepping);
     return;
   }
-  const used = new Set(traces.map((trace) => trace.color));
-  const color = TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
+  const color = freeTraceColor(new Set(traces.map((trace) => trace.color)), traces.length);
   traces.push({ id: `sc-${traces.length}-${result.equation}`, label: result.label, equation: result.equation, color, value: result.value, gains: result.gains, on: true, ...stepping });
   // Its held copies, saved with the design, come back with it.
   restoreHolds();
@@ -101712,9 +101706,6 @@ function annotateNoise() {
 
 // ----- the graph -------------------------------------------------------------------------
 
-// The traces drawn, each held one named by the values it was held at.
-const shownTraces = () => traces.filter((trace) => trace.on).map((trace) => ({ ...trace, label: trace.held ? heldLabel(trace) : liveLabel(trace) }));
-
 /** A live trace's name beside its held copies: its Values now for the
  *  names theirs give. */
 function liveLabel(trace) {
@@ -101728,15 +101719,16 @@ function heldLabel(trace) {
 }
 
 // Held traces are saved with the design (trace-hold.js): a record each, by
-// the equation it was held from, made into a trace as that one comes back.
-const holds = () => savedHolds('switched-cap');
-const holdsChanged = (records) => saveHolds('switched-cap', records);
+// the equation it was held from, made into a trace as that one comes back;
+// the traces drawn, each held one named by the values it was held at.
+const { holds, holdsChanged, label: traceLabel, shown: shownTraces, restore: restoreHolds } = heldTraces('switched-cap', {
+  traces: () => traces, heldLabel, liveLabel, heldFrom, liveOf: (trace) => trace.equation,
+});
 
 /** Hold a trace: a copy at the values now, in a color of its own. */
 function holdTrace(trace) {
   const values = Object.fromEntries(resultSymbols(trace.value, trace.variable || 'z').map((name) => [name, capacitance(name)]));
-  const used = new Set(traces.map((t) => t.color));
-  const color = TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
+  const color = freeTraceColor(new Set(traces.map((t) => t.color)), traces.length);
   const record = { key: holdKey(), of: trace.equation, base: trace.label, color, values };
   holdsChanged([...holds(), record]);
   traces.push(heldFrom(record, trace));
@@ -101748,14 +101740,6 @@ function heldFrom(record, live) {
   return { ...live, id: `${live.id}\n${record.key}`, value: withCoefficients(live.value, record.values), gains: [], color: record.color, on: record.on !== false, held: { values: record.values, base: record.base, key: record.key, of: record.of } };
 }
 
-/** The held traces whose live one is on the graph again, from their records. */
-function restoreHolds() {
-  for (const record of holds()) {
-    if (traces.some((trace) => trace.held?.key === record.key)) continue;
-    const live = traces.find((trace) => !trace.held && trace.equation === record.of);
-    if (live) traces.push(heldFrom(record, live));
-  }
-}
 
 /** The graph's plot: the shown traces at the numbers, magnitude or phase. */
 function graphPlot(quantity = 'magnitude') {
@@ -101764,16 +101748,7 @@ function graphPlot(quantity = 'magnitude') {
   return responsePlot(shown.map((trace) => ({ ...trace, value: numbered(trace.value), variable: trace.variable || 'z' })), 'z', { quantity });
 }
 
-function stackedGraphs() {
-  if (!graphs) {
-    graphs = {
-      magnitude: createPlotView({ height: 200, aspect: 0.42, xAxis: false, className: 'bode-magnitude' }),
-      phase: createPlotView({ height: 140, aspect: 0.3, className: 'bode-phase' }),
-    };
-    linkPlots(graphs.magnitude, graphs.phase);
-  }
-  return graphs;
-}
+const stackedGraphs = () => (graphs ||= bodeGraphPair());
 
 /** The Plots window's view of this mode: as the Bode graph -- magnitude
  *  over phase, a legend to show or take off each trace, then Clear and
@@ -101785,30 +101760,21 @@ function renderPlots() {
   plotsEl.querySelector('.sc-plots-empty').hidden = traces.length > 0;
   head.hidden = true;
   const plot = graphPlot();
-  // The plots stay in place while they redraw (a zoomed view stays too).
-  const { magnitude, phase } = stackedGraphs();
-  if (plot) {
-    if (magnitude.el.parentNode !== host) host.replaceChildren(magnitude.el, phase.el);
-    magnitude.set(responseSpec(plot));
-    phase.set(responseSpec(graphPlot('phase')));
-  } else {
-    host.replaceChildren(el('p', { class: 'field-hint', text: traces.length ? 'Check a trace below to plot it.' : '' }));
-  }
-  const legend = plotsEl.querySelector('.sc-legend');
-  legend.replaceChildren(...traces.map((trace) => traceLegendRow(trace, {
-    label: trace.held ? heldLabel(trace) : liveLabel(trace), holds, holdsChanged,
-    onHold: () => holdTrace(trace),
-    onShow: renderPlots,
-    onRemove: () => { traces = traces.filter((t) => t !== trace); renderValues(); renderPlots(); },
-  })));
-  const actions = plotsEl.querySelector('.sc-plots-actions');
-  actions.hidden = !traces.length;
-  actions.replaceChildren(...bodeGraphActions({
-    clear: () => { traces = []; holdsChanged([]); renderValues(); renderPlots(); },
+  showBodeGraphs(host, stackedGraphs(), plot ? { magnitude: responseSpec(plot), phase: responseSpec(graphPlot('phase')) } : null, traces.length > 0);
+  bodeGraphFooter({
+    legend: plotsEl.querySelector('.sc-legend'),
+    actions: plotsEl.querySelector('.sc-plots-actions'),
+    traces,
+    label: traceLabel,
+    holds,
+    holdsChanged,
+    hold: holdTrace,
+    redraw: renderPlots,
+    setTraces: (next) => { traces = next; renderValues(); renderPlots(); },
     annotate: annotateGraph,
     ready: !!plot,
     state: graphChoice,
-  }));
+  });
 }
 
 // Annotate graph puts the phase on the drawing too, as a plot of its own.
@@ -101918,23 +101884,11 @@ function installSwitchedCapUi() {
     { label: 'Bode magnitude', identity: { kind: 'plot', source: 'switched-cap', key: /^response::/ }, available: !!graphPlot(), run: () => annotateGraph({ phase: false }) },
     { label: 'Bode phase', identity: { kind: 'plot', source: 'switched-cap', key: /^response:phase:/ }, available: !!graphPlot(), run: () => annotateGraph({ magnitude: false, phase: true }) },
   ]);
-  const actions = [
-    el('button', { type: 'button', class: 'primary-action sc-derive', 'data-icon': 'check', text: 'Derive', title: 'Derive (Enter)', onclick: derive }),
-  ];
-  // Enter in a field derives here.
-  section.addEventListener('keydown', (ev) => {
-    if (ev.key !== 'Enter' || ev.target.tagName === 'BUTTON') return;
-    ev.preventDefault();
-    derive();
-  });
   // The drawing may have changed while the window was open.
-  let filled = -1;
-  section.addEventListener('pointerenter', () => {
-    if (filled === editor.modelRevision) return;
-    filled = editor.modelRevision;
+  const actions = [modeDerive(section, { className: 'sc-derive', derive, refill: () => {
     fillForm();
     if (latest) section.querySelector('.sc-stale').hidden = latest.revision === editor.modelRevision;
-  });
+  } })];
   registerAnalysisMode({
     mode: 'switched-cap',
     label: 'Switched-cap',
@@ -104101,8 +104055,8 @@ __exports.naturalCompare = naturalCompare;
 };
 
 __modules["src/web/trace-hold.js"] = function (__require, __exports) {
-__exports.savedHolds = savedHolds;
-__exports.saveHolds = saveHolds;
+__exports.heldTraces = heldTraces;
+__exports.freeTraceColor = freeTraceColor;
 __exports.differing = differing;
 __exports.differingNames = differingNames;
 __exports.liveName = liveName;
@@ -104110,6 +104064,7 @@ __exports.heldName = heldName;
 __exports.holdButton = holdButton;
 __exports.legendActions = legendActions;
 __exports.traceLegendRow = traceLegendRow;
+let TRACE_COLORS; __bind(() => { ({ TRACE_COLORS } = __require("src/core/analysis/signal-flow.js")); });
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
@@ -104121,6 +104076,7 @@ let markSettingsChanged; __bind(() => { ({ markSettingsChanged } = __require("sr
  * leave as it is. Each graph keeps its own copies, saved with the design;
  * this is where they are kept, their name, and their button.
  */
+
 
 
 
@@ -104141,6 +104097,40 @@ function saveHolds(mode, records) {
   else delete holds[mode];
   editor.circuit.windows.holds = holds;
   markSettingsChanged();
+}
+
+/**
+ * A graph's held traces for analysis `mode`: `traces()` the graph's list;
+ * `heldLabel(trace)` and `liveLabel(trace)` name a held and a live one;
+ * `liveOf(trace)` is what a record's `of` names a live trace by;
+ * `heldFrom(record, live)` makes a held trace; `skip(record)` a record that
+ * is not a trace of this list. Returns { holds, holdsChanged, label(trace),
+ * shown(), restore() }: `shown()` the traces checked, each named, and
+ * `restore()` the held traces whose live one is on the graph again (a
+ * Derive brought it back), made from their records.
+ */
+function heldTraces(mode, { traces, heldLabel, liveLabel, liveOf, heldFrom, skip = () => false }) {
+  const holds = () => savedHolds(mode);
+  const label = (trace) => (trace.held ? heldLabel(trace) : liveLabel(trace));
+  return {
+    holds,
+    holdsChanged: (records) => saveHolds(mode, records),
+    label,
+    shown: () => traces().filter((trace) => trace.on).map((trace) => ({ ...trace, label: label(trace) })),
+    restore() {
+      const list = traces();
+      for (const record of holds()) {
+        if (skip(record) || list.some((trace) => trace.held?.key === record.key)) continue;
+        const live = list.find((trace) => !trace.held && liveOf(trace) === record.of);
+        if (live) list.push(heldFrom(record, live));
+      }
+    },
+  };
+}
+
+/** A trace color none of `used` (a Set) has, else the next round the palette after `count` traces. */
+function freeTraceColor(used, count) {
+  return TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[count % TRACE_COLORS.length];
 }
 
 /** A new held trace's key, unlike any saved before. */

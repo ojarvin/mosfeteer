@@ -10,7 +10,7 @@
  */
 
 import { analyzeLogic, logicNameTex } from '../core/analysis/logic.js';
-import { registerAnalysisMode } from './signal-flow-ui.js';
+import { modeDerive, registerAnalysisMode } from './signal-flow-ui.js';
 import { editor } from './editor-state.js';
 import { markSettingsChanged, onDocumentShown } from './main.js';
 import { logLine } from './status-bar-ui.js';
@@ -177,22 +177,11 @@ export function installLogicUi() {
     { label: 'Table', identity: { kind: 'table', source: 'logic' }, available: !!latest?.result.ok && tableFits(latest.result), run: annotateTable },
     { label: 'Equations', identity: { kind: 'equations', source: 'logic' }, available: !!latest?.result.ok && latest.result.expressions.some((expression) => expression.tex), run: annotateEquations },
   ]);
-  const actions = [
-    el('button', { type: 'button', class: 'primary-action logic-derive', 'data-icon': 'check', text: 'Derive', title: 'Derive (Enter)', onclick: derive }),
-  ];
-  section.addEventListener('keydown', (ev) => {
-    if (ev.key !== 'Enter' || ev.target.tagName === 'BUTTON') return;
-    ev.preventDefault();
-    derive();
-  });
   // The drawing may have changed while the window was open.
-  let filled = -1;
-  section.addEventListener('pointerenter', () => {
-    if (filled === editor.modelRevision) return;
-    filled = editor.modelRevision;
+  const actions = [modeDerive(section, { className: 'logic-derive', derive, refill: () => {
     renderSignals();
     if (latest) section.querySelector('.logic-stale').hidden = latest.revision === editor.modelRevision;
-  });
+  } })];
   registerAnalysisMode({
     mode: 'logic',
     label: 'Logic',

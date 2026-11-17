@@ -51,7 +51,7 @@ import { controlPair, element as el, mathSpan, onFieldCommit } from './dom.js';
 import { netPicker } from './net-picker.js';
 import { deriving } from './analysis-busy.js';
 import { startWorker } from './worker-thread.js';
-import { differing, differingNames, heldName, heldNumber, holdButton, holdKey, liveName, saveHolds, savedHolds, traceLegendRow } from './trace-hold.js';
+import { differing, differingNames, freeTraceColor, heldName, heldNumber, heldTraces, holdButton, holdKey, liveName, traceLegendRow } from './trace-hold.js';
 import { installSweepPlot, progressText, showSweep, sweepPlotPoints, sweepPlotProblem, sweepPlotUpdate, sweepSection } from './sweep-plot.js';
 import { openRunWindow } from './optimize-window.js';
 import { simulatedSpectrum } from '../core/analysis/spectrum-run.js';
@@ -73,11 +73,14 @@ let traces = [];
 // Held traces and spectra are saved with the design (trace-hold.js): a
 // held spectrum is its record, { key, kind: 'spectrum', points, values,
 // amplitude, color, on }; a held trace is made from its record as the trace
-// it was held from comes back.
-const holds = () => savedHolds('signal-flow');
+// it was held from comes back. The traces drawn, each held one named by
+// the numbers it was held at.
+const { holds, holdsChanged: saveHeld, label: traceLabel, shown: shownTraces, restore: restoreHolds } = heldTraces('signal-flow', {
+  traces: () => traces, heldLabel, liveLabel, heldFrom, liveOf: (trace) => trace.id, skip: (record) => record.kind === 'spectrum',
+});
 const heldSpectraList = () => holds().filter((record) => record.kind === 'spectrum');
 /** The held records changed (a hold, a removal, a box ticked): saved. */
-const holdsChanged = (records = holds()) => saveHolds('signal-flow', records);
+const holdsChanged = (records = holds()) => saveHeld(records);
 // Whether the live simulated spectrum is drawn (its legend row's box): hidden, it still runs.
 let liveSpectrumOn = true;
 // Numbers for the symbols in the results (a_1, k), 1 until set: the graph and
@@ -136,6 +139,24 @@ function circuitParts() {
 // (switched-cap-ui.js): { mode, label, hint, title, section, actions,
 // suggested(circuit), shown() }.
 const extraModes = [];
+
+/** A mode's Derive: its footer button (`className`), and Enter in a field
+ *  of its `section` (never submitting the circuit form). `refill()` runs
+ *  when the pointer comes back to the section after the drawing changed. */
+export function modeDerive(section, { className, derive, refill }) {
+  section.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter' || ev.target.tagName === 'BUTTON') return;
+    ev.preventDefault();
+    derive();
+  });
+  let filled = -1;
+  section.addEventListener('pointerenter', () => {
+    if (filled === editor.modelRevision) return;
+    filled = editor.modelRevision;
+    refill();
+  });
+  return el('button', { type: 'button', class: `primary-action ${className}`, 'data-icon': 'check', text: 'Derive', title: 'Derive (Enter)', onclick: derive });
+}
 
 /** Add a mode to the window: its button on the mode bar, its section after
  *  the others, its buttons in the footer. */
@@ -986,10 +1007,7 @@ function liveSpectrumLabel() {
   return liveName('\\text{simulated output}', heldSpectraList().filter((held) => held.on !== false).flatMap((held) => differingNames(held.values, current)), current);
 }
 
-const nextTraceColor = () => {
-  const used = new Set([...traces.map((trace) => trace.color), ...heldSpectraList().map((held) => held.color)]);
-  return TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[(traces.length + heldSpectraList().length) % TRACE_COLORS.length];
-};
+const nextTraceColor = () => freeTraceColor(new Set([...traces, ...heldSpectraList()].map((item) => item.color)), traces.length + heldSpectraList().length);
 
 /** Hold a trace: a copy at the numbers now, in a color of its own, that
  *  the sliders leave as it is. */
@@ -1017,15 +1035,6 @@ function heldFrom(record, live, value = live.value) {
   };
 }
 
-/** The held traces whose live one is on the graph again (a Derive brought
- *  it back), made from their records. */
-function restoreHolds() {
-  for (const record of holds()) {
-    if (record.kind === 'spectrum' || traces.some((trace) => trace.held?.key === record.key)) continue;
-    const live = traces.find((trace) => !trace.held && trace.id === record.of);
-    if (live) traces.push(heldFrom(record, live));
-  }
-}
 
 /** Hold the simulated spectrum: a copy at the numbers now, drawn behind
  *  the live one. */
@@ -1215,8 +1224,6 @@ function showSpectrum(request, result) {
   const status = plots.querySelector('.signal-flow-spectrum-status');
   if (status) status.textContent = spectrumStatus();
 }
-// The traces drawn, each held one named by the numbers it was held at.
-const shownTraces = () => traces.filter((trace) => trace.on).map((trace) => ({ ...trace, label: trace.held ? heldLabel(trace) : liveLabel(trace) }));
 const hasQuantizer = () => [...editor.circuit.components.values()].some((c) => c.type === 'quantizer');
 
 /** Redraw the graph's plot alone, its controls left as they are (but a
@@ -1280,8 +1287,7 @@ function bandControls() {
 function addTrace(entry, variable, output) {
   const id = `${output.key}\n${entry.input}\n${entry.equation}`;
   if (traces.some((trace) => trace.id === id)) return;
-  const used = new Set(traces.map((trace) => trace.color));
-  const color = TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
+  const color = freeTraceColor(new Set(traces.map((trace) => trace.color)), traces.length);
   // A trace is named by its ratio (OUT/IN); the equation can be annotated on its own.
   traces.push({ id, label: entry.label, equation: entry.equation, color, value: entry.value, variable, on: true, noise: !!entry.quantizer, input: entry.input, output: output.key, ...(output.decimation > 1 ? { decimation: output.decimation } : {}) });
   // Its held copies, saved with the design, come back with it.
@@ -1378,7 +1384,7 @@ function renderGraph() {
   const legend = el('div', { class: 'signal-flow-legend' });
   for (const trace of traces) {
     legend.append(traceLegendRow(trace, {
-      label: trace.held ? heldLabel(trace) : liveLabel(trace), holds, holdsChanged,
+      label: traceLabel(trace), holds, holdsChanged,
       onHold: () => holdTrace(trace),
       onShow: renderGraph,
       onRemove: () => { traces = traces.filter((t) => t !== trace); renderCoefficients(); renderGraph(); },
@@ -1768,7 +1774,7 @@ function plotUpdate(plot) {
     const matched = stored.map((trace) => {
       // A live one's name may carry its numbers then (`OUT/IN,\\ a = 1`).
       const current = trace.hold ? traces.find((t) => t.held?.key === trace.hold) : traces.find((t) => !t.held && (t.label === trace.label || trace.label.startsWith(`${t.label},`)));
-      return current ? { ...current, label: current.held ? heldLabel(current) : liveLabel(current), color: trace.color } : null;
+      return current ? { ...current, label: traceLabel(current), color: trace.color } : null;
     });
     if (!matched.length || matched.some((t) => !t)) return null;
     const view = plot.kind === 'step' ? 'step' : plot.quantity === 'phase' ? 'phase' : 'magnitude';
@@ -2006,27 +2012,13 @@ export function installSignalFlowUi() {
   ]);
   // Every analysis's plots, from whichever mode the window is in.
   for (const other of ['circuit', 'switched-cap']) registerAnnotations(other, () => [updateAllItem()]);
-  actions = [
-    el('button', { type: 'button', class: 'primary-action signal-flow-derive', 'data-icon': 'check', text: 'Derive', title: 'Derive (Enter)', onclick: derive }),
-  ];
+  // The diagram may have changed while the window was open: the signals
+  // and sources are read again when the pointer comes back to it.
+  actions = [modeDerive(section, { className: 'signal-flow-derive', derive, refill: fillForm })];
   for (const button of actions) if (button.dataset.icon && !button.querySelector('.button-icon')) button.prepend(buttonIcon(button.dataset.icon));
   document.getElementById('analysis-submit')?.before(...actions);
   scroll.prepend(modeBar);
   modeBar.after(section);
-  // Enter in a field derives here; it must not submit the circuit form.
-  section.addEventListener('keydown', (ev) => {
-    if (ev.key !== 'Enter' || ev.target.tagName === 'BUTTON') return;
-    ev.preventDefault();
-    derive();
-  });
-  // The diagram may have changed while the window was open: refresh the
-  // signals and sources when the pointer comes back to it.
-  let filledRevision = -1;
-  section.addEventListener('pointerenter', () => {
-    if (filledRevision === editor.modelRevision) return;
-    filledRevision = editor.modelRevision;
-    fillForm();
-  });
   plots = el('div', { class: 'signal-flow-plots-view' }, [
     el('p', { class: 'field-hint signal-flow-plots-empty', text: 'Draw a signal-flow diagram (H(s), H(z), sums, gains, quantizers), then Derive in the analysis window (Shift+S).' }),
     el('div', { class: 'signal-flow-graph-head signal-flow-plots-head' }),
