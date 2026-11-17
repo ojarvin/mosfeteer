@@ -667,6 +667,7 @@ __exports.responseAt = responseAt;
 __exports.bodeSketch = bodeSketch;
 __exports.cancelCommonRoots = cancelCommonRoots;
 let symbolText; __bind(() => { ({ symbolText } = __require("src/core/analysis/present.js")); });
+let c, cabs, cadd, cdiv, cmul, csub; __bind(() => { ({ c, cabs, cadd, cdiv, cmul, csub } = __require("src/core/analysis/complex.js")); });
 /**
  * Relative Bode sketches of an exact transfer function.
  *
@@ -681,6 +682,7 @@ let symbolText; __bind(() => { ({ symbolText } = __require("src/core/analysis/pr
  *
  * Pure: numbers in, numbers out. The expressions are rational.js's.
  */
+
 
 
 
@@ -793,18 +795,6 @@ function numericCoefficients(list, values) {
   }
   return out;
 }
-
-// ----- complex arithmetic -------------------------------------------------------
-
-const c = (re, im = 0) => ({ re, im });
-const cadd = (a, b) => c(a.re + b.re, a.im + b.im);
-const csub = (a, b) => c(a.re - b.re, a.im - b.im);
-const cmul = (a, b) => c(a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re);
-const cdiv = (a, b) => {
-  const d = b.re * b.re + b.im * b.im;
-  return c((a.re * b.re + a.im * b.im) / d, (a.im * b.re - a.re * b.im) / d);
-};
-const cabs = (a) => Math.hypot(a.re, a.im);
 
 /** p(z) and p'(z) by Horner, coefficients low power first. */
 function horner(coefficients, z) {
@@ -1417,6 +1407,27 @@ function compactRational(value, ops) {
   }
 }
 
+};
+
+__modules["src/core/analysis/complex.js"] = function (__require, __exports) {
+/** Complex numbers as { re, im }: the arithmetic the numeric responses use. */
+
+const c = (re, im = 0) => ({ re, im });
+const cadd = (a, b) => c(a.re + b.re, a.im + b.im);
+const csub = (a, b) => c(a.re - b.re, a.im - b.im);
+const cmul = (a, b) => c(a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re);
+const cdiv = (a, b) => {
+  const d = b.re * b.re + b.im * b.im;
+  return c((a.re * b.re + a.im * b.im) / d, (a.im * b.re - a.re * b.im) / d);
+};
+const cabs = (a) => Math.hypot(a.re, a.im);
+
+__exports.c = c;
+__exports.cadd = cadd;
+__exports.csub = csub;
+__exports.cmul = cmul;
+__exports.cdiv = cdiv;
+__exports.cabs = cabs;
 };
 
 __modules["src/core/analysis/context.js"] = function (__require, __exports) {
@@ -5160,7 +5171,7 @@ __exports.normalizeSynthesisOptions = normalizeSynthesisOptions;
 __exports.synthesizeLogic = synthesizeLogic;
 __exports.gateSummary = gateSummary;
 __exports.drawSynthesis = drawSynthesis;
-let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
+let GRID, ceilGrid, snap; __bind(() => { ({ GRID, ceilGrid, snap } = __require("src/core/grid.js")); });
 let logicNameTex, minimalCover; __bind(() => { ({ logicNameTex, minimalCover } = __require("src/core/analysis/logic.js")); });
 let addTerminalStubs; __bind(() => { ({ addTerminalStubs } = __require("src/core/stubs.js")); });
 let busBits, nameList; __bind(() => { ({ busBits, nameList } = __require("src/core/bus.js")); });
@@ -5587,7 +5598,7 @@ function drawSynthesis(circuit, result, { at = null, wired = null, modes = null 
   const origin = at || (() => {
     if (!circuit.components.size) return { x: 0, y: 0 };
     const box = circuit.inkBounds(0);
-    return { x: Math.ceil((box.x + box.w) / GRID) * GRID + 8 * GRID, y: Math.round(box.y / GRID) * GRID };
+    return { x: ceilGrid(box.x + box.w) + 8 * GRID, y: snap(box.y) };
   })();
   const netsBefore = new Set(circuit.nets.keys());
   const labelsBefore = new Set(circuit.labels.keys());
@@ -9156,6 +9167,7 @@ __exports.solveAt = solveAt;
 __exports.atOrigin = atOrigin;
 __exports.numericQuantities = numericQuantities;
 let pencilRoots; __bind(() => { ({ pencilRoots } = __require("src/core/analysis/eigen.js")); });
+let c, cabs, cadd, cdiv, cmul, csub; __bind(() => { ({ c, cabs, cadd, cdiv, cmul, csub } = __require("src/core/analysis/complex.js")); });
 /**
  * The small-signal port quantities in numbers, for the Bode tab: the same
  * model the equations come from, every parameter a number, only s free.
@@ -9171,15 +9183,7 @@ let pencilRoots; __bind(() => { ({ pencilRoots } = __require("src/core/analysis/
 
 
 
-const c = (re, im = 0) => ({ re, im });
-const cadd = (a, b) => c(a.re + b.re, a.im + b.im);
-const csub = (a, b) => c(a.re - b.re, a.im - b.im);
-const cmul = (a, b) => c(a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re);
-const cdiv = (a, b) => {
-  const d = b.re * b.re + b.im * b.im;
-  return c((a.re * b.re + a.im * b.im) / d, (a.im * b.re - a.re * b.im) / d);
-};
-const cabs = (a) => Math.hypot(a.re, a.im);
+
 
 /** X with (A0 + s A1) X = B at a complex s, every column; null if singular. */
 function solveAt(A0, A1, B, s) {
@@ -22095,6 +22099,7 @@ __exports.swingOverload = swingOverload;
 __exports.swingRunaway = swingRunaway;
 __exports.swingFullScale = swingFullScale;
 __exports.swingLimit = swingLimit;
+__exports.locusNotes = locusNotes;
 __exports.locusFigure = locusFigure;
 let axisTicks, fitRange, logMinorGrid, toU; __bind(() => { ({ axisTicks, fitRange, logMinorGrid, toU } = __require("src/core/plot-scale.js")); });
 let cursorTitleRow; __bind(() => { ({ cursorTitleRow } = __require("src/core/plot-cursors.js")); });
@@ -22768,6 +22773,21 @@ function swingLimit(traces) {
  * dots from light (the sweep's start) to full color (its end), the
  * current value's poles as crosses. `plot`: locus.js's `locusPlot`.
  */
+/** A root locus's notes: the range it was swept over, then where it is
+ *  stable (between its crossings), or no second one without crossings. */
+function locusNotes(plot) {
+  const number = (v) => String(Number(v.toPrecision(3)));
+  const notes = [`${plot.parameter} ${number(plot.from)} … ${number(plot.to)}`];
+  const crossings = plot.crossings || [];
+  if (!crossings.length) return notes;
+  const stableFrom = crossings.find((c) => c.becomes === 'stable');
+  const unstableAt = crossings.find((c) => c.becomes === 'unstable' && (!stableFrom || c.k !== stableFrom.k));
+  notes.push(stableFrom && unstableAt
+    ? `stable for ${plot.parameter} ${number(Math.min(stableFrom.k, unstableAt.k))} … ${number(Math.max(stableFrom.k, unstableAt.k))}`
+    : stableFrom ? `stable from ${plot.parameter} = ${number(stableFrom.k)}` : `unstable from ${plot.parameter} = ${number(unstableAt.k)}`);
+  return notes;
+}
+
 function locusFigure(plot, { width = 480, height = 260, fontSize = 11, right } = {}) {
   const items = [];
   const em = fontSize;
@@ -22807,18 +22827,9 @@ function locusFigure(plot, { width = 480, height = 260, fontSize = 11, right } =
     items.push({ type: 'line', x1: x(p.re) - arm, y1: y(p.im) - arm, x2: x(p.re) + arm, y2: y(p.im) + arm, role: 'marker' });
     items.push({ type: 'line', x1: x(p.re) - arm, y1: y(p.im) + arm, x2: x(p.re) + arm, y2: y(p.im) - arm, role: 'marker' });
   }
-  const number = (v) => String(Number(v.toPrecision(3)));
-  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: `${plot.parameter} ${number(plot.from)} … ${number(plot.to)}`, anchor: 'start', role: 'label' });
-  // Where it is stable: between its crossings.
-  const crossings = plot.crossings || [];
-  if (crossings.length) {
-    const stableFrom = crossings.find((c) => c.becomes === 'stable');
-    const unstableAt = crossings.find((c) => c.becomes === 'unstable' && (!stableFrom || c.k !== stableFrom.k));
-    const text = stableFrom && unstableAt
-      ? `stable for ${plot.parameter} ${number(Math.min(stableFrom.k, unstableAt.k))} … ${number(Math.max(stableFrom.k, unstableAt.k))}`
-      : stableFrom ? `stable from ${plot.parameter} = ${number(stableFrom.k)}` : `unstable from ${plot.parameter} = ${number(unstableAt.k)}`;
-    items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 2.1 * em, text, anchor: 'start', role: 'marker' });
-  }
+  const [range, stability] = locusNotes(plot);
+  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: range, anchor: 'start', role: 'label' });
+  if (stability) items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 2.1 * em, text: stability, anchor: 'start', role: 'marker' });
   axisTitles(items, pane, em, { x: z ? 'Real part (Re z)' : 'Real part (Re s)', y: z ? 'Imaginary part (Im z)' : 'Imaginary part (Im s)' });
   return { width, height, items, pane, toPx: { x, y } };
 }
@@ -28877,7 +28888,7 @@ __exports.placeFigure = placeFigure;
 __exports.removeFigure = removeFigure;
 __exports.moveFigure = moveFigure;
 __exports.arrangeFigures = arrangeFigures;
-let GRID, ceilGrid, floorGrid; __bind(() => { ({ GRID, ceilGrid, floorGrid } = __require("src/core/grid.js")); });
+let GRID, ceilGrid, floorGrid, snap; __bind(() => { ({ GRID, ceilGrid, floorGrid, snap } = __require("src/core/grid.js")); });
 /**
  * Figures: what the tools put on the drawing -- an analysis's plots, its
  * equations as a table, the kT/C noise table, the small-signal model, the
@@ -29237,8 +29248,8 @@ function removeFigure(circuit, figure) {
  *  labels, parts, and the wires between its parts alone. */
 function moveFigure(circuit, figure, dx, dy) {
   // Whole cells: parts and anchors stay on the grid, whatever the ink.
-  dx = Math.round(dx / GRID) * GRID;
-  dy = Math.round(dy / GRID) * GRID;
+  dx = snap(dx);
+  dy = snap(dy);
   if (!dx && !dy) return;
   const refs = new Set(figure.components.map((component) => component.refdes));
   for (const component of figure.components) {
@@ -30105,7 +30116,7 @@ __exports.captionAnchor = captionAnchor;
 __exports.connectorPath = connectorPath;
 __exports.nestedSvg = nestedSvg;
 __exports.bubbleExtras = bubbleExtras;
-let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
+let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
 let segThroughInterior; __bind(() => { ({ segThroughInterior } = __require("src/core/router.js")); });
 /**
  * Where a linked design's peek bubble goes beside the drawing: on a ring
@@ -30121,7 +30132,6 @@ const BUBBLE_GAP = 3 * GRID;
 const BUBBLE_PAD = GRID;
 const BUBBLE_CAPTION = 1.5 * GRID;
 
-const snap = (value) => Math.round(value / GRID) * GRID;
 const ceilCell = (value) => Math.ceil(value / GRID - 1e-9) * GRID;
 const overlaps = (a, b, gap) => a.x < b.x + b.w + gap && b.x < a.x + a.w + gap && a.y < b.y + b.h + gap && b.y < a.y + a.h + gap;
 
@@ -41012,7 +41022,7 @@ __exports.locusSpec = locusSpec;
 __exports.bodeSpecs = bodeSpecs;
 __exports.waveSpec = waveSpec;
 __exports.plotSpec = plotSpec;
-let swingLimit, swingLimitText; __bind(() => { ({ swingLimit, swingLimitText } = __require("src/core/bode-figure.js")); });
+let locusNotes, swingLimit, swingLimitText; __bind(() => { ({ locusNotes, swingLimit, swingLimitText } = __require("src/core/bode-figure.js")); });
 /**
  * The plots the analysis windows show, as one kind of interactive plot
  * (web/plot-view.js) describes them: the data in its own units, the axes'
@@ -41135,19 +41145,7 @@ function swingSpec(plot) {
 function locusSpec(plot) {
   const z = plot.variable === 'z';
   const near = (p) => !z || Math.hypot(p.re, p.im) <= 2.5;
-  const number = (v) => String(Number(v.toPrecision(3)));
-  const notes = [{ text: `${plot.parameter} ${number(plot.from)} … ${number(plot.to)}`, role: 'label' }];
-  const crossings = plot.crossings || [];
-  if (crossings.length) {
-    const stableFrom = crossings.find((c) => c.becomes === 'stable');
-    const unstableAt = crossings.find((c) => c.becomes === 'unstable' && (!stableFrom || c.k !== stableFrom.k));
-    notes.push({
-      role: 'marker',
-      text: stableFrom && unstableAt
-        ? `stable for ${plot.parameter} ${number(Math.min(stableFrom.k, unstableAt.k))} … ${number(Math.max(stableFrom.k, unstableAt.k))}`
-        : stableFrom ? `stable from ${plot.parameter} = ${number(stableFrom.k)}` : `unstable from ${plot.parameter} = ${number(unstableAt.k)}`,
-    });
-  }
+  const notes = locusNotes(plot).map((text, i) => ({ text, role: i ? 'marker' : 'label' }));
   const shown = plot.points.filter(near);
   const reach = z ? [-1.1, 1.1] : [0];
   return {
@@ -55178,7 +55176,7 @@ function noteSelectionForTips() {
 
 __modules["src/web/atlas-arrange.js"] = function (__require, __exports) {
 __exports.arrangeAtlas = arrangeAtlas;
-let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
+let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
 let ATLAS_CAPTION, ATLAS_GAP, layoutAtlas; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP, layoutAtlas } = __require("src/web/atlas-layout.js")); });
 /**
  * Shift+T in the Atlas: the desk arranged by kinship, the same every time.
@@ -55214,7 +55212,6 @@ const PULL = 0.1;
 /** Toward the middle, which closes the room between neighborhoods. */
 const MIDDLE = 0.05;
 
-const snap = (value) => Math.round(value / GRID) * GRID;
 
 /**
  * Arrange `items` ({ id, w, h } in drawing units) by `related(a, b)`
@@ -56641,7 +56638,7 @@ __exports.deskBlur = deskBlur;
 __exports.beamGrowth = beamGrowth;
 __exports.rimSweep = rimSweep;
 let easeOut; __bind(() => { ({ easeOut } = __require("src/web/easing.js")); });
-let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
+let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
 /**
  * Where the Atlas view puts each design, and how much detail a tile needs.
  *
@@ -56662,7 +56659,6 @@ let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 const ATLAS_GAP = 2 * GRID;
 const ATLAS_CAPTION = 2 * GRID;
 
-const snap = (value) => Math.round(value / GRID) * GRID;
 
 /**
  * Pack `items` ({ id, w, h, tags } in drawing units, whole grid cells) around
@@ -58610,7 +58606,7 @@ let designIndex, parseTags, searchDesign, tagsText; __bind(() => { ({ designInde
 let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __require("src/core/selection-drawing.js")); });
 let symbolSheet; __bind(() => { ({ symbolSheet } = __require("src/core/symbol-sheet.js")); });
 let builtInDrawings; __bind(() => { ({ builtInDrawings } = __require("src/core/arrange-builtins.js")); });
-let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
+let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
 let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let relatednessOf; __bind(() => { ({ relatednessOf } = __require("src/core/design-related.js")); });
 let linkArrow, linkCurve, linkDepths, linkGraph; __bind(() => { ({ linkArrow, linkCurve, linkDepths, linkGraph } = __require("src/core/design-links.js")); });
@@ -59105,11 +59101,10 @@ async function loadWorkspace(generation) {
   const placed = provisional && tiles.find((tile) => tile.id === provisional.id);
   if (placed) state.view = { ...state.view, x: state.view.x + placed.x - provisional.x, y: state.view.y + placed.y - provisional.y };
   else if (tiles.length) {
-    const cell = (value) => Math.round(value / GRID) * GRID;
     state.view = {
       ...state.view,
-      x: state.view.x + cell(bounds.x + bounds.w / 2 - (state.view.x + state.view.w / 2)),
-      y: state.view.y + cell(bounds.y + bounds.h / 2 - (state.view.y + state.view.h / 2)),
+      x: state.view.x + snap(bounds.x + bounds.w / 2 - (state.view.x + state.view.w / 2)),
+      y: state.view.y + snap(bounds.y + bounds.h / 2 - (state.view.y + state.view.h / 2)),
     };
   }
   state.revealAt = performance.now();

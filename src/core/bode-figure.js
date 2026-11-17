@@ -668,6 +668,21 @@ export function swingLimit(traces) {
  * dots from light (the sweep's start) to full color (its end), the
  * current value's poles as crosses. `plot`: locus.js's `locusPlot`.
  */
+/** A root locus's notes: the range it was swept over, then where it is
+ *  stable (between its crossings), or no second one without crossings. */
+export function locusNotes(plot) {
+  const number = (v) => String(Number(v.toPrecision(3)));
+  const notes = [`${plot.parameter} ${number(plot.from)} … ${number(plot.to)}`];
+  const crossings = plot.crossings || [];
+  if (!crossings.length) return notes;
+  const stableFrom = crossings.find((c) => c.becomes === 'stable');
+  const unstableAt = crossings.find((c) => c.becomes === 'unstable' && (!stableFrom || c.k !== stableFrom.k));
+  notes.push(stableFrom && unstableAt
+    ? `stable for ${plot.parameter} ${number(Math.min(stableFrom.k, unstableAt.k))} … ${number(Math.max(stableFrom.k, unstableAt.k))}`
+    : stableFrom ? `stable from ${plot.parameter} = ${number(stableFrom.k)}` : `unstable from ${plot.parameter} = ${number(unstableAt.k)}`);
+  return notes;
+}
+
 export function locusFigure(plot, { width = 480, height = 260, fontSize = 11, right } = {}) {
   const items = [];
   const em = fontSize;
@@ -707,18 +722,9 @@ export function locusFigure(plot, { width = 480, height = 260, fontSize = 11, ri
     items.push({ type: 'line', x1: x(p.re) - arm, y1: y(p.im) - arm, x2: x(p.re) + arm, y2: y(p.im) + arm, role: 'marker' });
     items.push({ type: 'line', x1: x(p.re) - arm, y1: y(p.im) + arm, x2: x(p.re) + arm, y2: y(p.im) - arm, role: 'marker' });
   }
-  const number = (v) => String(Number(v.toPrecision(3)));
-  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: `${plot.parameter} ${number(plot.from)} … ${number(plot.to)}`, anchor: 'start', role: 'label' });
-  // Where it is stable: between its crossings.
-  const crossings = plot.crossings || [];
-  if (crossings.length) {
-    const stableFrom = crossings.find((c) => c.becomes === 'stable');
-    const unstableAt = crossings.find((c) => c.becomes === 'unstable' && (!stableFrom || c.k !== stableFrom.k));
-    const text = stableFrom && unstableAt
-      ? `stable for ${plot.parameter} ${number(Math.min(stableFrom.k, unstableAt.k))} … ${number(Math.max(stableFrom.k, unstableAt.k))}`
-      : stableFrom ? `stable from ${plot.parameter} = ${number(stableFrom.k)}` : `unstable from ${plot.parameter} = ${number(unstableAt.k)}`;
-    items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 2.1 * em, text, anchor: 'start', role: 'marker' });
-  }
+  const [range, stability] = locusNotes(plot);
+  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: range, anchor: 'start', role: 'label' });
+  if (stability) items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 2.1 * em, text: stability, anchor: 'start', role: 'marker' });
   axisTitles(items, pane, em, { x: z ? 'Real part (Re z)' : 'Real part (Re s)', y: z ? 'Imaginary part (Im z)' : 'Imaginary part (Im s)' });
   return { width, height, items, pane, toPx: { x, y } };
 }

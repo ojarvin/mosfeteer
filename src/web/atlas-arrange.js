@@ -13,7 +13,7 @@
  * not flip from one arrangement to the next.
  */
 
-import { GRID } from '../core/grid.js';
+import { GRID, snap } from '../core/grid.js';
 import { ATLAS_CAPTION, ATLAS_GAP, layoutAtlas } from './atlas-layout.js';
 
 /** The desk's width over height, whatever the window's: fitting the view
@@ -32,7 +32,6 @@ const PULL = 0.1;
 /** Toward the middle, which closes the room between neighborhoods. */
 const MIDDLE = 0.05;
 
-const snap = (value) => Math.round(value / GRID) * GRID;
 
 /**
  * Arrange `items` ({ id, w, h } in drawing units) by `related(a, b)`

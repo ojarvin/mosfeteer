@@ -19,7 +19,7 @@
  * parts table, the timing diagram's labels.
  */
 
-import { GRID, ceilGrid, floorGrid } from './grid.js';
+import { GRID, ceilGrid, floorGrid, snap } from './grid.js';
 
 export const FIGURE_KINDS = Object.freeze(['plot', 'equations', 'coefficients', 'noise', 'model', 'timing', 'table']);
 
@@ -357,8 +357,8 @@ export function removeFigure(circuit, figure) {
  *  labels, parts, and the wires between its parts alone. */
 export function moveFigure(circuit, figure, dx, dy) {
   // Whole cells: parts and anchors stay on the grid, whatever the ink.
-  dx = Math.round(dx / GRID) * GRID;
-  dy = Math.round(dy / GRID) * GRID;
+  dx = snap(dx);
+  dy = snap(dy);
   if (!dx && !dy) return;
   const refs = new Set(figure.components.map((component) => component.refdes));
   for (const component of figure.components) {

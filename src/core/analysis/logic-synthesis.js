@@ -12,7 +12,7 @@
  * - `drawSynthesis(circuit, result, { at })` draws them into a drawing.
  */
 
-import { GRID } from '../grid.js';
+import { GRID, ceilGrid, snap } from '../grid.js';
 import { logicNameTex, minimalCover } from './logic.js';
 import { addTerminalStubs } from '../stubs.js';
 import { busBits, nameList } from '../bus.js';
@@ -420,7 +420,7 @@ export function drawSynthesis(circuit, result, { at = null, wired = null, modes 
   const origin = at || (() => {
     if (!circuit.components.size) return { x: 0, y: 0 };
     const box = circuit.inkBounds(0);
-    return { x: Math.ceil((box.x + box.w) / GRID) * GRID + 8 * GRID, y: Math.round(box.y / GRID) * GRID };
+    return { x: ceilGrid(box.x + box.w) + 8 * GRID, y: snap(box.y) };
   })();
   const netsBefore = new Set(circuit.nets.keys());
   const labelsBefore = new Set(circuit.labels.keys());

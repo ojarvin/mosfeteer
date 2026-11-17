@@ -14,6 +14,7 @@
  */
 
 import { symbolText } from './present.js';
+import { c, cabs, cadd, cdiv, cmul, csub } from './complex.js';
 
 export const DEFAULT_INTRINSIC_GAIN = 30;
 /** A capacitor on the output node starts this many units: loads dominate. */
@@ -124,18 +125,6 @@ export function numericCoefficients(list, values) {
   }
   return out;
 }
-
-// ----- complex arithmetic -------------------------------------------------------
-
-const c = (re, im = 0) => ({ re, im });
-const cadd = (a, b) => c(a.re + b.re, a.im + b.im);
-const csub = (a, b) => c(a.re - b.re, a.im - b.im);
-const cmul = (a, b) => c(a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re);
-const cdiv = (a, b) => {
-  const d = b.re * b.re + b.im * b.im;
-  return c((a.re * b.re + a.im * b.im) / d, (a.im * b.re - a.re * b.im) / d);
-};
-const cabs = (a) => Math.hypot(a.re, a.im);
 
 /** p(z) and p'(z) by Horner, coefficients low power first. */
 function horner(coefficients, z) {

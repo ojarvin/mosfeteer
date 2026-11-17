@@ -22,7 +22,7 @@ import { designIndex, parseTags, searchDesign, tagsText } from '../core/design-i
 import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
 import { symbolSheet } from '../core/symbol-sheet.js';
 import { builtInDrawings } from '../core/arrange-builtins.js';
-import { GRID } from '../core/grid.js';
+import { GRID, snap } from '../core/grid.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { relatednessOf } from '../core/design-related.js';
 import { linkArrow, linkCurve, linkDepths, linkGraph } from '../core/design-links.js';
@@ -463,11 +463,10 @@ async function loadWorkspace(generation) {
   const placed = provisional && tiles.find((tile) => tile.id === provisional.id);
   if (placed) state.view = { ...state.view, x: state.view.x + placed.x - provisional.x, y: state.view.y + placed.y - provisional.y };
   else if (tiles.length) {
-    const cell = (value) => Math.round(value / GRID) * GRID;
     state.view = {
       ...state.view,
-      x: state.view.x + cell(bounds.x + bounds.w / 2 - (state.view.x + state.view.w / 2)),
-      y: state.view.y + cell(bounds.y + bounds.h / 2 - (state.view.y + state.view.h / 2)),
+      x: state.view.x + snap(bounds.x + bounds.w / 2 - (state.view.x + state.view.w / 2)),
+      y: state.view.y + snap(bounds.y + bounds.h / 2 - (state.view.y + state.view.h / 2)),
     };
   }
   state.revealAt = performance.now();

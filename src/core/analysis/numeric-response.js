@@ -12,16 +12,8 @@
  */
 
 import { pencilRoots } from './eigen.js';
+import { c, cabs, cadd, cdiv, cmul, csub } from './complex.js';
 
-const c = (re, im = 0) => ({ re, im });
-const cadd = (a, b) => c(a.re + b.re, a.im + b.im);
-const csub = (a, b) => c(a.re - b.re, a.im - b.im);
-const cmul = (a, b) => c(a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re);
-const cdiv = (a, b) => {
-  const d = b.re * b.re + b.im * b.im;
-  return c((a.re * b.re + a.im * b.im) / d, (a.im * b.re - a.re * b.im) / d);
-};
-const cabs = (a) => Math.hypot(a.re, a.im);
 
 /** X with (A0 + s A1) X = B at a complex s, every column; null if singular. */
 export function solveAt(A0, A1, B, s) {

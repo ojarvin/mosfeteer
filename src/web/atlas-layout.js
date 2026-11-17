@@ -12,13 +12,12 @@
  */
 
 import { easeOut } from './easing.js';
-import { GRID } from '../core/grid.js';
+import { GRID, snap } from '../core/grid.js';
 
 /** Space between neighboring designs, and below each for its caption. */
 export const ATLAS_GAP = 2 * GRID;
 export const ATLAS_CAPTION = 2 * GRID;
 
-const snap = (value) => Math.round(value / GRID) * GRID;
 
 /**
  * Pack `items` ({ id, w, h, tags } in drawing units, whole grid cells) around

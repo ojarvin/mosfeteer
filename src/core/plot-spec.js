@@ -12,7 +12,7 @@
  * asymptote, start (a run's starting point), band, marker, zero.
  */
 
-import { swingLimit, swingLimitText } from './bode-figure.js';
+import { locusNotes, swingLimit, swingLimitText } from './bode-figure.js';
 
 /** 10^x, exact at whole powers (V8 before 12 gives 10 ** -4 as 0.00009999999999999999). */
 const pow10 = (x) => (Number.isInteger(x) ? Number(`1e${x}`) : 10 ** x);
@@ -120,19 +120,7 @@ export function swingSpec(plot) {
 export function locusSpec(plot) {
   const z = plot.variable === 'z';
   const near = (p) => !z || Math.hypot(p.re, p.im) <= 2.5;
-  const number = (v) => String(Number(v.toPrecision(3)));
-  const notes = [{ text: `${plot.parameter} ${number(plot.from)} … ${number(plot.to)}`, role: 'label' }];
-  const crossings = plot.crossings || [];
-  if (crossings.length) {
-    const stableFrom = crossings.find((c) => c.becomes === 'stable');
-    const unstableAt = crossings.find((c) => c.becomes === 'unstable' && (!stableFrom || c.k !== stableFrom.k));
-    notes.push({
-      role: 'marker',
-      text: stableFrom && unstableAt
-        ? `stable for ${plot.parameter} ${number(Math.min(stableFrom.k, unstableAt.k))} … ${number(Math.max(stableFrom.k, unstableAt.k))}`
-        : stableFrom ? `stable from ${plot.parameter} = ${number(stableFrom.k)}` : `unstable from ${plot.parameter} = ${number(unstableAt.k)}`,
-    });
-  }
+  const notes = locusNotes(plot).map((text, i) => ({ text, role: i ? 'marker' : 'label' }));
   const shown = plot.points.filter(near);
   const reach = z ? [-1.1, 1.1] : [0];
   return {

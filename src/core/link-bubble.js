@@ -5,14 +5,13 @@
  * (web/hierarchy.js). Bubbles never enter the document or an export.
  */
 
-import { GRID } from './grid.js';
+import { GRID, snap } from './grid.js';
 import { segThroughInterior } from './router.js';
 
 const BUBBLE_GAP = 3 * GRID;
 const BUBBLE_PAD = GRID;
 const BUBBLE_CAPTION = 1.5 * GRID;
 
-const snap = (value) => Math.round(value / GRID) * GRID;
 const ceilCell = (value) => Math.ceil(value / GRID - 1e-9) * GRID;
 const overlaps = (a, b, gap) => a.x < b.x + b.w + gap && b.x < a.x + a.w + gap && a.y < b.y + b.h + gap && b.y < a.y + a.h + gap;
 
