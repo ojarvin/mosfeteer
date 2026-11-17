@@ -59,9 +59,38 @@ let exportContent = 'drawing';
 // ({ name, key, summary, build({ grid }) -> { svg, scale, count } }).
 let exportTarget = null;
 
+/** The export dialog's settings as this browser remembers them ({} with none). */
+function savedExportSettings() {
+  try { return JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null') || {}; } catch { return {}; }
+}
+
+/** Remember `changes` over the saved settings; `folder` ({ key, dir,
+ *  remembered }) keeps an export folder by its document's key, or forgets it
+ *  when it is the default one (`remembered` false). */
+function rememberExportSettings(changes, folder = null) {
+  const saved = savedExportSettings();
+  const folders = { ...(saved.folders || {}) };
+  if (folder?.remembered) folders[folder.key] = folder.dir;
+  else if (folder) delete folders[folder.key];
+  try { localStorage.setItem(EXPORT_SETTINGS_KEY, JSON.stringify({ ...saved, ...changes, ...(folder ? { folders } : {}) })); } catch { /* storage unavailable */ }
+}
+
+/** Whether `format` exports here (browser-only has no server PDF). */
+const formatSupported = (format) => persistence.supportedExportFormats?.has(format) ?? true;
+
+/** Whether every one of `formats` exports here; if not, the log says which. */
+function formatsSupported(formats) {
+  const unsupported = formats.filter((format) => !formatSupported(format));
+  if (unsupported.length) logLine(`Could not export: ${unsupported.join(', ')} export is unavailable in this mode.`, 'error');
+  return !unsupported.length;
+}
+
+/** Written files by name, for the log. */
+const fileNames = (paths) => paths.map((path) => path.split(/[\\/]/).pop()).join(', ');
+
 /** The remembered PNG resolution (export dialog), also used by copied images. */
 export function exportPngDpi() {
-  try { return normalizePngDpi(JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null')?.pngDpi); } catch { return normalizePngDpi(null); }
+  return normalizePngDpi(savedExportSettings().pngDpi);
 }
 
 /** PNG pixels per unit: label text at the page guide's size, else 10 pt, at `dpi`. */
@@ -105,12 +134,7 @@ export async function copyAsImage() {
  * frame, so the files and pages line up when stepped through.
  */
 async function runExport({ dir, name, formats, grid = false, dark = false, sketch = false, pngDpi = normalizePngDpi(null), selection = null, beat = null }) {
-  const supportedFormats = persistence.supportedExportFormats || new Set(formats);
-  const unsupported = formats.filter((format) => !supportedFormats.has(format));
-  if (unsupported.length) {
-    logLine(`Could not export: ${unsupported.join(', ')} export is unavailable in this mode.`, 'error');
-    return;
-  }
+  if (!formatsSupported(formats)) return;
   const allBeats = beat === 'all';
   // Browser-only, the PDF is printed (print-pdf.js), every beat on a page of
   // its own, after the files are written.
@@ -189,7 +213,7 @@ async function runExport({ dir, name, formats, grid = false, dark = false, sketc
       for (const page of pages) pdfPngPages.push(await svgToPngDataUrl(page, PDF_FALLBACK_PNG_SCALE));
       if (!await write({ dir, name, formats: ['pdf'], svg: pages[0], pdfPages: pages, pdfPngPages })) return;
     }
-    if (paths.length) logLine(`Exported ${paths.map((path) => path.split(/[\\/]/).pop()).join(', ')} to ${displayPath(folder)}.`);
+    if (paths.length) logLine(`Exported ${fileNames(paths)} to ${displayPath(folder)}.`);
     for (const note of notes) logLine(note);
     if (printing) await printPdf(printPagesHtml(printed, { title: name }), name);
   } catch (err) {
@@ -251,12 +275,7 @@ async function currentReport(fontCss = '') {
 
 /** The report: one HTML document, and the PDF the server prints from it. */
 async function runReportExport({ dir, name, formats }) {
-  const supportedFormats = persistence.supportedExportFormats || new Set(formats);
-  const unsupported = formats.filter((format) => !supportedFormats.has(format));
-  if (unsupported.length) {
-    logLine(`Could not export: ${unsupported.join(', ')} export is unavailable in this mode.`, 'error');
-    return;
-  }
+  if (!formatsSupported(formats)) return;
   try {
     logLine(`Exporting ${formats.map((format) => `${name}.${format}`).join(', ')}…`);
     const prepared = persistence.prepareExport ? await persistence.prepareExport({ name, formats: [], dir }) : null;
@@ -272,7 +291,7 @@ async function runReportExport({ dir, name, formats }) {
         logLine('Export canceled.');
         return;
       }
-      logLine(`Exported the report (${count} figure${count === 1 ? '' : 's'}) to ${result.paths.map((path) => path.split(/[\\/]/).pop()).join(', ')} in ${displayPath(result.dir)}.`);
+      logLine(`Exported the report (${count} figure${count === 1 ? '' : 's'}) to ${fileNames(result.paths)} in ${displayPath(result.dir)}.`);
       for (const note of result.notes || []) logLine(note);
     }
     for (const warning of report.warnings) logLine(warning, 'error');
@@ -304,12 +323,7 @@ async function writeExportFiles(request, { prepared = null, overwrite = false, o
 
 /** The Atlas sheet: every design on the desk on one vector page. */
 async function runAtlasExport({ dir, name, formats, grid = false, dark = false, target }) {
-  const supportedFormats = persistence.supportedExportFormats || new Set(formats);
-  const unsupported = formats.filter((format) => !supportedFormats.has(format));
-  if (unsupported.length) {
-    logLine(`Could not export: ${unsupported.join(', ')} export is unavailable in this mode.`, 'error');
-    return;
-  }
+  if (!formatsSupported(formats)) return;
   const report = (text, kind) => {
     logLine(text, kind);
     target.onStatus?.(text);
@@ -328,7 +342,7 @@ async function runAtlasExport({ dir, name, formats, grid = false, dark = false, 
           report('Export canceled.');
           return;
         }
-        report(`Exported ${count} design${count === 1 ? '' : 's'} to ${result.paths.map((path) => path.split(/[\\/]/).pop()).join(', ')} in ${displayPath(result.dir)}.`);
+        report(`Exported ${count} design${count === 1 ? '' : 's'} to ${fileNames(result.paths)} in ${displayPath(result.dir)}.`);
       }
       await printPdf(printPagesHtml([svg], { title: name }), name);
       return;
@@ -343,7 +357,7 @@ async function runAtlasExport({ dir, name, formats, grid = false, dark = false, 
       report('Export canceled.');
       return;
     }
-    report(`Exported ${count} design${count === 1 ? '' : 's'} to ${result.paths.map((path) => path.split(/[\\/]/).pop()).join(', ')} in ${displayPath(result.dir)}.`);
+    report(`Exported ${count} design${count === 1 ? '' : 's'} to ${fileNames(result.paths)} in ${displayPath(result.dir)}.`);
     if (scale < 1) report(`The sheet is larger than a PDF page can be, so its page is ${Math.round(scale * 100)}% of real size.`);
     for (const note of result.notes || []) logLine(note);
   } catch (err) {
@@ -402,13 +416,11 @@ function setExportContent(content) {
   if (exportDialog) exportDialog.dataset.content = exportTarget ? 'drawing' : exportContent;
   for (const button of document.querySelectorAll('[data-export-content]')) button.setAttribute('aria-pressed', String(button.dataset.exportContent === exportContent));
   if (exportContent === 'report' && !exportTarget) {
-    let saved = null;
-    try { saved = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null'); } catch { /* storage unavailable */ }
-    const supported = (format) => persistence.supportedExportFormats?.has(format) ?? true;
-    const wanted = Array.isArray(saved?.reportFormats) ? saved.reportFormats : [supported('pdf') ? 'pdf' : 'html'];
+    const saved = savedExportSettings();
+    const wanted = Array.isArray(saved.reportFormats) ? saved.reportFormats : [formatSupported('pdf') ? 'pdf' : 'html'];
     for (const format of ['pdf', 'html']) {
       const input = exportForm.querySelector(`input[name="format"][value="${format}"]`);
-      if (input) input.checked = supported(format) && wanted.includes(format);
+      if (input) input.checked = formatSupported(format) && wanted.includes(format);
     }
     renderReportSummary();
   }
@@ -457,16 +469,15 @@ function renderExportLocation() {
 export function exportCircuit({ content = 'drawing' } = {}) {
   exportTarget = null;
   setExportDialogTarget();
-  let saved = null;
-  try { saved = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null'); } catch { /* storage unavailable */ }
-  if (exportGridInput) exportGridInput.checked = saved?.grid === true;
-  if (exportDarkInput) exportDarkInput.checked = saved?.dark === true;
+  const saved = savedExportSettings();
+  if (exportGridInput) exportGridInput.checked = saved.grid === true;
+  if (exportDarkInput) exportDarkInput.checked = saved.dark === true;
   if (exportSketchInput) {
-    exportSketchInput.checked = saved?.sketch === true;
+    exportSketchInput.checked = saved.sketch === true;
     exportSketchInput.closest('label').hidden = !editor.circuit.sketch?.strokes.length;
   }
   const dpiSelect = exportForm.querySelector('select[name="pngDpi"]');
-  if (dpiSelect) dpiSelect.value = String(normalizePngDpi(saved?.pngDpi));
+  if (dpiSelect) dpiSelect.value = String(normalizePngDpi(saved.pngDpi));
   // Selection-only is offered per export, never remembered: a later export
   // with nothing selected must not silently shrink to a stale choice.
   const source = copySelectionSource();
@@ -485,8 +496,7 @@ export function exportCircuit({ content = 'drawing' } = {}) {
   }
   // The Atlas's export shares these boxes: set every one.
   for (const input of exportForm.querySelectorAll('input[name="format"]')) {
-    const supported = persistence.supportedExportFormats?.has(input.value) ?? true;
-    input.checked = supported && (Array.isArray(saved?.formats) ? saved.formats.includes(input.value) : input.defaultChecked);
+    input.checked = formatSupported(input.value) && (Array.isArray(saved.formats) ? saved.formats.includes(input.value) : input.defaultChecked);
   }
   setExportContent(content);
   syncExportBeatChoice();
@@ -495,7 +505,7 @@ export function exportCircuit({ content = 'drawing' } = {}) {
   if (pageGuideSelect) pageGuideSelect.value = editor.pageGuide?.preset || '';
   const documentKey = editor.currentDocumentPath || '';
   const defaultFolder = defaultExportDirectory(editor.workspaceState, { browserOnly: persistence.browserOnly });
-  exportFolder = (saved?.folders && saved.folders[documentKey]) || defaultFolder;
+  exportFolder = (saved.folders && saved.folders[documentKey]) || defaultFolder;
   const nameInput = document.getElementById('export-name');
   if (nameInput) nameInput.value = validDocumentName(circuitNameEl.value) || editor.currentCircuitName || 'circuit';
   renderExportLocation();
@@ -524,23 +534,21 @@ function setExportDialogTarget() {
 export function exportAtlasSheet(target) {
   exportTarget = target;
   setExportDialogTarget();
-  let saved = null;
-  try { saved = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null'); } catch { /* storage unavailable */ }
-  if (exportGridInput) exportGridInput.checked = saved?.grid === true;
-  if (exportDarkInput) exportDarkInput.checked = saved?.dark === true;
+  const saved = savedExportSettings();
+  if (exportGridInput) exportGridInput.checked = saved.grid === true;
+  if (exportDarkInput) exportDarkInput.checked = saved.dark === true;
   // The Atlas's sheet has no sketch of its own.
   if (exportSketchInput) exportSketchInput.closest('label').hidden = true;
-  const formats = Array.isArray(saved?.atlasFormats) ? saved.atlasFormats : ['pdf'];
+  const formats = Array.isArray(saved.atlasFormats) ? saved.atlasFormats : ['pdf'];
   for (const input of exportForm.querySelectorAll('input[name="format"]')) {
-    const supported = persistence.supportedExportFormats?.has(input.value) ?? true;
-    input.checked = input.value !== 'png' && supported && formats.includes(input.value);
+    input.checked = input.value !== 'png' && formatSupported(input.value) && formats.includes(input.value);
   }
   // With no format chosen, the sheet is an SVG.
   if (![...exportForm.querySelectorAll('input[name="format"]:checked')].length) {
     const svgInput = exportForm.querySelector('input[name="format"][value="svg"]');
     if (svgInput) svgInput.checked = true;
   }
-  exportFolder = (saved?.folders && saved.folders[target.key]) || defaultExportDirectory(editor.workspaceState, { browserOnly: persistence.browserOnly });
+  exportFolder = (saved.folders && saved.folders[target.key]) || defaultExportDirectory(editor.workspaceState, { browserOnly: persistence.browserOnly });
   const nameInput = document.getElementById('export-name');
   if (nameInput) nameInput.value = validDocumentName(target.name) || 'atlas';
   renderExportLocation();
@@ -589,10 +597,7 @@ export function installExportUi() {
     if (!formats.length || !name || !exportFolder) return;
     exportDialog.close();
     if (!exportTarget && exportContent === 'report') {
-      try {
-        const saved = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null') || {};
-        localStorage.setItem(EXPORT_SETTINGS_KEY, JSON.stringify({ ...saved, reportFormats: formats }));
-      } catch { /* storage unavailable */ }
+      rememberExportSettings({ reportFormats: formats });
       runReportExport({ dir: exportFolder, name, formats });
       return;
     }
@@ -600,13 +605,10 @@ export function installExportUi() {
       const target = exportTarget;
       const settings = { grid: exportGridInput?.checked === true, dark: exportDarkInput?.checked === true };
       const vectorFormats = formats.filter((format) => format !== 'png');
-      try {
-        const saved = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null') || {};
-        const folders = { ...(saved.folders || {}) };
-        if (exportFolder === defaultExportDirectory(editor.workspaceState, { browserOnly: persistence.browserOnly })) delete folders[target.key];
-        else folders[target.key] = exportFolder;
-        localStorage.setItem(EXPORT_SETTINGS_KEY, JSON.stringify({ ...saved, ...settings, atlasFormats: vectorFormats, folders }));
-      } catch { /* storage unavailable */ }
+      rememberExportSettings({ ...settings, atlasFormats: vectorFormats }, {
+        key: target.key, dir: exportFolder,
+        remembered: exportFolder !== defaultExportDirectory(editor.workspaceState, { browserOnly: persistence.browserOnly }),
+      });
       runAtlasExport({ dir: exportFolder, name, formats: vectorFormats, ...settings, target });
       return;
     }
@@ -616,16 +618,12 @@ export function installExportUi() {
       sketch: exportSketchInput?.checked === true,
       pngDpi: normalizePngDpi(exportForm.querySelector('select[name="pngDpi"]')?.value),
     };
-    try {
-      const saved = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null') || {};
-      // Remember a folder only when it differs from the document's own folder.
-      const folders = { ...(saved.folders || {}) };
-      const documentKey = editor.currentDocumentPath || '';
-      const defaultFolder = defaultExportDirectory(editor.workspaceState, { browserOnly: persistence.browserOnly });
-      if (exportFolder === defaultFolder || exportFolder === editor.currentDocumentDir) delete folders[documentKey];
-      else folders[documentKey] = exportFolder;
-      localStorage.setItem(EXPORT_SETTINGS_KEY, JSON.stringify({ ...saved, ...settings, formats, folders }));
-    } catch { /* storage unavailable */ }
+    // A folder is remembered only when it differs from the document's own folder.
+    const defaultFolder = defaultExportDirectory(editor.workspaceState, { browserOnly: persistence.browserOnly });
+    rememberExportSettings({ ...settings, formats }, {
+      key: editor.currentDocumentPath || '', dir: exportFolder,
+      remembered: exportFolder !== defaultFolder && exportFolder !== editor.currentDocumentDir,
+    });
     const selection = exportSelectionInput?.checked && exportSelection ? exportSelection : null;
     runExport({ dir: exportFolder, name, formats, ...settings, selection, beat: chosenExportBeat() });
   });

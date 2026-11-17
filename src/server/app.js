@@ -149,6 +149,20 @@ export async function startApp({
     return run.finally(() => { if (locks.get(key) === run) locks.delete(key); });
   };
 
+  /** Send the document file at `path` as `body(state)` gives it, under its
+   *  lock and with its revision; 304 when the client has that revision. */
+  async function sendDocument(req, res, path, body) {
+    await withLock(path, async () => {
+      const revision = await fileRevision(path);
+      if (matchesEtag(req, revision)) {
+        res.writeHead(304, { 'Cache-Control': 'no-store, max-age=0', ...revisionHeaders(revision) });
+        res.end();
+        return;
+      }
+      json(res, 200, await body(await readDocumentFile(path)), revisionHeaders(revision));
+    });
+  }
+
   // ----- active circuit (CLI) ----------------------------------------------
   const activeFile = join(dataRoot, 'active.json');
   let activeName = '';
@@ -287,16 +301,9 @@ export async function startApp({
     if (pathname === '/api/document') {
       if (method === 'GET') {
         const path = absolutePath(url.searchParams.get('path'));
-        await withLock(path, async () => {
-          const revision = await fileRevision(path);
-          if (matchesEtag(req, revision)) {
-            res.writeHead(304, { 'Cache-Control': 'no-store, max-age=0', ...revisionHeaders(revision) });
-            res.end();
-            return;
-          }
-          const state = await readDocumentFile(path);
+        await sendDocument(req, res, path, async (state) => {
           if (url.searchParams.get('open') === '1') await settings.addRecent(path);
-          json(res, 200, { name: documentNameFromPath(path), path, dir: dirname(path), state }, revisionHeaders(revision));
+          return { name: documentNameFromPath(path), path, dir: dirname(path), state };
         });
         return;
       }
@@ -370,15 +377,7 @@ export async function startApp({
       const name = commandCircuitName(readMatch[1]);
       if (!name) throw httpError('invalid circuit name');
       const path = circuitPath(name);
-      await withLock(path, async () => {
-        const revision = await fileRevision(path);
-        if (matchesEtag(req, revision)) {
-          res.writeHead(304, { 'Cache-Control': 'no-store, max-age=0', ...revisionHeaders(revision) });
-          res.end();
-          return;
-        }
-        json(res, 200, { name, path, state: await readDocumentFile(path) }, revisionHeaders(revision));
-      });
+      await sendDocument(req, res, path, (state) => ({ name, path, state }));
       return;
     }
 
