@@ -30,6 +30,7 @@ import { swapCandidates } from '../core/swap.js';
 import { appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename } from './side-panel.js';
 import { openPlotSettings } from './data-plot-ui.js';
 import { updatablePlot, updatePlot } from './signal-flow-ui.js';
+import { figureUpdate } from './annotate-menu.js';
 import { takesFileTraces } from '../core/data-plot.js';
 import { openPlotExport } from './plot-export-ui.js';
 import { busWidth, netNamesConnect } from '../core/bus.js';
@@ -804,6 +805,7 @@ function appendContextActions(menu, target) {
     }
     appendLinkContextItems(group, comp);
     appendDrawingOnlyItem(group, comp);
+    appendFigureUpdateItem(group, comp);
     appendBeatContextItems(group, target);
   } else if (target.kind === 'label') {
     if (target.value.kind === 'label') appendContextItem(group, 'Edit text…', later(() => inlineEditLabel(target.value)), { shortcut: 't' });
@@ -811,6 +813,7 @@ function appendContextActions(menu, target) {
     if (target.value.kind === 'line' && lines.length > 1) appendContextItem(group, `Join ${lines.length} lines`, joinSelectedLines);
     if (takesFileTraces(target.value)) appendContextItem(group, 'Plot settings…', later(() => openPlotSettings(target.value)));
     if (updatablePlot(target.value)) appendContextItem(group, 'Update plot', later(() => void updatePlot(target.value)));
+    else appendFigureUpdateItem(group, target.value);
     if (target.value.plot) appendContextItem(group, 'Export data…', later(() => openPlotExport(target.value)));
     if (target.value.plot) appendPlotColorsItem(group, target.value);
     appendBoxStackMenu(group, target.value);
@@ -1063,4 +1066,10 @@ export function installContextMenu() {
       moveMenuFocus(ev.key);
     }
   });
+}
+
+/** A figure's Update (annotate-menu.js figureUpdate), when a tool draws it again. */
+function appendFigureUpdateItem(group, member) {
+  const update = figureUpdate(member);
+  if (update) appendContextItem(group, update.text, () => setTimeout(update.run, 0));
 }

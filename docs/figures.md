@@ -38,7 +38,12 @@ replaces what it shows: a plot its data and legend, a table its text (its
 top-left corner kept once the browser has measured it), a model its parts
 from the same top-left corner. A plot is updated at the numbers now from its right-click **Update plot**
 too, or every plot by **Annotate… → Update all plots**
-([`signal-flow-analysis.md`](signal-flow-analysis.md)). Live figures
+([`signal-flow-analysis.md`](signal-flow-analysis.md)). Any other snapshot
+figure has a right-click **Update** of its kind (**Update equations**,
+**Update coefficients**, **Update noise table**, **Update model**, **Update
+table**: `figureUpdate`, `src/web/annotate-menu.js`): its tool's Annotate
+item run on it, at the settings now; when that tool has nothing to draw it
+from, the figure stays and the log says to derive first. Live figures
 follow the design themselves:
 a parts table is drawn from the parts, the timing diagram from the design's
 timing once annotated.

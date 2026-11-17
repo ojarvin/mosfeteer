@@ -53936,10 +53936,13 @@ __modules["src/web/annotate-menu.js"] = function (__require, __exports) {
 __exports.registerAnnotations = registerAnnotations;
 __exports.setAnnotationMode = setAnnotationMode;
 __exports.annotationItems = annotationItems;
+__exports.figureUpdate = figureUpdate;
 __exports.openAnnotateMenu = openAnnotateMenu;
 let listFigures; __bind(() => { ({ listFigures } = __require("src/core/figures.js")); });
 let appendContextItem, openMenuAt; __bind(() => { ({ appendContextItem, openMenuAt } = __require("src/web/context-menu.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let setLabelSelection, setSelection; __bind(() => { ({ setLabelSelection, setSelection } = __require("src/web/main.js")); });
+let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 /**
  * The analysis window's Annotate menu: one place for everything the
  * analysis on screen can put on the drawing -- its equation table, the
@@ -53948,6 +53951,8 @@ let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); 
  * the drawing already, and choosing it updates that figure in place
  * (figures.js). Everything puts every one there at once, packed as one.
  */
+
+
 
 
 
@@ -53976,10 +53981,44 @@ function annotationItems(mode = currentMode()) {
   return [...items.filter((item) => item.identity), ...items.filter((item) => !item.identity)];
 }
 
+/** Whether `figure` is one an item of identity { kind, source, key } draws. */
+const drawnBy = (figure, { kind, source, key }) => figure.kind === kind && (figure.source === null || figure.source === source)
+  && (key === undefined || (key instanceof RegExp ? key.test(figure.key || '') : figure.key === key));
+
 /** Whether a figure of that identity is on the drawing. */
-function onDrawing({ kind, source, key }) {
-  return listFigures(editor.circuit).some((figure) => figure.kind === kind && (figure.source === null || figure.source === source)
-    && (key === undefined || (key instanceof RegExp ? key.test(figure.key || '') : figure.key === key)));
+function onDrawing(identity) {
+  return listFigures(editor.circuit).some((figure) => drawnBy(figure, identity));
+}
+
+/** What a figure is called in Update and the log, by kind (plots have Update plot). */
+const FIGURE_NAMES = { equations: ['equations', true], coefficients: ['coefficients', true], noise: ['noise table'], model: ['model'], table: ['table'] };
+
+/**
+ * The right-click Update of the figure `member` (a label or part) is in:
+ * `{ text, run }`, or null for one no tool's Annotate draws again. It draws
+ * the figure again in place as its tool's Annotate does, with the settings
+ * now; when the tool has nothing to draw it from, the log says to derive.
+ */
+function figureUpdate(member) {
+  const figure = listFigures(editor.circuit).find((candidate) => candidate.labels.includes(member) || candidate.components.includes(member));
+  const name = figure && FIGURE_NAMES[figure.kind];
+  if (!name) return null;
+  const item = [...providers.values()].flat().flatMap((provider) => provider()).find((candidate) => candidate.identity && drawnBy(figure, candidate.identity));
+  if (!item) return null;
+  const [word, plural] = name;
+  return {
+    text: `Update ${word}`,
+    run: () => {
+      if (!item.available) {
+        logLine(`left the ${word} as ${plural ? 'they were' : 'it was'}: derive first (Shift+S)`, 'error');
+        return;
+      }
+      // Its tool updates the selected figure of its kind.
+      setSelection(figure.components.map((component) => component.refdes));
+      setLabelSelection(figure.labels.map((label) => label.id));
+      item.run();
+    },
+  };
 }
 
 /** Open the menu above `button`. */
@@ -67307,6 +67346,7 @@ let swapCandidates; __bind(() => { ({ swapCandidates } = __require("src/core/swa
 let appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename; __bind(() => { ({ appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename } = __require("src/web/side-panel.js")); });
 let openPlotSettings; __bind(() => { ({ openPlotSettings } = __require("src/web/data-plot-ui.js")); });
 let updatablePlot, updatePlot; __bind(() => { ({ updatablePlot, updatePlot } = __require("src/web/signal-flow-ui.js")); });
+let figureUpdate; __bind(() => { ({ figureUpdate } = __require("src/web/annotate-menu.js")); });
 let takesFileTraces; __bind(() => { ({ takesFileTraces } = __require("src/core/data-plot.js")); });
 let openPlotExport; __bind(() => { ({ openPlotExport } = __require("src/web/plot-export-ui.js")); });
 let busWidth, netNamesConnect; __bind(() => { ({ busWidth, netNamesConnect } = __require("src/core/bus.js")); });
@@ -67319,6 +67359,7 @@ let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); 
  * selection, style, switch, signal-flow, and small-signal submenus, and the
  * panel rows' renames it offers.
  */
+
 
 
 
@@ -68120,6 +68161,7 @@ function appendContextActions(menu, target) {
     }
     appendLinkContextItems(group, comp);
     appendDrawingOnlyItem(group, comp);
+    appendFigureUpdateItem(group, comp);
     appendBeatContextItems(group, target);
   } else if (target.kind === 'label') {
     if (target.value.kind === 'label') appendContextItem(group, 'Edit text…', later(() => inlineEditLabel(target.value)), { shortcut: 't' });
@@ -68127,6 +68169,7 @@ function appendContextActions(menu, target) {
     if (target.value.kind === 'line' && lines.length > 1) appendContextItem(group, `Join ${lines.length} lines`, joinSelectedLines);
     if (takesFileTraces(target.value)) appendContextItem(group, 'Plot settings…', later(() => openPlotSettings(target.value)));
     if (updatablePlot(target.value)) appendContextItem(group, 'Update plot', later(() => void updatePlot(target.value)));
+    else appendFigureUpdateItem(group, target.value);
     if (target.value.plot) appendContextItem(group, 'Export data…', later(() => openPlotExport(target.value)));
     if (target.value.plot) appendPlotColorsItem(group, target.value);
     appendBoxStackMenu(group, target.value);
@@ -68379,6 +68422,12 @@ function installContextMenu() {
       moveMenuFocus(ev.key);
     }
   });
+}
+
+/** A figure's Update (annotate-menu.js figureUpdate), when a tool draws it again. */
+function appendFigureUpdateItem(group, member) {
+  const update = figureUpdate(member);
+  if (update) appendContextItem(group, update.text, () => setTimeout(update.run, 0));
 }
 
 };

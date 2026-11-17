@@ -575,6 +575,41 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     assert.match(await h.evaluate(`[...document.querySelectorAll('#log > *')].map((n) => n.textContent).at(-1)`), /2 plots' traces in their colors/);
   });
 
+  test('an annotated table or equations update from their right-click, at the settings now; with nothing derived it says to derive first', async () => {
+    await openAnalysis('modulator');
+    await derive();
+    await annotate('Coefficients');
+    await annotate('Equations');
+    const of = (kind) => `(l) => l.figure?.kind === '${kind}' && !l.parent`;
+    const text = (kind) => h.evaluate(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].filter(${of(kind)}).map((l) => l.text).join('\\n'))`);
+    await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some(${of('equations')}))`);
+    // Loaded again: nothing derived.
+    await h.evaluate(`${h.module('editor-state.js')}.then((m) => window.__load(m.editor.circuit.toJSON()))`);
+    await h.settle();
+    const menu = async (kind, label) => {
+      await h.evaluate(`Promise.all([${h.module('editor-state.js')}, ${h.module('canvas-view.js')}, ${h.module('context-menu.js')}]).then(([s, v, menu]) => {
+        const b = [...s.editor.circuit.labels.values()].find(${of(kind)}).bbox();
+        const p = v.worldToClient(b.x + b.w / 2, b.y + b.h / 2);
+        menu.openContextMenuAt(p.x, p.y);
+      })`);
+      await h.until(`[...document.querySelectorAll('.component-context-menu:not([hidden]) button')].some((b) => b.textContent.startsWith(${JSON.stringify(label)}))`);
+      await h.evaluate(`[...document.querySelectorAll('.component-context-menu:not([hidden]) button')].find((b) => b.textContent.startsWith(${JSON.stringify(label)})).click()`);
+    };
+    // The coefficients need no derive: the numbers now.
+    await h.evaluate(`${h.module('editor-state.js')}.then((m) => { const v = m.editor.circuit.analysisValues; v.coefficients = { ...v.coefficients, k_1: 0.25 }; })`);
+    await menu('coefficients', 'Update coefficients');
+    await h.until(`${h.module('editor-state.js')}.then((m) => /^k_\\{?1\\}? & 0\\.25$/m.test([...m.editor.circuit.labels.values()].filter(${of('coefficients')}).map((l) => l.text).join('\\n')))`);
+    // The equations do: left as they were until then.
+    const before = await text('equations');
+    await menu('equations', 'Update equations');
+    await h.until(`/left the equations as they were: derive first/.test([...document.querySelectorAll('#log > *')].map((n) => n.textContent).join(' '))`);
+    assert.equal(await text('equations'), before);
+    await derive();
+    await menu('equations', 'Update equations');
+    await h.until(`/updated the equation/.test([...document.querySelectorAll('#log > *')].map((n) => n.textContent).at(-1))`);
+    assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => new Set([...m.editor.circuit.labels.values()].filter((l) => l.figure?.kind === 'equations').map((l) => l.figure.id)).size)`), 1, 'one figure, updated in place');
+  });
+
   test('the coefficients are a table of their own, the plot legend only its traces; Update all plots moves an older plot\'s numbers to the table', async () => {
     await openAnalysis('modulator');
     await derive();

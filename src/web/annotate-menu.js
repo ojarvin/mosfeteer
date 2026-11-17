@@ -10,6 +10,8 @@
 import { listFigures } from '../core/figures.js';
 import { appendContextItem, openMenuAt } from './context-menu.js';
 import { editor } from './editor-state.js';
+import { setLabelSelection, setSelection } from './main.js';
+import { logLine } from './status-bar-ui.js';
 
 /** mode -> [() => items]; an item is { label, identity: { kind, source,
  *  key? }, available, run }; one of no identity (Update all plots) is no
@@ -34,10 +36,44 @@ export function annotationItems(mode = currentMode()) {
   return [...items.filter((item) => item.identity), ...items.filter((item) => !item.identity)];
 }
 
+/** Whether `figure` is one an item of identity { kind, source, key } draws. */
+const drawnBy = (figure, { kind, source, key }) => figure.kind === kind && (figure.source === null || figure.source === source)
+  && (key === undefined || (key instanceof RegExp ? key.test(figure.key || '') : figure.key === key));
+
 /** Whether a figure of that identity is on the drawing. */
-function onDrawing({ kind, source, key }) {
-  return listFigures(editor.circuit).some((figure) => figure.kind === kind && (figure.source === null || figure.source === source)
-    && (key === undefined || (key instanceof RegExp ? key.test(figure.key || '') : figure.key === key)));
+function onDrawing(identity) {
+  return listFigures(editor.circuit).some((figure) => drawnBy(figure, identity));
+}
+
+/** What a figure is called in Update and the log, by kind (plots have Update plot). */
+const FIGURE_NAMES = { equations: ['equations', true], coefficients: ['coefficients', true], noise: ['noise table'], model: ['model'], table: ['table'] };
+
+/**
+ * The right-click Update of the figure `member` (a label or part) is in:
+ * `{ text, run }`, or null for one no tool's Annotate draws again. It draws
+ * the figure again in place as its tool's Annotate does, with the settings
+ * now; when the tool has nothing to draw it from, the log says to derive.
+ */
+export function figureUpdate(member) {
+  const figure = listFigures(editor.circuit).find((candidate) => candidate.labels.includes(member) || candidate.components.includes(member));
+  const name = figure && FIGURE_NAMES[figure.kind];
+  if (!name) return null;
+  const item = [...providers.values()].flat().flatMap((provider) => provider()).find((candidate) => candidate.identity && drawnBy(figure, candidate.identity));
+  if (!item) return null;
+  const [word, plural] = name;
+  return {
+    text: `Update ${word}`,
+    run: () => {
+      if (!item.available) {
+        logLine(`left the ${word} as ${plural ? 'they were' : 'it was'}: derive first (Shift+S)`, 'error');
+        return;
+      }
+      // Its tool updates the selected figure of its kind.
+      setSelection(figure.components.map((component) => component.refdes));
+      setLabelSelection(figure.labels.map((label) => label.id));
+      item.run();
+    },
+  };
 }
 
 /** Open the menu above `button`. */
