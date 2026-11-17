@@ -2421,14 +2421,18 @@ export class ComponentInstance {
   }
 
   /** The body of a part sized per instance: a schematic block's set size,
-   *  or a transfer-function box fitted to its equation. Null for the rest. */
+   *  or a transfer-function box fitted to its equation. Null for the rest.
+   *  The equation stays level when the part is turned upright: its box is
+   *  then fitted turned, the same box on the drawing. */
   get bodySize() {
     if (this.type === 'block') return this.blockSize;
     const variable = TRANSFER_FUNCTION_TYPES[this.type];
     if (!variable) return null;
-    const key = `${this.type}\n${this.value}`;
+    const upright = Math.abs(this.transform?.rotation || 0) % 180 === 90;
+    const key = `${this.type}\n${this.value}\n${upright}`;
     if (this._tfSize?.key !== key) {
-      this._tfSize = { key, size: transferFunctionBodySize(this.circuit, transferFunctionLines(this.value, variable)) };
+      const { w, h } = transferFunctionBodySize(this.circuit, transferFunctionLines(this.value, variable));
+      this._tfSize = { key, size: upright ? { w: h, h: w } : { w, h } };
     }
     return this._tfSize.size;
   }

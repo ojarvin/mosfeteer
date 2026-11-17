@@ -98,3 +98,15 @@ test('an s block reads an expression with delays, or a tf() with an InputDelay',
   assert.equal([...circuit.labels.values()].find((l) => l.owner === delayed.refdes).text, '$\\frac{k}{s + p}\\,e^{-s\\,T}$');
   assert.throws(() => run(circuit, `value ${delayed.refdes} exp(s)`), /delay/);
 });
+
+test('a transfer-function block turned upright keeps the box its level equation needs, its pins mid-side', () => {
+  const circuit = new Circuit();
+  const flat = circuit.addComponent('tf_z', { value: 'tf([1 -1], [1])', x: 0, y: 0 });
+  const upright = circuit.addComponent('tf_z', { value: 'tf([1 -1], [1])', x: 800, y: 0 });
+  run(circuit, `rotate ${upright.refdes}`);
+  const size = (c) => ({ w: c.bboxWorld().w, h: c.bboxWorld().h });
+  assert.ok(size(flat).w > size(flat).h, JSON.stringify(size(flat)));
+  assert.deepEqual(size(upright), size(flat));
+  const [input, output] = upright.worldTerminals();
+  assert.deepEqual([input.x, input.y, output.x, output.y], [800, -size(flat).h / 2, 800, size(flat).h / 2]);
+});
