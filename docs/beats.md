@@ -85,9 +85,12 @@ rails, pins, and named nets (a virtual connection) it touches. An island keeps
 working and stays shown, with the pins and rail markers on its wires, when it
 has a device in it (anything but switches, pins, and rail markers) and at
 least one end -- an integrator holding its charge, say -- or when its closed
-switches join two ends, such as an output reset to VCM. Anything else is cut
-off and dimmed, a capacitor floating between open switches included, so the
-whole circuit stays readable. Switches without a phase keep their
+switches join two ends, such as an output reset to VCM, or when a closed
+switch in it has a device on each side, such as capacitors sharing their
+charge plate to plate or a capacitor reset. Anything else is cut off and
+dimmed, a capacitor floating between open switches included, so the whole
+circuit stays readable. A stacked wire's repeats and fans look as the wire
+they repeat. Switches without a phase keep their
 drawn position. Only phases some switch is on make beats: a complement merely
 offered in the menu makes none. The beats are ordinary beats, inserted after
 the one on screen as one undoable edit.

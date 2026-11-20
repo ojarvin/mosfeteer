@@ -10,7 +10,7 @@ import { TIMING_ARROWHEAD, arrowheadEnds, curvedArrowGeometry, defaultArrowhead,
 import { hiddenSupplyBarLabels, supplyBars } from './supply-bars.js';
 import { VALUE_TYPES, replacedNameLabels } from './part-value.js';
 import { SOURCE_WAVEFORMS } from './components/current.js';
-import { closedSwitchHighlight, drawnNetPaths, switchState } from './beats.js';
+import { beatEchoPieces, closedSwitchHighlight, drawnNetPaths, switchState } from './beats.js';
 import { BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth } from './bus.js';
 import { TRANSFER_FUNCTION_TYPES } from './transfer-function.js';
 import { normalizePageGuide, pageGuideFrame } from './page-guide.js';
@@ -1297,6 +1297,15 @@ export function svgString(circuit, opts = {}) {
   let pinInsetMap = null;
   const pinInsets = () => (pinInsetMap ||= bodyEdgePinInsets(circuit));
   const signalPins = signalInputPins(circuit);
+  const echoSvg = (echo, style, opacity) => {
+    const ends = arrowheadEnds(style?.arrowhead);
+    const arrowhead = ends.start && echo.start ? (ends.end && echo.end ? 'both' : 'start') : ends.end && echo.end ? 'end' : 'none';
+    let svg = styledPolylineSvg(echo.points, { ...(style || {}), arrowhead }, 'wire', 'none', opacity);
+    // A fan's lines end on other lines: flush ends, a cut corner, nothing
+    // poking past them.
+    if (echo.fan) svg = svg.replace(/stroke-linecap="[^"]*"/, 'stroke-linecap="butt"').replace(/stroke-linejoin="[^"]*"/, 'stroke-linejoin="bevel"');
+    parts.push(`<g class="wire-echo" pointer-events="none">${svg}</g>`);
+  };
   for (const net of nets) {
     // A beat draws only the wire that joins what it shows (see beats.js).
     const shown = beat?.wires.get(net.id) ?? 'all';
@@ -1320,6 +1329,13 @@ export function svgString(circuit, opts = {}) {
       for (const p of shown.shown) piece(p, ghost);
       for (const p of shown.dimmed) piece(p, ghost, DIM_INK);
       for (const [attrs, ds] of faint) parts.push(`<path class="wire-beat" d="${ds.join(' ')}" ${attrs} pointer-events="none"/>`);
+      // Its repeats and fans look as the wire they repeat.
+      const inks = { show: highlight, dim: DIM_INK, hide: beatFade ? FADE_INK : null };
+      for (const echo of wireEchoes(circuit, drawnNetPaths(net), stacks, net.fans)) {
+        for (const piece of beatEchoPieces(echo, shown)) {
+          if (piece.look === 'show' || inks[piece.look]) echoSvg({ ...echo, ...piece }, withHighlight(net.style, inks[piece.look]), ghost);
+        }
+      }
       // The editor keeps the whole net, faded, as the thing to click.
       if (!beatFade) continue;
     }
@@ -1361,15 +1377,7 @@ export function svgString(circuit, opts = {}) {
     }
     // Between stacked boxes the wire is repeated, once per copy, or fans
     // into a stack (box-stack.js).
-    for (const echo of wireEchoes(circuit, paths, stacks, net.fans)) {
-      const ends = arrowheadEnds(netStyle?.arrowhead);
-      const arrowhead = ends.start && echo.start ? (ends.end && echo.end ? 'both' : 'start') : ends.end && echo.end ? 'end' : 'none';
-      let svg = styledPolylineSvg(echo.points, { ...(netStyle || {}), arrowhead }, 'wire', 'none', opacity);
-      // A fan's lines end on other lines: flush ends, a cut corner, nothing
-      // poking past them.
-      if (echo.fan) svg = svg.replace(/stroke-linecap="[^"]*"/, 'stroke-linecap="butt"').replace(/stroke-linejoin="[^"]*"/, 'stroke-linejoin="bevel"');
-      parts.push(`<g class="wire-echo" pointer-events="none">${svg}</g>`);
-    }
+    if (typeof shown !== 'object') for (const echo of wireEchoes(circuit, paths, stacks, net.fans)) echoSvg(echo, netStyle, opacity);
     // A bus (D[7:0], D<7:0>) carries a slash at each pin on it (bus.js), solid
     // and in the wire's own color, unless hidden.
     if (busWidth(net.name) && !net.busSlashHidden) {

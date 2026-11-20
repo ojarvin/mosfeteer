@@ -251,9 +251,11 @@ export function fanStacks(circuit, paths, stacks = stackedBoxes(circuit)) {
  * step and copy count, or from a stack to a free wire end, each shifted once
  * per copy and cut where a nearer copy of either end's stack covers it; and
  * the fans into the stacks named in `fans` (box ids, `Net#fans`). Returns
- * [{ branch, points, start, end, fan }], `start`/`end` true where the echo
- * keeps the path's own end (and so its arrowhead), `fan` on a fan's lines,
- * whose ends meet other lines and are drawn flush.
+ * [{ branch, points, start, end, fan, shift, origin }], `start`/`end` true
+ * where the echo keeps the path's own end (and so its arrowhead), `fan` on a
+ * fan's lines, whose ends meet other lines and are drawn flush. A repeat's
+ * `shift` is its offset from the wire it repeats; a fan's `origin` is a
+ * point on the wire it fans from.
  */
 export function wireEchoes(circuit, paths, stacks = stackedBoxes(circuit), fans = []) {
   if (!stacks.length) return [];
@@ -292,6 +294,7 @@ export function wireEchoes(circuit, paths, stacks = stackedBoxes(circuit), fans 
             points: part.points,
             start: part.first && piece.first && !from,
             end: part.last && piece.last && !to,
+            shift: { x: k * dx, y: k * dy },
           });
         }
       }
@@ -300,7 +303,9 @@ export function wireEchoes(circuit, paths, stacks = stackedBoxes(circuit), fans 
     for (const [side, atStart] of [[from, true], [to, false]]) {
       if (!fanned(side) || (!atStart && side === from)) continue;
       const c = crossing(piece.points, atStart, side);
-      if (c) for (const points of fanLines(c, side)) echoes.push({ branch, points, start: false, end: false, fan: true });
+      if (!c) continue;
+      const origin = { x: c.at.x + c.out.x * c.reach / 2, y: c.at.y + c.out.y * c.reach / 2 };
+      for (const points of fanLines(c, side)) echoes.push({ branch, points, start: false, end: false, fan: true, origin });
     }
   }
   return echoes;

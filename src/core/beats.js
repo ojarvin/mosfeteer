@@ -657,7 +657,8 @@ function railGroups(circuit) {
  * device in it -- anything but switches, pins, and rail markers -- and at
  * least one end (an integrator holding its charge, a capacitor holding its
  * sample against ground), or when its closed switches join two ends (an
- * output reset to VCM). Anything else is cut off. Returns a Set of the
+ * output reset to VCM), or when a closed switch in it has a device on each
+ * side (capacitors sharing their charge). Anything else is cut off. Returns a Set of the
  * refdes that stay shown, pins and rail markers included with the parts on
  * their wire; the open switches are never in it.
  */
@@ -669,16 +670,19 @@ function liveWhen(circuit, isClosed) {
     return phase ? isClosed(phase) : switchState(component) === 'closed';
   };
   const netsOf = new Map();
+  // The non-rail net on each side of a switch.
+  const sidesOf = new Map();
   // The ends a part touches: the rails it is on, and the pins on its wires.
   const endsOf = new Map();
   for (const net of circuit.nets.values()) {
     const group = circuit.netGroupKey(net);
     const pins = net.terminals.filter(({ comp }) => INTERFACE_PIN_TYPES.has(circuit.components.get(comp)?.type)).map(({ comp }) => comp);
-    for (const { comp } of net.terminals) {
-      if (!netsOf.has(comp)) { netsOf.set(comp, new Set()); endsOf.set(comp, new Set()); }
+    for (const { comp, term } of net.terminals) {
+      if (!netsOf.has(comp)) { netsOf.set(comp, new Set()); endsOf.set(comp, new Set()); sidesOf.set(comp, new Map()); }
       if (rails.has(group)) endsOf.get(comp).add(`rail:${group}`);
       else {
         netsOf.get(comp).add(group);
+        sidesOf.get(comp).set(term, group);
         // A port names its own net; that is the one end, the pin.
         if (net.name && !pins.length) endsOf.get(comp).add(group);
       }
@@ -707,7 +711,28 @@ function liveWhen(circuit, isClosed) {
       }
     }
     const ends = new Set(island.flatMap((c) => [...(endsOf.get(c.refdes) || [])]));
-    if ((ends.size && island.some((c) => !switchState(c))) || ends.size >= 2) for (const c of island) live.add(c.refdes);
+    // Whether a device is reached from `net` within the island, not through `skip`.
+    const reachesDevice = (net, skip) => {
+      const nets = new Set([net]);
+      const queue = [net];
+      while (queue.length) {
+        const at = queue.pop();
+        for (const c of island) {
+          if (c === skip || !netsOf.get(c.refdes)?.has(at)) continue;
+          if (!switchState(c)) return true;
+          for (const next of netsOf.get(c.refdes)) if (!nets.has(next)) { nets.add(next); queue.push(next); }
+        }
+      }
+      return false;
+    };
+    // A closed switch with a device on each side moves charge: capacitors
+    // sharing theirs, a capacitor reset.
+    const sharing = () => island.some((c) => {
+      if (!switchState(c)) return false;
+      const sides = [...(sidesOf.get(c.refdes)?.values() || [])];
+      return sides.length === 2 && sides[0] !== sides[1] && sides.every((net) => reachesDevice(net, c));
+    });
+    if ((ends.size && island.some((c) => !switchState(c))) || ends.size >= 2 || sharing()) for (const c of island) live.add(c.refdes);
   }
   // A pin or rail marker goes with the parts on its own wire.
   for (const component of circuit.components.values()) {
@@ -843,6 +868,45 @@ function cutSegments(paths, cuts) {
     }
   });
   return edges;
+}
+
+function onSegment(p, a, b) {
+  const cross = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+  if (Math.abs(cross) > 1e-6) return false;
+  const dot = (p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y);
+  return dot > -1e-6 && dot < (b.x - a.x) ** 2 + (b.y - a.y) ** 2 + 1e-6;
+}
+
+/**
+ * How a beat draws one repeat or fan of a stacked wire (box-stack.js
+ * wireEchoes) on a net it shows in part (`wire`, { shown, dimmed } from
+ * resolveBeat): the wire it repeats looks the same, piece by piece; a fan
+ * looks as the wire it fans from. Returns [{ points, look, start, end }],
+ * `look` 'show', 'dim', or 'hide'.
+ */
+export function beatEchoPieces(echo, wire) {
+  const edges = [...wire.shown.map((e) => ({ ...e, look: 'show' })), ...wire.dimmed.map((e) => ({ ...e, look: 'dim' }))];
+  const lookAt = (p) => edges.find((e) => onSegment(p, e.a, e.b))?.look || 'hide';
+  if (!echo.shift) return [{ points: echo.points, look: lookAt(echo.origin), start: echo.start, end: echo.end }];
+  const shift = echo.shift;
+  const cuts = edges.flatMap((e) => [e.a, e.b]).map((p) => ({ x: p.x + shift.x, y: p.y + shift.y }));
+  const out = [];
+  for (let i = 1; i < echo.points.length; i += 1) {
+    const a = echo.points[i - 1];
+    const b = echo.points[i];
+    const inner = cuts.filter((p) => strictlyInside(p, a, b))
+      .sort((p, q) => Math.hypot(p.x - a.x, p.y - a.y) - Math.hypot(q.x - a.x, q.y - a.y));
+    let from = a;
+    for (const to of [...inner, b]) {
+      if (Math.hypot(to.x - from.x, to.y - from.y) < 1e-6) continue;
+      const look = lookAt({ x: (from.x + to.x) / 2 - shift.x, y: (from.y + to.y) / 2 - shift.y });
+      const last = out.at(-1);
+      if (last?.look === look && last.points.at(-1) === from) last.points.push(to);
+      else out.push({ points: [from, to], look });
+      from = to;
+    }
+  }
+  return out.map((piece, i) => ({ ...piece, start: echo.start && i === 0, end: echo.end && i === out.length - 1 }));
 }
 
 /** Which edges meet at each point. */

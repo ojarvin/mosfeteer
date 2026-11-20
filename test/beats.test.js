@@ -416,6 +416,49 @@ test('a phase beat dims a closed switch that leads nowhere, but not one joining 
   assert.deepEqual(dim(0), ['S2']);
 });
 
+test('a phase beat shows capacitors sharing their charge through closed switches', () => {
+  const circuit = new Circuit();
+  run(circuit,
+    'add capacitor C1 --at 0 0', 'add capacitor C2 --at 400 0', 'add switch_open S1 --at 200 -200', 'add switch_open S2 --at 200 200',
+    'connect C1.a S1.a', 'connect S1.b C2.a', 'connect C1.b S2.a', 'connect S2.b C2.b', 'value S1 φ_{2}', 'value S2 φ_{2}',
+    'add input VA --at -400 -400', 'add switch_open S3 --at -200 -400', 'connect VA.p S3.a', 'connect S3.b C1.a', 'value S3 φ_{1}',
+    'add ground G1 --at -200 400', 'add switch_open S4 --at -200 200', 'connect C1.b S4.a', 'connect S4.b G1.gnd', 'value S4 φ_{1}');
+  phaseBeats(circuit);
+  const dim = (index) => [...resolveBeat(circuit, index).dimRefs].filter((ref) => !ref.startsWith('J')).sort();
+  // ϕ2 joins C1 and C2 plate to plate, touching no rail or pin.
+  assert.deepEqual(dim(0), ['G1', 'S3', 'S4', 'VA']);
+  // ϕ1 samples onto C1; C2 floats between open switches.
+  assert.deepEqual(dim(1), ['C2', 'S1', 'S2']);
+  // A closed switch across one floating capacitor resets it.
+  const reset = new Circuit();
+  run(reset, 'add capacitor C1 --at 0 0', 'add switch_open S1 --at 240 0 --rot 90', 'connect C1.a S1.a', 'connect C1.b S1.b', 'value S1 φ_{1}',
+    'add switch_open S2 --at 0 400', 'value S2 φ_{2}');
+  phaseBeats(reset);
+  assert.deepEqual([...resolveBeat(reset, 0).dimRefs].filter((ref) => !ref.startsWith('J')).sort(), ['S2']);
+});
+
+test('a beat draws a stacked wire\'s fans and repeats as the wire they repeat', () => {
+  const circuit = new Circuit();
+  run(circuit, 'add gain A1 --at 0 0 --rot 90', 'add port VIN --at 0 -440', 'connect VIN.p A1.in',
+    'add switch_open S1 --at 400 -440', 'connect S1.a A1.in', 'value S1 φ_{1}', 'add switch_open S2 --at 400 -840', 'value S2 φ_{2}');
+  const box = circuit.labels.get(run(circuit, 'box A1')[0].json.id);
+  const input = circuit.netOfTerminal({ comp: 'A1', term: 'in' });
+  run(circuit, `annotation stack ${box.id} 3`, `net ${input.id} fan ${box.id} on`);
+  phaseBeats(circuit);
+  // ϕ2 dims S1, so the wire to it is dimmed and the rest of the net shown.
+  const view = resolveBeat(circuit, 1);
+  assert.equal(typeof view.wires.get(input.id), 'object');
+  const strokes = (svg) => (svg.match(/<g class="wire-echo"[^]*?<\/g>/g) || []).map((g) => g.match(/stroke="([^"]*)"/)[1]);
+  for (const fade of [false, true]) {
+    const drawn = strokes(svgString(circuit, { beat: { view, fade } }));
+    assert.equal(drawn.length, 3);
+    assert.ok(drawn.every((color) => color !== BEAT_DIM_INK && color !== BEAT_FADE_INK), `fade ${fade}: ${drawn}`);
+  }
+  // Dimming the gain dims the fan into it.
+  run(circuit, 'beat dim 2 A1 VIN');
+  assert.deepEqual(strokes(svgString(circuit, { beat: { view: resolveBeat(circuit, 1) } })), [BEAT_DIM_INK, BEAT_DIM_INK, BEAT_DIM_INK]);
+});
+
 test('a closed switch carries a net highlight across to the net it shorts', async () => {
   const { COLOR_PALETTE } = await import('../src/core/style.js');
   const circuit = new Circuit();

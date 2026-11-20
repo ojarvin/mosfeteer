@@ -21049,6 +21049,7 @@ __exports.carryBeatSwitchKey = carryBeatSwitchKey;
 __exports.invertBeatSwitchKey = invertBeatSwitchKey;
 __exports.renameBeatHighlightKey = renameBeatHighlightKey;
 __exports.drawnNetPaths = drawnNetPaths;
+__exports.beatEchoPieces = beatEchoPieces;
 __exports.resolveBeat = resolveBeat;
 let getSymbol; __bind(() => { ({ getSymbol } = __require("src/core/components/index.js")); });
 let INTERFACE_PIN_TYPES, REFERENCE_MARKER_TYPES, applyNetProbe, busNetHighlight, isReferenceMarkerGlobalName; __bind(() => { ({ INTERFACE_PIN_TYPES, REFERENCE_MARKER_TYPES, applyNetProbe, busNetHighlight, isReferenceMarkerGlobalName } = __require("src/core/model.js")); });
@@ -21712,7 +21713,8 @@ function railGroups(circuit) {
  * device in it -- anything but switches, pins, and rail markers -- and at
  * least one end (an integrator holding its charge, a capacitor holding its
  * sample against ground), or when its closed switches join two ends (an
- * output reset to VCM). Anything else is cut off. Returns a Set of the
+ * output reset to VCM), or when a closed switch in it has a device on each
+ * side (capacitors sharing their charge). Anything else is cut off. Returns a Set of the
  * refdes that stay shown, pins and rail markers included with the parts on
  * their wire; the open switches are never in it.
  */
@@ -21724,16 +21726,19 @@ function liveWhen(circuit, isClosed) {
     return phase ? isClosed(phase) : switchState(component) === 'closed';
   };
   const netsOf = new Map();
+  // The non-rail net on each side of a switch.
+  const sidesOf = new Map();
   // The ends a part touches: the rails it is on, and the pins on its wires.
   const endsOf = new Map();
   for (const net of circuit.nets.values()) {
     const group = circuit.netGroupKey(net);
     const pins = net.terminals.filter(({ comp }) => INTERFACE_PIN_TYPES.has(circuit.components.get(comp)?.type)).map(({ comp }) => comp);
-    for (const { comp } of net.terminals) {
-      if (!netsOf.has(comp)) { netsOf.set(comp, new Set()); endsOf.set(comp, new Set()); }
+    for (const { comp, term } of net.terminals) {
+      if (!netsOf.has(comp)) { netsOf.set(comp, new Set()); endsOf.set(comp, new Set()); sidesOf.set(comp, new Map()); }
       if (rails.has(group)) endsOf.get(comp).add(`rail:${group}`);
       else {
         netsOf.get(comp).add(group);
+        sidesOf.get(comp).set(term, group);
         // A port names its own net; that is the one end, the pin.
         if (net.name && !pins.length) endsOf.get(comp).add(group);
       }
@@ -21762,7 +21767,28 @@ function liveWhen(circuit, isClosed) {
       }
     }
     const ends = new Set(island.flatMap((c) => [...(endsOf.get(c.refdes) || [])]));
-    if ((ends.size && island.some((c) => !switchState(c))) || ends.size >= 2) for (const c of island) live.add(c.refdes);
+    // Whether a device is reached from `net` within the island, not through `skip`.
+    const reachesDevice = (net, skip) => {
+      const nets = new Set([net]);
+      const queue = [net];
+      while (queue.length) {
+        const at = queue.pop();
+        for (const c of island) {
+          if (c === skip || !netsOf.get(c.refdes)?.has(at)) continue;
+          if (!switchState(c)) return true;
+          for (const next of netsOf.get(c.refdes)) if (!nets.has(next)) { nets.add(next); queue.push(next); }
+        }
+      }
+      return false;
+    };
+    // A closed switch with a device on each side moves charge: capacitors
+    // sharing theirs, a capacitor reset.
+    const sharing = () => island.some((c) => {
+      if (!switchState(c)) return false;
+      const sides = [...(sidesOf.get(c.refdes)?.values() || [])];
+      return sides.length === 2 && sides[0] !== sides[1] && sides.every((net) => reachesDevice(net, c));
+    });
+    if ((ends.size && island.some((c) => !switchState(c))) || ends.size >= 2 || sharing()) for (const c of island) live.add(c.refdes);
   }
   // A pin or rail marker goes with the parts on its own wire.
   for (const component of circuit.components.values()) {
@@ -21898,6 +21924,45 @@ function cutSegments(paths, cuts) {
     }
   });
   return edges;
+}
+
+function onSegment(p, a, b) {
+  const cross = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+  if (Math.abs(cross) > 1e-6) return false;
+  const dot = (p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y);
+  return dot > -1e-6 && dot < (b.x - a.x) ** 2 + (b.y - a.y) ** 2 + 1e-6;
+}
+
+/**
+ * How a beat draws one repeat or fan of a stacked wire (box-stack.js
+ * wireEchoes) on a net it shows in part (`wire`, { shown, dimmed } from
+ * resolveBeat): the wire it repeats looks the same, piece by piece; a fan
+ * looks as the wire it fans from. Returns [{ points, look, start, end }],
+ * `look` 'show', 'dim', or 'hide'.
+ */
+function beatEchoPieces(echo, wire) {
+  const edges = [...wire.shown.map((e) => ({ ...e, look: 'show' })), ...wire.dimmed.map((e) => ({ ...e, look: 'dim' }))];
+  const lookAt = (p) => edges.find((e) => onSegment(p, e.a, e.b))?.look || 'hide';
+  if (!echo.shift) return [{ points: echo.points, look: lookAt(echo.origin), start: echo.start, end: echo.end }];
+  const shift = echo.shift;
+  const cuts = edges.flatMap((e) => [e.a, e.b]).map((p) => ({ x: p.x + shift.x, y: p.y + shift.y }));
+  const out = [];
+  for (let i = 1; i < echo.points.length; i += 1) {
+    const a = echo.points[i - 1];
+    const b = echo.points[i];
+    const inner = cuts.filter((p) => strictlyInside(p, a, b))
+      .sort((p, q) => Math.hypot(p.x - a.x, p.y - a.y) - Math.hypot(q.x - a.x, q.y - a.y));
+    let from = a;
+    for (const to of [...inner, b]) {
+      if (Math.hypot(to.x - from.x, to.y - from.y) < 1e-6) continue;
+      const look = lookAt({ x: (from.x + to.x) / 2 - shift.x, y: (from.y + to.y) / 2 - shift.y });
+      const last = out.at(-1);
+      if (last?.look === look && last.points.at(-1) === from) last.points.push(to);
+      else out.push({ points: [from, to], look });
+      from = to;
+    }
+  }
+  return out.map((piece, i) => ({ ...piece, start: echo.start && i === 0, end: echo.end && i === out.length - 1 }));
 }
 
 /** Which edges meet at each point. */
@@ -22754,9 +22819,11 @@ function fanStacks(circuit, paths, stacks = stackedBoxes(circuit)) {
  * step and copy count, or from a stack to a free wire end, each shifted once
  * per copy and cut where a nearer copy of either end's stack covers it; and
  * the fans into the stacks named in `fans` (box ids, `Net#fans`). Returns
- * [{ branch, points, start, end, fan }], `start`/`end` true where the echo
- * keeps the path's own end (and so its arrowhead), `fan` on a fan's lines,
- * whose ends meet other lines and are drawn flush.
+ * [{ branch, points, start, end, fan, shift, origin }], `start`/`end` true
+ * where the echo keeps the path's own end (and so its arrowhead), `fan` on a
+ * fan's lines, whose ends meet other lines and are drawn flush. A repeat's
+ * `shift` is its offset from the wire it repeats; a fan's `origin` is a
+ * point on the wire it fans from.
  */
 function wireEchoes(circuit, paths, stacks = stackedBoxes(circuit), fans = []) {
   if (!stacks.length) return [];
@@ -22795,6 +22862,7 @@ function wireEchoes(circuit, paths, stacks = stackedBoxes(circuit), fans = []) {
             points: part.points,
             start: part.first && piece.first && !from,
             end: part.last && piece.last && !to,
+            shift: { x: k * dx, y: k * dy },
           });
         }
       }
@@ -22803,7 +22871,9 @@ function wireEchoes(circuit, paths, stacks = stackedBoxes(circuit), fans = []) {
     for (const [side, atStart] of [[from, true], [to, false]]) {
       if (!fanned(side) || (!atStart && side === from)) continue;
       const c = crossing(piece.points, atStart, side);
-      if (c) for (const points of fanLines(c, side)) echoes.push({ branch, points, start: false, end: false, fan: true });
+      if (!c) continue;
+      const origin = { x: c.at.x + c.out.x * c.reach / 2, y: c.at.y + c.out.y * c.reach / 2 };
+      for (const points of fanLines(c, side)) echoes.push({ branch, points, start: false, end: false, fan: true, origin });
     }
   }
   return echoes;
@@ -41280,7 +41350,7 @@ let TIMING_ARROWHEAD, arrowheadEnds, curvedArrowGeometry, defaultArrowhead, poly
 let hiddenSupplyBarLabels, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js")); });
 let VALUE_TYPES, replacedNameLabels; __bind(() => { ({ VALUE_TYPES, replacedNameLabels } = __require("src/core/part-value.js")); });
 let SOURCE_WAVEFORMS; __bind(() => { ({ SOURCE_WAVEFORMS } = __require("src/core/components/current.js")); });
-let closedSwitchHighlight, drawnNetPaths, switchState; __bind(() => { ({ closedSwitchHighlight, drawnNetPaths, switchState } = __require("src/core/beats.js")); });
+let beatEchoPieces, closedSwitchHighlight, drawnNetPaths, switchState; __bind(() => { ({ beatEchoPieces, closedSwitchHighlight, drawnNetPaths, switchState } = __require("src/core/beats.js")); });
 let BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth; __bind(() => { ({ BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth } = __require("src/core/bus.js")); });
 let TRANSFER_FUNCTION_TYPES; __bind(() => { ({ TRANSFER_FUNCTION_TYPES } = __require("src/core/transfer-function.js")); });
 let normalizePageGuide, pageGuideFrame; __bind(() => { ({ normalizePageGuide, pageGuideFrame } = __require("src/core/page-guide.js")); });
@@ -42589,6 +42659,15 @@ function svgString(circuit, opts = {}) {
   let pinInsetMap = null;
   const pinInsets = () => (pinInsetMap ||= bodyEdgePinInsets(circuit));
   const signalPins = signalInputPins(circuit);
+  const echoSvg = (echo, style, opacity) => {
+    const ends = arrowheadEnds(style?.arrowhead);
+    const arrowhead = ends.start && echo.start ? (ends.end && echo.end ? 'both' : 'start') : ends.end && echo.end ? 'end' : 'none';
+    let svg = styledPolylineSvg(echo.points, { ...(style || {}), arrowhead }, 'wire', 'none', opacity);
+    // A fan's lines end on other lines: flush ends, a cut corner, nothing
+    // poking past them.
+    if (echo.fan) svg = svg.replace(/stroke-linecap="[^"]*"/, 'stroke-linecap="butt"').replace(/stroke-linejoin="[^"]*"/, 'stroke-linejoin="bevel"');
+    parts.push(`<g class="wire-echo" pointer-events="none">${svg}</g>`);
+  };
   for (const net of nets) {
     // A beat draws only the wire that joins what it shows (see beats.js).
     const shown = beat?.wires.get(net.id) ?? 'all';
@@ -42612,6 +42691,13 @@ function svgString(circuit, opts = {}) {
       for (const p of shown.shown) piece(p, ghost);
       for (const p of shown.dimmed) piece(p, ghost, DIM_INK);
       for (const [attrs, ds] of faint) parts.push(`<path class="wire-beat" d="${ds.join(' ')}" ${attrs} pointer-events="none"/>`);
+      // Its repeats and fans look as the wire they repeat.
+      const inks = { show: highlight, dim: DIM_INK, hide: beatFade ? FADE_INK : null };
+      for (const echo of wireEchoes(circuit, drawnNetPaths(net), stacks, net.fans)) {
+        for (const piece of beatEchoPieces(echo, shown)) {
+          if (piece.look === 'show' || inks[piece.look]) echoSvg({ ...echo, ...piece }, withHighlight(net.style, inks[piece.look]), ghost);
+        }
+      }
       // The editor keeps the whole net, faded, as the thing to click.
       if (!beatFade) continue;
     }
@@ -42653,15 +42739,7 @@ function svgString(circuit, opts = {}) {
     }
     // Between stacked boxes the wire is repeated, once per copy, or fans
     // into a stack (box-stack.js).
-    for (const echo of wireEchoes(circuit, paths, stacks, net.fans)) {
-      const ends = arrowheadEnds(netStyle?.arrowhead);
-      const arrowhead = ends.start && echo.start ? (ends.end && echo.end ? 'both' : 'start') : ends.end && echo.end ? 'end' : 'none';
-      let svg = styledPolylineSvg(echo.points, { ...(netStyle || {}), arrowhead }, 'wire', 'none', opacity);
-      // A fan's lines end on other lines: flush ends, a cut corner, nothing
-      // poking past them.
-      if (echo.fan) svg = svg.replace(/stroke-linecap="[^"]*"/, 'stroke-linecap="butt"').replace(/stroke-linejoin="[^"]*"/, 'stroke-linejoin="bevel"');
-      parts.push(`<g class="wire-echo" pointer-events="none">${svg}</g>`);
-    }
+    if (typeof shown !== 'object') for (const echo of wireEchoes(circuit, paths, stacks, net.fans)) echoSvg(echo, netStyle, opacity);
     // A bus (D[7:0], D<7:0>) carries a slash at each pin on it (bus.js), solid
     // and in the wire's own color, unless hidden.
     if (busWidth(net.name) && !net.busSlashHidden) {
