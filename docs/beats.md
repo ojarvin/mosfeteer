@@ -89,7 +89,10 @@ switches join two ends, such as an output reset to VCM, or when a closed
 switch in it has a device on each side, such as capacitors sharing their
 charge plate to plate or a capacitor reset. Anything else is cut off and
 dimmed, a capacitor floating between open switches included, so the whole
-circuit stays readable. A stacked wire's repeats and fans look as the wire
+circuit stays readable. So is a two-terminal part with a terminal wired to a
+net nothing else shown is on, nor a rail, pin, or name: a feedback capacitor
+behind its open series switch, a closed switch leading only to open ones.
+Dimming one can leave the next part dangling. A stacked wire's repeats and fans look as the wire
 they repeat. Switches without a phase keep their
 drawn position. Only phases some switch is on make beats: a complement merely
 offered in the menu makes none. The beats are ordinary beats, inserted after

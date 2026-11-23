@@ -389,8 +389,13 @@ test('a phase beat dims a capacitor floating between open switches', () => {
   assert.deepEqual(dim(0), ['S3']);
   // ϕ2 opens both of C1's switches: nothing reaches it, so it is dimmed too.
   assert.deepEqual(dim(1), ['C1', 'S1', 'S2', 'S3', 'VA', 'VB']);
-  // A named plate is a virtual connection: C1 is no longer floating.
+  // A named plate is a virtual connection, but C1 still hangs from the other.
   circuit.renameNet(circuit.netOfTerminal({ comp: 'C1', term: 'a' }), 'TOP');
+  circuit.beats = [];
+  phaseBeats(circuit);
+  assert.deepEqual(dim(1), ['C1', 'S1', 'S2', 'S3', 'VA', 'VB']);
+  // With both plates named, C1 is no longer floating.
+  circuit.renameNet(circuit.netOfTerminal({ comp: 'C1', term: 'b' }), 'BOT');
   circuit.beats = [];
   phaseBeats(circuit);
   assert.deepEqual(dim(1), ['S1', 'S2', 'S3', 'VA', 'VB']);
@@ -405,15 +410,32 @@ test('a phase beat dims a closed switch that leads nowhere, but not one joining 
     'value S1 φ_{1}', 'value S2 φ_{2}');
   phaseBeats(circuit);
   const dim = (index) => [...resolveBeat(circuit, index).dimRefs].filter((ref) => !ref.startsWith('J')).sort();
-  // ϕ1: VA and S1 reach nothing past the open S2; C1 still holds its charge.
-  assert.deepEqual(dim(0), ['S1', 'S2', 'VA']);
-  // ϕ2: C1 hangs on S2; VA is cut off behind the open S1.
-  assert.deepEqual(dim(1), ['S1', 'VA']);
-  // A closed switch joining two ends does work: here it resets VA to VCM.
+  // ϕ1: VA and S1 reach nothing past the open S2; C1 hangs on it, nothing
+  // reading its charge.
+  assert.deepEqual(dim(0), ['C1', 'G1', 'S1', 'S2', 'VA']);
+  // ϕ2: S2 leads only to the open S1, and C1 hangs on S2.
+  assert.deepEqual(dim(1), ['C1', 'G1', 'S1', 'S2', 'VA']);
+  // A closed switch joining two ends does work: here it resets VA to VCM,
+  // while S1 still leads only to the open S2.
   run(circuit, 'add vcm VCM1 --at -400 -240', 'add switch_open S3 --at -160 -240', 'connect VA.p S3.a', 'connect S3.b VCM1.vcm', 'value S3 φ_{1}');
   circuit.beats = [];
   phaseBeats(circuit);
-  assert.deepEqual(dim(0), ['S2']);
+  assert.deepEqual(dim(0), ['C1', 'G1', 'S1', 'S2']);
+});
+
+test('a phase beat dims a feedback capacitor behind its open series switch', () => {
+  const circuit = integrator();
+  run(circuit, 'rm CF', 'add capacitor CF --at 640 -320', 'add switch_open S5 --at 960 -320',
+    'connect CF.a OA.im', 'connect CF.b S5.a', 'connect S5.b OA.o', 'value S5 $\\phi_2$');
+  phaseBeats(circuit);
+  const dim = (index) => [...resolveBeat(circuit, index).dimRefs].filter((ref) => !ref.startsWith('J')).sort();
+  // ϕ1: CF hangs on the open S5; the opamp stays.
+  assert.deepEqual(dim(0), ['CF', 'G1', 'S2', 'S3', 'S5']);
+  assert.deepEqual(dim(1), ['G2', 'S1', 'S4', 'VIN']);
+  // Without S5 the plain integrator keeps CF holding its output.
+  const plain = integrator();
+  phaseBeats(plain);
+  assert.ok(!resolveBeat(plain, 0).dimRefs.has('CF'));
 });
 
 test('a phase beat shows capacitors sharing their charge through closed switches', () => {

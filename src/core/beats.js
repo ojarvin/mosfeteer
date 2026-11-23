@@ -658,8 +658,9 @@ function railGroups(circuit) {
  * least one end (an integrator holding its charge, a capacitor holding its
  * sample against ground), or when its closed switches join two ends (an
  * output reset to VCM), or when a closed switch in it has a device on each
- * side (capacitors sharing their charge). Anything else is cut off. Returns a Set of the
- * refdes that stay shown, pins and rail markers included with the parts on
+ * side (capacitors sharing their charge). Anything else is cut off, and so
+ * is a two-terminal part left with a terminal wired to a net nothing else shown,
+ * nor a rail, pin, or name, is on. Returns a Set of the refdes that stay shown, pins and rail markers included with the parts on
  * their wire; the open switches are never in it.
  */
 function liveWhen(circuit, isClosed) {
@@ -674,10 +675,19 @@ function liveWhen(circuit, isClosed) {
   const sidesOf = new Map();
   // The ends a part touches: the rails it is on, and the pins on its wires.
   const endsOf = new Map();
+  // Each terminal's net group, the parts on each group, and the groups a
+  // rail, pin, or name holds.
+  const termGroup = new Map();
+  const onGroup = new Map();
+  const anchored = new Set();
   for (const net of circuit.nets.values()) {
     const group = circuit.netGroupKey(net);
     const pins = net.terminals.filter(({ comp }) => INTERFACE_PIN_TYPES.has(circuit.components.get(comp)?.type)).map(({ comp }) => comp);
+    if (rails.has(group) || net.name || pins.length) anchored.add(group);
+    if (!onGroup.has(group)) onGroup.set(group, []);
     for (const { comp, term } of net.terminals) {
+      termGroup.set(`${comp}.${term}`, group);
+      onGroup.get(group).push(comp);
       if (!netsOf.has(comp)) { netsOf.set(comp, new Set()); endsOf.set(comp, new Set()); sidesOf.set(comp, new Map()); }
       if (rails.has(group)) endsOf.get(comp).add(`rail:${group}`);
       else {
@@ -733,6 +743,23 @@ function liveWhen(circuit, isClosed) {
       return sides.length === 2 && sides[0] !== sides[1] && sides.every((net) => reachesDevice(net, c));
     });
     if ((ends.size && island.some((c) => !switchState(c))) || ends.size >= 2 || sharing()) for (const c of island) live.add(c.refdes);
+  }
+  // A two-terminal part with a terminal wired to a net nothing else shown is
+  // on -- no rail, pin, or name either -- carries no current and sets nothing:
+  // a feedback capacitor behind its open series switch. Dimming one can
+  // leave the next dangling.
+  const twoTerminal = parts.filter((c) => live.has(c.refdes) && c.terminalDefs.length === 2);
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const c of twoTerminal) {
+      if (!live.has(c.refdes)) continue;
+      const dangles = c.terminalDefs.some(({ name }) => {
+        const group = termGroup.get(`${c.refdes}.${name}`);
+        if (group === undefined || anchored.has(group)) return false;
+        return !(onGroup.get(group) || []).some((other) => other !== c.refdes && live.has(other));
+      });
+      if (dangles) { live.delete(c.refdes); changed = true; }
+    }
   }
   // A pin or rail marker goes with the parts on its own wire.
   for (const component of circuit.components.values()) {
