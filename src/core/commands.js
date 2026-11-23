@@ -2,7 +2,7 @@ import { plotCsv, plotSeries } from './plot-export.js';
 import { appendPlotTraces, dataPlotFromText, fileUnits, inPlotUnits, takesFileTraces, movePlotTrace, placeDataPlot, removePlotTrace, setDataPlotAxis, setPlotTrace, setDataPlotView } from './data-plot.js';
 import { analyzeSignalFlow, complexText } from './analysis/signal-flow.js';
 import { analyzeLogic } from './analysis/logic.js';
-import { Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld } from './model.js';
+import { Circuit, canonicalNetName, muxInputCount, normalizeTags, parseTermRef, transformComponentWorld } from './model.js';
 import { captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets, setPartValue } from './part-moves.js';
 import { TRANSFER_FUNCTION_ROLE, isTransferFunction } from './transfer-function.js';
 import { getSymbol, symbolTypeNames } from './components/index.js';
@@ -69,6 +69,7 @@ const FLAG_ARITY = {
   const: 1,
   rot: 1,
   value: 1,
+  inputs: 1,
   label: 1,
   name: 1,
   comment: 1,
@@ -503,7 +504,7 @@ export function commandHelp() {
     'Commands',
     '  help | version',
     '  clear                          - start an empty circuit',
-    '  add <type> [refdes] [--at X Y] [--rot D] [--mirrorX] [--mirrorY] [--value V]',
+    '  add <type> [refdes] [--at X Y] [--rot D] [--mirrorX] [--mirrorY] [--value V] [--inputs N]',
     '                                  types: ' + symbolTypeNames.join(' '),
     '  move <refdes> <X> <Y>          - move (snapped to 40-grid)',
     '  rotate <refdes> [deg=90]       - rotate by multiples of 90',
@@ -514,6 +515,7 @@ export function commandHelp() {
     '                                   or a gain (k): in s highest power first, in z ascending powers of z^-1 (tf([1 -1], [1]) is 1 - z^-1;',
     '                                   tf([1], [1 -1], \'Variable\', \'z\') for descending powers of z)',
     '  link <refdes> [DESIGN]         - link a part to another design of the workspace (show it, or dive in, from the editor); unlink <refdes>',
+    '  inputs <refdes> [2..8]         - a multiplexer\'s data inputs; past 2 its select is a bus (S[1:0] for 3-4, S[2:0] for 5-8)',
     '  waveform <refdes> [sine|pulse|noise|none] - draw a voltage source with a sine, a pulse, or noise in its circle (drawing only)',
     '  drawing-only <refdes>[,refdes...] [on|off] - drawn and checked, but read by no analysis (a placed small-signal model)',
     '  size <refdes>[,refdes...] [W/L] [xM] [replace|beside|hide] - a transistor\'s size and its label, W/L = M·W/L (2u/400n x4; bare numbers are μm);',
@@ -673,6 +675,12 @@ function notesCommand(circuit, action, raw) {
   circuit.notes = normalizeNotes(next);
   const lines = circuit.notes ? circuit.notes.split('\n').length : 0;
   return { text: circuit.notes ? `notes: ${lines} line${lines === 1 ? '' : 's'}` : '(no notes)', json: { notes: circuit.notes }, mutated: circuit.notes !== before };
+}
+
+/** `add --inputs`: only a multiplexer takes it. */
+function addInputs(type, value) {
+  if (type !== 'mux2') throw new Error(`--inputs is for a multiplexer (mux2), not ${type}`);
+  return muxInputCount(value);
 }
 
 function dispatch(circuit, cmd, pos, flags, io) {
@@ -919,6 +927,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
       mirrorX: flags.mirrorX ? true : undefined,
       mirrorY: flags.mirrorY ? true : undefined,
       value: flags.value ? flags.value[0] : undefined,
+      inputs: flags.inputs ? addInputs(type, flags.inputs[0]) : undefined,
     });
     const terms = c.worldTerminals().map((t) => `${t.name}=${pp(t.x, t.y)}`);
     const m = `${c.transform.mirrorX ? 'X' : ''}${c.transform.mirrorY ? 'Y' : ''}`;
@@ -1022,6 +1031,15 @@ function dispatch(circuit, cmd, pos, flags, io) {
     if (!pos[1]) return result(`${c.refdes} shows ${c.waveform || 'no waveform'}`, { refdes: c.refdes, waveform: c.waveform });
     circuit.setWaveform(c.refdes, pos[1]);
     return result(`${c.refdes} shows ${c.waveform || 'no waveform'}`, { refdes: c.refdes, waveform: c.waveform }, true);
+  }
+  if (cmd === 'inputs') {
+    if (!pos[0]) throw new Error('usage: inputs <refdes> [2..8]');
+    const c = circuit.getComponent(pos[0]);
+    if (c.type !== 'mux2') throw new Error(`${c.refdes} is not a multiplexer; only multiplexers take an input count`);
+    const state = () => result(`${c.refdes} has ${c.muxInputs} inputs`, { refdes: c.refdes, inputs: c.muxInputs }, pos[1] !== undefined);
+    if (pos[1] === undefined) return state();
+    circuit.setMuxInputs(c.refdes, pos[1]);
+    return state();
   }
   if (cmd === 'size') {
     if (!pos[0]) throw new Error('usage: size <refdes>[,refdes...] [W/L] [xM] [replace|beside|hide] ; size <refdes> off');

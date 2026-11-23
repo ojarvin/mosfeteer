@@ -9,6 +9,7 @@ function build(lines) {
   for (const line of lines) runCommand(circuit, line);
   return circuit;
 }
+const run = (circuit, ...lines) => lines.forEach((line) => runCommand(circuit, line));
 const table = (result) => result.rows.map((row) => `${[...row.states, ...row.inputs].join('')}|${[...row.next, ...row.outputs].join('')}`);
 const equations = (result) => Object.fromEntries(result.expressions.map((e) => [e.name, e.tex]));
 
@@ -47,6 +48,67 @@ test('a multiplexer passes a at s = 0 and b at s = 1; ground and a supply are 0 
     'connect A.p U1.a', 'connect VDD.p U1.b', 'connect U1.y Y.p']));
   assert.deepEqual(tied.inputs.map((s) => s.name), ['A']);
   assert.equal(equations(tied).Y, 'A');
+});
+
+test('a multiplexer past two inputs reads its select from a bus, the first bit most significant', () => {
+  const lines = ['add mux2 U1 --at 0 0 --inputs 4', 'add output Y --at 400 0', 'connect U1.y Y.p'];
+  const inputs = ['A', 'B', 'C', 'D'].flatMap((name, i) => [`add input ${name} --at -400 ${(2 * i - 3) * 40}`, `connect ${name}.p U1.${'abcd'[i]}`]);
+  const circuit = build([...lines, ...inputs, 'add input SEL --at -400 400', 'connect SEL.p U1.s']);
+  // An unnamed select is one signal: a 4:1 mux needs two bits.
+  assert.equal(analyzeLogic(circuit).error, 'U1 has 4 inputs: its select takes a bus of 2 bits, such as S[1:0].');
+  circuit.renameNet(circuit.netOfTerminal({ comp: 'U1', term: 's' }), 'S[2:0]');
+  assert.match(analyzeLogic(circuit).error, /bus of 2 bits/);
+  circuit.renameNet(circuit.netOfTerminal({ comp: 'U1', term: 's' }), 'S[1:0]');
+  const result = analyzeLogic(circuit);
+  assert.equal(result.ok, true, result.error);
+  // The input port on the bus stands on each bit.
+  assert.deepEqual(result.inputs.map((s) => s.name), ['A', 'B', 'C', 'D', 'S[0]', 'S[1]']);
+  const at = (values) => result.rows.find((row) => result.inputs.every((s, i) => row.inputs[i] === values[s.name])).outputs[0];
+  for (let pick = 0; pick < 4; pick += 1) {
+    const values = { A: 0, B: 0, C: 0, D: 0, 'S[1]': pick >> 1, 'S[0]': pick & 1 };
+    values['ABCD'[pick]] = 1;
+    assert.equal(at(values), 1, `S = ${pick}`);
+  }
+  // Each bit can come from logic of its own, joined by its name (S<1> and
+  // S[1] alike).
+  const driven = build([...lines, ...inputs, 'add input SEL --at -400 400', 'connect SEL.p U1.s',
+    'add inverter U2 --at -400 800', 'add input P --at -800 800', 'connect P.p U2.a', 'add output O1 --at 0 800', 'connect U2.y O1.p',
+    'add inverter U3 --at -400 1200', 'add input Q --at -800 1200', 'connect Q.p U3.a', 'add output O0 --at 0 1200', 'connect U3.y O0.p']);
+  run(driven, 'rm SEL');
+  driven.renameNet(driven.netOfTerminal({ comp: 'U1', term: 's' }), 'S[1:0]');
+  driven.renameNet(driven.netOfTerminal({ comp: 'U2', term: 'y' }), 'S<1>');
+  driven.renameNet(driven.netOfTerminal({ comp: 'U3', term: 'y' }), 'S[0]');
+  const chained = analyzeLogic(driven);
+  assert.equal(chained.ok, true, chained.error);
+  assert.deepEqual(chained.inputs.map((s) => s.name), ['A', 'B', 'C', 'D', 'P', 'Q']);
+  const pick = (values) => chained.rows.find((row) => chained.inputs.every((s, i) => row.inputs[i] === values[s.name])).outputs.at(-1);
+  assert.equal(chained.outputs.at(-1).name, 'Y');
+  // P = 0, Q = 1: S = 2, so Y is C.
+  assert.equal(pick({ A: 0, B: 0, C: 1, D: 0, P: 0, Q: 1 }), 1);
+  assert.equal(pick({ A: 1, B: 1, C: 0, D: 1, P: 0, Q: 1 }), 0);
+});
+
+test('a multiplexer picks X only where the inputs it could pick disagree, and nothing past its last input', () => {
+  const circuit = build(['add mux2 U1 --at 0 0 --inputs 3', 'add output Y --at 400 0', 'connect U1.y Y.p',
+    'add input A --at -400 -80', 'connect A.p U1.a', 'add supply VDD --at -400 0', 'connect VDD.p U1.b', 'add input C --at -400 80', 'connect C.p U1.c',
+    'add input S --at -400 400', 'connect S.p U1.s']);
+  circuit.renameNet(circuit.netOfTerminal({ comp: 'U1', term: 's' }), 'S[1:0]');
+  const result = analyzeLogic(circuit);
+  assert.equal(result.ok, true, result.error);
+  const at = (a, c, s1, s0) => result.rows.find((row) => row.inputs.join('') === `${a}${c}${s0}${s1}`).outputs[0];
+  assert.equal(at(1, 0, 0, 0), 1);
+  assert.equal(at(0, 0, 0, 1), 1);
+  assert.equal(at(0, 1, 1, 0), 1);
+  assert.equal(at(1, 1, 1, 1), 'X');
+});
+
+test('a bus reaches the logic only at a multiplexer\'s select', () => {
+  const circuit = build(['add and2_gate U1 --at 0 0', 'add input A --at -400 -40', 'connect A.p U1.a', 'add output Y --at 400 0', 'connect U1.y Y.p']);
+  circuit.renameNet(circuit.netOfTerminal({ comp: 'U1', term: 'a' }), 'D[1:0]');
+  assert.equal(analyzeLogic(circuit).error, 'U1.a is on the bus D[1:0]: only a multiplexer\'s select reads a bus.');
+  const two = build(['add mux2 U1 --at 0 0', 'add input S --at -400 300', 'connect S.p U1.s']);
+  two.renameNet(two.netOfTerminal({ comp: 'U1', term: 's' }), 'S[1:0]');
+  assert.equal(analyzeLogic(two).error, 'U1 has 2 inputs: its select is one signal, not the bus S[1:0].');
 });
 
 test('tri-state buffers share a signal: Z with none driving, X when two disagree', () => {

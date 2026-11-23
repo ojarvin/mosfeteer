@@ -28,6 +28,7 @@
  */
 
 import { analyzedCircuit, canonicalNetName } from '../model.js';
+import { busBits, netNameMembers, netNameParts } from '../bus.js';
 
 const GATES = {
   inverter: ([a]) => not(a),
@@ -117,14 +118,58 @@ export function analyzeLogic(source, options = {}) {
     if (!signals.has(key)) signals.set(key, { key, name, drivers: [], readers: [], ports: new Set(), constant: null, named: false });
     return signals.get(key);
   };
-  // A pin's signal: its net's (by name, so equal names join), else its own.
-  const netKey = (net) => `net:${canonicalNetName(net.name) || net.id}`;
+  // A pin's signal: its net's (by name, so equal names join; a bus bit by
+  // its bit, D[1] and D<1> alike), else its own.
+  const bitKey = (member) => `net:bit:${member}`;
+  const netKey = (net) => {
+    const name = canonicalNetName(net.name);
+    if (name && busBits(name) && netNameMembers(name).length === 1) return bitKey(netNameMembers(name)[0]);
+    return `net:${name || net.id}`;
+  };
+  const isBus = (net) => netNameMembers(canonicalNetName(net?.name)).length > 1;
+  // A bus's bits, first to last, each spelled as the bus is (S[1:0] -> S[1],
+  // S[0]; a list A,B -> A, B), with the key its signal goes by.
+  const busMembers = (net) => {
+    const name = canonicalNetName(net.name);
+    const spelled = netNameParts(name).flatMap((part) => {
+      const bus = busBits(part);
+      if (!bus) return [part];
+      const [open, close] = part.includes('<') ? ['<', '>'] : ['[', ']'];
+      return bus.bits.map((bit) => `${bus.base}${open}${bit}${close}`);
+    });
+    return netNameMembers(name).map((member, i) => ({
+      name: spelled[i],
+      key: busBits(spelled[i]) ? bitKey(member) : `net:${spelled[i]}`,
+    }));
+  };
+  let busError = null;
   const pinSignal = (component, term) => {
     const net = circuit.netOfTerminal({ comp: component.refdes, term });
     if (!net) return signalOf(`pin:${component.refdes}.${term}`, `${component.refdes}.${term}`);
+    if (isBus(net)) busError ||= `${component.refdes}.${term} is on the bus ${canonicalNetName(net.name)}: only a multiplexer's select reads a bus.`;
     const signal = signalOf(netKey(net), canonicalNetName(net.name) || null);
     if (net.name) signal.named = true;
     return signal;
+  };
+  // A multiplexer's select: past two inputs, the bits of a bus as wide as
+  // it takes to count them, first bit the most significant.
+  const selectSignals = (component) => {
+    const count = component.muxInputs;
+    const width = Math.ceil(Math.log2(count));
+    const net = circuit.netOfTerminal({ comp: component.refdes, term: 's' });
+    if (width === 1 && !(net && isBus(net))) return [['s', pinSignal(component, 's')]];
+    const members = net && isBus(net) ? busMembers(net) : [];
+    if (members.length !== width) {
+      busError ||= width === 1
+        ? `${component.refdes} has 2 inputs: its select is one signal, not the bus ${canonicalNetName(net.name)}.`
+        : `${component.refdes} has ${count} inputs: its select takes a bus of ${width} bits, such as S[${width - 1}:0].`;
+      return [];
+    }
+    return members.map(({ name, key }, i) => {
+      const signal = signalOf(key, name);
+      signal.named = true;
+      return [`s:${i}`, signal];
+    });
   };
 
   const gates = [];
@@ -133,10 +178,11 @@ export function analyzeLogic(source, options = {}) {
     const type = component.type;
     if (GATES[type] || TRISTATE[type] || type === 'mux2') {
       const pin = (name) => pinSignal(component, name);
-      const inputs = component.terminalDefs.filter((t) => t.direction === 'input').map((t) => [t.name, pin(t.name)]);
+      const inputs = component.terminalDefs.filter((t) => t.direction === 'input' && !(type === 'mux2' && t.name === 's')).map((t) => [t.name, pin(t.name)]);
+      if (type === 'mux2') inputs.push(...selectSignals(component));
       const output = pin('y');
       const gate = { component, type, inputs: new Map(inputs), output };
-      for (const [name, signal] of inputs) signal.readers.push({ component, pin: name });
+      for (const [name, signal] of inputs) signal.readers.push({ component, pin: name.startsWith('s:') ? 's' : name });
       output.drivers.push({ component, pin: 'y', tristate: !!TRISTATE[type] });
       gates.push(gate);
     } else if (sequentialPins(component)) {
@@ -152,6 +198,7 @@ export function analyzeLogic(source, options = {}) {
     }
   }
   if (!gates.length && !sequential.length) return { ok: false, error: 'There is no logic to analyze: draw gates, multiplexers, flip-flops, or latches.' };
+  if (busError) return { ok: false, error: busError };
 
   // What else touches the logic: ports name signals, rails are constants,
   // anything else is not logic.
@@ -160,12 +207,16 @@ export function analyzeLogic(source, options = {}) {
     if (GATES[component.type] || TRISTATE[component.type] || component.type === 'mux2' || sequentialPins(component) || PASSIVE.has(component.type)) continue;
     for (const t of component.terminalDefs || []) {
       const net = circuit.netOfTerminal({ comp: component.refdes, term: t.name });
-      if (!net || !logicKeys.has(netKey(net))) continue;
-      const signal = signals.get(netKey(net));
-      if (PORTS.has(component.type)) signal.ports.add(component.type);
-      else if (component.type === 'ground') signal.constant = signal.constant === 1 ? 'both' : 0;
-      else if (component.type === 'supply') signal.constant = signal.constant === 0 ? 'both' : 1;
-      else return { ok: false, error: `${component.refdes} (${component.type}) is on the logic signal ${signal.name || component.refdes}: only logic parts, ports, ground, and supplies can be.` };
+      if (!net) continue;
+      // A port or rail on a select bus stands on each of its bits.
+      const keys = isBus(net) ? busMembers(net).map(({ key }) => key).filter((key) => logicKeys.has(key)) : [netKey(net)].filter((key) => logicKeys.has(key));
+      for (const key of keys) {
+        const signal = signals.get(key);
+        if (PORTS.has(component.type)) signal.ports.add(component.type);
+        else if (component.type === 'ground') signal.constant = signal.constant === 1 ? 'both' : 0;
+        else if (component.type === 'supply') signal.constant = signal.constant === 0 ? 'both' : 1;
+        else return { ok: false, error: `${component.refdes} (${component.type}) is on the logic signal ${signal.name || component.refdes}: only logic parts, ports, ground, and supplies can be.` };
+      }
     }
   }
   for (const signal of signals.values()) {
@@ -351,8 +402,14 @@ export function analyzeLogic(source, options = {}) {
       if (GATES[gate.type]) out = GATES[gate.type]([...gate.inputs.keys()].map(at));
       else if (TRISTATE[gate.type]) out = at('en') === 1 ? TRISTATE[gate.type](at('a')) : at('en') === 0 ? 'Z' : 'X';
       else {
-        const s = at('s');
-        out = s === 0 ? at('a') : s === 1 ? at('b') : at('a') === at('b') ? at('a') : 'X';
+        // Every input the select could pick, an unknown bit either way; one
+        // past the last input picks nothing known.
+        const data = [...gate.inputs.keys()].filter((pin) => pin !== 's' && !pin.startsWith('s:'));
+        const select = [...gate.inputs.keys()].filter((pin) => pin === 's' || pin.startsWith('s:'));
+        let picks = [0];
+        for (const bit of select.map(at)) picks = picks.flatMap((n) => (bit === 0 ? [2 * n] : bit === 1 ? [2 * n + 1] : [2 * n, 2 * n + 1]));
+        const values = picks.map((n) => (n < data.length ? at(data[n]) : 'X'));
+        out = values.every((v) => v === values[0]) ? values[0] : 'X';
       }
       resolve(gate.output, out);
     }

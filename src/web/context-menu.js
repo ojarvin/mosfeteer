@@ -18,6 +18,7 @@ import { PART_VALUE_ROLE, VALUE_TYPES, valueText, valueUnit } from '../core/part
 import { setPartValue } from '../core/part-moves.js';
 import { editInSizing } from './sizing-window.js';
 import { WAVEFORM_TYPES } from '../core/components/current.js';
+import { MUX_MAX_INPUTS, MUX_MIN_INPUTS } from '../core/components/mux.js';
 import { ditherValueText, parseDither } from '../core/transfer-function.js';
 import { joinSelectedLines, selectedLines } from './annotation-tools.js';
 import { appendLinkContextItems, linkBubbleAt, openLinkBubbleMenu } from './hierarchy.js';
@@ -351,6 +352,19 @@ function appendWaveformMenu(menu, target) {
   });
 }
 
+/** A multiplexer's data inputs, 2 to 8. */
+function appendMuxInputsMenu(menu, target) {
+  const component = target.kind === 'component' ? target.value : null;
+  if (component?.type !== 'mux2') return;
+  appendContextSubmenu(menu, 'Inputs', (submenu) => {
+    for (let count = MUX_MIN_INPUTS; count <= MUX_MAX_INPUTS; count += 1) {
+      appendContextItem(submenu, String(count), () => {
+        if (commit(() => editor.circuit.setMuxInputs(component.refdes, count)) !== false) logLine(`${component.refdes} has ${count} inputs`);
+      }, { active: component.muxInputs === count });
+    }
+  });
+}
+
 /** Where a size or value label stands, for every part it applies to: the
  *  right-clicked part, or all of the selection's parts of its kind. */
 function appendLabelPlacement(submenu, parts, read, write, disabled) {
@@ -495,6 +509,7 @@ function appendComponentOptions(menu, target) {
   appendDitherShapeMenu(group, target);
   appendSwitchPhaseMenu(group, target);
   appendWaveformMenu(group, target);
+  appendMuxInputsMenu(group, target);
   if (target.value.type === 'supply') appendSupplyBarItem(group, target.value);
   if (group.childElementCount) menu.appendChild(group);
 }

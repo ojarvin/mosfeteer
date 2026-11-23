@@ -210,6 +210,7 @@ export function copySelection({ quiet = false, alone = false } = {}) {
       // at the default size, and its wires end on terminals it lacks.
       ...(c.type === 'block' ? { blockSize: { ...c.blockSize }, blockTerminals: c.blockTerminals.map((t) => ({ ...t })) } : {}),
       ...(c.type === 'chopper' ? { blockSize: { ...c.blockSize } } : {}),
+      ...(c.type === 'mux2' ? { inputs: c.muxInputs } : {}),
       ...(c.waveform ? { waveform: c.waveform } : {}),
       ...(c.drawingOnly ? { drawingOnly: true } : {}),
       style: { ...(c.style || {}) },
@@ -666,6 +667,7 @@ export function pasteClipboard({ recordHistory = true, connect = true } = {}) {
           size: c.size,
           blockSize: c.blockSize,
           blockTerminals: c.blockTerminals,
+          inputs: c.inputs,
           waveform: c.waveform,
           drawingOnly: c.drawingOnly,
           style: c.style,

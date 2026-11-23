@@ -645,6 +645,50 @@ test('managed VCM-to-VCM routes escape upward and clear both bodies', () => {
   assert.deepEqual(evaluate(c).wireThroughBBoxes, []);
 });
 
+test('inputs gives a multiplexer 2 to 8 inputs, keeps its wiring, and saves the count', () => {
+  const c = fresh();
+  runCommand(c, 'add mux2 U1 --at 0 0 --inputs 3');
+  runCommand(c, 'add input A --at -400 -80');
+  runCommand(c, 'add output Y --at 400 0');
+  runCommand(c, 'connect A.p U1.a');
+  runCommand(c, 'connect U1.y Y.p');
+  assert.equal(runCommand(c, 'inputs U1').text, 'U1 has 3 inputs');
+  const res = runCommand(c, 'inputs U1 6');
+  assert.equal(res.mutated, true);
+  assert.deepEqual(res.json, { refdes: 'U1', inputs: 6 });
+  const u1 = c.getComponent('U1');
+  // The output stays put; the inputs spread around it, still wired.
+  assert.deepEqual(u1.terminalWorld('y'), { x: 80, y: 0 });
+  assert.deepEqual(u1.terminalWorld('a'), { x: -80, y: -200 });
+  assert.deepEqual(u1.terminalWorld('f'), { x: -80, y: 200 });
+  const wired = (term) => c.netOfTerminal({ comp: 'U1', term })?.terminals.map((t) => `${t.comp}.${t.term}`).sort();
+  assert.deepEqual(wired('a'), ['A.p', 'U1.a']);
+  assert.deepEqual(wired('y'), ['U1.y', 'Y.p']);
+  assert.deepEqual(evaluate(c).wireThroughBBoxes, []);
+  // The count is saved with the part; two inputs, the default, is not written.
+  const saved = c.toJSON();
+  assert.equal(saved.components.find((part) => part.refdes === 'U1').inputs, 6);
+  assert.equal(Circuit.fromJSON(saved).getComponent('U1').muxInputs, 6);
+  runCommand(c, 'inputs U1 2');
+  assert.equal(c.toJSON().components.find((part) => part.refdes === 'U1').inputs, undefined);
+});
+
+test('inputs refuses another part, a count out of range, and dropping a wired input', () => {
+  const c = fresh();
+  runCommand(c, 'add mux2 U1 --at 0 0 --inputs 4');
+  runCommand(c, 'add resistor R1 --at 400 400');
+  runCommand(c, 'add input D --at -400 120');
+  runCommand(c, 'connect D.p U1.d');
+  assert.throws(() => runCommand(c, 'inputs R1 3'), /R1 is not a multiplexer/);
+  assert.throws(() => runCommand(c, 'inputs U1 9'), /2 to 8 inputs, not "9"/);
+  assert.throws(() => runCommand(c, 'inputs U1 two'), /2 to 8 inputs/);
+  assert.throws(() => runCommand(c, 'add resistor R2 --inputs 3'), /--inputs is for a multiplexer/);
+  const before = JSON.stringify(c.toJSON());
+  assert.throws(() => runCommand(c, 'inputs U1 3'), /U1\.d is wired/);
+  assert.equal(JSON.stringify(c.toJSON()), before);
+  assert.ok(commandHelp().includes('inputs <refdes> [2..8]'));
+});
+
 test('unknown command throws', () => {
   assert.throws(() => runCommand(fresh(), 'frobnicate'), /unknown command/);
 });

@@ -6268,6 +6268,7 @@ __exports.analyzeLogic = analyzeLogic;
 __exports.sumOfProducts = sumOfProducts;
 __exports.minimalCover = minimalCover;
 let analyzedCircuit, canonicalNetName; __bind(() => { ({ analyzedCircuit, canonicalNetName } = __require("src/core/model.js")); });
+let busBits, netNameMembers, netNameParts; __bind(() => { ({ busBits, netNameMembers, netNameParts } = __require("src/core/bus.js")); });
 /**
  * Logic analysis: a drawing of gates, multiplexers, tri-state buffers,
  * flip-flops, and latches as its truth table, and each output as a
@@ -6296,6 +6297,7 @@ let analyzedCircuit, canonicalNetName; __bind(() => { ({ analyzedCircuit, canoni
  * not logic on a logic signal, more than one clock input, a clock that
  * reaches anything but clock pins, flip-flops that clock each other.
  */
+
 
 
 
@@ -6387,14 +6389,58 @@ function analyzeLogic(source, options = {}) {
     if (!signals.has(key)) signals.set(key, { key, name, drivers: [], readers: [], ports: new Set(), constant: null, named: false });
     return signals.get(key);
   };
-  // A pin's signal: its net's (by name, so equal names join), else its own.
-  const netKey = (net) => `net:${canonicalNetName(net.name) || net.id}`;
+  // A pin's signal: its net's (by name, so equal names join; a bus bit by
+  // its bit, D[1] and D<1> alike), else its own.
+  const bitKey = (member) => `net:bit:${member}`;
+  const netKey = (net) => {
+    const name = canonicalNetName(net.name);
+    if (name && busBits(name) && netNameMembers(name).length === 1) return bitKey(netNameMembers(name)[0]);
+    return `net:${name || net.id}`;
+  };
+  const isBus = (net) => netNameMembers(canonicalNetName(net?.name)).length > 1;
+  // A bus's bits, first to last, each spelled as the bus is (S[1:0] -> S[1],
+  // S[0]; a list A,B -> A, B), with the key its signal goes by.
+  const busMembers = (net) => {
+    const name = canonicalNetName(net.name);
+    const spelled = netNameParts(name).flatMap((part) => {
+      const bus = busBits(part);
+      if (!bus) return [part];
+      const [open, close] = part.includes('<') ? ['<', '>'] : ['[', ']'];
+      return bus.bits.map((bit) => `${bus.base}${open}${bit}${close}`);
+    });
+    return netNameMembers(name).map((member, i) => ({
+      name: spelled[i],
+      key: busBits(spelled[i]) ? bitKey(member) : `net:${spelled[i]}`,
+    }));
+  };
+  let busError = null;
   const pinSignal = (component, term) => {
     const net = circuit.netOfTerminal({ comp: component.refdes, term });
     if (!net) return signalOf(`pin:${component.refdes}.${term}`, `${component.refdes}.${term}`);
+    if (isBus(net)) busError ||= `${component.refdes}.${term} is on the bus ${canonicalNetName(net.name)}: only a multiplexer's select reads a bus.`;
     const signal = signalOf(netKey(net), canonicalNetName(net.name) || null);
     if (net.name) signal.named = true;
     return signal;
+  };
+  // A multiplexer's select: past two inputs, the bits of a bus as wide as
+  // it takes to count them, first bit the most significant.
+  const selectSignals = (component) => {
+    const count = component.muxInputs;
+    const width = Math.ceil(Math.log2(count));
+    const net = circuit.netOfTerminal({ comp: component.refdes, term: 's' });
+    if (width === 1 && !(net && isBus(net))) return [['s', pinSignal(component, 's')]];
+    const members = net && isBus(net) ? busMembers(net) : [];
+    if (members.length !== width) {
+      busError ||= width === 1
+        ? `${component.refdes} has 2 inputs: its select is one signal, not the bus ${canonicalNetName(net.name)}.`
+        : `${component.refdes} has ${count} inputs: its select takes a bus of ${width} bits, such as S[${width - 1}:0].`;
+      return [];
+    }
+    return members.map(({ name, key }, i) => {
+      const signal = signalOf(key, name);
+      signal.named = true;
+      return [`s:${i}`, signal];
+    });
   };
 
   const gates = [];
@@ -6403,10 +6449,11 @@ function analyzeLogic(source, options = {}) {
     const type = component.type;
     if (GATES[type] || TRISTATE[type] || type === 'mux2') {
       const pin = (name) => pinSignal(component, name);
-      const inputs = component.terminalDefs.filter((t) => t.direction === 'input').map((t) => [t.name, pin(t.name)]);
+      const inputs = component.terminalDefs.filter((t) => t.direction === 'input' && !(type === 'mux2' && t.name === 's')).map((t) => [t.name, pin(t.name)]);
+      if (type === 'mux2') inputs.push(...selectSignals(component));
       const output = pin('y');
       const gate = { component, type, inputs: new Map(inputs), output };
-      for (const [name, signal] of inputs) signal.readers.push({ component, pin: name });
+      for (const [name, signal] of inputs) signal.readers.push({ component, pin: name.startsWith('s:') ? 's' : name });
       output.drivers.push({ component, pin: 'y', tristate: !!TRISTATE[type] });
       gates.push(gate);
     } else if (sequentialPins(component)) {
@@ -6422,6 +6469,7 @@ function analyzeLogic(source, options = {}) {
     }
   }
   if (!gates.length && !sequential.length) return { ok: false, error: 'There is no logic to analyze: draw gates, multiplexers, flip-flops, or latches.' };
+  if (busError) return { ok: false, error: busError };
 
   // What else touches the logic: ports name signals, rails are constants,
   // anything else is not logic.
@@ -6430,12 +6478,16 @@ function analyzeLogic(source, options = {}) {
     if (GATES[component.type] || TRISTATE[component.type] || component.type === 'mux2' || sequentialPins(component) || PASSIVE.has(component.type)) continue;
     for (const t of component.terminalDefs || []) {
       const net = circuit.netOfTerminal({ comp: component.refdes, term: t.name });
-      if (!net || !logicKeys.has(netKey(net))) continue;
-      const signal = signals.get(netKey(net));
-      if (PORTS.has(component.type)) signal.ports.add(component.type);
-      else if (component.type === 'ground') signal.constant = signal.constant === 1 ? 'both' : 0;
-      else if (component.type === 'supply') signal.constant = signal.constant === 0 ? 'both' : 1;
-      else return { ok: false, error: `${component.refdes} (${component.type}) is on the logic signal ${signal.name || component.refdes}: only logic parts, ports, ground, and supplies can be.` };
+      if (!net) continue;
+      // A port or rail on a select bus stands on each of its bits.
+      const keys = isBus(net) ? busMembers(net).map(({ key }) => key).filter((key) => logicKeys.has(key)) : [netKey(net)].filter((key) => logicKeys.has(key));
+      for (const key of keys) {
+        const signal = signals.get(key);
+        if (PORTS.has(component.type)) signal.ports.add(component.type);
+        else if (component.type === 'ground') signal.constant = signal.constant === 1 ? 'both' : 0;
+        else if (component.type === 'supply') signal.constant = signal.constant === 0 ? 'both' : 1;
+        else return { ok: false, error: `${component.refdes} (${component.type}) is on the logic signal ${signal.name || component.refdes}: only logic parts, ports, ground, and supplies can be.` };
+      }
     }
   }
   for (const signal of signals.values()) {
@@ -6621,8 +6673,14 @@ function analyzeLogic(source, options = {}) {
       if (GATES[gate.type]) out = GATES[gate.type]([...gate.inputs.keys()].map(at));
       else if (TRISTATE[gate.type]) out = at('en') === 1 ? TRISTATE[gate.type](at('a')) : at('en') === 0 ? 'Z' : 'X';
       else {
-        const s = at('s');
-        out = s === 0 ? at('a') : s === 1 ? at('b') : at('a') === at('b') ? at('a') : 'X';
+        // Every input the select could pick, an unknown bit either way; one
+        // past the last input picks nothing known.
+        const data = [...gate.inputs.keys()].filter((pin) => pin !== 's' && !pin.startsWith('s:'));
+        const select = [...gate.inputs.keys()].filter((pin) => pin === 's' || pin.startsWith('s:'));
+        let picks = [0];
+        for (const bit of select.map(at)) picks = picks.flatMap((n) => (bit === 0 ? [2 * n] : bit === 1 ? [2 * n + 1] : [2 * n, 2 * n + 1]));
+        const values = picks.map((n) => (n < data.length ? at(data[n]) : 'X'));
+        out = values.every((v) => v === values[0]) ? values[0] : 'X';
       }
       resolve(gate.output, out);
     }
@@ -23521,7 +23579,7 @@ let plotCsv, plotSeries; __bind(() => { ({ plotCsv, plotSeries } = __require("sr
 let appendPlotTraces, dataPlotFromText, fileUnits, inPlotUnits, takesFileTraces, movePlotTrace, placeDataPlot, removePlotTrace, setDataPlotAxis, setPlotTrace, setDataPlotView; __bind(() => { ({ appendPlotTraces, dataPlotFromText, fileUnits, inPlotUnits, takesFileTraces, movePlotTrace, placeDataPlot, removePlotTrace, setDataPlotAxis, setPlotTrace, setDataPlotView } = __require("src/core/data-plot.js")); });
 let analyzeSignalFlow, complexText; __bind(() => { ({ analyzeSignalFlow, complexText } = __require("src/core/analysis/signal-flow.js")); });
 let analyzeLogic; __bind(() => { ({ analyzeLogic } = __require("src/core/analysis/logic.js")); });
-let Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld; __bind(() => { ({ Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld } = __require("src/core/model.js")); });
+let Circuit, canonicalNetName, muxInputCount, normalizeTags, parseTermRef, transformComponentWorld; __bind(() => { ({ Circuit, canonicalNetName, muxInputCount, normalizeTags, parseTermRef, transformComponentWorld } = __require("src/core/model.js")); });
 let captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets, setPartValue; __bind(() => { ({ captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets, setPartValue } = __require("src/core/part-moves.js")); });
 let TRANSFER_FUNCTION_ROLE, isTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_ROLE, isTransferFunction } = __require("src/core/transfer-function.js")); });
 let getSymbol, symbolTypeNames; __bind(() => { ({ getSymbol, symbolTypeNames } = __require("src/core/components/index.js")); });
@@ -23627,6 +23685,7 @@ const FLAG_ARITY = {
   const: 1,
   rot: 1,
   value: 1,
+  inputs: 1,
   label: 1,
   name: 1,
   comment: 1,
@@ -24061,7 +24120,7 @@ function commandHelp() {
     'Commands',
     '  help | version',
     '  clear                          - start an empty circuit',
-    '  add <type> [refdes] [--at X Y] [--rot D] [--mirrorX] [--mirrorY] [--value V]',
+    '  add <type> [refdes] [--at X Y] [--rot D] [--mirrorX] [--mirrorY] [--value V] [--inputs N]',
     '                                  types: ' + symbolTypeNames.join(' '),
     '  move <refdes> <X> <Y>          - move (snapped to 40-grid)',
     '  rotate <refdes> [deg=90]       - rotate by multiples of 90',
@@ -24072,6 +24131,7 @@ function commandHelp() {
     '                                   or a gain (k): in s highest power first, in z ascending powers of z^-1 (tf([1 -1], [1]) is 1 - z^-1;',
     '                                   tf([1], [1 -1], \'Variable\', \'z\') for descending powers of z)',
     '  link <refdes> [DESIGN]         - link a part to another design of the workspace (show it, or dive in, from the editor); unlink <refdes>',
+    '  inputs <refdes> [2..8]         - a multiplexer\'s data inputs; past 2 its select is a bus (S[1:0] for 3-4, S[2:0] for 5-8)',
     '  waveform <refdes> [sine|pulse|noise|none] - draw a voltage source with a sine, a pulse, or noise in its circle (drawing only)',
     '  drawing-only <refdes>[,refdes...] [on|off] - drawn and checked, but read by no analysis (a placed small-signal model)',
     '  size <refdes>[,refdes...] [W/L] [xM] [replace|beside|hide] - a transistor\'s size and its label, W/L = M·W/L (2u/400n x4; bare numbers are μm);',
@@ -24231,6 +24291,12 @@ function notesCommand(circuit, action, raw) {
   circuit.notes = normalizeNotes(next);
   const lines = circuit.notes ? circuit.notes.split('\n').length : 0;
   return { text: circuit.notes ? `notes: ${lines} line${lines === 1 ? '' : 's'}` : '(no notes)', json: { notes: circuit.notes }, mutated: circuit.notes !== before };
+}
+
+/** `add --inputs`: only a multiplexer takes it. */
+function addInputs(type, value) {
+  if (type !== 'mux2') throw new Error(`--inputs is for a multiplexer (mux2), not ${type}`);
+  return muxInputCount(value);
 }
 
 function dispatch(circuit, cmd, pos, flags, io) {
@@ -24477,6 +24543,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
       mirrorX: flags.mirrorX ? true : undefined,
       mirrorY: flags.mirrorY ? true : undefined,
       value: flags.value ? flags.value[0] : undefined,
+      inputs: flags.inputs ? addInputs(type, flags.inputs[0]) : undefined,
     });
     const terms = c.worldTerminals().map((t) => `${t.name}=${pp(t.x, t.y)}`);
     const m = `${c.transform.mirrorX ? 'X' : ''}${c.transform.mirrorY ? 'Y' : ''}`;
@@ -24580,6 +24647,15 @@ function dispatch(circuit, cmd, pos, flags, io) {
     if (!pos[1]) return result(`${c.refdes} shows ${c.waveform || 'no waveform'}`, { refdes: c.refdes, waveform: c.waveform });
     circuit.setWaveform(c.refdes, pos[1]);
     return result(`${c.refdes} shows ${c.waveform || 'no waveform'}`, { refdes: c.refdes, waveform: c.waveform }, true);
+  }
+  if (cmd === 'inputs') {
+    if (!pos[0]) throw new Error('usage: inputs <refdes> [2..8]');
+    const c = circuit.getComponent(pos[0]);
+    if (c.type !== 'mux2') throw new Error(`${c.refdes} is not a multiplexer; only multiplexers take an input count`);
+    const state = () => result(`${c.refdes} has ${c.muxInputs} inputs`, { refdes: c.refdes, inputs: c.muxInputs }, pos[1] !== undefined);
+    if (pos[1] === undefined) return state();
+    circuit.setMuxInputs(c.refdes, pos[1]);
+    return state();
   }
   if (cmd === 'size') {
     if (!pos[0]) throw new Error('usage: size <refdes>[,refdes...] [W/L] [xM] [replace|beside|hide] ; size <refdes> off');
@@ -26754,38 +26830,66 @@ function createMos(type, { pmos = false, bulk = false } = {}) {
 };
 
 __modules["src/core/components/mux.js"] = function (__require, __exports) {
+__exports.muxSymbol = muxSymbol;
 let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
+let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 
+
+
+/** The fewest and most inputs a multiplexer takes. */
+const MUX_MIN_INPUTS = 2;
+const MUX_MAX_INPUTS = 8;
+/** Input pin names, the first selected by 0. */
+const MUX_INPUT_NAMES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+
+const shapes = new Map();
+
+/**
+ * A multiplexer with `inputs` data inputs two cells apart, numbered from 0
+ * at the top, and one select `s` below (a bus of enough bits past two
+ * inputs). The output stays centered; more inputs make the body taller, never
+ * wider. Built once per count, so every mux of one count shares one
+ * definition.
+ */
+function muxSymbol(inputs = MUX_MIN_INPUTS) {
+  if (!shapes.has(inputs)) {
+    // The left side reaches two cells past the outer inputs, the right one
+    // cell less, leaving a shallow taper at each end.
+    const left = (inputs + 1) * GRID;
+    const right = left - GRID;
+    const ys = MUX_INPUT_NAMES.slice(0, inputs).map((_, i) => (2 * i - (inputs - 1)) * GRID);
+    shapes.set(inputs, defineSymbol({
+      type: 'mux2',
+      description: inputs === 2 ? '2:1 Multiplexer' : `${inputs}:1 Multiplexer`,
+      refPrefix: 'U',
+      terminals: [
+        ...ys.map((y, i) => ({ name: MUX_INPUT_NAMES[i], x: -2 * GRID, y, direction: 'input', dir: { x: -1, y: 0 } })),
+        { name: 'y', x: 2 * GRID, y: 0, direction: 'output', dir: { x: 1, y: 0 } },
+        { name: 's', x: 0, y: left + GRID, direction: 'input', dir: { x: 0, y: 1 } },
+      ],
+      bbox: { x: -2 * GRID, y: -left, w: 4 * GRID, h: 2 * left + GRID },
+      graphics: [
+        ...ys.map((y) => ({ kind: 'path', d: `M ${-2 * GRID} ${y} L ${-GRID} ${y}`, style: 'symbol' })),
+        { kind: 'path', d: `M ${GRID} 0 L ${2 * GRID} 0`, style: 'symbol' },
+        { kind: 'path', d: `M 0 ${left - GRID / 2} L 0 ${left + GRID}`, style: 'symbol' },
+        { kind: 'path', d: `M ${-GRID} ${-left} L ${GRID} ${-right} L ${GRID} ${right} L ${-GRID} ${left} Z`, style: 'emph' },
+        ...ys.map((y, i) => ({ kind: 'text', x: 0, y, text: String(i), anchor: 'middle', font: 'label', keepUpright: true })),
+      ],
+      textPos: null,
+      refPos: null,
+      labelOffset: { x: 0, y: -left - GRID },
+      defaultValue: '',
+    }));
+  }
+  return shapes.get(inputs);
+}
 
 /** Compact two-input, one-select multiplexer. */
-const mux2 = defineSymbol({
-  type: 'mux2',
-  description: '2:1 Multiplexer',
-  refPrefix: 'U',
-  terminals: [
-    { name: 'a', x: -80, y: -40, direction: 'input', dir: { x: -1, y: 0 } },
-    { name: 'b', x: -80, y: 40, direction: 'input', dir: { x: -1, y: 0 } },
-    { name: 'y', x: 80, y: 0, direction: 'output', dir: { x: 1, y: 0 } },
-    { name: 's', x: 0, y: 160, direction: 'input', dir: { x: 0, y: 1 } },
-  ],
-  // The body is two squares wide. Its left side is six squares tall and its
-  // right side is four squares tall, leaving a shallow taper at each end.
-  bbox: { x: -80, y: -120, w: 160, h: 280 },
-  graphics: [
-    { kind: 'path', d: 'M -80 -40 L -40 -40', style: 'symbol' },
-    { kind: 'path', d: 'M -80 40 L -40 40', style: 'symbol' },
-    { kind: 'path', d: 'M 40 0 L 80 0', style: 'symbol' },
-    { kind: 'path', d: 'M 0 100 L 0 160', style: 'symbol' },
-    { kind: 'path', d: 'M -40 -120 L 40 -80 L 40 80 L -40 120 Z', style: 'emph' },
-    { kind: 'text', x: 0, y: -40, text: '0', anchor: 'middle', font: 'label', keepUpright: true },
-    { kind: 'text', x: 0, y: 40, text: '1', anchor: 'middle', font: 'label', keepUpright: true },
-  ],
-  textPos: null,
-  refPos: null,
-  labelOffset: { x: 0, y: -160 },
-  defaultValue: '',
-});
+const mux2 = muxSymbol(MUX_MIN_INPUTS);
 
+__exports.MUX_MIN_INPUTS = MUX_MIN_INPUTS;
+__exports.MUX_MAX_INPUTS = MUX_MAX_INPUTS;
+__exports.MUX_INPUT_NAMES = MUX_INPUT_NAMES;
 __exports.mux2 = mux2;
 };
 
@@ -30153,6 +30257,7 @@ function mathRuns(text) {
 
 __modules["src/core/model.js"] = function (__require, __exports) {
 __exports.canonicalNetName = canonicalNetName;
+__exports.muxInputCount = muxInputCount;
 __exports.normalizeDesignLink = normalizeDesignLink;
 __exports.normalizeSavedNames = normalizeSavedNames;
 __exports.nextSavedNames = nextSavedNames;
@@ -30201,6 +30306,7 @@ let applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverlap, re
 let snap, snapPoint, GRID; __bind(() => { ({ snap, snapPoint, GRID } = __require("src/core/grid.js")); });
 let getSymbol, seriesTerminalNames; __bind(() => { ({ getSymbol, seriesTerminalNames } = __require("src/core/components/index.js")); });
 let chopperSymbol; __bind(() => { ({ chopperSymbol } = __require("src/core/components/chopper.js")); });
+let MUX_MAX_INPUTS, MUX_MIN_INPUTS, muxSymbol; __bind(() => { ({ MUX_MAX_INPUTS, MUX_MIN_INPUTS, muxSymbol } = __require("src/core/components/mux.js")); });
 let roomyType; __bind(() => { ({ roomyType } = __require("src/core/components/categories.js")); });
 let SOURCE_WAVEFORMS, WAVEFORM_TYPES; __bind(() => { ({ SOURCE_WAVEFORMS, WAVEFORM_TYPES } = __require("src/core/components/current.js")); });
 let balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute; __bind(() => { ({ balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } = __require("src/core/router.js")); });
@@ -30217,6 +30323,7 @@ let fanStacks, normalizeStack, segmentEnters, stackRects, stackedBoxes, wireEcho
 let PART_VALUE_ROLE, VALUE_LABEL_MODES, VALUE_TYPES, valueLabelTex; __bind(() => { ({ PART_VALUE_ROLE, VALUE_LABEL_MODES, VALUE_TYPES, valueLabelTex } = __require("src/core/part-value.js")); });
 let MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize; __bind(() => { ({ MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize } = __require("src/core/mos-size.js")); });
 let cursorsOf; __bind(() => { ({ cursorsOf } = __require("src/core/plot-cursors.js")); });
+
 
 
 
@@ -30271,6 +30378,15 @@ const REFERENCE_MARKER_LEGACY_GLOBAL_NAMES = Object.freeze({ ground: Object.free
 // rotation, on the grid.
 function blockSpan(value) {
   return Math.max(2 * GRID, Math.ceil(snap(Number(value)) / (2 * GRID)) * 2 * GRID);
+}
+
+/** A multiplexer's input count, checked: a whole number from 2 to 8. */
+function muxInputCount(value) {
+  const count = Number(value);
+  if (!Number.isInteger(count) || count < MUX_MIN_INPUTS || count > MUX_MAX_INPUTS) {
+    throw new Error(`a multiplexer has ${MUX_MIN_INPUTS} to ${MUX_MAX_INPUTS} inputs, not "${value}"`);
+  }
+  return count;
 }
 
 // A chopper is at least four cells wide, so its cross keeps a cell clear of
@@ -32606,6 +32722,8 @@ class ComponentInstance {
     // A chopper's symbol is rebuilt for its size (chopperSymbol), so its
     // pins, outline, and cross follow a resize.
     if (this.type === 'chopper') this.setChopperSize(opts.blockSize ?? this.def.bbox);
+    // A multiplexer's symbol is rebuilt for its input count (muxSymbol).
+    if (this.type === 'mux2' && opts.inputs !== undefined && opts.inputs !== null) this.def = muxSymbol(muxInputCount(opts.inputs));
     this.analysis = {
       model: normalizeSmallSignalDeviceModel(opts.analysis?.model ?? opts.analysis?.smallSignalModel),
       role: opts.analysis?.role || null,
@@ -32686,6 +32804,11 @@ class ComponentInstance {
     this.blockSize = size;
     this.def = chopperSymbol(size.w, size.h);
     return this;
+  }
+
+  /** A multiplexer's data inputs; null for any other part. */
+  get muxInputs() {
+    return this.type === 'mux2' ? this.def.terminals.filter((t) => t.direction === 'input' && t.name !== 's').length : null;
   }
 
   setBlockSize(size = {}, options = {}) {
@@ -32823,6 +32946,7 @@ class ComponentInstance {
       transform: { ...this.transform },
       ...(this.type === 'block' ? { blockSize: { ...this.blockSize }, blockTerminals: this.blockTerminals.map((t) => ({ ...t })) } : {}),
       ...(this.type === 'chopper' ? { blockSize: { ...this.blockSize } } : {}),
+      ...(this.type === 'mux2' && this.muxInputs !== MUX_MIN_INPUTS ? { inputs: this.muxInputs } : {}),
       ...(this.negativeInputs.size ? { negativeInputs: [...this.negativeInputs] } : {}),
       ...(this.joinBar ? { joinBar: true } : {}),
       ...(this.link ? { link: this.link } : {}),
@@ -33950,6 +34074,47 @@ class Circuit {
       component.blockSize = beforeSize;
       component.blockTerminals = beforeTerminals;
       this._restoreNetTopology(topology);
+      throw error;
+    }
+  }
+
+  /** Give a multiplexer `count` inputs (2 to 8). The output stays put and
+   * the inputs spread two cells apart around it; the select moves with the
+   * body's bottom. An input that would go away while wired refuses the
+   * change, which then leaves the part as it was. */
+  setMuxInputs(refdes, count) {
+    const component = this.getComponent(refdes);
+    if (component.type !== 'mux2') throw new Error(`${component.refdes} is not a multiplexer; only multiplexers take an input count`);
+    const next = muxSymbol(muxInputCount(count));
+    if (next === component.def) return component;
+    const kept = new Set(next.terminals.map((t) => t.name));
+    const touched = new Set();
+    for (const net of this.nets.values()) {
+      for (const t of net.terminals) {
+        if (t.comp !== component.refdes) continue;
+        if (!kept.has(t.term)) throw new Error(`${component.refdes}.${t.term} is wired: disconnect it before leaving ${next.terminals.length - 2} inputs`);
+        touched.add(net.id);
+      }
+    }
+    const before = component.def;
+    const topology = this._snapshotNetTopology();
+    const beforePoints = new Map(component.terminalDefs.filter((t) => kept.has(t.name)).map((t) => [t.name, component.terminalWorld(t.name)]));
+    const label = this.labelOf(component.refdes);
+    const labelOffset = label?.offset ? { ...label.offset } : null;
+    try {
+      component.def = next;
+      // The name stays above the body unless it was moved.
+      if (label && labelOffset && before.labelOffset && labelOffset.x === before.labelOffset.x && labelOffset.y === before.labelOffset.y) {
+        label.offset = { ...next.labelOffset };
+        label.clearRenderedTextBounds();
+      }
+      this._rerouteResized(component, beforePoints, touched);
+      return component;
+    } catch (error) {
+      component.def = before;
+      if (label && labelOffset) { label.offset = labelOffset; label.clearRenderedTextBounds(); }
+      this._restoreNetTopology(topology);
+      this.invalidateRoutingCache();
       throw error;
     }
   }
@@ -37936,6 +38101,7 @@ class Circuit {
         mirrorY: c.transform.mirrorY,
         blockSize: c.blockSize,
         blockTerminals: c.blockTerminals,
+        inputs: c.inputs,
         negativeInputs: c.negativeInputs,
         joinBar: c.joinBar,
         link: c.link,
@@ -39162,6 +39328,7 @@ function componentProblem(comp) {
   if (!optional(comp.style, isObject)) return `part ${comp.origRef} has a bad style`;
   if (!optional(comp.size, isObject)) return `part ${comp.origRef} has a bad size`;
   if (!optional(comp.blockSize, (size) => isObject(size) && finite(size.w) && finite(size.h))) return `block ${comp.origRef} has a bad size`;
+  if (!optional(comp.inputs, (inputs) => Number.isInteger(inputs) && inputs >= 2 && inputs <= 8)) return `multiplexer ${comp.origRef} has a bad input count`;
   if (!optional(comp.blockTerminals, (terminals) => Array.isArray(terminals) && terminals.every(blockTerminal))) return `block ${comp.origRef} has bad terminals`;
   return null;
 }
@@ -66569,6 +66736,7 @@ const DOCUMENT_COMMANDS = [
   { name: 'value', aliases: ['setvalue'], help: 'value <refdes> <V>' },
   { name: 'link', aliases: ['unlink'], help: 'link <refdes> [design] — link a part to another design; unlink <refdes>' },
   { name: 'rename', help: 'rename <refdes> <new>' },
+  { name: 'inputs', help: 'inputs <refdes> [2..8] (a multiplexer\'s data inputs; past 2 its select is a bus, S[1:0])' },
   { name: 'waveform', aliases: ['sine', 'pulse-source', 'noise-source'], help: 'waveform <refdes> [sine|pulse|noise|none] (what a voltage source shows in its circle)' },
   { name: 'drawing-only', aliases: ['drawingonly', 'no-analysis'], help: 'drawing-only <refdes>[,refdes...] [on|off] (drawn and checked, read by no analysis)' },
   { name: 'size', aliases: ['wl', 'transistor-size'], help: 'size <refdes>[,refdes...] [W/L] [xM] [replace|beside|hide] (a transistor\'s W/L and its label; off removes it)' },
@@ -67292,6 +67460,7 @@ let PART_VALUE_ROLE, VALUE_TYPES, valueText, valueUnit; __bind(() => { ({ PART_V
 let setPartValue; __bind(() => { ({ setPartValue } = __require("src/core/part-moves.js")); });
 let editInSizing; __bind(() => { ({ editInSizing } = __require("src/web/sizing-window.js")); });
 let WAVEFORM_TYPES; __bind(() => { ({ WAVEFORM_TYPES } = __require("src/core/components/current.js")); });
+let MUX_MAX_INPUTS, MUX_MIN_INPUTS; __bind(() => { ({ MUX_MAX_INPUTS, MUX_MIN_INPUTS } = __require("src/core/components/mux.js")); });
 let ditherValueText, parseDither; __bind(() => { ({ ditherValueText, parseDither } = __require("src/core/transfer-function.js")); });
 let joinSelectedLines, selectedLines; __bind(() => { ({ joinSelectedLines, selectedLines } = __require("src/web/annotation-tools.js")); });
 let appendLinkContextItems, linkBubbleAt, openLinkBubbleMenu; __bind(() => { ({ appendLinkContextItems, linkBubbleAt, openLinkBubbleMenu } = __require("src/web/hierarchy.js")); });
@@ -67317,6 +67486,7 @@ let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); 
  * selection, style, switch, signal-flow, and small-signal submenus, and the
  * panel rows' renames it offers.
  */
+
 
 
 
@@ -67665,6 +67835,19 @@ function appendWaveformMenu(menu, target) {
   });
 }
 
+/** A multiplexer's data inputs, 2 to 8. */
+function appendMuxInputsMenu(menu, target) {
+  const component = target.kind === 'component' ? target.value : null;
+  if (component?.type !== 'mux2') return;
+  appendContextSubmenu(menu, 'Inputs', (submenu) => {
+    for (let count = MUX_MIN_INPUTS; count <= MUX_MAX_INPUTS; count += 1) {
+      appendContextItem(submenu, String(count), () => {
+        if (commit(() => editor.circuit.setMuxInputs(component.refdes, count)) !== false) logLine(`${component.refdes} has ${count} inputs`);
+      }, { active: component.muxInputs === count });
+    }
+  });
+}
+
 /** Where a size or value label stands, for every part it applies to: the
  *  right-clicked part, or all of the selection's parts of its kind. */
 function appendLabelPlacement(submenu, parts, read, write, disabled) {
@@ -67809,6 +67992,7 @@ function appendComponentOptions(menu, target) {
   appendDitherShapeMenu(group, target);
   appendSwitchPhaseMenu(group, target);
   appendWaveformMenu(group, target);
+  appendMuxInputsMenu(group, target);
   if (target.value.type === 'supply') appendSupplyBarItem(group, target.value);
   if (group.childElementCount) menu.appendChild(group);
 }
@@ -68629,6 +68813,7 @@ function copySelection({ quiet = false, alone = false } = {}) {
       // at the default size, and its wires end on terminals it lacks.
       ...(c.type === 'block' ? { blockSize: { ...c.blockSize }, blockTerminals: c.blockTerminals.map((t) => ({ ...t })) } : {}),
       ...(c.type === 'chopper' ? { blockSize: { ...c.blockSize } } : {}),
+      ...(c.type === 'mux2' ? { inputs: c.muxInputs } : {}),
       ...(c.waveform ? { waveform: c.waveform } : {}),
       ...(c.drawingOnly ? { drawingOnly: true } : {}),
       style: { ...(c.style || {}) },
@@ -69085,6 +69270,7 @@ function pasteClipboard({ recordHistory = true, connect = true } = {}) {
           size: c.size,
           blockSize: c.blockSize,
           blockTerminals: c.blockTerminals,
+          inputs: c.inputs,
           waveform: c.waveform,
           drawingOnly: c.drawingOnly,
           style: c.style,

@@ -127,6 +127,7 @@ export const DOCUMENT_COMMANDS = [
   { name: 'value', aliases: ['setvalue'], help: 'value <refdes> <V>' },
   { name: 'link', aliases: ['unlink'], help: 'link <refdes> [design] — link a part to another design; unlink <refdes>' },
   { name: 'rename', help: 'rename <refdes> <new>' },
+  { name: 'inputs', help: 'inputs <refdes> [2..8] (a multiplexer\'s data inputs; past 2 its select is a bus, S[1:0])' },
   { name: 'waveform', aliases: ['sine', 'pulse-source', 'noise-source'], help: 'waveform <refdes> [sine|pulse|noise|none] (what a voltage source shows in its circle)' },
   { name: 'drawing-only', aliases: ['drawingonly', 'no-analysis'], help: 'drawing-only <refdes>[,refdes...] [on|off] (drawn and checked, read by no analysis)' },
   { name: 'size', aliases: ['wl', 'transistor-size'], help: 'size <refdes>[,refdes...] [W/L] [xM] [replace|beside|hide] (a transistor\'s W/L and its label; off removes it)' },

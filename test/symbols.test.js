@@ -262,6 +262,25 @@ test('mux2 uses a tapered two-square body with labeled inputs and select', () =>
   ]);
 });
 
+test('a multiplexer with more inputs grows taller around a centered output, never wider', async () => {
+  const { muxSymbol } = await import('../src/core/components/mux.js');
+  assert.equal(muxSymbol(2), getSymbol('mux2'));
+  for (const count of [3, 4, 8]) {
+    const def = muxSymbol(count);
+    const inputs = def.terminals.filter(({ name }) => name !== 'y' && name !== 's');
+    assert.deepEqual(inputs.map(({ name }) => name), 'abcdefgh'.slice(0, count).split(''));
+    // Two cells apart, centered on the output.
+    assert.deepEqual(inputs.map(({ x, y }) => [x, y]), inputs.map((_, i) => [-80, (2 * i - (count - 1)) * 40]));
+    assert.deepEqual(def.terminals.find(({ name }) => name === 'y'), { ...def.terminals.find(({ name }) => name === 'y'), x: 80, y: 0 });
+    const left = (count + 1) * 40;
+    assert.equal(def.terminals.find(({ name }) => name === 's').y, left + 40);
+    assert.deepEqual(def.bbox, { x: -80, y: -left, w: 160, h: 2 * left + 40 });
+    assert.ok(def.graphics.some((graphic) => graphic.d === `M -40 ${-left} L 40 ${-left + 40} L 40 ${left - 40} L -40 ${left} Z`));
+    assert.deepEqual(def.graphics.filter((graphic) => graphic.kind === 'text').map(({ text, y }) => [text, y]), inputs.map(({ y }, i) => [String(i), y]));
+    for (const t of def.terminals) assert.ok(t.x % 40 === 0 && t.y % 40 === 0, `${count}: ${t.name} on the grid`);
+  }
+});
+
 test('three-input logic gates preserve their two-input bodies and order pins a, b, c', () => {
   for (const [three, two, middleLead] of [
     ['and3_gate', 'and2_gate', '-76.88'], ['nand3_gate', 'nand2_gate', '-76.88'],

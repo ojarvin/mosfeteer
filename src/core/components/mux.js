@@ -1,30 +1,53 @@
 import { defineSymbol } from './defineSymbol.js';
+import { GRID } from '../grid.js';
+
+/** The fewest and most inputs a multiplexer takes. */
+export const MUX_MIN_INPUTS = 2;
+export const MUX_MAX_INPUTS = 8;
+/** Input pin names, the first selected by 0. */
+export const MUX_INPUT_NAMES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+
+const shapes = new Map();
+
+/**
+ * A multiplexer with `inputs` data inputs two cells apart, numbered from 0
+ * at the top, and one select `s` below (a bus of enough bits past two
+ * inputs). The output stays centered; more inputs make the body taller, never
+ * wider. Built once per count, so every mux of one count shares one
+ * definition.
+ */
+export function muxSymbol(inputs = MUX_MIN_INPUTS) {
+  if (!shapes.has(inputs)) {
+    // The left side reaches two cells past the outer inputs, the right one
+    // cell less, leaving a shallow taper at each end.
+    const left = (inputs + 1) * GRID;
+    const right = left - GRID;
+    const ys = MUX_INPUT_NAMES.slice(0, inputs).map((_, i) => (2 * i - (inputs - 1)) * GRID);
+    shapes.set(inputs, defineSymbol({
+      type: 'mux2',
+      description: inputs === 2 ? '2:1 Multiplexer' : `${inputs}:1 Multiplexer`,
+      refPrefix: 'U',
+      terminals: [
+        ...ys.map((y, i) => ({ name: MUX_INPUT_NAMES[i], x: -2 * GRID, y, direction: 'input', dir: { x: -1, y: 0 } })),
+        { name: 'y', x: 2 * GRID, y: 0, direction: 'output', dir: { x: 1, y: 0 } },
+        { name: 's', x: 0, y: left + GRID, direction: 'input', dir: { x: 0, y: 1 } },
+      ],
+      bbox: { x: -2 * GRID, y: -left, w: 4 * GRID, h: 2 * left + GRID },
+      graphics: [
+        ...ys.map((y) => ({ kind: 'path', d: `M ${-2 * GRID} ${y} L ${-GRID} ${y}`, style: 'symbol' })),
+        { kind: 'path', d: `M ${GRID} 0 L ${2 * GRID} 0`, style: 'symbol' },
+        { kind: 'path', d: `M 0 ${left - GRID / 2} L 0 ${left + GRID}`, style: 'symbol' },
+        { kind: 'path', d: `M ${-GRID} ${-left} L ${GRID} ${-right} L ${GRID} ${right} L ${-GRID} ${left} Z`, style: 'emph' },
+        ...ys.map((y, i) => ({ kind: 'text', x: 0, y, text: String(i), anchor: 'middle', font: 'label', keepUpright: true })),
+      ],
+      textPos: null,
+      refPos: null,
+      labelOffset: { x: 0, y: -left - GRID },
+      defaultValue: '',
+    }));
+  }
+  return shapes.get(inputs);
+}
 
 /** Compact two-input, one-select multiplexer. */
-export const mux2 = defineSymbol({
-  type: 'mux2',
-  description: '2:1 Multiplexer',
-  refPrefix: 'U',
-  terminals: [
-    { name: 'a', x: -80, y: -40, direction: 'input', dir: { x: -1, y: 0 } },
-    { name: 'b', x: -80, y: 40, direction: 'input', dir: { x: -1, y: 0 } },
-    { name: 'y', x: 80, y: 0, direction: 'output', dir: { x: 1, y: 0 } },
-    { name: 's', x: 0, y: 160, direction: 'input', dir: { x: 0, y: 1 } },
-  ],
-  // The body is two squares wide. Its left side is six squares tall and its
-  // right side is four squares tall, leaving a shallow taper at each end.
-  bbox: { x: -80, y: -120, w: 160, h: 280 },
-  graphics: [
-    { kind: 'path', d: 'M -80 -40 L -40 -40', style: 'symbol' },
-    { kind: 'path', d: 'M -80 40 L -40 40', style: 'symbol' },
-    { kind: 'path', d: 'M 40 0 L 80 0', style: 'symbol' },
-    { kind: 'path', d: 'M 0 100 L 0 160', style: 'symbol' },
-    { kind: 'path', d: 'M -40 -120 L 40 -80 L 40 80 L -40 120 Z', style: 'emph' },
-    { kind: 'text', x: 0, y: -40, text: '0', anchor: 'middle', font: 'label', keepUpright: true },
-    { kind: 'text', x: 0, y: 40, text: '1', anchor: 'middle', font: 'label', keepUpright: true },
-  ],
-  textPos: null,
-  refPos: null,
-  labelOffset: { x: 0, y: -160 },
-  defaultValue: '',
-});
+export const mux2 = muxSymbol(MUX_MIN_INPUTS);

@@ -12,6 +12,14 @@ opens in this mode for a drawing of logic parts with nothing analog in it.
   3 inputs), `mux2` (`a` at `s` = 0, `b` at `s` = 1), tri-state inverter
   and buffer (driving while `en` is 1), D flip-flops and latches with their
   inverted-clock, reset, and `QB` variants.
+- **A multiplexer of 3 to 8 inputs** (`a`…`h`, numbered from 0) reads `s`
+  from a bus: 2 bits for 3–4 inputs, 3 for 5–8 (`S[1:0]`, `S[2:0]`, or a
+  list `A,B`), the first bit the most significant. Each bit is a signal of
+  its own, joined by name to a net named for it (`S[1]` or `S<1>`). An input
+  port, ground, or supply on the bus stands on every bit. A select past the
+  last input picks `X`; an unknown bit picks `X` where the inputs it could
+  pick disagree. A select of another width, or a bus on any other logic pin,
+  refuses.
 - **Signals** are nets, joined by name as elsewhere; a logic pin wired to
   nothing is a signal of its own, named by the pin (`U1.a`). An unnamed net
   is named by the pin that drives it.

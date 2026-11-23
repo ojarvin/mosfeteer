@@ -55,6 +55,7 @@ function componentProblem(comp) {
   if (!optional(comp.style, isObject)) return `part ${comp.origRef} has a bad style`;
   if (!optional(comp.size, isObject)) return `part ${comp.origRef} has a bad size`;
   if (!optional(comp.blockSize, (size) => isObject(size) && finite(size.w) && finite(size.h))) return `block ${comp.origRef} has a bad size`;
+  if (!optional(comp.inputs, (inputs) => Number.isInteger(inputs) && inputs >= 2 && inputs <= 8)) return `multiplexer ${comp.origRef} has a bad input count`;
   if (!optional(comp.blockTerminals, (terminals) => Array.isArray(terminals) && terminals.every(blockTerminal))) return `block ${comp.origRef} has bad terminals`;
   return null;
 }

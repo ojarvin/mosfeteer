@@ -9,6 +9,7 @@ import { applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverla
 import { snap, snapPoint, GRID } from './grid.js';
 import { getSymbol, seriesTerminalNames } from './components/index.js';
 import { chopperSymbol } from './components/chopper.js';
+import { MUX_MAX_INPUTS, MUX_MIN_INPUTS, muxSymbol } from './components/mux.js';
 import { roomyType } from './components/categories.js';
 import { SOURCE_WAVEFORMS, WAVEFORM_TYPES } from './components/current.js';
 import { balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
@@ -52,6 +53,15 @@ const REFERENCE_MARKER_LEGACY_GLOBAL_NAMES = Object.freeze({ ground: Object.free
 // rotation, on the grid.
 function blockSpan(value) {
   return Math.max(2 * GRID, Math.ceil(snap(Number(value)) / (2 * GRID)) * 2 * GRID);
+}
+
+/** A multiplexer's input count, checked: a whole number from 2 to 8. */
+export function muxInputCount(value) {
+  const count = Number(value);
+  if (!Number.isInteger(count) || count < MUX_MIN_INPUTS || count > MUX_MAX_INPUTS) {
+    throw new Error(`a multiplexer has ${MUX_MIN_INPUTS} to ${MUX_MAX_INPUTS} inputs, not "${value}"`);
+  }
+  return count;
 }
 
 // A chopper is at least four cells wide, so its cross keeps a cell clear of
@@ -2387,6 +2397,8 @@ export class ComponentInstance {
     // A chopper's symbol is rebuilt for its size (chopperSymbol), so its
     // pins, outline, and cross follow a resize.
     if (this.type === 'chopper') this.setChopperSize(opts.blockSize ?? this.def.bbox);
+    // A multiplexer's symbol is rebuilt for its input count (muxSymbol).
+    if (this.type === 'mux2' && opts.inputs !== undefined && opts.inputs !== null) this.def = muxSymbol(muxInputCount(opts.inputs));
     this.analysis = {
       model: normalizeSmallSignalDeviceModel(opts.analysis?.model ?? opts.analysis?.smallSignalModel),
       role: opts.analysis?.role || null,
@@ -2467,6 +2479,11 @@ export class ComponentInstance {
     this.blockSize = size;
     this.def = chopperSymbol(size.w, size.h);
     return this;
+  }
+
+  /** A multiplexer's data inputs; null for any other part. */
+  get muxInputs() {
+    return this.type === 'mux2' ? this.def.terminals.filter((t) => t.direction === 'input' && t.name !== 's').length : null;
   }
 
   setBlockSize(size = {}, options = {}) {
@@ -2604,6 +2621,7 @@ export class ComponentInstance {
       transform: { ...this.transform },
       ...(this.type === 'block' ? { blockSize: { ...this.blockSize }, blockTerminals: this.blockTerminals.map((t) => ({ ...t })) } : {}),
       ...(this.type === 'chopper' ? { blockSize: { ...this.blockSize } } : {}),
+      ...(this.type === 'mux2' && this.muxInputs !== MUX_MIN_INPUTS ? { inputs: this.muxInputs } : {}),
       ...(this.negativeInputs.size ? { negativeInputs: [...this.negativeInputs] } : {}),
       ...(this.joinBar ? { joinBar: true } : {}),
       ...(this.link ? { link: this.link } : {}),
@@ -3731,6 +3749,47 @@ export class Circuit {
       component.blockSize = beforeSize;
       component.blockTerminals = beforeTerminals;
       this._restoreNetTopology(topology);
+      throw error;
+    }
+  }
+
+  /** Give a multiplexer `count` inputs (2 to 8). The output stays put and
+   * the inputs spread two cells apart around it; the select moves with the
+   * body's bottom. An input that would go away while wired refuses the
+   * change, which then leaves the part as it was. */
+  setMuxInputs(refdes, count) {
+    const component = this.getComponent(refdes);
+    if (component.type !== 'mux2') throw new Error(`${component.refdes} is not a multiplexer; only multiplexers take an input count`);
+    const next = muxSymbol(muxInputCount(count));
+    if (next === component.def) return component;
+    const kept = new Set(next.terminals.map((t) => t.name));
+    const touched = new Set();
+    for (const net of this.nets.values()) {
+      for (const t of net.terminals) {
+        if (t.comp !== component.refdes) continue;
+        if (!kept.has(t.term)) throw new Error(`${component.refdes}.${t.term} is wired: disconnect it before leaving ${next.terminals.length - 2} inputs`);
+        touched.add(net.id);
+      }
+    }
+    const before = component.def;
+    const topology = this._snapshotNetTopology();
+    const beforePoints = new Map(component.terminalDefs.filter((t) => kept.has(t.name)).map((t) => [t.name, component.terminalWorld(t.name)]));
+    const label = this.labelOf(component.refdes);
+    const labelOffset = label?.offset ? { ...label.offset } : null;
+    try {
+      component.def = next;
+      // The name stays above the body unless it was moved.
+      if (label && labelOffset && before.labelOffset && labelOffset.x === before.labelOffset.x && labelOffset.y === before.labelOffset.y) {
+        label.offset = { ...next.labelOffset };
+        label.clearRenderedTextBounds();
+      }
+      this._rerouteResized(component, beforePoints, touched);
+      return component;
+    } catch (error) {
+      component.def = before;
+      if (label && labelOffset) { label.offset = labelOffset; label.clearRenderedTextBounds(); }
+      this._restoreNetTopology(topology);
+      this.invalidateRoutingCache();
       throw error;
     }
   }
@@ -7717,6 +7776,7 @@ export class Circuit {
         mirrorY: c.transform.mirrorY,
         blockSize: c.blockSize,
         blockTerminals: c.blockTerminals,
+        inputs: c.inputs,
         negativeInputs: c.negativeInputs,
         joinBar: c.joinBar,
         link: c.link,

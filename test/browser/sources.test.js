@@ -1,6 +1,6 @@
 /** A part's options from its right-click menu, in a browser: a voltage
- *  source's waveform, a dither's shape, a sum's input signs; a tone's
- *  value edited in place. */
+ *  source's waveform, a dither's shape, a sum's input signs, a
+ *  multiplexer's inputs; a tone's value edited in place. */
 
 import { describe, before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,7 +12,8 @@ function sources() {
   const circuit = new Circuit();
   for (const line of ['add voltage_source V1 --at 0 0', 'add current_source I1 --at 400 0', 'add dither DTH1 --at 0 400 --value "rect 0.5"',
     'add gain K1 --at 400 400 --value k', 'add signal_sum S1 --at 800 400', 'connect DTH1.out K1.in', 'connect K1.out S1.w',
-    'add tone TONE1 --at 0 800 --value "A_{ripple} f_{ripple}"']) runCommand(circuit, line);
+    'add tone TONE1 --at 0 800 --value "A_{ripple} f_{ripple}"',
+    'add mux2 U1 --at 1600 0', 'add input A --at 1200 -40', 'connect A.p U1.a', 'add output Y --at 2000 0', 'connect U1.y Y.p']) runCommand(circuit, line);
   return circuit.toJSON();
 }
 
@@ -43,6 +44,29 @@ describe('source waveforms', { skip: browserSkip() }, () => {
     await rightClick(400, 0);
     assert.ok(!(await menuItems()).some((item) => item.startsWith('Waveform')));
     await h.key('Escape');
+  });
+
+  test("a multiplexer's inputs are a choice in its options, one undo each; a wired input stays", async () => {
+    await h.open('sources');
+    const inputs = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.getComponent('U1').muxInputs)`);
+    await rightClick(1600, 0);
+    await h.evaluate(`[...document.querySelectorAll('.component-context-menu button')].find((b) => b.textContent.startsWith('Inputs')).click()`);
+    const items = await h.evaluate(`[...document.querySelectorAll('.context-submenu[aria-label="Inputs"] button')].map((b) => b.textContent.trim())`);
+    // Seven counts, the one it has checked.
+    assert.deepEqual(items, ['2✓', '3', '4', '5', '6', '7', '8']);
+    await h.evaluate(`[...document.querySelectorAll('.context-submenu[aria-label="Inputs"] button')].find((b) => b.textContent.trim() === '4').click()`);
+    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.getComponent('U1').muxInputs === 4)`);
+    // Drawn with its four numbered inputs, the first still wired.
+    const numbers = await h.evaluate(`[...document.querySelectorAll('svg text')].map((t) => t.textContent.trim()).filter((t) => /^\\d$/.test(t))`);
+    assert.deepEqual([...new Set(numbers)].sort(), ['0', '1', '2', '3']);
+    assert.ok(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.netOfTerminal({ comp: 'U1', term: 'a' }).terminals.some((t) => t.comp === 'A'))`));
+    await h.key('z', { ctrlKey: true });
+    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.getComponent('U1').muxInputs === 2)`);
+    // Other parts have no such menu.
+    await rightClick(400, 0);
+    assert.ok(!(await menuItems()).some((item) => item.startsWith('Inputs')));
+    await h.key('Escape');
+    assert.equal(await inputs(), 2);
   });
 
   const choose = async (submenu, item) => {
