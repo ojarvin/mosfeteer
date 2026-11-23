@@ -355,7 +355,7 @@ function appendWaveformMenu(menu, target) {
 /** A multiplexer's data inputs, 2 to 8. */
 function appendMuxInputsMenu(menu, target) {
   const component = target.kind === 'component' ? target.value : null;
-  if (component?.type !== 'mux2') return;
+  if (component?.type !== 'mux') return;
   appendContextSubmenu(menu, 'Inputs', (submenu) => {
     for (let count = MUX_MIN_INPUTS; count <= MUX_MAX_INPUTS; count += 1) {
       appendContextItem(submenu, String(count), () => {

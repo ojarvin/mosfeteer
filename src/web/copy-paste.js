@@ -210,7 +210,7 @@ export function copySelection({ quiet = false, alone = false } = {}) {
       // at the default size, and its wires end on terminals it lacks.
       ...(c.type === 'block' ? { blockSize: { ...c.blockSize }, blockTerminals: c.blockTerminals.map((t) => ({ ...t })) } : {}),
       ...(c.type === 'chopper' ? { blockSize: { ...c.blockSize } } : {}),
-      ...(c.type === 'mux2' ? { inputs: c.muxInputs } : {}),
+      ...(c.type === 'mux' ? { inputs: c.muxInputs } : {}),
       ...(c.waveform ? { waveform: c.waveform } : {}),
       ...(c.drawingOnly ? { drawingOnly: true } : {}),
       style: { ...(c.style || {}) },

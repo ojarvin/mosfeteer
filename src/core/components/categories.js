@@ -17,7 +17,7 @@ export const SYMBOL_CATEGORY_RULES = [
   ['Sources & power', /^(current_source|voltage_source|vccs|vcvs|supply|ground|vcm)$/],
   ['Interfaces / ports', /^(input|output|inputoutput|port)$/],
   ['Macros', /^(opamp|opamp_diff|opamp_diff_cmfb|gm|gm_cmfb|comparator|comparator_clocked|adc|dac|adc_diff|dac_diff)$/],
-  ['Logic', /^(inverter|buffer|tristate_(inverter|buffer)|mux2|.*_gate)$/],
+  ['Logic', /^(inverter|buffer|tristate_(inverter|buffer)|mux|.*_gate)$/],
   ['Sequential', /^(?:dff|latch)(?:_|$)/],
   // Block-diagram drawing parts; the signal-flow analysis reads only the
   // next group's.

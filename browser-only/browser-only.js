@@ -6447,10 +6447,10 @@ function analyzeLogic(source, options = {}) {
   const sequential = [];
   for (const component of [...circuit.components.values()].sort((a, b) => natural(a.refdes, b.refdes))) {
     const type = component.type;
-    if (GATES[type] || TRISTATE[type] || type === 'mux2') {
+    if (GATES[type] || TRISTATE[type] || type === 'mux') {
       const pin = (name) => pinSignal(component, name);
-      const inputs = component.terminalDefs.filter((t) => t.direction === 'input' && !(type === 'mux2' && t.name === 's')).map((t) => [t.name, pin(t.name)]);
-      if (type === 'mux2') inputs.push(...selectSignals(component));
+      const inputs = component.terminalDefs.filter((t) => t.direction === 'input' && !(type === 'mux' && t.name === 's')).map((t) => [t.name, pin(t.name)]);
+      if (type === 'mux') inputs.push(...selectSignals(component));
       const output = pin('y');
       const gate = { component, type, inputs: new Map(inputs), output };
       for (const [name, signal] of inputs) signal.readers.push({ component, pin: name.startsWith('s:') ? 's' : name });
@@ -6475,7 +6475,7 @@ function analyzeLogic(source, options = {}) {
   // anything else is not logic.
   const logicKeys = new Set(signals.keys());
   for (const component of circuit.components.values()) {
-    if (GATES[component.type] || TRISTATE[component.type] || component.type === 'mux2' || sequentialPins(component) || PASSIVE.has(component.type)) continue;
+    if (GATES[component.type] || TRISTATE[component.type] || component.type === 'mux' || sequentialPins(component) || PASSIVE.has(component.type)) continue;
     for (const t of component.terminalDefs || []) {
       const net = circuit.netOfTerminal({ comp: component.refdes, term: t.name });
       if (!net) continue;
@@ -24295,7 +24295,7 @@ function notesCommand(circuit, action, raw) {
 
 /** `add --inputs`: only a multiplexer takes it. */
 function addInputs(type, value) {
-  if (type !== 'mux2') throw new Error(`--inputs is for a multiplexer (mux2), not ${type}`);
+  if (type !== 'mux') throw new Error(`--inputs is for a multiplexer (mux), not ${type}`);
   return muxInputCount(value);
 }
 
@@ -24651,7 +24651,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
   if (cmd === 'inputs') {
     if (!pos[0]) throw new Error('usage: inputs <refdes> [2..8]');
     const c = circuit.getComponent(pos[0]);
-    if (c.type !== 'mux2') throw new Error(`${c.refdes} is not a multiplexer; only multiplexers take an input count`);
+    if (c.type !== 'mux') throw new Error(`${c.refdes} is not a multiplexer; only multiplexers take an input count`);
     const state = () => result(`${c.refdes} has ${c.muxInputs} inputs`, { refdes: c.refdes, inputs: c.muxInputs }, pos[1] !== undefined);
     if (pos[1] === undefined) return state();
     circuit.setMuxInputs(c.refdes, pos[1]);
@@ -25681,7 +25681,7 @@ const SYMBOL_CATEGORY_RULES = [
   ['Sources & power', /^(current_source|voltage_source|vccs|vcvs|supply|ground|vcm)$/],
   ['Interfaces / ports', /^(input|output|inputoutput|port)$/],
   ['Macros', /^(opamp|opamp_diff|opamp_diff_cmfb|gm|gm_cmfb|comparator|comparator_clocked|adc|dac|adc_diff|dac_diff)$/],
-  ['Logic', /^(inverter|buffer|tristate_(inverter|buffer)|mux2|.*_gate)$/],
+  ['Logic', /^(inverter|buffer|tristate_(inverter|buffer)|mux|.*_gate)$/],
   ['Sequential', /^(?:dff|latch)(?:_|$)/],
   // Block-diagram drawing parts; the signal-flow analysis reads only the
   // next group's.
@@ -26235,7 +26235,7 @@ let solder; __bind(() => { ({ solder } = __require("src/core/components/solder.j
 let switch_open, switch_closed; __bind(() => { ({ switch_open, switch_closed } = __require("src/core/components/switch.js")); });
 let block; __bind(() => { ({ block } = __require("src/core/components/block.js")); });
 let chopper; __bind(() => { ({ chopper } = __require("src/core/components/chopper.js")); });
-let mux2; __bind(() => { ({ mux2 } = __require("src/core/components/mux.js")); });
+let mux; __bind(() => { ({ mux } = __require("src/core/components/mux.js")); });
 let signal_sum, signal_multiply, oscillator, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, tf_dac, tf_dac_rz, tf_delay, tf_zdelay, gain, sampler, quantizer, dither, tone, downsample, upsample; __bind(() => { ({ signal_sum, signal_multiply, oscillator, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, tf_dac, tf_dac_rz, tf_delay, tf_zdelay, gain, sampler, quantizer, dither, tone, downsample, upsample } = __require("src/core/components/signal-flow.js")); });
 
 
@@ -26300,7 +26300,7 @@ const symbolTypes = {
   buffer,
   tristate_inverter: tristateInverter,
   tristate_buffer: tristateBuffer,
-  mux2,
+  mux,
   and2_gate,
   nand2_gate,
   or2_gate,
@@ -26859,8 +26859,8 @@ function muxSymbol(inputs = MUX_MIN_INPUTS) {
     const right = left - GRID;
     const ys = MUX_INPUT_NAMES.slice(0, inputs).map((_, i) => (2 * i - (inputs - 1)) * GRID);
     shapes.set(inputs, defineSymbol({
-      type: 'mux2',
-      description: inputs === 2 ? '2:1 Multiplexer' : `${inputs}:1 Multiplexer`,
+      type: 'mux',
+      description: 'Multiplexer',
       refPrefix: 'U',
       terminals: [
         ...ys.map((y, i) => ({ name: MUX_INPUT_NAMES[i], x: -2 * GRID, y, direction: 'input', dir: { x: -1, y: 0 } })),
@@ -26884,13 +26884,13 @@ function muxSymbol(inputs = MUX_MIN_INPUTS) {
   return shapes.get(inputs);
 }
 
-/** Compact two-input, one-select multiplexer. */
-const mux2 = muxSymbol(MUX_MIN_INPUTS);
+/** The multiplexer as placed: two inputs, one select. */
+const mux = muxSymbol(MUX_MIN_INPUTS);
 
 __exports.MUX_MIN_INPUTS = MUX_MIN_INPUTS;
 __exports.MUX_MAX_INPUTS = MUX_MAX_INPUTS;
 __exports.MUX_INPUT_NAMES = MUX_INPUT_NAMES;
-__exports.mux2 = mux2;
+__exports.mux = mux;
 };
 
 __modules["src/core/components/nmos.js"] = function (__require, __exports) {
@@ -32723,7 +32723,7 @@ class ComponentInstance {
     // pins, outline, and cross follow a resize.
     if (this.type === 'chopper') this.setChopperSize(opts.blockSize ?? this.def.bbox);
     // A multiplexer's symbol is rebuilt for its input count (muxSymbol).
-    if (this.type === 'mux2' && opts.inputs !== undefined && opts.inputs !== null) this.def = muxSymbol(muxInputCount(opts.inputs));
+    if (this.type === 'mux' && opts.inputs !== undefined && opts.inputs !== null) this.def = muxSymbol(muxInputCount(opts.inputs));
     this.analysis = {
       model: normalizeSmallSignalDeviceModel(opts.analysis?.model ?? opts.analysis?.smallSignalModel),
       role: opts.analysis?.role || null,
@@ -32808,7 +32808,7 @@ class ComponentInstance {
 
   /** A multiplexer's data inputs; null for any other part. */
   get muxInputs() {
-    return this.type === 'mux2' ? this.def.terminals.filter((t) => t.direction === 'input' && t.name !== 's').length : null;
+    return this.type === 'mux' ? this.def.terminals.filter((t) => t.direction === 'input' && t.name !== 's').length : null;
   }
 
   setBlockSize(size = {}, options = {}) {
@@ -32946,7 +32946,7 @@ class ComponentInstance {
       transform: { ...this.transform },
       ...(this.type === 'block' ? { blockSize: { ...this.blockSize }, blockTerminals: this.blockTerminals.map((t) => ({ ...t })) } : {}),
       ...(this.type === 'chopper' ? { blockSize: { ...this.blockSize } } : {}),
-      ...(this.type === 'mux2' && this.muxInputs !== MUX_MIN_INPUTS ? { inputs: this.muxInputs } : {}),
+      ...(this.type === 'mux' && this.muxInputs !== MUX_MIN_INPUTS ? { inputs: this.muxInputs } : {}),
       ...(this.negativeInputs.size ? { negativeInputs: [...this.negativeInputs] } : {}),
       ...(this.joinBar ? { joinBar: true } : {}),
       ...(this.link ? { link: this.link } : {}),
@@ -34084,7 +34084,7 @@ class Circuit {
    * change, which then leaves the part as it was. */
   setMuxInputs(refdes, count) {
     const component = this.getComponent(refdes);
-    if (component.type !== 'mux2') throw new Error(`${component.refdes} is not a multiplexer; only multiplexers take an input count`);
+    if (component.type !== 'mux') throw new Error(`${component.refdes} is not a multiplexer; only multiplexers take an input count`);
     const next = muxSymbol(muxInputCount(count));
     if (next === component.def) return component;
     const kept = new Set(next.terminals.map((t) => t.name));
@@ -38091,7 +38091,8 @@ class Circuit {
     for (const c of data.components) {
       // A dither source drawn as a sine (`sine a_r f_r`) is a tone source.
       const sineDither = c.type === 'dither' && /^\s*(sine|sin|tone)\b/i.test(String(c.value ?? ''));
-      circuit.addComponent(sineDither ? 'tone' : c.type, {
+      // The multiplexer was `mux2` before it took an input count.
+      circuit.addComponent(sineDither ? 'tone' : c.type === 'mux2' ? 'mux' : c.type, {
         refdes: c.refdes,
         value: sineDither ? String(c.value).trim().replace(/^(sine|sin|tone)\s*/i, '') : c.value,
         x: c.transform.x,
@@ -67838,7 +67839,7 @@ function appendWaveformMenu(menu, target) {
 /** A multiplexer's data inputs, 2 to 8. */
 function appendMuxInputsMenu(menu, target) {
   const component = target.kind === 'component' ? target.value : null;
-  if (component?.type !== 'mux2') return;
+  if (component?.type !== 'mux') return;
   appendContextSubmenu(menu, 'Inputs', (submenu) => {
     for (let count = MUX_MIN_INPUTS; count <= MUX_MAX_INPUTS; count += 1) {
       appendContextItem(submenu, String(count), () => {
@@ -68813,7 +68814,7 @@ function copySelection({ quiet = false, alone = false } = {}) {
       // at the default size, and its wires end on terminals it lacks.
       ...(c.type === 'block' ? { blockSize: { ...c.blockSize }, blockTerminals: c.blockTerminals.map((t) => ({ ...t })) } : {}),
       ...(c.type === 'chopper' ? { blockSize: { ...c.blockSize } } : {}),
-      ...(c.type === 'mux2' ? { inputs: c.muxInputs } : {}),
+      ...(c.type === 'mux' ? { inputs: c.muxInputs } : {}),
       ...(c.waveform ? { waveform: c.waveform } : {}),
       ...(c.drawingOnly ? { drawingOnly: true } : {}),
       style: { ...(c.style || {}) },
@@ -80582,7 +80583,7 @@ const ANNOTATED_ROWS = 64;
 /** Columns an annotated table holds (render.js), one of them the gap. */
 const ANNOTATED_COLUMNS = 16;
 
-const LOGIC_TYPES = /^(inverter|buffer|tristate_inverter|tristate_buffer|mux2|(and|nand|or|nor|xor|xnor)[23]_gate|dff.*|latch.*)$/;
+const LOGIC_TYPES = /^(inverter|buffer|tristate_inverter|tristate_buffer|mux|(and|nand|or|nor|xor|xnor)[23]_gate|dff.*|latch.*)$/;
 const ANALOG_TYPES = /^(nmos|pmos|nmosb|pmosb|npn|pnp|resistor|capacitor|inductor|current_source|voltage_source|vccs|vcvs|opamp.*|gm.*|diode|switch_.*|tf_.*|gain|signal_.*)$/;
 
 let section = null;
@@ -103754,7 +103755,7 @@ const PLACEMENT_LABELS = {
   vcvs: 'VCVS (voltage-controlled voltage source)',
   opamp: 'Operational amplifier', opamp_diff: 'Differential op-amp', opamp_diff_cmfb: 'Differential op-amp with CMFB', gm: 'Gm cell (transconductor)', gm_cmfb: 'Gm cell with CMFB', inverter: 'Inverter', buffer: 'Buffer',
   tristate_inverter: 'Tri-state inverter', tristate_buffer: 'Tri-state buffer',
-  mux2: '2:1 multiplexer',
+  mux: 'Multiplexer',
   adc: 'ADC', dac: 'DAC', adc_diff: 'Differential ADC', dac_diff: 'Differential DAC',
   dff: 'D flip-flop (CLK, Q)', dff_qb: 'D flip-flop (CLK, Q, QB)',
   dff_clkb: 'D flip-flop (CLKB, Q)', dff_clkb_qb: 'D flip-flop (CLKB, Q, QB)',
@@ -103795,7 +103796,7 @@ const PLACEMENT_ALIASES = {
   adc_diff: ['converter', 'differential', 'diff'], dac_diff: ['converter', 'differential', 'diff'],
   tristate_inverter: ['tri-state', 'tristate', 'three-state', 'enable'],
   tristate_buffer: ['tri-state', 'tristate', 'three-state', 'enable'],
-  mux2: ['mux', 'multiplexer', 'select', 'two input'],
+  mux: ['mux', 'multiplexer', 'select'],
   dff: ['flip flop', 'flip-flop', 'sequential', 'clocked'],
   dff_qb: ['flip flop', 'flip-flop', 'sequential', 'clocked', 'complementary'],
   dff_clkb: ['flip flop', 'flip-flop', 'sequential', 'clocked', 'active low clock'],

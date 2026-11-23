@@ -13,7 +13,7 @@ function sources() {
   for (const line of ['add voltage_source V1 --at 0 0', 'add current_source I1 --at 400 0', 'add dither DTH1 --at 0 400 --value "rect 0.5"',
     'add gain K1 --at 400 400 --value k', 'add signal_sum S1 --at 800 400', 'connect DTH1.out K1.in', 'connect K1.out S1.w',
     'add tone TONE1 --at 0 800 --value "A_{ripple} f_{ripple}"',
-    'add mux2 U1 --at 1600 0', 'add input A --at 1200 -40', 'connect A.p U1.a', 'add output Y --at 2000 0', 'connect U1.y Y.p']) runCommand(circuit, line);
+    'add mux U1 --at 1600 0', 'add input A --at 1200 -40', 'connect A.p U1.a', 'add output Y --at 2000 0', 'connect U1.y Y.p']) runCommand(circuit, line);
   return circuit.toJSON();
 }
 

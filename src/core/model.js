@@ -2398,7 +2398,7 @@ export class ComponentInstance {
     // pins, outline, and cross follow a resize.
     if (this.type === 'chopper') this.setChopperSize(opts.blockSize ?? this.def.bbox);
     // A multiplexer's symbol is rebuilt for its input count (muxSymbol).
-    if (this.type === 'mux2' && opts.inputs !== undefined && opts.inputs !== null) this.def = muxSymbol(muxInputCount(opts.inputs));
+    if (this.type === 'mux' && opts.inputs !== undefined && opts.inputs !== null) this.def = muxSymbol(muxInputCount(opts.inputs));
     this.analysis = {
       model: normalizeSmallSignalDeviceModel(opts.analysis?.model ?? opts.analysis?.smallSignalModel),
       role: opts.analysis?.role || null,
@@ -2483,7 +2483,7 @@ export class ComponentInstance {
 
   /** A multiplexer's data inputs; null for any other part. */
   get muxInputs() {
-    return this.type === 'mux2' ? this.def.terminals.filter((t) => t.direction === 'input' && t.name !== 's').length : null;
+    return this.type === 'mux' ? this.def.terminals.filter((t) => t.direction === 'input' && t.name !== 's').length : null;
   }
 
   setBlockSize(size = {}, options = {}) {
@@ -2621,7 +2621,7 @@ export class ComponentInstance {
       transform: { ...this.transform },
       ...(this.type === 'block' ? { blockSize: { ...this.blockSize }, blockTerminals: this.blockTerminals.map((t) => ({ ...t })) } : {}),
       ...(this.type === 'chopper' ? { blockSize: { ...this.blockSize } } : {}),
-      ...(this.type === 'mux2' && this.muxInputs !== MUX_MIN_INPUTS ? { inputs: this.muxInputs } : {}),
+      ...(this.type === 'mux' && this.muxInputs !== MUX_MIN_INPUTS ? { inputs: this.muxInputs } : {}),
       ...(this.negativeInputs.size ? { negativeInputs: [...this.negativeInputs] } : {}),
       ...(this.joinBar ? { joinBar: true } : {}),
       ...(this.link ? { link: this.link } : {}),
@@ -3759,7 +3759,7 @@ export class Circuit {
    * change, which then leaves the part as it was. */
   setMuxInputs(refdes, count) {
     const component = this.getComponent(refdes);
-    if (component.type !== 'mux2') throw new Error(`${component.refdes} is not a multiplexer; only multiplexers take an input count`);
+    if (component.type !== 'mux') throw new Error(`${component.refdes} is not a multiplexer; only multiplexers take an input count`);
     const next = muxSymbol(muxInputCount(count));
     if (next === component.def) return component;
     const kept = new Set(next.terminals.map((t) => t.name));
@@ -7766,7 +7766,8 @@ export class Circuit {
     for (const c of data.components) {
       // A dither source drawn as a sine (`sine a_r f_r`) is a tone source.
       const sineDither = c.type === 'dither' && /^\s*(sine|sin|tone)\b/i.test(String(c.value ?? ''));
-      circuit.addComponent(sineDither ? 'tone' : c.type, {
+      // The multiplexer was `mux2` before it took an input count.
+      circuit.addComponent(sineDither ? 'tone' : c.type === 'mux2' ? 'mux' : c.type, {
         refdes: c.refdes,
         value: sineDither ? String(c.value).trim().replace(/^(sine|sin|tone)\s*/i, '') : c.value,
         x: c.transform.x,

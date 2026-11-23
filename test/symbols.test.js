@@ -246,8 +246,8 @@ test('tri-state logic gates add a bottom enable pin without changing their body'
   }
 });
 
-test('mux2 uses a tapered two-square body with labeled inputs and select', () => {
-  const def = getSymbol('mux2');
+test('mux uses a tapered two-square body with labeled inputs and select', () => {
+  const def = getSymbol('mux');
   assert.deepEqual(def.terminals.map(({ name, x, y }) => ({ name, x, y })), [
     { name: 'a', x: -80, y: -40 },
     { name: 'b', x: -80, y: 40 },
@@ -264,7 +264,7 @@ test('mux2 uses a tapered two-square body with labeled inputs and select', () =>
 
 test('a multiplexer with more inputs grows taller around a centered output, never wider', async () => {
   const { muxSymbol } = await import('../src/core/components/mux.js');
-  assert.equal(muxSymbol(2), getSymbol('mux2'));
+  assert.equal(muxSymbol(2), getSymbol('mux'));
   for (const count of [3, 4, 8]) {
     const def = muxSymbol(count);
     const inputs = def.terminals.filter(({ name }) => name !== 'y' && name !== 's');
@@ -541,7 +541,7 @@ test('refdes prefixes by component type', () => {
     input: 'VI',
     output: 'VO',
     inputoutput: 'VIO',
-    mux2: 'U',
+    mux: 'U',
     adc: 'U',
     dac: 'U',
     adc_diff: 'U',

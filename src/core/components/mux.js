@@ -24,8 +24,8 @@ export function muxSymbol(inputs = MUX_MIN_INPUTS) {
     const right = left - GRID;
     const ys = MUX_INPUT_NAMES.slice(0, inputs).map((_, i) => (2 * i - (inputs - 1)) * GRID);
     shapes.set(inputs, defineSymbol({
-      type: 'mux2',
-      description: inputs === 2 ? '2:1 Multiplexer' : `${inputs}:1 Multiplexer`,
+      type: 'mux',
+      description: 'Multiplexer',
       refPrefix: 'U',
       terminals: [
         ...ys.map((y, i) => ({ name: MUX_INPUT_NAMES[i], x: -2 * GRID, y, direction: 'input', dir: { x: -1, y: 0 } })),
@@ -49,5 +49,5 @@ export function muxSymbol(inputs = MUX_MIN_INPUTS) {
   return shapes.get(inputs);
 }
 
-/** Compact two-input, one-select multiplexer. */
-export const mux2 = muxSymbol(MUX_MIN_INPUTS);
+/** The multiplexer as placed: two inputs, one select. */
+export const mux = muxSymbol(MUX_MIN_INPUTS);

@@ -89,9 +89,9 @@ test('tri-state logic gates are named and searchable', () => {
 });
 
 test('multiplexer is named and searchable', () => {
-  assert.equal(PLACEMENT_LABELS.mux2, '2:1 multiplexer');
-  assert.ok(PLACEMENT_ALIASES.mux2.includes('multiplexer'));
-  assert.ok(placementSearchScore('select', 'mux2') > 0);
+  assert.equal(PLACEMENT_LABELS.mux, 'Multiplexer');
+  assert.ok(PLACEMENT_ALIASES.mux.includes('multiplexer'));
+  assert.ok(placementSearchScore('select', 'mux') > 0);
 });
 
 test('signal-flow operators are named and searchable', () => {

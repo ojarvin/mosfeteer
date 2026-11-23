@@ -12,7 +12,7 @@ test('insert categories keep switches and macros separate and include vccs with 
   assert.deepEqual(groups.Switches, ['switch_open', 'switch_closed', 'chopper']);
   assert.deepEqual([...groups['Sources & power']].sort(), ['current_source', 'ground', 'supply', 'vccs', 'vcm', 'vcvs', 'voltage_source']);
   assert.deepEqual([...groups.Macros].sort(), ['adc', 'adc_diff', 'comparator', 'comparator_clocked', 'dac', 'dac_diff', 'gm', 'gm_cmfb', 'opamp', 'opamp_diff', 'opamp_diff_cmfb']);
-  assert.ok(groups.Logic.includes('mux2') && groups.Logic.includes('tristate_buffer') && groups.Logic.includes('xnor3_gate'));
+  assert.ok(groups.Logic.includes('mux') && groups.Logic.includes('tristate_buffer') && groups.Logic.includes('xnor3_gate'));
   assert.ok(groups.Sequential.includes('dff') && groups.Sequential.includes('latch_enb_rstb_qb'));
   assert.deepEqual(groups['Signal flow'], ['signal_sum', 'signal_multiply', 'tf_s', 'tf_z', 'tf_dac', 'tf_dac_rz', 'tf_delay', 'tf_zdelay', 'gain', 'sampler', 'downsample', 'upsample', 'quantizer', 'dither', 'tone']);
   // Filters draw block diagrams; the signal-flow analysis does not read them.

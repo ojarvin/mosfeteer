@@ -176,10 +176,10 @@ export function analyzeLogic(source, options = {}) {
   const sequential = [];
   for (const component of [...circuit.components.values()].sort((a, b) => natural(a.refdes, b.refdes))) {
     const type = component.type;
-    if (GATES[type] || TRISTATE[type] || type === 'mux2') {
+    if (GATES[type] || TRISTATE[type] || type === 'mux') {
       const pin = (name) => pinSignal(component, name);
-      const inputs = component.terminalDefs.filter((t) => t.direction === 'input' && !(type === 'mux2' && t.name === 's')).map((t) => [t.name, pin(t.name)]);
-      if (type === 'mux2') inputs.push(...selectSignals(component));
+      const inputs = component.terminalDefs.filter((t) => t.direction === 'input' && !(type === 'mux' && t.name === 's')).map((t) => [t.name, pin(t.name)]);
+      if (type === 'mux') inputs.push(...selectSignals(component));
       const output = pin('y');
       const gate = { component, type, inputs: new Map(inputs), output };
       for (const [name, signal] of inputs) signal.readers.push({ component, pin: name.startsWith('s:') ? 's' : name });
@@ -204,7 +204,7 @@ export function analyzeLogic(source, options = {}) {
   // anything else is not logic.
   const logicKeys = new Set(signals.keys());
   for (const component of circuit.components.values()) {
-    if (GATES[component.type] || TRISTATE[component.type] || component.type === 'mux2' || sequentialPins(component) || PASSIVE.has(component.type)) continue;
+    if (GATES[component.type] || TRISTATE[component.type] || component.type === 'mux' || sequentialPins(component) || PASSIVE.has(component.type)) continue;
     for (const t of component.terminalDefs || []) {
       const net = circuit.netOfTerminal({ comp: component.refdes, term: t.name });
       if (!net) continue;

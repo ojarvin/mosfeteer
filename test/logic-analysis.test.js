@@ -40,7 +40,7 @@ test('a pin wired to nothing is a signal of its own: an unwired input an input, 
 });
 
 test('a multiplexer passes a at s = 0 and b at s = 1; ground and a supply are 0 and 1', () => {
-  const mux = analyzeLogic(build(['add mux2 U1 --at 0 0', 'add input A --at -400 -40', 'add input B --at -400 40', 'add input S --at -400 300', 'add output Y --at 400 0',
+  const mux = analyzeLogic(build(['add mux U1 --at 0 0', 'add input A --at -400 -40', 'add input B --at -400 40', 'add input S --at -400 300', 'add output Y --at 400 0',
     'connect A.p U1.a', 'connect B.p U1.b', 'connect S.p U1.s', 'connect U1.y Y.p']));
   assert.deepEqual(mux.inputs.map((s) => s.name), ['A', 'B', 'S']);
   assert.equal(equations(mux).Y, 'A \\cdot \\overline{S} + B \\cdot S');
@@ -51,7 +51,7 @@ test('a multiplexer passes a at s = 0 and b at s = 1; ground and a supply are 0 
 });
 
 test('a multiplexer past two inputs reads its select from a bus, the first bit most significant', () => {
-  const lines = ['add mux2 U1 --at 0 0 --inputs 4', 'add output Y --at 400 0', 'connect U1.y Y.p'];
+  const lines = ['add mux U1 --at 0 0 --inputs 4', 'add output Y --at 400 0', 'connect U1.y Y.p'];
   const inputs = ['A', 'B', 'C', 'D'].flatMap((name, i) => [`add input ${name} --at -400 ${(2 * i - 3) * 40}`, `connect ${name}.p U1.${'abcd'[i]}`]);
   const circuit = build([...lines, ...inputs, 'add input SEL --at -400 400', 'connect SEL.p U1.s']);
   // An unnamed select is one signal: a 4:1 mux needs two bits.
@@ -89,7 +89,7 @@ test('a multiplexer past two inputs reads its select from a bus, the first bit m
 });
 
 test('a multiplexer picks X only where the inputs it could pick disagree, and nothing past its last input', () => {
-  const circuit = build(['add mux2 U1 --at 0 0 --inputs 3', 'add output Y --at 400 0', 'connect U1.y Y.p',
+  const circuit = build(['add mux U1 --at 0 0 --inputs 3', 'add output Y --at 400 0', 'connect U1.y Y.p',
     'add input A --at -400 -80', 'connect A.p U1.a', 'add supply VDD --at -400 0', 'connect VDD.p U1.b', 'add input C --at -400 80', 'connect C.p U1.c',
     'add input S --at -400 400', 'connect S.p U1.s']);
   circuit.renameNet(circuit.netOfTerminal({ comp: 'U1', term: 's' }), 'S[1:0]');
@@ -106,7 +106,7 @@ test('a bus reaches the logic only at a multiplexer\'s select', () => {
   const circuit = build(['add and2_gate U1 --at 0 0', 'add input A --at -400 -40', 'connect A.p U1.a', 'add output Y --at 400 0', 'connect U1.y Y.p']);
   circuit.renameNet(circuit.netOfTerminal({ comp: 'U1', term: 'a' }), 'D[1:0]');
   assert.equal(analyzeLogic(circuit).error, 'U1.a is on the bus D[1:0]: only a multiplexer\'s select reads a bus.');
-  const two = build(['add mux2 U1 --at 0 0', 'add input S --at -400 300', 'connect S.p U1.s']);
+  const two = build(['add mux U1 --at 0 0', 'add input S --at -400 300', 'connect S.p U1.s']);
   two.renameNet(two.netOfTerminal({ comp: 'U1', term: 's' }), 'S[1:0]');
   assert.equal(analyzeLogic(two).error, 'U1 has 2 inputs: its select is one signal, not the bus S[1:0].');
 });

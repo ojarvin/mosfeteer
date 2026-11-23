@@ -679,7 +679,7 @@ function notesCommand(circuit, action, raw) {
 
 /** `add --inputs`: only a multiplexer takes it. */
 function addInputs(type, value) {
-  if (type !== 'mux2') throw new Error(`--inputs is for a multiplexer (mux2), not ${type}`);
+  if (type !== 'mux') throw new Error(`--inputs is for a multiplexer (mux), not ${type}`);
   return muxInputCount(value);
 }
 
@@ -1035,7 +1035,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
   if (cmd === 'inputs') {
     if (!pos[0]) throw new Error('usage: inputs <refdes> [2..8]');
     const c = circuit.getComponent(pos[0]);
-    if (c.type !== 'mux2') throw new Error(`${c.refdes} is not a multiplexer; only multiplexers take an input count`);
+    if (c.type !== 'mux') throw new Error(`${c.refdes} is not a multiplexer; only multiplexers take an input count`);
     const state = () => result(`${c.refdes} has ${c.muxInputs} inputs`, { refdes: c.refdes, inputs: c.muxInputs }, pos[1] !== undefined);
     if (pos[1] === undefined) return state();
     circuit.setMuxInputs(c.refdes, pos[1]);

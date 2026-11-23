@@ -647,7 +647,7 @@ test('managed VCM-to-VCM routes escape upward and clear both bodies', () => {
 
 test('inputs gives a multiplexer 2 to 8 inputs, keeps its wiring, and saves the count', () => {
   const c = fresh();
-  runCommand(c, 'add mux2 U1 --at 0 0 --inputs 3');
+  runCommand(c, 'add mux U1 --at 0 0 --inputs 3');
   runCommand(c, 'add input A --at -400 -80');
   runCommand(c, 'add output Y --at 400 0');
   runCommand(c, 'connect A.p U1.a');
@@ -673,9 +673,21 @@ test('inputs gives a multiplexer 2 to 8 inputs, keeps its wiring, and saves the 
   assert.equal(c.toJSON().components.find((part) => part.refdes === 'U1').inputs, undefined);
 });
 
+test('a file saved with the old mux2 type loads it as a mux, wired as it was', () => {
+  const c = fresh();
+  runCommand(c, 'add mux U1 --at 0 0');
+  runCommand(c, 'add input A --at -400 -40');
+  runCommand(c, 'connect A.p U1.a');
+  const old = JSON.parse(JSON.stringify(c.toJSON()).replaceAll('"type":"mux"', '"type":"mux2"'));
+  assert.equal(old.components.find((part) => part.refdes === 'U1').type, 'mux2');
+  const loaded = Circuit.fromJSON(old);
+  assert.equal(loaded.getComponent('U1').type, 'mux');
+  assert.deepEqual(loaded.netOfTerminal({ comp: 'U1', term: 'a' }).terminals.map((t) => `${t.comp}.${t.term}`).sort(), ['A.p', 'U1.a']);
+});
+
 test('inputs refuses another part, a count out of range, and dropping a wired input', () => {
   const c = fresh();
-  runCommand(c, 'add mux2 U1 --at 0 0 --inputs 4');
+  runCommand(c, 'add mux U1 --at 0 0 --inputs 4');
   runCommand(c, 'add resistor R1 --at 400 400');
   runCommand(c, 'add input D --at -400 120');
   runCommand(c, 'connect D.p U1.d');

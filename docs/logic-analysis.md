@@ -9,7 +9,7 @@ opens in this mode for a drawing of logic parts with nothing analog in it.
 ## Parts and signals
 
 - **Logic parts**: inverter, buffer, AND, NAND, OR, NOR, XOR, XNOR (2 and
-  3 inputs), `mux2` (`a` at `s` = 0, `b` at `s` = 1), tri-state inverter
+  3 inputs), `mux` (`a` at `s` = 0, `b` at `s` = 1), tri-state inverter
   and buffer (driving while `en` is 1), D flip-flops and latches with their
   inverted-clock, reset, and `QB` variants.
 - **A multiplexer of 3 to 8 inputs** (`a`…`h`, numbered from 0) reads `s`

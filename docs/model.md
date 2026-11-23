@@ -30,7 +30,7 @@ The routing-sensitive symbol contract is:
 | opamp, comparator, gm | `ip=(-200,-40)`, `im=(-200,40)`, `o=(160,0)` | `+` on top; differential variant adds `om=(160,-40)`, `op=(160,40)`; `gm` is the differential pins on a blunt (trapezoid) body; comparators share the single-ended body, the clocked one adds `clk=(-200,0)` between the inputs |
 | inverter/buffer | `a=(-120,0)`, `y=(120,0)` | tri-state variants add `en=(0,80)` |
 | 2-input logic | `a=(-120,-40)`, `b=(-120,40)`, `y=(120,0)` | XOR/XNOR output is at `x=160`; 3-input adds `c` at `y=40` |
-| mux2 | `a=(-80,-40)`, `b=(-80,40)`, `y=(80,0)`, `s=(0,160)` | tapered body; `inputs` 2–8 (`muxSymbol`, `inputs <refdes> N`): inputs `a`…`h` two cells apart centered on `y`, `s=(0,40(N+2))`, the body taller, never wider; dropping a wired input refuses |
+| mux | `a=(-80,-40)`, `b=(-80,40)`, `y=(80,0)`, `s=(0,160)` | tapered body; `inputs` 2–8 (`muxSymbol`, `inputs <refdes> N`): inputs `a`…`h` two cells apart centered on `y`, `s=(0,40(N+2))`, the body taller, never wider; dropping a wired input refuses |
 | ADC / DAC | ADC `ain=(-200,0)`, `d=(200,0)`; reversed for DAC | bbox `{-200,-120,400,240}`; `adc_diff`/`dac_diff` replace the analog pin with `aip`/`aim` (`aop`/`aom`) at `y=-40`/`40` |
 | DFF / latch | inputs at `(-80,-40)`, `(-80,40)`; outputs at `(80,-40)`, `(80,40)` | reset, when present, is `(0,120)`; bbox expands downward |
 | ground / supply / VCM | ground `gnd=(0,0)`; supply `p=(0,0)`; VCM `vcm=(0,0)` | ground hangs down, supply hangs up, VCM is outline-only |

@@ -23,7 +23,7 @@ import { solder } from './solder.js';
 import { switch_open, switch_closed } from './switch.js';
 import { block } from './block.js';
 import { chopper } from './chopper.js';
-import { mux2 } from './mux.js';
+import { mux } from './mux.js';
 import { signal_sum, signal_multiply, oscillator, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, tf_dac, tf_dac_rz, tf_delay, tf_zdelay, gain, sampler, quantizer, dither, tone, downsample, upsample } from './signal-flow.js';
 
 /** All registered symbol definitions, keyed by type name. */
@@ -61,7 +61,7 @@ export const symbolTypes = {
   buffer,
   tristate_inverter: tristateInverter,
   tristate_buffer: tristateBuffer,
-  mux2,
+  mux,
   and2_gate,
   nand2_gate,
   or2_gate,
