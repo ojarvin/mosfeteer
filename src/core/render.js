@@ -6,7 +6,7 @@ import { autoRoute } from './router.js';
 import { TABLE_RULE_ROOM_EM, escapeSvg, fontAttrs, labelFontSize, resolveColor, roleWidth, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } from './style.js';
 import { GREEK_LOWER, GREEK_UPPER, TEX_SPACE_WIDTHS, TEX_SYMBOLS, plainTexText, plotTextMarkup, texToLabelMarkup } from './tex-markup.js';
 import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, hasInlineMath, plotLegendCurves, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } from './model.js';
-import { TIMING_ARROWHEAD, arrowheadEnds, curvedArrowGeometry, defaultArrowhead, polylineArrowheads } from './line-style.js';
+import { TIMING_ARROWHEAD, arrowheadEnds, bentArrowheads, curvedArrowGeometry, defaultArrowhead, polylineArrowheads } from './line-style.js';
 import { hiddenSupplyBarLabels, supplyBars } from './supply-bars.js';
 import { VALUE_TYPES, replacedNameLabels } from './part-value.js';
 import { SOURCE_WAVEFORMS } from './components/current.js';
@@ -724,9 +724,17 @@ function curvedArrowSvg(points, style, opacity = '') {
   return `<path d="${d}" fill="none"${opacity} ${styleAttrs(style, 'annotation')}/>${head ? arrowheadsSvg([head], style?.color, opacity) : ''}`;
 }
 
+/** A bent arrow or line (bentArrowheads): one quadratic, cut back for its heads. */
+function bentShapeSvg(label, opacity = '') {
+  const { shaft, heads } = bentArrowheads(label.points, label.style?.arrowhead, { fallback: defaultArrowhead(label.kind) });
+  const d = `M ${pt(shaft.start.x, shaft.start.y)} Q ${pt(shaft.c.x, shaft.c.y)} ${pt(shaft.end.x, shaft.end.y)}`;
+  return `<path d="${d}" fill="none"${opacity} ${styleAttrs(label.style, 'annotation')}/>${arrowheadsSvg(heads, label.style?.color, opacity)}`;
+}
+
 function shapeAnnotationSvg(label, opacity = '') {
   const a = label.anchor; const b = label.end;
   if (label.kind === 'arrow' && label.curve) return curvedArrowSvg(label.points, label.style, opacity);
+  if (label.isBent?.()) return bentShapeSvg(label, opacity);
   if (label.kind === 'line' || label.kind === 'arrow') {
     const points = label.points?.length ? label.points : [a, b];
     // A timing diagram's lines take its arrows' heads: one size in one figure.
@@ -1918,7 +1926,17 @@ export function editorOverlay(circuit, opts = {}) {
 
   // Arrow and line vertices are drag points: solid when the annotation is
   // selected, hollow while the pointer rests on an unselected one.
-  const vertexHandles = (label, solid) => label.points.map((p) => `<circle class="annotation-vertex-handle" cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="${fmt(5 * unit)}" fill="${solid ? SELECT : 'var(--paper, #fff)'}" stroke="${solid ? 'var(--paper, #fff)' : SELECT}" stroke-width="2" vector-effect="non-scaling-stroke" pointer-events="none"/>`).join('');
+  // A bent one's middle point is its bend, drawn as the bend handle.
+  const vertexHandles = (label, solid) => label.points.map((p, i) => (label.isBent?.() && i === 1 ? '' : `<circle class="annotation-vertex-handle" cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="${fmt(5 * unit)}" fill="${solid ? SELECT : 'var(--paper, #fff)'}" stroke="${solid ? 'var(--paper, #fff)' : SELECT}" stroke-width="2" vector-effect="non-scaling-stroke" pointer-events="none"/>`)).join('');
+  // A selected straight two-point arrow or line, or a bent one, has a
+  // square bend handle at its middle: hollow while straight, solid bent.
+  const bendHandle = (label) => {
+    const p = label.bendHandle?.();
+    if (!p) return '';
+    const s = 5 * unit;
+    const bent = label.isBent();
+    return `<rect class="annotation-bend-handle" x="${fmt(p.x - s)}" y="${fmt(p.y - s)}" width="${fmt(2 * s)}" height="${fmt(2 * s)}" fill="${bent ? SELECT : 'var(--paper, #fff)'}" stroke="${bent ? 'var(--paper, #fff)' : SELECT}" stroke-width="2" vector-effect="non-scaling-stroke" pointer-events="none"/>`;
+  };
   const hoverAnnotation = opts.hoverAnnotation && !(opts.selLabels || []).includes(opts.hoverAnnotation)
     ? circuit.labels.get(opts.hoverAnnotation) : null;
   if (hoverAnnotation?.points) parts.push(vertexHandles(hoverAnnotation, false));
@@ -1933,6 +1951,7 @@ export function editorOverlay(circuit, opts = {}) {
       // Align to draws its own picks; vertex drag points would compete.
       if (label.points && !opts.alignTool) {
         parts.push(vertexHandles(label, true));
+        parts.push(bendHandle(label));
         // Picked vertices (for a group drag or Delete) wear a ring.
         const picked = opts.selectedVertices?.[label.id] || [];
         for (const index of picked) {

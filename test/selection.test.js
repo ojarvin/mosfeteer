@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { chooseWireHitCandidate, completeSelectedNetIds, copySelectionParts, copyableLabelPayload, nextStackedSelection, selectedSetMoveSource, componentPressSelection } from '../src/web/selection.js';
+import { Circuit } from '../src/core/model.js';
 
 const components = new Map([
   ['R1', { type: 'resistor' }],
@@ -203,4 +204,16 @@ test('a click picks the label whose text is under it before one whose box merely
   // The text is found a little beside its ink, as a pointer lands.
   assert.deepEqual(labelsUnderPoint([onIt], { x: 112, y: 40 }, { tolerance: 4 }).map((l) => l.id), ['on']);
   assert.deepEqual(labelsUnderPoint([wide], { x: 80, y: 40 }).map((l) => l.id), ['wide']);
+});
+
+test("a copied arrow keeps its corners and its bend", () => {
+  const circuit = new Circuit();
+  const arrow = circuit.addAnnotation('arrow', { points: [{ x: 0, y: 0 }, { x: 0, y: 160 }] });
+  arrow.bendTo(80, 80);
+  const payload = copyableLabelPayload(arrow);
+  assert.deepEqual(payload.points, [{ x: 0, y: 0 }, { x: 80, y: 80 }, { x: 0, y: 160 }]);
+  assert.equal(payload.bent, true);
+  const corner = circuit.addAnnotation('arrow', { points: [{ x: 200, y: 0 }, { x: 280, y: 0 }, { x: 280, y: 80 }] });
+  assert.equal(copyableLabelPayload(corner).points.length, 3);
+  assert.equal('bent' in copyableLabelPayload(corner), false);
 });

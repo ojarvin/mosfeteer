@@ -1050,3 +1050,47 @@ test('link and unlink name the design a part stands for', () => {
   assert.equal(c.components.get('OA1').link, null);
   assert.throws(() => runCommand(c, 'link NOPE amp'), /NOPE/);
 });
+
+test('annotation bend bends a two-point arrow through a point, straightens it on the line or by off, and is saved', () => {
+  const circuit = new Circuit();
+  const arrow = circuit.addAnnotation('arrow', { points: [{ x: 0, y: 0 }, { x: 0, y: 160 }] });
+  const bent = runCommand(circuit, `annotation bend ${arrow.id} 40 80`);
+  assert.equal(bent.text, `${arrow.id}: bent through 40,80`);
+  assert.deepEqual(arrow.points, [{ x: 0, y: 0 }, { x: 40, y: 80 }, { x: 0, y: 160 }]);
+  assert.equal(arrow.isBent(), true);
+  // Saved and read back bent; its bounds take in the bow.
+  const back = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON()))).labels.get(arrow.id);
+  assert.equal(back.isBent(), true);
+  assert.ok(back.bbox().w >= 40);
+  // Off the grid, the nearest grid point; on the line, straight.
+  runCommand(circuit, `annotation bend ${arrow.id} -50 70`);
+  assert.deepEqual(arrow.points[1], { x: -40, y: 80 });
+  assert.equal(runCommand(circuit, `annotation bend ${arrow.id} 0 120`).text, `${arrow.id}: straight`);
+  assert.deepEqual(arrow.points, [{ x: 0, y: 0 }, { x: 0, y: 160 }]);
+  assert.equal('bent' in arrow.toJSON(), false);
+  runCommand(circuit, `annotation bend ${arrow.id} 40 80`);
+  assert.equal(runCommand(circuit, `annotation bend ${arrow.id} off`).text, `${arrow.id}: straight`);
+  assert.equal(arrow.isBent(), false);
+});
+
+test('annotation bend refuses a polyline, a curved timing arrow, and a bad point', () => {
+  const circuit = new Circuit();
+  const line = circuit.addAnnotation('line', { points: [{ x: 0, y: 0 }, { x: 80, y: 0 }, { x: 80, y: 80 }] });
+  assert.throws(() => runCommand(circuit, `annotation bend ${line.id} 40 40`), /only a straight two-point line or arrow bends/);
+  const curved = circuit.addAnnotation('arrow', { points: [{ x: 0, y: 200 }, { x: 160, y: 280 }], curve: true });
+  assert.throws(() => runCommand(circuit, `annotation bend ${curved.id} 80 200`), /cannot bend/);
+  const arrow = circuit.addAnnotation('arrow', { points: [{ x: 0, y: 400 }, { x: 160, y: 400 }] });
+  assert.throws(() => runCommand(circuit, `annotation bend ${arrow.id} 40`), /usage: annotation bend/);
+  assert.throws(() => runCommand(circuit, 'annotation bend nothing 0 0'), /unknown line or arrow/);
+  assert.equal(arrow.isBent(), false);
+});
+
+test('a bent arrow left with other than three points, a vertex removed, draws straight', () => {
+  const circuit = new Circuit();
+  const arrow = circuit.addAnnotation('arrow', { points: [{ x: 0, y: 0 }, { x: 0, y: 160 }] });
+  arrow.bendTo(80, 80);
+  assert.equal(arrow.removeVertex(1), true);
+  assert.equal(arrow.isBent(), false);
+  assert.equal(arrow.canBend(), true);
+  assert.equal('bent' in arrow.toJSON(), false);
+});

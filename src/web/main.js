@@ -1382,8 +1382,11 @@ export function annotationGeometryAt(world) {
   const p = { x: snap(world.x), y: snap(world.y) };
   const near = (a, b) => distanceToSegment(p, a, b) <= GRID / 2;
   for (const label of labels()) {
-    if (label.kind === 'line' && label.points.some((point, i) => i > 0 && near(label.points[i - 1], point))) return label;
-    if (label.kind === 'arrow' && label.points?.some((point, i) => i > 0 && near(label.points[i - 1], point))) return label;
+    if (['arrow', 'line'].includes(label.kind) && label.points?.length) {
+      // Along what is drawn: a bent one's bow, not its three points.
+      const route = label.isBent() ? label.shapePoints() : label.points;
+      if (route.some((point, i) => i > 0 && near(route[i - 1], point))) return label;
+    }
     if (label.kind === 'box') {
       if (label.table) label.syncTableBox();
       const a = label.anchor; const b = label.end;
@@ -1402,7 +1405,8 @@ export function annotationEndpointAt(world) {
   const p = { x: snap(world.x), y: snap(world.y) };
   for (const label of labels()) {
     if (['arrow', 'line'].includes(label.kind)) {
-      const index = label.points.findIndex((point) => Math.abs(p.x - point.x) <= GRID / 2 && Math.abs(p.y - point.y) <= GRID / 2);
+      // A bent one's middle point is its bend (annotationBendAt), not a vertex.
+      const index = label.points.findIndex((point, i) => !(label.isBent() && i === 1) && Math.abs(p.x - point.x) <= GRID / 2 && Math.abs(p.y - point.y) <= GRID / 2);
       if (index >= 0) return { label, endpoint: `vertex:${index}` };
     }
     if (label.kind !== 'arrow') continue;
@@ -1414,11 +1418,22 @@ export function annotationEndpointAt(world) {
   return null;
 }
 
+/** The selected arrow or line whose bend handle (bendHandle) is under
+ *  `world`, or null: a straight two-point one's midpoint, a bent one's bow. */
+export function annotationBendAt(world) {
+  for (const id of selLabels) {
+    const handle = circuit.labels.get(id)?.bendHandle?.();
+    if (handle && Math.abs(world.x - handle.x) <= GRID / 2 && Math.abs(world.y - handle.y) <= GRID / 2) return circuit.labels.get(id);
+  }
+  return null;
+}
+
 function annotationSegmentAt(world) {
   const p = { x: snap(world.x), y: snap(world.y) };
   const near = (a, b) => distanceToSegment(p, a, b) <= GRID / 2;
   for (const label of labels()) {
-    if (!['arrow', 'line'].includes(label.kind)) continue;
+    // A bent one moves whole (annotationGeometryAt); it has no straight legs.
+    if (!['arrow', 'line'].includes(label.kind) || label.isBent()) continue;
     for (let i = 1; i < label.points.length; i++) {
       if (near(label.points[i - 1], label.points[i])) return { label, segment: i };
     }
@@ -4908,6 +4923,12 @@ function canvasMouseDown(ev) {
     };
     return;
   }
+  // A selected arrow's or line's bend handle bends it.
+  const bendHit = !isSelectionModifier(ev) && mode === 'normal' ? annotationBendAt(startWorld) : null;
+  if (bendHit) {
+    drag = { mode: 'annotationbend', label: bendHit, startPoints: bendHit.points.map((point) => ({ ...point })), startBent: bendHit.bent, startClient, startWorld, startSnapshot: snapshot(), moved: false };
+    return;
+  }
   const endpointHit = annotationEndpointAt(startWorld);
   const annotationSegment = endpointHit ? null : annotationSegmentAt(startWorld);
   const pickedLine = endpointHit?.label || annotationSegment?.label;
@@ -5861,6 +5882,18 @@ export function canvasMouseMove(ev) {
     }
     return;
   }
+  if (drag.mode === 'annotationbend') {
+    if (movedOut) drag.moved = true;
+    if (drag.moved) {
+      drag.label.points = drag.startPoints.map((point) => ({ ...point }));
+      drag.label.bent = drag.startBent;
+      drag.label.bendTo(movedWorld.x, movedWorld.y);
+      cursor = snappedWorld(movedWorld);
+      markModelChanged(false);
+      scheduleInteractionRender();
+    }
+    return;
+  }
   if (drag.mode === 'annotationvertices') {
     if (movedOut) drag.moved = true;
     if (drag.moved) {
@@ -6531,7 +6564,7 @@ function finishCanvasMouseUp(ev) {
       if (copySelectionExists()) deleteSelection();
       else deleteAtPoint(w);
     }
-  } else if (drag.mode === 'annotationsegment' || drag.mode === 'annotationendpoint' || drag.mode === 'annotationvertices' || drag.mode === 'boxresize') {
+  } else if (drag.mode === 'annotationsegment' || drag.mode === 'annotationendpoint' || drag.mode === 'annotationvertices' || drag.mode === 'annotationbend' || drag.mode === 'boxresize') {
     if (drag.moved && snapshot() !== drag.startSnapshot) {
       recordHistoryEntry(drag.startSnapshot);
     }

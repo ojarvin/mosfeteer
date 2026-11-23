@@ -66,7 +66,7 @@ function labelProblem(label) {
   if (!finite(label.x) || !finite(label.y)) return 'a label has no position';
   if (label.kind === 'label' && !text(label.text)) return 'a text label has no text';
   if (label.kind !== 'label' && !point(label.end)) return `a ${label.kind} has no end`;
-  if (label.kind === 'line' && !optional(label.points, path)) return 'a line has bad points';
+  if (['line', 'arrow'].includes(label.kind) && !optional(label.points, path)) return `a ${label.kind} has bad points`;
   if (!optional(label.style, isObject)) return 'a label has a bad style';
   return null;
 }

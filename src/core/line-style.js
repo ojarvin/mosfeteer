@@ -142,6 +142,72 @@ export function polylineArrowheads(points = [], value = 'none', options = {}) {
   return { shaftPoints, heads };
 }
 
+/**
+ * A bent arrow or line: one smooth bow from `start` to `end` through
+ * `through` at its middle -- a quadratic whose control point is
+ * 2 through - (start + end) / 2. `at(t)` is a point on it (t from 0 to 1).
+ */
+export function bentCurve(start, through, end) {
+  const c = { x: 2 * through.x - (start.x + end.x) / 2, y: 2 * through.y - (start.y + end.y) / 2 };
+  const at = (t) => {
+    const u = 1 - t;
+    return { x: u * u * start.x + 2 * u * t * c.x + t * t * end.x, y: u * u * start.y + 2 * u * t * c.y + t * t * end.y };
+  };
+  return { start, c, end, at };
+}
+
+/** A bent curve drawn as `count` straight pieces: what it reaches and
+ *  where a pointer finds it. */
+export function bentPolyline(points, count = 24) {
+  const curve = bentCurve(points[0], points[1], points[2]);
+  return Array.from({ length: count + 1 }, (_, i) => curve.at(i / count));
+}
+
+/**
+ * A bent arrow's or line's shaft and heads (as polylineArrowheads gives a
+ * straight one's): the shaft is the curve cut back where each head's base
+ * lies a head's length from its tip, as one quadratic `{ start, c, end }`;
+ * each head points along the curve's last stretch into its end.
+ */
+export function bentArrowheads(points, value = 'none', { fallback = 'none', length = 32, halfWidth = 18 } = {}) {
+  const curve = bentCurve(points[0], points[1], points[2]);
+  const ends = arrowheadEnds(value, fallback);
+  // Where along the curve a point lies `length` from an end: the distance
+  // grows steadily away from the end, so halving the interval finds it.
+  const cut = (fromEnd) => {
+    const tip = fromEnd ? curve.end : curve.start;
+    let near = fromEnd ? 1 : 0;
+    let far = 0.5;
+    for (let i = 0; i < 40; i++) {
+      const mid = (near + far) / 2;
+      const p = curve.at(mid);
+      if (Math.hypot(p.x - tip.x, p.y - tip.y) < length) near = mid;
+      else far = mid;
+    }
+    return (near + far) / 2;
+  };
+  const heads = [];
+  let t0 = 0;
+  let t1 = 1;
+  if (ends.start) {
+    t0 = cut(false);
+    const head = arrowheadGeometry(curve.at(t0), curve.start, length, halfWidth);
+    if (head) heads.push({ ...head, placement: 'start' });
+  }
+  if (ends.end) {
+    t1 = cut(true);
+    const head = arrowheadGeometry(curve.at(t1), curve.end, length, halfWidth);
+    if (head) heads.push({ ...head, placement: 'end' });
+  }
+  // The piece from t0 to t1 is a quadratic too; its control point is the
+  // curve's blossom at (t0, t1).
+  const blossom = (a, b) => ({
+    x: (1 - a) * (1 - b) * curve.start.x + ((1 - a) * b + a * (1 - b)) * curve.c.x + a * b * curve.end.x,
+    y: (1 - a) * (1 - b) * curve.start.y + ((1 - a) * b + a * (1 - b)) * curve.c.y + a * b * curve.end.y,
+  });
+  return { shaft: { start: curve.at(t0), c: blossom(t0, t1), end: curve.at(t1) }, heads };
+}
+
 /** The one arrowhead a timing diagram draws, on its curved arrows and its
  *  spans' lines alike: smaller than a drawn line's, as its strokes are thin. */
 export const TIMING_ARROWHEAD = Object.freeze({ length: 26, halfWidth: 13 });

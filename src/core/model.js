@@ -17,7 +17,7 @@ import { collapseCollinear } from './wireedit.js';
 import { busGroupName, busGroupsWithin, busWidth, isBusName, netNameParts, netNameSpelling, netNamesConnect } from './bus.js';
 import { LABEL_FONT_SIZES, TABLE_RULE_ROOM_EM, labelFontSize, strokeWidth } from './style.js';
 import { cloneLiteralPath, clonePath, crossNetOverlaps, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
-import { curvedArrowGeometry, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue, timingBreakGeometry } from './line-style.js';
+import { bentPolyline, curvedArrowGeometry, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue, timingBreakGeometry } from './line-style.js';
 import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } from './beats.js';
 import { TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, isRateChanger, parseDither, parseGain, parseLevels, parseRate, parseTone, readTransferFunction, toneValueText, transferFunctionDisplay, transferFunctionLines } from './transfer-function.js';
 import { normalizePartsTable, partsTableKey, partsTableLayout } from './parts-table.js';
@@ -1623,6 +1623,9 @@ export class LabelInstance {
     // A two-point arrow may be drawn as a curve between its ends
     // (curvedArrowGeometry), as a timing diagram's arrows are.
     this.curve = this.kind === 'arrow' && opts.curve === true && this.points.length === 2;
+    // A bent arrow or line (bendTo): three points, drawn as one smooth bow
+    // from the first to the last through the middle one (bentCurve).
+    this.bent = ['arrow', 'line'].includes(this.kind) && opts.bent === true && this.points.length === 3 && !this.curve;
     const textPoint = opts.textAnchor ? snapPoint(opts.textAnchor.x, opts.textAnchor.y) : { x: snap((p.x + e.x) / 2), y: snap((p.y + e.y) / 2) };
     this.textAnchor = { x: textPoint.x, y: textPoint.y };
     // A box may carry a Bode sketch (bode-figure.js) drawn in its place.
@@ -1910,6 +1913,7 @@ export class LabelInstance {
    *  too, which hold it. */
   shapePoints() {
     const points = this.points?.length ? this.points : [this.anchor, this.end];
+    if (this.isBent()) return bentPolyline(points);
     if (!this.curve) return points;
     const curve = curvedArrowGeometry(points[0], points[1]);
     return curve ? [curve.start, curve.c1, curve.c2, curve.end] : points;
@@ -1946,10 +1950,11 @@ export class LabelInstance {
       return { x, y, w: Math.max(GRID, Math.abs(this.end.x - this.anchor.x)), h: Math.max(GRID, Math.abs(this.end.y - this.anchor.y)) };
     }
     if (this.kind === 'line') {
-      const x0 = Math.min(...this.points.map((point) => point.x));
-      const y0 = Math.min(...this.points.map((point) => point.y));
-      const x1 = Math.max(...this.points.map((point) => point.x));
-      const y1 = Math.max(...this.points.map((point) => point.y));
+      const points = this.shapePoints();
+      const x0 = Math.min(...points.map((point) => point.x));
+      const y0 = Math.min(...points.map((point) => point.y));
+      const x1 = Math.max(...points.map((point) => point.x));
+      const y1 = Math.max(...points.map((point) => point.y));
       return { x: x0, y: y0, w: Math.max(GRID, x1 - x0), h: Math.max(GRID, y1 - y0) };
     }
     const a = this.anchorWorld();
@@ -2216,6 +2221,46 @@ export class LabelInstance {
     return true;
   }
 
+  /** Bent: three points drawn as one bow through the middle one. Any edit
+   *  that leaves it other than three points leaves it a polyline. */
+  isBent() {
+    return !!this.bent && this.points?.length === 3;
+  }
+
+  /** A straight two-point arrow or line, or a bent one, can be bent. */
+  canBend() {
+    return ['arrow', 'line'].includes(this.kind) && !this.curve && !this.timing && (this.points?.length === 2 || this.isBent());
+  }
+
+  /** Where its bend handle sits: on the bow's middle, or the straight
+   *  one's midpoint (off the grid when its length is an odd count of cells). */
+  bendHandle() {
+    if (!this.canBend()) return null;
+    if (this.isBent()) return { ...this.points[1] };
+    const [a, b] = this.points;
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  }
+
+  /** Bend it to pass through the grid point nearest (wx, wy) at its middle;
+   *  a point on the straight line between its ends straightens it. */
+  bendTo(wx, wy) {
+    if (!this.canBend()) return false;
+    const a = this.points[0];
+    const b = this.points.at(-1);
+    const p = snapPoint(wx, wy);
+    const cross = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+    const within = (p.x - a.x) * (b.x - p.x) + (p.y - a.y) * (b.y - p.y) >= 0;
+    if (cross === 0 && within) {
+      this.points = [{ ...a }, { ...b }];
+      this.bent = false;
+    } else {
+      this.points = [{ ...a }, p, { ...b }];
+      this.bent = true;
+    }
+    this.circuit.invalidateRoutingCache();
+    return true;
+  }
+
   moveSegment(index, dx, dy) {
     if (!['arrow', 'line'].includes(this.kind) || !Number.isInteger(index) || index < 1 || index >= this.points.length) return false;
     for (const point of [this.points[index - 1], this.points[index]]) {
@@ -2313,6 +2358,7 @@ export class LabelInstance {
       end: this.kind === 'label' ? null : { ...this.end },
       points: ['arrow', 'line'].includes(this.kind) ? this.points.map((point) => ({ ...point })) : null,
       ...(this.curve ? { curve: true } : {}),
+      ...(this.isBent() ? { bent: true } : {}),
       textAnchor: this.kind === 'label' ? null : { ...this.textAnchor },
       ...(this.plot ? { plot: normalizePlot(this.plot) } : {}),
       ...(this.image ? { image: { ...this.image } } : {}),
@@ -7874,6 +7920,7 @@ export class Circuit {
           end: l.end || null,
           points: l.points || null,
           curve: l.curve === true,
+          bent: l.bent === true,
           textAnchor: l.textAnchor || null,
           plot: l.plot || null,
           image: l.image || null,

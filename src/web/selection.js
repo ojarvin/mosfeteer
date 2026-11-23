@@ -18,7 +18,8 @@ export function copyableLabelPayload(label) {
     x: anchor.x,
     y: anchor.y,
     end: label.kind === 'label' ? null : { ...label.end },
-    points: label.kind === 'line' ? label.points.map((point) => ({ ...point })) : null,
+    // An arrow's corners and bend too, not only a line's.
+    points: ['line', 'arrow'].includes(label.kind) && label.points ? label.points.map((point) => ({ ...point })) : null,
     style: { ...(label.style || {}) },
     // An equation stays an equation; it and aligned text keep their measured
     // box until they render.
@@ -29,6 +30,7 @@ export function copyableLabelPayload(label) {
     ...(label.table ? { table: label.table } : {}),
     ...(label.stack ? { stack: { ...label.stack } } : {}),
     ...(label.curve ? { curve: true } : {}),
+    ...(label.bent && label.points?.length === 3 ? { bent: true } : {}),
   };
 }
 

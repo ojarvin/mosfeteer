@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { arrowheadEnds, curvedArrowGeometry, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue, polylineArrowheadValues, polylineArrowheads } from '../src/core/line-style.js';
+import { arrowheadEnds, bentArrowheads, bentCurve, curvedArrowGeometry, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue, polylineArrowheadValues, polylineArrowheads } from '../src/core/line-style.js';
 
 test('the shared arrowhead choice has one shape and four endpoint placements', () => {
   assert.deepEqual(arrowheadEnds('none'), { start: false, end: false });
@@ -64,4 +64,33 @@ test('a curved arrow always leaves heading right and arrives from the left, its 
   // Turning back takes it further out.
   assert.ok(curvedArrowGeometry({ x: 0, y: 0 }, { x: 0, y: 120 }).c1.x > curvedArrowGeometry({ x: 0, y: 0 }, { x: 80, y: 120 }).c1.x);
   assert.equal(curvedArrowGeometry({ x: 1, y: 1 }, { x: 1, y: 1 }), null);
+});
+
+test('a bent curve runs from end to end through its middle point', () => {
+  const curve = bentCurve({ x: 0, y: 0 }, { x: 80, y: 40 }, { x: 0, y: 160 });
+  assert.deepEqual(curve.at(0), { x: 0, y: 0 });
+  assert.deepEqual(curve.at(0.5), { x: 80, y: 40 });
+  assert.deepEqual(curve.at(1), { x: 0, y: 160 });
+  assert.deepEqual(curve.c, { x: 160, y: 0 });
+});
+
+test("a bent arrow's heads lie on the curve a head's length from each tip, its shaft cut back to them", () => {
+  const points = [{ x: 0, y: 0 }, { x: 80, y: 80 }, { x: 0, y: 160 }];
+  const curve = bentCurve(...points);
+  const both = bentArrowheads(points, 'both', { length: 32 });
+  assert.deepEqual(both.heads.map((head) => head.placement), ['start', 'end']);
+  for (const head of both.heads) {
+    assert.ok(Math.abs(Math.hypot(head.tip.x - head.shaft.x, head.tip.y - head.shaft.y) - 32) < 1e-6);
+  }
+  assert.deepEqual(both.heads[1].tip, { x: 0, y: 160 });
+  // The shaft is a piece of the same curve: its middle lies on it.
+  const { start, c, end } = both.shaft;
+  const middle = { x: (start.x + 2 * c.x + end.x) / 4, y: (start.y + 2 * c.y + end.y) / 4 };
+  const near = Array.from({ length: 1001 }, (_, i) => curve.at(i / 1000)).some((p) => Math.hypot(p.x - middle.x, p.y - middle.y) < 0.5);
+  assert.ok(near);
+  assert.ok(Math.hypot(both.shaft.end.x - both.heads[1].shaft.x, both.shaft.end.y - both.heads[1].shaft.y) < 1e-6);
+  // No heads: the whole curve.
+  const none = bentArrowheads(points, 'none');
+  assert.deepEqual([none.heads, none.shaft.start, none.shaft.end], [[], points[0], points[2]]);
+  assert.deepEqual(none.shaft.c, curve.c);
 });

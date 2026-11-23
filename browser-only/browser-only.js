@@ -24229,6 +24229,8 @@ function commandHelp() {
     '  annotation rename|move|align|rm ... - edit/remove an annotation label',
     '  annotation join ID ID ...      - join line annotations that meet end to end or share a stretch into one line',
     '  annotation vertex-rm ID N      - remove vertex N (from 0) of a line or arrow',
+    '  annotation bend ID X Y         - bend a two-point line or arrow through X Y at its middle (on the line: straight)',
+    '  annotation bend ID off         - straighten a bent line or arrow',
     '  annotation plotcolors PLOT on|off - a plot\'s traces in their colors, or in black told apart by dash (a new plot\'s)',
     '  annotation dataplot FILE [--x COL|row] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y | --into PLOT [--hz] [--ratio]]',
     '                                   - plot a CSV file\'s columns (by number or name), or add them to a plot (an analysis\'s too; --hz: x in Hz, --ratio: a magnitude ratio, on a response); unset options are guessed. The file is read, never kept',
@@ -25455,7 +25457,26 @@ function annotationCommand(circuit, pos, result, flags = {}, io) {
     if (!label.removeVertex(index)) throw new Error(`cannot remove vertex ${index} of ${label.id}: a line keeps two distinct points and an arrow two cells of length`);
     return result(`removed vertex ${index} of ${label.id}`, label.toJSON(), true);
   }
-  throw new Error('usage: annotation add|rename|move|align|rm|vertex-rm|plotcolors|dataplot|plotaxis|plotview|plottrace|stack|list ...');
+  if (op === 'bend') {
+    const usage = 'usage: annotation bend ID X Y | annotation bend ID off';
+    const label = circuit.labels.get(pos[1]);
+    if (!label || !['arrow', 'line'].includes(label.kind)) throw new Error(`unknown line or arrow "${pos[1]}"`);
+    if (!label.canBend()) throw new Error(`${label.id} cannot bend: only a straight two-point line or arrow bends`);
+    const [a, b] = [label.points[0], label.points.at(-1)];
+    const off = pos[2] === 'off' && pos.length === 3;
+    const x = off ? (a.x + b.x) / 2 : Number(pos[2]);
+    const y = off ? (a.y + b.y) / 2 : Number(pos[3]);
+    if (!off && (pos.length !== 4 || !Number.isFinite(x) || !Number.isFinite(y))) throw new Error(usage);
+    const before = JSON.stringify(label.points);
+    if (off) {
+      label.points = [{ ...a }, { ...b }];
+      label.bent = false;
+      circuit.invalidateRoutingCache();
+    } else label.bendTo(x, y);
+    const changed = JSON.stringify(label.points) !== before;
+    return result(label.isBent() ? `${label.id}: bent through ${label.points[1].x},${label.points[1].y}` : `${label.id}: straight`, label.toJSON(), changed);
+  }
+  throw new Error('usage: annotation add|rename|move|align|rm|vertex-rm|bend|plotcolors|dataplot|plotaxis|plotview|plottrace|stack|list ...');
 }
 
 /** A 1-based beat number from a command, as a 0-based index. */
@@ -29852,6 +29873,9 @@ __exports.polylineArrowheadValues = polylineArrowheadValues;
 __exports.polylineArrowheadValue = polylineArrowheadValue;
 __exports.polylineArrowheadStyles = polylineArrowheadStyles;
 __exports.polylineArrowheads = polylineArrowheads;
+__exports.bentCurve = bentCurve;
+__exports.bentPolyline = bentPolyline;
+__exports.bentArrowheads = bentArrowheads;
 __exports.curvedArrowGeometry = curvedArrowGeometry;
 __exports.timingBreakGeometry = timingBreakGeometry;
 /** The one filled triangular arrowhead offered by the shared style menu. */
@@ -29996,6 +30020,72 @@ function polylineArrowheads(points = [], value = 'none', options = {}) {
     }
   }
   return { shaftPoints, heads };
+}
+
+/**
+ * A bent arrow or line: one smooth bow from `start` to `end` through
+ * `through` at its middle -- a quadratic whose control point is
+ * 2 through - (start + end) / 2. `at(t)` is a point on it (t from 0 to 1).
+ */
+function bentCurve(start, through, end) {
+  const c = { x: 2 * through.x - (start.x + end.x) / 2, y: 2 * through.y - (start.y + end.y) / 2 };
+  const at = (t) => {
+    const u = 1 - t;
+    return { x: u * u * start.x + 2 * u * t * c.x + t * t * end.x, y: u * u * start.y + 2 * u * t * c.y + t * t * end.y };
+  };
+  return { start, c, end, at };
+}
+
+/** A bent curve drawn as `count` straight pieces: what it reaches and
+ *  where a pointer finds it. */
+function bentPolyline(points, count = 24) {
+  const curve = bentCurve(points[0], points[1], points[2]);
+  return Array.from({ length: count + 1 }, (_, i) => curve.at(i / count));
+}
+
+/**
+ * A bent arrow's or line's shaft and heads (as polylineArrowheads gives a
+ * straight one's): the shaft is the curve cut back where each head's base
+ * lies a head's length from its tip, as one quadratic `{ start, c, end }`;
+ * each head points along the curve's last stretch into its end.
+ */
+function bentArrowheads(points, value = 'none', { fallback = 'none', length = 32, halfWidth = 18 } = {}) {
+  const curve = bentCurve(points[0], points[1], points[2]);
+  const ends = arrowheadEnds(value, fallback);
+  // Where along the curve a point lies `length` from an end: the distance
+  // grows steadily away from the end, so halving the interval finds it.
+  const cut = (fromEnd) => {
+    const tip = fromEnd ? curve.end : curve.start;
+    let near = fromEnd ? 1 : 0;
+    let far = 0.5;
+    for (let i = 0; i < 40; i++) {
+      const mid = (near + far) / 2;
+      const p = curve.at(mid);
+      if (Math.hypot(p.x - tip.x, p.y - tip.y) < length) near = mid;
+      else far = mid;
+    }
+    return (near + far) / 2;
+  };
+  const heads = [];
+  let t0 = 0;
+  let t1 = 1;
+  if (ends.start) {
+    t0 = cut(false);
+    const head = arrowheadGeometry(curve.at(t0), curve.start, length, halfWidth);
+    if (head) heads.push({ ...head, placement: 'start' });
+  }
+  if (ends.end) {
+    t1 = cut(true);
+    const head = arrowheadGeometry(curve.at(t1), curve.end, length, halfWidth);
+    if (head) heads.push({ ...head, placement: 'end' });
+  }
+  // The piece from t0 to t1 is a quadratic too; its control point is the
+  // curve's blossom at (t0, t1).
+  const blossom = (a, b) => ({
+    x: (1 - a) * (1 - b) * curve.start.x + ((1 - a) * b + a * (1 - b)) * curve.c.x + a * b * curve.end.x,
+    y: (1 - a) * (1 - b) * curve.start.y + ((1 - a) * b + a * (1 - b)) * curve.c.y + a * b * curve.end.y,
+  });
+  return { shaft: { start: curve.at(t0), c: blossom(t0, t1), end: curve.at(t1) }, heads };
 }
 
 /** The one arrowhead a timing diagram draws, on its curved arrows and its
@@ -30413,7 +30503,7 @@ let collapseCollinear; __bind(() => { ({ collapseCollinear } = __require("src/co
 let busGroupName, busGroupsWithin, busWidth, isBusName, netNameParts, netNameSpelling, netNamesConnect; __bind(() => { ({ busGroupName, busGroupsWithin, busWidth, isBusName, netNameParts, netNameSpelling, netNamesConnect } = __require("src/core/bus.js")); });
 let LABEL_FONT_SIZES, TABLE_RULE_ROOM_EM, labelFontSize, strokeWidth; __bind(() => { ({ LABEL_FONT_SIZES, TABLE_RULE_ROOM_EM, labelFontSize, strokeWidth } = __require("src/core/style.js")); });
 let cloneLiteralPath, clonePath, crossNetOverlaps, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments; __bind(() => { ({ cloneLiteralPath, clonePath, crossNetOverlaps, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } = __require("src/core/wiring.js")); });
-let curvedArrowGeometry, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue, timingBreakGeometry; __bind(() => { ({ curvedArrowGeometry, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue, timingBreakGeometry } = __require("src/core/line-style.js")); });
+let bentPolyline, curvedArrowGeometry, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue, timingBreakGeometry; __bind(() => { ({ bentPolyline, curvedArrowGeometry, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue, timingBreakGeometry } = __require("src/core/line-style.js")); });
 let SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey; __bind(() => { ({ SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } = __require("src/core/beats.js")); });
 let TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, isRateChanger, parseDither, parseGain, parseLevels, parseRate, parseTone, readTransferFunction, toneValueText, transferFunctionDisplay, transferFunctionLines; __bind(() => { ({ TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, isRateChanger, parseDither, parseGain, parseLevels, parseRate, parseTone, readTransferFunction, toneValueText, transferFunctionDisplay, transferFunctionLines } = __require("src/core/transfer-function.js")); });
 let normalizePartsTable, partsTableKey, partsTableLayout; __bind(() => { ({ normalizePartsTable, partsTableKey, partsTableLayout } = __require("src/core/parts-table.js")); });
@@ -32047,6 +32137,9 @@ class LabelInstance {
     // A two-point arrow may be drawn as a curve between its ends
     // (curvedArrowGeometry), as a timing diagram's arrows are.
     this.curve = this.kind === 'arrow' && opts.curve === true && this.points.length === 2;
+    // A bent arrow or line (bendTo): three points, drawn as one smooth bow
+    // from the first to the last through the middle one (bentCurve).
+    this.bent = ['arrow', 'line'].includes(this.kind) && opts.bent === true && this.points.length === 3 && !this.curve;
     const textPoint = opts.textAnchor ? snapPoint(opts.textAnchor.x, opts.textAnchor.y) : { x: snap((p.x + e.x) / 2), y: snap((p.y + e.y) / 2) };
     this.textAnchor = { x: textPoint.x, y: textPoint.y };
     // A box may carry a Bode sketch (bode-figure.js) drawn in its place.
@@ -32334,6 +32427,7 @@ class LabelInstance {
    *  too, which hold it. */
   shapePoints() {
     const points = this.points?.length ? this.points : [this.anchor, this.end];
+    if (this.isBent()) return bentPolyline(points);
     if (!this.curve) return points;
     const curve = curvedArrowGeometry(points[0], points[1]);
     return curve ? [curve.start, curve.c1, curve.c2, curve.end] : points;
@@ -32370,10 +32464,11 @@ class LabelInstance {
       return { x, y, w: Math.max(GRID, Math.abs(this.end.x - this.anchor.x)), h: Math.max(GRID, Math.abs(this.end.y - this.anchor.y)) };
     }
     if (this.kind === 'line') {
-      const x0 = Math.min(...this.points.map((point) => point.x));
-      const y0 = Math.min(...this.points.map((point) => point.y));
-      const x1 = Math.max(...this.points.map((point) => point.x));
-      const y1 = Math.max(...this.points.map((point) => point.y));
+      const points = this.shapePoints();
+      const x0 = Math.min(...points.map((point) => point.x));
+      const y0 = Math.min(...points.map((point) => point.y));
+      const x1 = Math.max(...points.map((point) => point.x));
+      const y1 = Math.max(...points.map((point) => point.y));
       return { x: x0, y: y0, w: Math.max(GRID, x1 - x0), h: Math.max(GRID, y1 - y0) };
     }
     const a = this.anchorWorld();
@@ -32640,6 +32735,46 @@ class LabelInstance {
     return true;
   }
 
+  /** Bent: three points drawn as one bow through the middle one. Any edit
+   *  that leaves it other than three points leaves it a polyline. */
+  isBent() {
+    return !!this.bent && this.points?.length === 3;
+  }
+
+  /** A straight two-point arrow or line, or a bent one, can be bent. */
+  canBend() {
+    return ['arrow', 'line'].includes(this.kind) && !this.curve && !this.timing && (this.points?.length === 2 || this.isBent());
+  }
+
+  /** Where its bend handle sits: on the bow's middle, or the straight
+   *  one's midpoint (off the grid when its length is an odd count of cells). */
+  bendHandle() {
+    if (!this.canBend()) return null;
+    if (this.isBent()) return { ...this.points[1] };
+    const [a, b] = this.points;
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  }
+
+  /** Bend it to pass through the grid point nearest (wx, wy) at its middle;
+   *  a point on the straight line between its ends straightens it. */
+  bendTo(wx, wy) {
+    if (!this.canBend()) return false;
+    const a = this.points[0];
+    const b = this.points.at(-1);
+    const p = snapPoint(wx, wy);
+    const cross = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+    const within = (p.x - a.x) * (b.x - p.x) + (p.y - a.y) * (b.y - p.y) >= 0;
+    if (cross === 0 && within) {
+      this.points = [{ ...a }, { ...b }];
+      this.bent = false;
+    } else {
+      this.points = [{ ...a }, p, { ...b }];
+      this.bent = true;
+    }
+    this.circuit.invalidateRoutingCache();
+    return true;
+  }
+
   moveSegment(index, dx, dy) {
     if (!['arrow', 'line'].includes(this.kind) || !Number.isInteger(index) || index < 1 || index >= this.points.length) return false;
     for (const point of [this.points[index - 1], this.points[index]]) {
@@ -32737,6 +32872,7 @@ class LabelInstance {
       end: this.kind === 'label' ? null : { ...this.end },
       points: ['arrow', 'line'].includes(this.kind) ? this.points.map((point) => ({ ...point })) : null,
       ...(this.curve ? { curve: true } : {}),
+      ...(this.isBent() ? { bent: true } : {}),
       textAnchor: this.kind === 'label' ? null : { ...this.textAnchor },
       ...(this.plot ? { plot: normalizePlot(this.plot) } : {}),
       ...(this.image ? { image: { ...this.image } } : {}),
@@ -38298,6 +38434,7 @@ class Circuit {
           end: l.end || null,
           points: l.points || null,
           curve: l.curve === true,
+          bent: l.bent === true,
           textAnchor: l.textAnchor || null,
           plot: l.plot || null,
           image: l.image || null,
@@ -39451,7 +39588,7 @@ function labelProblem(label) {
   if (!finite(label.x) || !finite(label.y)) return 'a label has no position';
   if (label.kind === 'label' && !text(label.text)) return 'a text label has no text';
   if (label.kind !== 'label' && !point(label.end)) return `a ${label.kind} has no end`;
-  if (label.kind === 'line' && !optional(label.points, path)) return 'a line has bad points';
+  if (['line', 'arrow'].includes(label.kind) && !optional(label.points, path)) return `a ${label.kind} has bad points`;
   if (!optional(label.style, isObject)) return 'a label has a bad style';
   return null;
 }
@@ -41660,7 +41797,7 @@ let autoRoute; __bind(() => { ({ autoRoute } = __require("src/core/router.js"));
 let TABLE_RULE_ROOM_EM, escapeSvg, fontAttrs, labelFontSize, resolveColor, roleWidth, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg; __bind(() => { ({ TABLE_RULE_ROOM_EM, escapeSvg, fontAttrs, labelFontSize, resolveColor, roleWidth, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } = __require("src/core/style.js")); });
 let GREEK_LOWER, GREEK_UPPER, TEX_SPACE_WIDTHS, TEX_SYMBOLS, plainTexText, plotTextMarkup, texToLabelMarkup; __bind(() => { ({ GREEK_LOWER, GREEK_UPPER, TEX_SPACE_WIDTHS, TEX_SYMBOLS, plainTexText, plotTextMarkup, texToLabelMarkup } = __require("src/core/tex-markup.js")); });
 let INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, hasInlineMath, plotLegendCurves, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters; __bind(() => { ({ INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, hasInlineMath, plotLegendCurves, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } = __require("src/core/model.js")); });
-let TIMING_ARROWHEAD, arrowheadEnds, curvedArrowGeometry, defaultArrowhead, polylineArrowheads; __bind(() => { ({ TIMING_ARROWHEAD, arrowheadEnds, curvedArrowGeometry, defaultArrowhead, polylineArrowheads } = __require("src/core/line-style.js")); });
+let TIMING_ARROWHEAD, arrowheadEnds, bentArrowheads, curvedArrowGeometry, defaultArrowhead, polylineArrowheads; __bind(() => { ({ TIMING_ARROWHEAD, arrowheadEnds, bentArrowheads, curvedArrowGeometry, defaultArrowhead, polylineArrowheads } = __require("src/core/line-style.js")); });
 let hiddenSupplyBarLabels, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js")); });
 let VALUE_TYPES, replacedNameLabels; __bind(() => { ({ VALUE_TYPES, replacedNameLabels } = __require("src/core/part-value.js")); });
 let SOURCE_WAVEFORMS; __bind(() => { ({ SOURCE_WAVEFORMS } = __require("src/core/components/current.js")); });
@@ -42400,9 +42537,17 @@ function curvedArrowSvg(points, style, opacity = '') {
   return `<path d="${d}" fill="none"${opacity} ${styleAttrs(style, 'annotation')}/>${head ? arrowheadsSvg([head], style?.color, opacity) : ''}`;
 }
 
+/** A bent arrow or line (bentArrowheads): one quadratic, cut back for its heads. */
+function bentShapeSvg(label, opacity = '') {
+  const { shaft, heads } = bentArrowheads(label.points, label.style?.arrowhead, { fallback: defaultArrowhead(label.kind) });
+  const d = `M ${pt(shaft.start.x, shaft.start.y)} Q ${pt(shaft.c.x, shaft.c.y)} ${pt(shaft.end.x, shaft.end.y)}`;
+  return `<path d="${d}" fill="none"${opacity} ${styleAttrs(label.style, 'annotation')}/>${arrowheadsSvg(heads, label.style?.color, opacity)}`;
+}
+
 function shapeAnnotationSvg(label, opacity = '') {
   const a = label.anchor; const b = label.end;
   if (label.kind === 'arrow' && label.curve) return curvedArrowSvg(label.points, label.style, opacity);
+  if (label.isBent?.()) return bentShapeSvg(label, opacity);
   if (label.kind === 'line' || label.kind === 'arrow') {
     const points = label.points?.length ? label.points : [a, b];
     // A timing diagram's lines take its arrows' heads: one size in one figure.
@@ -43594,7 +43739,17 @@ function editorOverlay(circuit, opts = {}) {
 
   // Arrow and line vertices are drag points: solid when the annotation is
   // selected, hollow while the pointer rests on an unselected one.
-  const vertexHandles = (label, solid) => label.points.map((p) => `<circle class="annotation-vertex-handle" cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="${fmt(5 * unit)}" fill="${solid ? SELECT : 'var(--paper, #fff)'}" stroke="${solid ? 'var(--paper, #fff)' : SELECT}" stroke-width="2" vector-effect="non-scaling-stroke" pointer-events="none"/>`).join('');
+  // A bent one's middle point is its bend, drawn as the bend handle.
+  const vertexHandles = (label, solid) => label.points.map((p, i) => (label.isBent?.() && i === 1 ? '' : `<circle class="annotation-vertex-handle" cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="${fmt(5 * unit)}" fill="${solid ? SELECT : 'var(--paper, #fff)'}" stroke="${solid ? 'var(--paper, #fff)' : SELECT}" stroke-width="2" vector-effect="non-scaling-stroke" pointer-events="none"/>`)).join('');
+  // A selected straight two-point arrow or line, or a bent one, has a
+  // square bend handle at its middle: hollow while straight, solid bent.
+  const bendHandle = (label) => {
+    const p = label.bendHandle?.();
+    if (!p) return '';
+    const s = 5 * unit;
+    const bent = label.isBent();
+    return `<rect class="annotation-bend-handle" x="${fmt(p.x - s)}" y="${fmt(p.y - s)}" width="${fmt(2 * s)}" height="${fmt(2 * s)}" fill="${bent ? SELECT : 'var(--paper, #fff)'}" stroke="${bent ? 'var(--paper, #fff)' : SELECT}" stroke-width="2" vector-effect="non-scaling-stroke" pointer-events="none"/>`;
+  };
   const hoverAnnotation = opts.hoverAnnotation && !(opts.selLabels || []).includes(opts.hoverAnnotation)
     ? circuit.labels.get(opts.hoverAnnotation) : null;
   if (hoverAnnotation?.points) parts.push(vertexHandles(hoverAnnotation, false));
@@ -43609,6 +43764,7 @@ function editorOverlay(circuit, opts = {}) {
       // Align to draws its own picks; vertex drag points would compete.
       if (label.points && !opts.alignTool) {
         parts.push(vertexHandles(label, true));
+        parts.push(bendHandle(label));
         // Picked vertices (for a group drag or Delete) wear a ring.
         const picked = opts.selectedVertices?.[label.id] || [];
         for (const index of picked) {
@@ -69446,6 +69602,7 @@ function pasteClipboard({ recordHistory = true, connect = true } = {}) {
           ...(l.table ? { table: { parts: l.table.parts && l.table.parts.map((refdes) => refMap.get(refdes) || refdes) } } : {}),
           ...(l.stack ? { stack: l.stack } : {}),
           ...(l.curve ? { curve: true } : {}),
+          ...(l.bent ? { bent: true } : {}),
         });
         labelMap.set(l.id, shape.id);
         addedLabels.push(shape.id);
@@ -80953,6 +81110,7 @@ __exports.pickLabel = pickLabel;
 __exports.annotationTextAt = annotationTextAt;
 __exports.annotationGeometryAt = annotationGeometryAt;
 __exports.annotationEndpointAt = annotationEndpointAt;
+__exports.annotationBendAt = annotationBendAt;
 __exports.selectedComps = selectedComps;
 __exports.layoutSelection = layoutSelection;
 __exports.layoutPlan = layoutPlan;
@@ -82492,8 +82650,11 @@ function annotationGeometryAt(world) {
   const p = { x: snap(world.x), y: snap(world.y) };
   const near = (a, b) => distanceToSegment(p, a, b) <= GRID / 2;
   for (const label of labels()) {
-    if (label.kind === 'line' && label.points.some((point, i) => i > 0 && near(label.points[i - 1], point))) return label;
-    if (label.kind === 'arrow' && label.points?.some((point, i) => i > 0 && near(label.points[i - 1], point))) return label;
+    if (['arrow', 'line'].includes(label.kind) && label.points?.length) {
+      // Along what is drawn: a bent one's bow, not its three points.
+      const route = label.isBent() ? label.shapePoints() : label.points;
+      if (route.some((point, i) => i > 0 && near(route[i - 1], point))) return label;
+    }
     if (label.kind === 'box') {
       if (label.table) label.syncTableBox();
       const a = label.anchor; const b = label.end;
@@ -82512,7 +82673,8 @@ function annotationEndpointAt(world) {
   const p = { x: snap(world.x), y: snap(world.y) };
   for (const label of labels()) {
     if (['arrow', 'line'].includes(label.kind)) {
-      const index = label.points.findIndex((point) => Math.abs(p.x - point.x) <= GRID / 2 && Math.abs(p.y - point.y) <= GRID / 2);
+      // A bent one's middle point is its bend (annotationBendAt), not a vertex.
+      const index = label.points.findIndex((point, i) => !(label.isBent() && i === 1) && Math.abs(p.x - point.x) <= GRID / 2 && Math.abs(p.y - point.y) <= GRID / 2);
       if (index >= 0) return { label, endpoint: `vertex:${index}` };
     }
     if (label.kind !== 'arrow') continue;
@@ -82524,11 +82686,22 @@ function annotationEndpointAt(world) {
   return null;
 }
 
+/** The selected arrow or line whose bend handle (bendHandle) is under
+ *  `world`, or null: a straight two-point one's midpoint, a bent one's bow. */
+function annotationBendAt(world) {
+  for (const id of selLabels) {
+    const handle = circuit.labels.get(id)?.bendHandle?.();
+    if (handle && Math.abs(world.x - handle.x) <= GRID / 2 && Math.abs(world.y - handle.y) <= GRID / 2) return circuit.labels.get(id);
+  }
+  return null;
+}
+
 function annotationSegmentAt(world) {
   const p = { x: snap(world.x), y: snap(world.y) };
   const near = (a, b) => distanceToSegment(p, a, b) <= GRID / 2;
   for (const label of labels()) {
-    if (!['arrow', 'line'].includes(label.kind)) continue;
+    // A bent one moves whole (annotationGeometryAt); it has no straight legs.
+    if (!['arrow', 'line'].includes(label.kind) || label.isBent()) continue;
     for (let i = 1; i < label.points.length; i++) {
       if (near(label.points[i - 1], label.points[i])) return { label, segment: i };
     }
@@ -86018,6 +86191,12 @@ function canvasMouseDown(ev) {
     };
     return;
   }
+  // A selected arrow's or line's bend handle bends it.
+  const bendHit = !isSelectionModifier(ev) && mode === 'normal' ? annotationBendAt(startWorld) : null;
+  if (bendHit) {
+    drag = { mode: 'annotationbend', label: bendHit, startPoints: bendHit.points.map((point) => ({ ...point })), startBent: bendHit.bent, startClient, startWorld, startSnapshot: snapshot(), moved: false };
+    return;
+  }
   const endpointHit = annotationEndpointAt(startWorld);
   const annotationSegment = endpointHit ? null : annotationSegmentAt(startWorld);
   const pickedLine = endpointHit?.label || annotationSegment?.label;
@@ -86971,6 +87150,18 @@ function canvasMouseMove(ev) {
     }
     return;
   }
+  if (drag.mode === 'annotationbend') {
+    if (movedOut) drag.moved = true;
+    if (drag.moved) {
+      drag.label.points = drag.startPoints.map((point) => ({ ...point }));
+      drag.label.bent = drag.startBent;
+      drag.label.bendTo(movedWorld.x, movedWorld.y);
+      cursor = snappedWorld(movedWorld);
+      markModelChanged(false);
+      scheduleInteractionRender();
+    }
+    return;
+  }
   if (drag.mode === 'annotationvertices') {
     if (movedOut) drag.moved = true;
     if (drag.moved) {
@@ -87641,7 +87832,7 @@ function finishCanvasMouseUp(ev) {
       if (copySelectionExists()) deleteSelection();
       else deleteAtPoint(w);
     }
-  } else if (drag.mode === 'annotationsegment' || drag.mode === 'annotationendpoint' || drag.mode === 'annotationvertices' || drag.mode === 'boxresize') {
+  } else if (drag.mode === 'annotationsegment' || drag.mode === 'annotationendpoint' || drag.mode === 'annotationvertices' || drag.mode === 'annotationbend' || drag.mode === 'boxresize') {
     if (drag.moved && snapshot() !== drag.startSnapshot) {
       recordHistoryEntry(drag.startSnapshot);
     }
@@ -95331,7 +95522,8 @@ function copyableLabelPayload(label) {
     x: anchor.x,
     y: anchor.y,
     end: label.kind === 'label' ? null : { ...label.end },
-    points: label.kind === 'line' ? label.points.map((point) => ({ ...point })) : null,
+    // An arrow's corners and bend too, not only a line's.
+    points: ['line', 'arrow'].includes(label.kind) && label.points ? label.points.map((point) => ({ ...point })) : null,
     style: { ...(label.style || {}) },
     // An equation stays an equation; it and aligned text keep their measured
     // box until they render.
@@ -95342,6 +95534,7 @@ function copyableLabelPayload(label) {
     ...(label.table ? { table: label.table } : {}),
     ...(label.stack ? { stack: { ...label.stack } } : {}),
     ...(label.curve ? { curve: true } : {}),
+    ...(label.bent && label.points?.length === 3 ? { bent: true } : {}),
   };
 }
 

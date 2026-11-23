@@ -575,6 +575,8 @@ export function commandHelp() {
     '  annotation rename|move|align|rm ... - edit/remove an annotation label',
     '  annotation join ID ID ...      - join line annotations that meet end to end or share a stretch into one line',
     '  annotation vertex-rm ID N      - remove vertex N (from 0) of a line or arrow',
+    '  annotation bend ID X Y         - bend a two-point line or arrow through X Y at its middle (on the line: straight)',
+    '  annotation bend ID off         - straighten a bent line or arrow',
     '  annotation plotcolors PLOT on|off - a plot\'s traces in their colors, or in black told apart by dash (a new plot\'s)',
     '  annotation dataplot FILE [--x COL|row] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y | --into PLOT [--hz] [--ratio]]',
     '                                   - plot a CSV file\'s columns (by number or name), or add them to a plot (an analysis\'s too; --hz: x in Hz, --ratio: a magnitude ratio, on a response); unset options are guessed. The file is read, never kept',
@@ -1801,7 +1803,26 @@ function annotationCommand(circuit, pos, result, flags = {}, io) {
     if (!label.removeVertex(index)) throw new Error(`cannot remove vertex ${index} of ${label.id}: a line keeps two distinct points and an arrow two cells of length`);
     return result(`removed vertex ${index} of ${label.id}`, label.toJSON(), true);
   }
-  throw new Error('usage: annotation add|rename|move|align|rm|vertex-rm|plotcolors|dataplot|plotaxis|plotview|plottrace|stack|list ...');
+  if (op === 'bend') {
+    const usage = 'usage: annotation bend ID X Y | annotation bend ID off';
+    const label = circuit.labels.get(pos[1]);
+    if (!label || !['arrow', 'line'].includes(label.kind)) throw new Error(`unknown line or arrow "${pos[1]}"`);
+    if (!label.canBend()) throw new Error(`${label.id} cannot bend: only a straight two-point line or arrow bends`);
+    const [a, b] = [label.points[0], label.points.at(-1)];
+    const off = pos[2] === 'off' && pos.length === 3;
+    const x = off ? (a.x + b.x) / 2 : Number(pos[2]);
+    const y = off ? (a.y + b.y) / 2 : Number(pos[3]);
+    if (!off && (pos.length !== 4 || !Number.isFinite(x) || !Number.isFinite(y))) throw new Error(usage);
+    const before = JSON.stringify(label.points);
+    if (off) {
+      label.points = [{ ...a }, { ...b }];
+      label.bent = false;
+      circuit.invalidateRoutingCache();
+    } else label.bendTo(x, y);
+    const changed = JSON.stringify(label.points) !== before;
+    return result(label.isBent() ? `${label.id}: bent through ${label.points[1].x},${label.points[1].y}` : `${label.id}: straight`, label.toJSON(), changed);
+  }
+  throw new Error('usage: annotation add|rename|move|align|rm|vertex-rm|bend|plotcolors|dataplot|plotaxis|plotview|plottrace|stack|list ...');
 }
 
 /** A 1-based beat number from a command, as a 0-based index. */

@@ -686,6 +686,7 @@ export function pasteClipboard({ recordHistory = true, connect = true } = {}) {
           ...(l.table ? { table: { parts: l.table.parts && l.table.parts.map((refdes) => refMap.get(refdes) || refdes) } } : {}),
           ...(l.stack ? { stack: l.stack } : {}),
           ...(l.curve ? { curve: true } : {}),
+          ...(l.bent ? { bent: true } : {}),
         });
         labelMap.set(l.id, shape.id);
         addedLabels.push(shape.id);

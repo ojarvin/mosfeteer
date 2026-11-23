@@ -95,6 +95,14 @@ typed into a window's field (an analysis value, a calculator's number)
 applies on Enter or when the focus leaves the field changed, never while it
 is typed (`onFieldCommit`, `dom.js`); Enter there applies the field only.
 
+A selected straight two-point arrow or line has a square bend handle at
+its middle (hollow; solid once bent). Dragging it bends the shape through
+that grid point as one quadratic bow (`LabelInstance#bendTo`,
+`bentArrowheads` in `line-style.js`): saved as three points and `bent`,
+drawn smooth, its heads along the curve; dropped on the straight line
+between its ends, it is straight again. One undo step per drag. A bent
+shape's ends still drag; a press on its bow moves it whole.
+
 Every placing tool stays armed until Esc: insert, wire, move, copy,
 delete, net labels and ports (asking for the next names once the typed
 ones are placed), free text (asking for the next text), equations,

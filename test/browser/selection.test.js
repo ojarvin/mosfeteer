@@ -173,6 +173,38 @@ describe('selection and editing', { skip: browserSkip() }, () => {
     assert.deepEqual(await points(), ['0,400', '200,560']);
   });
 
+  test("a selected arrow's middle handle bends it, one undo step each; dragged back onto the line it is straight", async () => {
+    const id = await ed(`c.addAnnotation('arrow', { points: [{ x: 800, y: 0 }, { x: 800, y: 160 }] }).id`);
+    await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.fitView())`);
+    const arrow = (expression) => ed(`(() => { const a = c.labels.get(${JSON.stringify(id)}); return ${expression}; })()`);
+    const handle = () => h.evaluate(`!!document.querySelector('.annotation-bend-handle')`);
+    assert.equal(await handle(), false, 'no handle until selected');
+    await press(800, 40);
+    await until(`e.selLabels.has(${JSON.stringify(id)})`);
+    assert.equal(await handle(), true, 'a selected straight arrow offers its bend');
+    const history = await ed('e.history.length');
+    await press(800, 80, { to: { x: 880, y: 80 } });
+    assert.deepEqual(await arrow('[a.isBent(), a.points.map((p) => p.x + \',\' + p.y)]'), [true, ['800,0', '880,80', '800,160']]);
+    assert.equal(await ed('e.history.length'), history + 1, 'one undo step');
+    // Drawn as one curve, its head at the end.
+    assert.ok(await h.evaluate(`[...document.querySelectorAll('#canvas path')].some((p) => /^M [^A-Z]+ Q /.test(p.getAttribute('d') || ''))`));
+    await h.key('z', { ctrlKey: true });
+    await until(`!c.labels.get(${JSON.stringify(id)}).isBent()`);
+    // Selected again (undo let it go), bent again, then the bow dragged
+    // onto the straight line: straight.
+    await press(800, 40);
+    await until(`e.selLabels.has(${JSON.stringify(id)})`);
+    await press(800, 80, { to: { x: 720, y: 80 } });
+    assert.equal(await arrow('a.isBent()'), true);
+    await press(720, 80, { to: { x: 800, y: 120 } });
+    assert.deepEqual(await arrow('[a.isBent(), a.points.length]'), [false, 2]);
+    // A press on a bent arrow's line, away from the handle, moves it whole.
+    await press(800, 80, { to: { x: 880, y: 80 } });
+    await press(800, 0, { to: { x: 800, y: -80 } });
+    assert.equal(await arrow('a.isBent()'), true, 'its end moved, still bent');
+    assert.deepEqual(await arrow('a.points[0]'), { x: 800, y: -80 });
+  });
+
   test("renaming a net to another net's name asks first, offering to keep them separate", async () => {
     // A net sharing no part with OUT.
     for (const line of ['add resistor R4 --at 600 640', 'add resistor R5 --at 1000 640', 'connect R4.b R5.a']) await h.evaluate(`window.__run(${JSON.stringify(line)})`);
