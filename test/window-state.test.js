@@ -12,6 +12,7 @@ test('window state is saved with the design and read back', () => {
   circuit.windows.calculator = { history: [{ input: '20*log(10)', result: '20' }] };
   circuit.windows.scope = { nets: [], chosen: true, samples: 512, input: 'U', amplitude: '-6', frequency: '1/64' };
   circuit.windows.sizing = { sort: { key: 'w', reverse: true }, group: true };
+  circuit.windows.bode = { asymptotes: false };
   const back = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
   assert.deepEqual(back.windows, circuit.windows);
 });
@@ -31,4 +32,10 @@ test('window state keeps only what each window shows, bounded', () => {
   assert.equal('sizing' in windows, false, 'no column it sorts by, not grouped');
   assert.deepEqual(normalizeWindows({ sizing: { sort: { key: 'value' }, group: false } }).sizing, { sort: { key: 'value' } });
   assert.equal('unknown' in windows, false);
+});
+
+test('the Bode asymptotes are saved only when turned off', () => {
+  assert.deepEqual(normalizeWindows({ bode: { asymptotes: false } }).bode, { asymptotes: false });
+  assert.equal('bode' in normalizeWindows({ bode: { asymptotes: true } }), false);
+  assert.equal('bode' in normalizeWindows({ bode: { asymptotes: 'no' } }), false);
 });

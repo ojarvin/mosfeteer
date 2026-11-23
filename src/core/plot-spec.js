@@ -47,13 +47,17 @@ export function responseSpec(plot) {
       step: phase ? 45 : 20,
       floor: phase ? null : -400,
     },
-    series: plot.traces.map((trace, index) => ({ trace, index })).filter(({ trace }) => !trace.hidden).map(({ trace, index }) => ({
-      trace: index,
-      label: trace.label,
-      color: trace.color,
-      role: trace.background ? 'background' : trace.start ? 'start' : 'curve',
-      points: finitePoints(trace.points.filter((p) => p.f > 0).map((p) => [p.f, Number.isFinite(p.db) ? p.db : null])),
-    })),
+    series: plot.traces.map((trace, index) => ({ trace, index })).filter(({ trace }) => !trace.hidden).flatMap(({ trace, index }) => [
+      // Its straight-line asymptote, when it has one, under it in its color.
+      ...(trace.asymptote?.length ? [{ trace: index, color: trace.color, role: 'asymptote', points: trace.asymptote.map((p) => [p.f, p.db]) }] : []),
+      {
+        trace: index,
+        label: trace.label,
+        color: trace.color,
+        role: trace.background ? 'background' : trace.start ? 'start' : 'curve',
+        points: finitePoints(trace.points.filter((p) => p.f > 0).map((p) => [p.f, Number.isFinite(p.db) ? p.db : null])),
+      },
+    ]),
     vlines: [
       ...(plot.band || []).map((f) => ({ x: f, role: 'band' })),
       ...(plot.markers || []).filter((m) => m.f > 0).map((m) => ({ x: m.f, role: 'marker', label: m.label || '' })),
@@ -154,10 +158,11 @@ export function locusSpec(plot) {
 
 /**
  * A Bode sketch (bode.js `bodeSketch`) as two plots sharing their
- * frequency axis: the magnitude with its straight-line asymptotes and the
- * marked corners, and the phase. `corners`: `[{ w, text }]`.
+ * frequency axis: the magnitude and the phase, with the marked corners and,
+ * with `asymptotes`, each one's straight-line asymptote. `corners`:
+ * `[{ w, text }]`.
  */
-export function bodeSpecs(sketch, { corners = [], quantity = 'A_{v}', unityText = 'ω_{u}' } = {}) {
+export function bodeSpecs(sketch, { corners = [], quantity = 'A_{v}', unityText = 'ω_{u}', asymptotes = true } = {}) {
   const range = [pow10(sketch.range.low), pow10(sketch.range.high)];
   const marks = corners.filter((c) => c.w > 0).map((c) => ({ x: c.w, role: 'corner', label: c.text }));
   if (sketch.unityGain) marks.push({ x: sketch.unityGain.w, role: 'corner', label: unityText });
@@ -168,7 +173,7 @@ export function bodeSpecs(sketch, { corners = [], quantity = 'A_{v}', unityText 
       x: { scale: 'log', label: 'ω (g/C)', range },
       y: { scale: 'linear', label: `|${quantity}| (dB)`, step: 20, floor: -400 },
       series: [
-        { role: 'asymptote', points: sketch.asymptote.map((p) => [p.w, p.db]) },
+        ...(asymptotes ? [{ role: 'asymptote', points: sketch.asymptote.map((p) => [p.w, p.db]) }] : []),
         { role: 'curve', label: quantity, points: sketch.points.map((p) => [p.w, p.db]) },
       ],
       vlines: marks,
@@ -179,7 +184,10 @@ export function bodeSpecs(sketch, { corners = [], quantity = 'A_{v}', unityText 
       title: 'Phase',
       x: { scale: 'log', label: 'ω (g/C)', range },
       y: { scale: 'linear', label: `∠${quantity} (°)`, step: 90 },
-      series: [{ role: 'curve', label: quantity, points: sketch.points.map((p) => [p.w, p.phase]) }],
+      series: [
+        ...(asymptotes && sketch.phaseAsymptote?.length ? [{ role: 'asymptote', points: sketch.phaseAsymptote.map((p) => [p.w, p.phase]) }] : []),
+        { role: 'curve', label: quantity, points: sketch.points.map((p) => [p.w, p.phase]) },
+      ],
       vlines: marks.map((mark) => ({ ...mark, label: '' })),
       hlines: [-360, -180, 0, 180].map((y) => ({ y, role: 'zero' })),
     },

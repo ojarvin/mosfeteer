@@ -17,7 +17,7 @@
 
 import { PER_DECADE } from './e-series.js';
 import {
-  DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, baseSymbols, bodeSketch, evaluateExpression, expressionSymbols, numericCoefficients,
+  DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, baseSymbols, bodeSketch, evaluateExpression, expressionSymbols, extendAsymptote, numericCoefficients,
   responseAt, sketchParameters, sketchValues, withDerivedValues,
 } from '../core/analysis/bode.js';
 import { renderExpression } from '../core/analysis/present.js';
@@ -347,8 +347,9 @@ const POINTS_PER_DECADE = 40;
 
 /** The graph as a response plot (signal-flow.js `responsePlot`'s shape):
  *  what the Plots window and an annotation draw. Every trace over the range
- *  they span together, each from its own exact response. */
-function responsePlotOf(sketches, quantity = 'magnitude') {
+ *  they span together, each from its own exact response, and with
+ *  `asymptotes` its straight-line asymptote run on over that range. */
+function responsePlotOf(sketches, quantity = 'magnitude', { asymptotes = asymptotesShown() } = {}) {
   if (!sketches.length) return null;
   const low = Math.min(...sketches.map(({ sketch }) => sketch.range.low));
   const high = Math.max(low + 1, ...sketches.map(({ sketch }) => sketch.range.high));
@@ -364,26 +365,47 @@ function responsePlotOf(sketches, quantity = 'magnitude') {
     range: { low, high },
     ...(markers.length ? { markers } : {}),
     ...(quantity === 'phase' ? { quantity: 'phase' } : {}),
-    traces: sketches.map(({ trace, response }) => {
+    traces: sketches.map(({ trace, response, sketch }) => {
       let previous = null;
-      return {
-        label: trace.label,
-        color: trace.color,
-        points: grid.map((f) => {
-          const h = response(f);
-          if (quantity !== 'phase') return { f, db: 20 * Math.log10(Math.hypot(h.re, h.im)) };
-          // Unwrapped, as the sketch's own phase is.
-          let phase = (Math.atan2(h.im, h.re) * 180) / Math.PI;
-          if (previous !== null) {
-            while (phase - previous > 180) phase -= 360;
-            while (phase - previous < -180) phase += 360;
-          }
-          previous = phase;
-          return { f, db: phase };
-        }),
-      };
+      const points = grid.map((f) => {
+        const h = response(f);
+        if (quantity !== 'phase') return { f, db: 20 * Math.log10(Math.hypot(h.re, h.im)) };
+        // Unwrapped, as the sketch's own phase is.
+        let phase = (Math.atan2(h.im, h.re) * 180) / Math.PI;
+        if (previous !== null) {
+          while (phase - previous > 180) phase -= 360;
+          while (phase - previous < -180) phase += 360;
+        }
+        previous = phase;
+        return { f, db: phase };
+      });
+      return { label: trace.label, color: trace.color, points, ...(asymptotes ? asymptoteOf(sketch, quantity, points, low, high) : {}) };
     }),
   };
+}
+
+/** A sketch's straight-line magnitude or phase over `low`..`high` (decades
+ *  of ω), as a response trace keeps it; the phase by as many turns as start
+ *  it on the curve's `points`. */
+function asymptoteOf(sketch, quantity, points, low, high) {
+  const phase = quantity === 'phase';
+  const line = extendAsymptote(phase
+    ? (sketch.phaseAsymptote || []).map((p) => ({ w: p.w, value: p.phase }))
+    : sketch.asymptote.map((p) => ({ w: p.w, value: p.db })), low, high);
+  if (line.length < 2) return {};
+  const turns = phase && Number.isFinite(points[0]?.db) ? Math.round((points[0].db - line[0].value) / 360) * 360 : 0;
+  return { asymptote: line.map((p) => ({ f: p.w, db: p.value + turns })) };
+}
+
+/** The asymptotes are drawn: the Plots window's Asymptotes, saved with the
+ *  design (`Circuit#windows.bode`), on unless turned off. */
+const asymptotesShown = () => editor.circuit?.windows?.bode?.asymptotes !== false;
+
+function showAsymptotes(on) {
+  if (on) delete editor.circuit.windows.bode;
+  else editor.circuit.windows.bode = { asymptotes: false };
+  markSettingsChanged();
+  renderPlots();
 }
 
 /** One trace shown: its textbook sketch, asymptote and corners marked;
@@ -391,7 +413,7 @@ function responsePlotOf(sketches, quantity = 'magnitude') {
 function graphSpec(sketches, quantity) {
   if (sketches.length === 1) {
     const [{ trace, sketch, corners }] = sketches;
-    const spec = bodeSpecs(sketch, { corners, quantity: axisName(trace.label), ...(trace.key === 'loop' ? { unityText: 'ω_{c}' } : {}) })[quantity];
+    const spec = bodeSpecs(sketch, { corners, quantity: axisName(trace.label), asymptotes: asymptotesShown(), ...(trace.key === 'loop' ? { unityText: 'ω_{c}' } : {}) })[quantity];
     return { ...spec, key: `bode:${quantity}:${trace.id}`, series: spec.series.map((series) => (series.role === 'curve' ? { ...series, color: trace.color } : series)) };
   }
   const spec = responseSpec(responsePlotOf(sketches, quantity));
@@ -505,8 +527,13 @@ function appendCorners(list, { trace, sketch, corners }, named) {
   }
 }
 
-// Annotate graph puts the phase on the drawing too, as a plot of its own.
-const graphChoice = { phase: false };
+// Annotate graph puts the phase on the drawing too, as a plot of its own;
+// the asymptotes go on the graph and with it.
+const graphChoice = {
+  phase: false,
+  get asymptotes() { return asymptotesShown(); },
+  set asymptotes(on) { showAsymptotes(on); },
+};
 
 /** The graph on the drawing: its magnitude, and with `phase` its phase. */
 function annotateGraph({ phase = graphChoice.phase, magnitude = true } = {}) {
@@ -527,7 +554,8 @@ function bodePlotUpdate(plot) {
   const matched = matchPlotTraces(plot, traces.map((trace) => ({ ...trace, label: trace.held ? heldLabel(trace) : liveLabel(trace) })));
   const sketches = (matched || []).map((trace) => ({ trace, ...(sketchOf(trace) || {}) }));
   if (!matched || sketches.some((entry) => !entry.sketch)) return { error: 'its traces are no longer on the graph' };
-  const next = responsePlotOf(sketches, plot.quantity === 'phase' ? 'phase' : 'magnitude');
+  // Its asymptotes stay as they were drawn, on or off.
+  const next = responsePlotOf(sketches, plot.quantity === 'phase' ? 'phase' : 'magnitude', { asymptotes: plot.traces.some((trace) => trace.asymptote) });
   return next ? { plot: next, shown: matched } : { error: 'its traces are no longer on the graph' };
 }
 

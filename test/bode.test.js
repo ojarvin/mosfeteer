@@ -4,7 +4,7 @@ import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
 import { analyzeSmallSignal } from '../src/core/analysis/index.js';
 import {
-  DEFAULT_INTRINSIC_GAIN, bodeSketch, evaluateExpression, expressionSymbols, numericCoefficients,
+  DEFAULT_INTRINSIC_GAIN, bodeSketch, evaluateExpression, extendAsymptote, expressionSymbols, numericCoefficients,
   polynomialRoots, sketchParameters, sketchValues,
 } from '../src/core/analysis/bode.js';
 
@@ -193,4 +193,28 @@ test('a Miller capacitance gets its number from its definition, and the plots se
   assert.ok(Math.abs(values['C_{M1,in}'] - 2e-12 * (1 + 0.002 * load)) < 1e-24);
   assert.ok(Math.abs(values['C_{M1,out}'] - 2e-12 * (1 + 1 / (0.002 * load))) < 1e-24);
   assert.ok(Number.isFinite(evaluateExpression(report.exact.Av.expression.denominator, { ...values, s: 1e6 })));
+});
+
+test('the phase asymptote turns 90 degrees per root over two decades, from where the curve starts', () => {
+  // -10 (1 - s/100) / ((1 + s)(1 + s/10)): inverting, two poles, a right-half-plane zero.
+  const sketch = bodeSketch([-10, 0.1], [1, 1.1, 0.1]);
+  const line = sketch.phaseAsymptote.map((p) => [Math.round(Math.log10(p.w) * 100) / 100, Math.round(p.phase)]);
+  assert.deepEqual(line, [[-2, 180], [-1, 180], [0, 135], [1, 45], [2, -45], [3, -90]]);
+  // It ends where the curve heads: -90 past the last corner.
+  assert.ok(Math.abs(sketch.points.at(-1).phase - -90) < 10);
+  // A zero at the origin starts it at 90, a left-half-plane pole takes it to 0.
+  const highPass = bodeSketch([0, 1], [1, 1]);
+  assert.deepEqual(highPass.phaseAsymptote.map((p) => Math.round(p.phase)), [90, 0]);
+  // A complex pair turns it twice, through -90 at its frequency.
+  const resonant = bodeSketch([1], [1, 0.2, 1]);
+  const at = (w) => resonant.phaseAsymptote.find((p) => Math.abs(Math.log10(p.w) - Math.log10(w)) < 1e-9)?.phase;
+  assert.equal(Math.round(at(0.1)), 0);
+  assert.equal(Math.round(at(10)), -180);
+});
+
+test('an asymptote runs on along its end segments', () => {
+  const line = [{ w: 1, value: 0 }, { w: 10, value: 0 }, { w: 100, value: -20 }];
+  assert.deepEqual(extendAsymptote(line, -1, 3).map((p) => [Math.round(Math.log10(p.w)), Math.round(p.value)]), [[-1, 0], [0, 0], [1, 0], [2, -20], [3, -40]]);
+  // Already spanning the range, it is as it was.
+  assert.deepEqual(extendAsymptote(line, 0, 2), line);
 });

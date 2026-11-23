@@ -131,6 +131,10 @@ export function normalizeWindows(value) {
       ...(samples > 0 ? { samples: Math.max(1024, Math.min(samples, 1 << 16)) } : {}),
     };
   }
+  // The small-signal Bode plots' straight-line asymptotes: kept only when
+  // turned off.
+  const bode = object(source.bode);
+  if (bode?.asymptotes === false) windows.bode = { asymptotes: false };
   // Held traces, by analysis ('signal-flow', 'switched-cap', 'small-signal'):
   // each the trace it was held from (`of`), its name, color, shown or not,
   // and the numbers it was held at -- remade when a Derive brings that

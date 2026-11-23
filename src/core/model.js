@@ -1311,6 +1311,16 @@ function analysisValuesJSON(values) {
   } };
 }
 
+/** A response trace's straight-line asymptote, `[{ f, db }]` (the phase in
+ *  `db` on a phase plot, as its points keep it): its corners only, so a
+ *  few dozen at most. */
+function asymptoteOf(trace) {
+  const points = (Array.isArray(trace?.asymptote) ? trace.asymptote : [])
+    .filter((p) => finite(p?.f) && p.f > 0 && finite(p?.db)).slice(0, 200)
+    .map((p) => ({ f: round(p.f, 6), db: round(p.db) }));
+  return points.length > 1 ? { asymptote: points } : {};
+}
+
 /** A plot of several magnitude responses (signal-flow analysis): colored
  *  traces of dB against log frequency, each named by its TeX equation. */
 function normalizeResponsePlot(plot) {
@@ -1329,6 +1339,8 @@ function normalizeResponsePlot(plot) {
     points: (Array.isArray(trace?.points) ? trace.points : [])
       .filter((p) => finite(p?.f) && p.f > 0 && finite(p?.db))
       .map((p) => ({ f: round(p.f, 6), db: round(p.db) })),
+    // Its straight-line asymptote (a Bode plot's), drawn under it.
+    ...asymptoteOf(trace),
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   const band = (Array.isArray(plot.band) ? plot.band : []).filter((f) => finite(f) && f > 0).slice(0, 2).map((f) => round(f, 6));

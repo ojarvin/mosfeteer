@@ -61,7 +61,7 @@ export function cursorCurves(spec) {
   const xs = spec?.x?.scale || 'linear';
   const ys = spec?.y?.scale || 'linear';
   return (spec?.series || [])
-    .filter((s) => s.trace !== undefined && !s.parametric && !s.dots && s.role !== 'band')
+    .filter((s) => s.trace !== undefined && !s.parametric && !s.dots && s.role !== 'band' && s.role !== 'asymptote')
     .map((s) => ({
       trace: s.trace,
       color: s.color || null,

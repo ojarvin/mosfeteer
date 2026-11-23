@@ -425,12 +425,21 @@ origin (`atOrigin`), so a zero at s = 0 does not stretch the axis decades
 down. Each trace can be hidden or removed;
 the magnitude is drawn over the phase, the two on one frequency axis
 (they pan and zoom along it together, and only the phase numbers it); one
-trace shown is drawn as a
-textbook sketch, its asymptote and corners marked, several as their curves
-together over the range they span. **Annotate** puts the graph on the
+trace shown is drawn with its corners marked, several as their curves
+together over the range they span. **Asymptotes** (on unless turned off,
+saved with the design as `Circuit#windows.bode`) draws each shown trace's
+straight-line asymptotes under it, dashed in its color
+(`bodeSketch`'s `asymptote` and `phaseAsymptote`): the magnitude bends
+20 dB/decade at each zero and pole; the phase starts at the low-frequency
+phase of `k s^m` and each root away from the origin turns it 90° at
+45°/decade, from a decade below its frequency to a decade above (up for a
+left-half-plane zero or right-half-plane pole, down for the others; a
+complex pair twice). **Annotate** puts the graph on the
 drawing as a signal-flow graph is (`plot.kind: 'response'`, its traces
 named beside it, against its box; one trace's corners marked, `ω_{p1}`, a
-label close to the one before a line lower), and **with phase** checked its phase as
+label close to the one before a line lower; with Asymptotes on, each
+trace's asymptote with it, `trace.asymptote`, kept by **Update plot**), and
+**with phase** checked its phase as
 a plot of its own. Each shown trace's corners are listed under the graph.
 
 The plots are drawn in relative units, so they sketch shapes, not a

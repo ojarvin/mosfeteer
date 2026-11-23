@@ -7009,7 +7009,8 @@ details.analysis-options > * + * {
   gap: 6px;
 }
 
-.bode-phase-toggle {
+/* Above the windows' stacked field labels: the box beside its text. */
+:is(.analysis-dock, .plots-window) :is(.bode-phase-toggle, .bode-asymptote-toggle) {
   display: inline-flex;
   flex-direction: row;
   align-items: center;

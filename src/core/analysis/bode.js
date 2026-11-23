@@ -204,7 +204,8 @@ const decibels = (h) => 20 * log10(cabs(h));
 /**
  * The sketch of `N(s)/D(s)` (dense coefficient arrays): the exact magnitude
  * and phase over a frequency range around its corners, the poles and zeros,
- * the straight-line magnitude asymptote, and the unity-gain crossing.
+ * the straight-line magnitude and phase asymptotes, and the unity-gain
+ * crossing.
  * Frequencies are in the units the coefficients were evaluated in. A
  * numeric solve (numeric-response.js) passes its own `roots` ({zeros,
  * poles}, found as eigenvalues rather than from the coefficients) and its
@@ -259,6 +260,9 @@ export function bodeSketch(numerator, denominator, { pointsPerDecade = 40, roots
     const shift = Math.round(points[0].phase / 360) * 360;
     for (const point of points) point.phase -= shift;
   }
+  // The phase asymptote, by as many turns as start it on the curve.
+  const phaseLine = phaseAsymptote(num, den, zeros, poles, low, high);
+  const turns = points.length && phaseLine.length ? Math.round((points[0].phase - phaseLine[0].phase) / 360) * 360 : 0;
   return {
     range: { low, high },
     points,
@@ -266,6 +270,7 @@ export function bodeSketch(numerator, denominator, { pointsPerDecade = 40, roots
     poles,
     canceled,
     asymptote: magnitudeAsymptote(num, den, zeros, poles, low, high),
+    phaseAsymptote: phaseLine.map((p) => ({ w: p.w, phase: p.phase + turns })),
     unityGain: unityCrossing(points),
   };
 }
@@ -319,6 +324,38 @@ function magnitudeAsymptote(num, den, zeros, poles, low, high) {
     base = { logW, db };
   }
   out.push({ w: 10 ** high, db: base.db + 20 * slope * (high - base.logW) });
+  return out;
+}
+
+/** The textbook straight-line phase: the low-frequency phase of k ω^m
+ *  (0 or 180, and 90 for each power of s), each root away from the origin
+ *  turning it by 90 degrees at 45 per decade, from a decade below its
+ *  frequency to a decade above (a complex pair turns it twice). A
+ *  left-half-plane zero and a right-half-plane pole turn it up; a
+ *  right-half-plane zero and a left-half-plane pole down. */
+function phaseAsymptote(num, den, zeros, poles, low, high) {
+  const valuation = (a) => a.findIndex((value) => value !== 0);
+  const vn = valuation(num);
+  const vd = valuation(den);
+  if (vn < 0 || vd < 0) return [];
+  const base = (num[vn] / den[vd] < 0 ? 180 : 0) + 90 * (vn - vd);
+  const turns = [
+    ...zeros.filter((z) => cabs(z) > 0).map((z) => ({ at: log10(cabs(z)), by: z.re > 0 ? -90 : 90 })),
+    ...poles.filter((p) => cabs(p) > 0).map((p) => ({ at: log10(cabs(p)), by: p.re > 0 ? 90 : -90 })),
+  ];
+  const phaseAt = (logW) => turns.reduce((sum, { at, by }) => sum + by * Math.min(1, Math.max(0, (logW - at + 1) / 2)), base);
+  const bends = [low, high, ...turns.flatMap(({ at }) => [at - 1, at + 1])].filter((logW) => logW >= low && logW <= high);
+  return [...new Set(bends)].sort((a, b) => a - b).map((logW) => ({ w: 10 ** logW, phase: phaseAt(logW) }));
+}
+
+/** A straight-line asymptote (`[{ w, value }]`) run on to `low` and `high`
+ *  (decades of ω) along its first and last segments. */
+export function extendAsymptote(line, low, high) {
+  if (line.length < 2) return line;
+  const at = (a, b, logW) => a.value + ((b.value - a.value) * (logW - log10(a.w))) / (log10(b.w) - log10(a.w));
+  const out = [...line];
+  if (low < log10(out[0].w)) out.unshift({ w: 10 ** low, value: at(out[0], out[1], low) });
+  if (high > log10(out.at(-1).w)) out.push({ w: 10 ** high, value: at(out.at(-2), out.at(-1), high) });
   return out;
 }
 

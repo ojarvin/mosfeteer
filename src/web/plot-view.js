@@ -265,7 +265,7 @@ export function createPlotView({ height = 230, fill = false, aspect = null, maxH
     if (spec.equal) rows.push(`${plain(spec.y.label) || 'y'} = ${readoutNumber(fromU(scaleY(), atY(hover.py)))}`);
     else {
       for (const series of spec.series) {
-        if (series.dots || series.parametric || series.role === 'band') continue;
+        if (series.dots || series.parametric || series.role === 'band' || series.role === 'asymptote') continue;
         const y = valueAt(uPoints(series), u, { stairs: !!series.stairs });
         if (y === null || !Number.isFinite(y)) continue;
         rows.push(`${plain(series.label) || plain(spec.y.label)}: ${readoutNumber(fromU(scaleY(), y))}`);

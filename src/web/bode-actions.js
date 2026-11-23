@@ -38,7 +38,7 @@ export function showBodeGraphs(host, pair, specs, hasTraces) {
  * The row's controls. `clear()` empties the graph; `annotate({ magnitude,
  * phase })` puts the shown quantities on the drawing; `ready` whether
  * there is a graph to annotate; `state` the mode's own { phase } choice,
- * kept across redraws.
+ * kept across redraws, and { asymptotes } where its sketches have them.
  */
 function bodeGraphActions({ clear, annotate, ready, state }) {
   return [
@@ -48,6 +48,11 @@ function bodeGraphActions({ clear, annotate, ready, state }) {
       Object.assign(el('input', { type: 'checkbox', 'aria-label': 'Annotate the phase too' }), { checked: state.phase, onchange: (ev) => { state.phase = ev.target.checked; } }),
       ' with phase',
     ]),
+    // A mode whose sketches have straight-line asymptotes shows them or not.
+    ...('asymptotes' in state ? [el('label', { class: 'bode-asymptote-toggle' }, [
+      Object.assign(el('input', { type: 'checkbox', 'aria-label': 'Asymptotes' }), { checked: state.asymptotes, onchange: (ev) => { state.asymptotes = ev.target.checked; } }),
+      ' Asymptotes',
+    ])] : []),
   ];
 }
 

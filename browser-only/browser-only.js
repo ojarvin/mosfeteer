@@ -666,6 +666,7 @@ __exports.polynomialRoots = polynomialRoots;
 __exports.responseAt = responseAt;
 __exports.bodeSketch = bodeSketch;
 __exports.cancelCommonRoots = cancelCommonRoots;
+__exports.extendAsymptote = extendAsymptote;
 let symbolText; __bind(() => { ({ symbolText } = __require("src/core/analysis/present.js")); });
 let c, cabs, cadd, cdiv, cmul, csub; __bind(() => { ({ c, cabs, cadd, cdiv, cmul, csub } = __require("src/core/analysis/complex.js")); });
 /**
@@ -874,7 +875,8 @@ const decibels = (h) => 20 * log10(cabs(h));
 /**
  * The sketch of `N(s)/D(s)` (dense coefficient arrays): the exact magnitude
  * and phase over a frequency range around its corners, the poles and zeros,
- * the straight-line magnitude asymptote, and the unity-gain crossing.
+ * the straight-line magnitude and phase asymptotes, and the unity-gain
+ * crossing.
  * Frequencies are in the units the coefficients were evaluated in. A
  * numeric solve (numeric-response.js) passes its own `roots` ({zeros,
  * poles}, found as eigenvalues rather than from the coefficients) and its
@@ -929,6 +931,9 @@ function bodeSketch(numerator, denominator, { pointsPerDecade = 40, roots = null
     const shift = Math.round(points[0].phase / 360) * 360;
     for (const point of points) point.phase -= shift;
   }
+  // The phase asymptote, by as many turns as start it on the curve.
+  const phaseLine = phaseAsymptote(num, den, zeros, poles, low, high);
+  const turns = points.length && phaseLine.length ? Math.round((points[0].phase - phaseLine[0].phase) / 360) * 360 : 0;
   return {
     range: { low, high },
     points,
@@ -936,6 +941,7 @@ function bodeSketch(numerator, denominator, { pointsPerDecade = 40, roots = null
     poles,
     canceled,
     asymptote: magnitudeAsymptote(num, den, zeros, poles, low, high),
+    phaseAsymptote: phaseLine.map((p) => ({ w: p.w, phase: p.phase + turns })),
     unityGain: unityCrossing(points),
   };
 }
@@ -989,6 +995,38 @@ function magnitudeAsymptote(num, den, zeros, poles, low, high) {
     base = { logW, db };
   }
   out.push({ w: 10 ** high, db: base.db + 20 * slope * (high - base.logW) });
+  return out;
+}
+
+/** The textbook straight-line phase: the low-frequency phase of k ω^m
+ *  (0 or 180, and 90 for each power of s), each root away from the origin
+ *  turning it by 90 degrees at 45 per decade, from a decade below its
+ *  frequency to a decade above (a complex pair turns it twice). A
+ *  left-half-plane zero and a right-half-plane pole turn it up; a
+ *  right-half-plane zero and a left-half-plane pole down. */
+function phaseAsymptote(num, den, zeros, poles, low, high) {
+  const valuation = (a) => a.findIndex((value) => value !== 0);
+  const vn = valuation(num);
+  const vd = valuation(den);
+  if (vn < 0 || vd < 0) return [];
+  const base = (num[vn] / den[vd] < 0 ? 180 : 0) + 90 * (vn - vd);
+  const turns = [
+    ...zeros.filter((z) => cabs(z) > 0).map((z) => ({ at: log10(cabs(z)), by: z.re > 0 ? -90 : 90 })),
+    ...poles.filter((p) => cabs(p) > 0).map((p) => ({ at: log10(cabs(p)), by: p.re > 0 ? 90 : -90 })),
+  ];
+  const phaseAt = (logW) => turns.reduce((sum, { at, by }) => sum + by * Math.min(1, Math.max(0, (logW - at + 1) / 2)), base);
+  const bends = [low, high, ...turns.flatMap(({ at }) => [at - 1, at + 1])].filter((logW) => logW >= low && logW <= high);
+  return [...new Set(bends)].sort((a, b) => a - b).map((logW) => ({ w: 10 ** logW, phase: phaseAt(logW) }));
+}
+
+/** A straight-line asymptote (`[{ w, value }]`) run on to `low` and `high`
+ *  (decades of ω) along its first and last segments. */
+function extendAsymptote(line, low, high) {
+  if (line.length < 2) return line;
+  const at = (a, b, logW) => a.value + ((b.value - a.value) * (logW - log10(a.w))) / (log10(b.w) - log10(a.w));
+  const out = [...line];
+  if (low < log10(out[0].w)) out.unshift({ w: 10 ** low, value: at(out[0], out[1], low) });
+  if (high > log10(out.at(-1).w)) out.push({ w: 10 ** high, value: at(out.at(-2), out.at(-1), high) });
   return out;
 }
 
@@ -31697,6 +31735,16 @@ function analysisValuesJSON(values) {
   } };
 }
 
+/** A response trace's straight-line asymptote, `[{ f, db }]` (the phase in
+ *  `db` on a phase plot, as its points keep it): its corners only, so a
+ *  few dozen at most. */
+function asymptoteOf(trace) {
+  const points = (Array.isArray(trace?.asymptote) ? trace.asymptote : [])
+    .filter((p) => finite(p?.f) && p.f > 0 && finite(p?.db)).slice(0, 200)
+    .map((p) => ({ f: round(p.f, 6), db: round(p.db) }));
+  return points.length > 1 ? { asymptote: points } : {};
+}
+
 /** A plot of several magnitude responses (signal-flow analysis): colored
  *  traces of dB against log frequency, each named by its TeX equation. */
 function normalizeResponsePlot(plot) {
@@ -31715,6 +31763,8 @@ function normalizeResponsePlot(plot) {
     points: (Array.isArray(trace?.points) ? trace.points : [])
       .filter((p) => finite(p?.f) && p.f > 0 && finite(p?.db))
       .map((p) => ({ f: round(p.f, 6), db: round(p.db) })),
+    // Its straight-line asymptote (a Bode plot's), drawn under it.
+    ...asymptoteOf(trace),
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   const band = (Array.isArray(plot.band) ? plot.band : []).filter((f) => finite(f) && f > 0).slice(0, 2).map((f) => round(f, 6));
@@ -40340,7 +40390,7 @@ function cursorCurves(spec) {
   const xs = spec?.x?.scale || 'linear';
   const ys = spec?.y?.scale || 'linear';
   return (spec?.series || [])
-    .filter((s) => s.trace !== undefined && !s.parametric && !s.dots && s.role !== 'band')
+    .filter((s) => s.trace !== undefined && !s.parametric && !s.dots && s.role !== 'band' && s.role !== 'asymptote')
     .map((s) => ({
       trace: s.trace,
       color: s.color || null,
@@ -41249,13 +41299,17 @@ function responseSpec(plot) {
       step: phase ? 45 : 20,
       floor: phase ? null : -400,
     },
-    series: plot.traces.map((trace, index) => ({ trace, index })).filter(({ trace }) => !trace.hidden).map(({ trace, index }) => ({
-      trace: index,
-      label: trace.label,
-      color: trace.color,
-      role: trace.background ? 'background' : trace.start ? 'start' : 'curve',
-      points: finitePoints(trace.points.filter((p) => p.f > 0).map((p) => [p.f, Number.isFinite(p.db) ? p.db : null])),
-    })),
+    series: plot.traces.map((trace, index) => ({ trace, index })).filter(({ trace }) => !trace.hidden).flatMap(({ trace, index }) => [
+      // Its straight-line asymptote, when it has one, under it in its color.
+      ...(trace.asymptote?.length ? [{ trace: index, color: trace.color, role: 'asymptote', points: trace.asymptote.map((p) => [p.f, p.db]) }] : []),
+      {
+        trace: index,
+        label: trace.label,
+        color: trace.color,
+        role: trace.background ? 'background' : trace.start ? 'start' : 'curve',
+        points: finitePoints(trace.points.filter((p) => p.f > 0).map((p) => [p.f, Number.isFinite(p.db) ? p.db : null])),
+      },
+    ]),
     vlines: [
       ...(plot.band || []).map((f) => ({ x: f, role: 'band' })),
       ...(plot.markers || []).filter((m) => m.f > 0).map((m) => ({ x: m.f, role: 'marker', label: m.label || '' })),
@@ -41356,10 +41410,11 @@ function locusSpec(plot) {
 
 /**
  * A Bode sketch (bode.js `bodeSketch`) as two plots sharing their
- * frequency axis: the magnitude with its straight-line asymptotes and the
- * marked corners, and the phase. `corners`: `[{ w, text }]`.
+ * frequency axis: the magnitude and the phase, with the marked corners and,
+ * with `asymptotes`, each one's straight-line asymptote. `corners`:
+ * `[{ w, text }]`.
  */
-function bodeSpecs(sketch, { corners = [], quantity = 'A_{v}', unityText = 'ω_{u}' } = {}) {
+function bodeSpecs(sketch, { corners = [], quantity = 'A_{v}', unityText = 'ω_{u}', asymptotes = true } = {}) {
   const range = [pow10(sketch.range.low), pow10(sketch.range.high)];
   const marks = corners.filter((c) => c.w > 0).map((c) => ({ x: c.w, role: 'corner', label: c.text }));
   if (sketch.unityGain) marks.push({ x: sketch.unityGain.w, role: 'corner', label: unityText });
@@ -41370,7 +41425,7 @@ function bodeSpecs(sketch, { corners = [], quantity = 'A_{v}', unityText = 'ω_{
       x: { scale: 'log', label: 'ω (g/C)', range },
       y: { scale: 'linear', label: `|${quantity}| (dB)`, step: 20, floor: -400 },
       series: [
-        { role: 'asymptote', points: sketch.asymptote.map((p) => [p.w, p.db]) },
+        ...(asymptotes ? [{ role: 'asymptote', points: sketch.asymptote.map((p) => [p.w, p.db]) }] : []),
         { role: 'curve', label: quantity, points: sketch.points.map((p) => [p.w, p.db]) },
       ],
       vlines: marks,
@@ -41381,7 +41436,10 @@ function bodeSpecs(sketch, { corners = [], quantity = 'A_{v}', unityText = 'ω_{
       title: 'Phase',
       x: { scale: 'log', label: 'ω (g/C)', range },
       y: { scale: 'linear', label: `∠${quantity} (°)`, step: 90 },
-      series: [{ role: 'curve', label: quantity, points: sketch.points.map((p) => [p.w, p.phase]) }],
+      series: [
+        ...(asymptotes && sketch.phaseAsymptote?.length ? [{ role: 'asymptote', points: sketch.phaseAsymptote.map((p) => [p.w, p.phase]) }] : []),
+        { role: 'curve', label: quantity, points: sketch.points.map((p) => [p.w, p.phase]) },
+      ],
       vlines: marks.map((mark) => ({ ...mark, label: '' })),
       hlines: [-360, -180, 0, 180].map((y) => ({ y, role: 'zero' })),
     },
@@ -50897,6 +50955,10 @@ function normalizeWindows(value) {
       ...(samples > 0 ? { samples: Math.max(1024, Math.min(samples, 1 << 16)) } : {}),
     };
   }
+  // The small-signal Bode plots' straight-line asymptotes: kept only when
+  // turned off.
+  const bode = object(source.bode);
+  if (bode?.asymptotes === false) windows.bode = { asymptotes: false };
   // Held traces, by analysis ('signal-flow', 'switched-cap', 'small-signal'):
   // each the trace it was held from (`of`), its name, color, shown or not,
   // and the numbers it was held at -- remade when a Derive brings that
@@ -64699,7 +64761,7 @@ function showBodeGraphs(host, pair, specs, hasTraces) {
  * The row's controls. `clear()` empties the graph; `annotate({ magnitude,
  * phase })` puts the shown quantities on the drawing; `ready` whether
  * there is a graph to annotate; `state` the mode's own { phase } choice,
- * kept across redraws.
+ * kept across redraws, and { asymptotes } where its sketches have them.
  */
 function bodeGraphActions({ clear, annotate, ready, state }) {
   return [
@@ -64709,6 +64771,11 @@ function bodeGraphActions({ clear, annotate, ready, state }) {
       Object.assign(el('input', { type: 'checkbox', 'aria-label': 'Annotate the phase too' }), { checked: state.phase, onchange: (ev) => { state.phase = ev.target.checked; } }),
       ' with phase',
     ]),
+    // A mode whose sketches have straight-line asymptotes shows them or not.
+    ...('asymptotes' in state ? [el('label', { class: 'bode-asymptote-toggle' }, [
+      Object.assign(el('input', { type: 'checkbox', 'aria-label': 'Asymptotes' }), { checked: state.asymptotes, onchange: (ev) => { state.asymptotes = ev.target.checked; } }),
+      ' Asymptotes',
+    ])] : []),
   ];
 }
 
@@ -64743,7 +64810,7 @@ __exports.bodeSettingsRestored = bodeSettingsRestored;
 __exports.installBodeUi = installBodeUi;
 __exports.bodeSnapshot = bodeSnapshot;
 let PER_DECADE; __bind(() => { ({ PER_DECADE } = __require("src/web/e-series.js")); });
-let DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, baseSymbols, bodeSketch, evaluateExpression, expressionSymbols, numericCoefficients, responseAt, sketchParameters, sketchValues, withDerivedValues; __bind(() => { ({ DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, baseSymbols, bodeSketch, evaluateExpression, expressionSymbols, numericCoefficients, responseAt, sketchParameters, sketchValues, withDerivedValues } = __require("src/core/analysis/bode.js")); });
+let DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, baseSymbols, bodeSketch, evaluateExpression, expressionSymbols, extendAsymptote, numericCoefficients, responseAt, sketchParameters, sketchValues, withDerivedValues; __bind(() => { ({ DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, baseSymbols, bodeSketch, evaluateExpression, expressionSymbols, extendAsymptote, numericCoefficients, responseAt, sketchParameters, sketchValues, withDerivedValues } = __require("src/core/analysis/bode.js")); });
 let renderExpression; __bind(() => { ({ renderExpression } = __require("src/core/analysis/present.js")); });
 let negate; __bind(() => { ({ negate } = __require("src/core/analysis/rational.js")); });
 let cornerNames; __bind(() => { ({ cornerNames } = __require("src/core/bode-figure.js")); });
@@ -65104,8 +65171,9 @@ const POINTS_PER_DECADE = 40;
 
 /** The graph as a response plot (signal-flow.js `responsePlot`'s shape):
  *  what the Plots window and an annotation draw. Every trace over the range
- *  they span together, each from its own exact response. */
-function responsePlotOf(sketches, quantity = 'magnitude') {
+ *  they span together, each from its own exact response, and with
+ *  `asymptotes` its straight-line asymptote run on over that range. */
+function responsePlotOf(sketches, quantity = 'magnitude', { asymptotes = asymptotesShown() } = {}) {
   if (!sketches.length) return null;
   const low = Math.min(...sketches.map(({ sketch }) => sketch.range.low));
   const high = Math.max(low + 1, ...sketches.map(({ sketch }) => sketch.range.high));
@@ -65121,26 +65189,47 @@ function responsePlotOf(sketches, quantity = 'magnitude') {
     range: { low, high },
     ...(markers.length ? { markers } : {}),
     ...(quantity === 'phase' ? { quantity: 'phase' } : {}),
-    traces: sketches.map(({ trace, response }) => {
+    traces: sketches.map(({ trace, response, sketch }) => {
       let previous = null;
-      return {
-        label: trace.label,
-        color: trace.color,
-        points: grid.map((f) => {
-          const h = response(f);
-          if (quantity !== 'phase') return { f, db: 20 * Math.log10(Math.hypot(h.re, h.im)) };
-          // Unwrapped, as the sketch's own phase is.
-          let phase = (Math.atan2(h.im, h.re) * 180) / Math.PI;
-          if (previous !== null) {
-            while (phase - previous > 180) phase -= 360;
-            while (phase - previous < -180) phase += 360;
-          }
-          previous = phase;
-          return { f, db: phase };
-        }),
-      };
+      const points = grid.map((f) => {
+        const h = response(f);
+        if (quantity !== 'phase') return { f, db: 20 * Math.log10(Math.hypot(h.re, h.im)) };
+        // Unwrapped, as the sketch's own phase is.
+        let phase = (Math.atan2(h.im, h.re) * 180) / Math.PI;
+        if (previous !== null) {
+          while (phase - previous > 180) phase -= 360;
+          while (phase - previous < -180) phase += 360;
+        }
+        previous = phase;
+        return { f, db: phase };
+      });
+      return { label: trace.label, color: trace.color, points, ...(asymptotes ? asymptoteOf(sketch, quantity, points, low, high) : {}) };
     }),
   };
+}
+
+/** A sketch's straight-line magnitude or phase over `low`..`high` (decades
+ *  of ω), as a response trace keeps it; the phase by as many turns as start
+ *  it on the curve's `points`. */
+function asymptoteOf(sketch, quantity, points, low, high) {
+  const phase = quantity === 'phase';
+  const line = extendAsymptote(phase
+    ? (sketch.phaseAsymptote || []).map((p) => ({ w: p.w, value: p.phase }))
+    : sketch.asymptote.map((p) => ({ w: p.w, value: p.db })), low, high);
+  if (line.length < 2) return {};
+  const turns = phase && Number.isFinite(points[0]?.db) ? Math.round((points[0].db - line[0].value) / 360) * 360 : 0;
+  return { asymptote: line.map((p) => ({ f: p.w, db: p.value + turns })) };
+}
+
+/** The asymptotes are drawn: the Plots window's Asymptotes, saved with the
+ *  design (`Circuit#windows.bode`), on unless turned off. */
+const asymptotesShown = () => editor.circuit?.windows?.bode?.asymptotes !== false;
+
+function showAsymptotes(on) {
+  if (on) delete editor.circuit.windows.bode;
+  else editor.circuit.windows.bode = { asymptotes: false };
+  markSettingsChanged();
+  renderPlots();
 }
 
 /** One trace shown: its textbook sketch, asymptote and corners marked;
@@ -65148,7 +65237,7 @@ function responsePlotOf(sketches, quantity = 'magnitude') {
 function graphSpec(sketches, quantity) {
   if (sketches.length === 1) {
     const [{ trace, sketch, corners }] = sketches;
-    const spec = bodeSpecs(sketch, { corners, quantity: axisName(trace.label), ...(trace.key === 'loop' ? { unityText: 'ω_{c}' } : {}) })[quantity];
+    const spec = bodeSpecs(sketch, { corners, quantity: axisName(trace.label), asymptotes: asymptotesShown(), ...(trace.key === 'loop' ? { unityText: 'ω_{c}' } : {}) })[quantity];
     return { ...spec, key: `bode:${quantity}:${trace.id}`, series: spec.series.map((series) => (series.role === 'curve' ? { ...series, color: trace.color } : series)) };
   }
   const spec = responseSpec(responsePlotOf(sketches, quantity));
@@ -65262,8 +65351,13 @@ function appendCorners(list, { trace, sketch, corners }, named) {
   }
 }
 
-// Annotate graph puts the phase on the drawing too, as a plot of its own.
-const graphChoice = { phase: false };
+// Annotate graph puts the phase on the drawing too, as a plot of its own;
+// the asymptotes go on the graph and with it.
+const graphChoice = {
+  phase: false,
+  get asymptotes() { return asymptotesShown(); },
+  set asymptotes(on) { showAsymptotes(on); },
+};
 
 /** The graph on the drawing: its magnitude, and with `phase` its phase. */
 function annotateGraph({ phase = graphChoice.phase, magnitude = true } = {}) {
@@ -65284,7 +65378,8 @@ function bodePlotUpdate(plot) {
   const matched = matchPlotTraces(plot, traces.map((trace) => ({ ...trace, label: trace.held ? heldLabel(trace) : liveLabel(trace) })));
   const sketches = (matched || []).map((trace) => ({ trace, ...(sketchOf(trace) || {}) }));
   if (!matched || sketches.some((entry) => !entry.sketch)) return { error: 'its traces are no longer on the graph' };
-  const next = responsePlotOf(sketches, plot.quantity === 'phase' ? 'phase' : 'magnitude');
+  // Its asymptotes stay as they were drawn, on or off.
+  const next = responsePlotOf(sketches, plot.quantity === 'phase' ? 'phase' : 'magnitude', { asymptotes: plot.traces.some((trace) => trace.asymptote) });
   return next ? { plot: next, shown: matched } : { error: 'its traces are no longer on the graph' };
 }
 
@@ -93445,7 +93540,7 @@ function createPlotView({ height = 230, fill = false, aspect = null, maxHeight =
     if (spec.equal) rows.push(`${plain(spec.y.label) || 'y'} = ${readoutNumber(fromU(scaleY(), atY(hover.py)))}`);
     else {
       for (const series of spec.series) {
-        if (series.dots || series.parametric || series.role === 'band') continue;
+        if (series.dots || series.parametric || series.role === 'band' || series.role === 'asymptote') continue;
         const y = valueAt(uPoints(series), u, { stairs: !!series.stairs });
         if (y === null || !Number.isFinite(y)) continue;
         rows.push(`${plain(series.label) || plain(spec.y.label)}: ${readoutNumber(fromU(scaleY(), y))}`);

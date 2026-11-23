@@ -56,3 +56,38 @@ test('an analysis plot\'s spec draws the traces added from files over its own; a
   assert.equal(locus.series.at(-1).parametric, true);
   assert.equal(plotSpec({ points: [] }), null);
 });
+
+test("a response trace's asymptote is drawn under it in its color, saved with it, and no marker lands on it", async () => {
+  const { normalizePlot } = await import('../src/core/model.js');
+  const { cursorCurves } = await import('../src/core/plot-cursors.js');
+  const plot = normalizePlot({
+    kind: 'response', axis: 'omega', range: { low: -1, high: 2 },
+    traces: [
+      { label: 'A_v', color: '#3b74e0', points: [{ f: 0.1, db: 20 }, { f: 100, db: -40 }], asymptote: [{ f: 0.1, db: 20 }, { f: 1, db: 20 }, { f: 100, db: -20 }, { f: 'x', db: 0 }] },
+      { label: 'Z_out', color: '#e0743b', points: [{ f: 0.1, db: 0 }, { f: 100, db: 0 }], asymptote: [{ f: 1, db: 0 }] },
+    ],
+  });
+  // Kept: its finite points; one point is no line.
+  assert.deepEqual(plot.traces[0].asymptote, [{ f: 0.1, db: 20 }, { f: 1, db: 20 }, { f: 100, db: -20 }]);
+  assert.equal('asymptote' in plot.traces[1], false);
+  const spec = plotSpec(plot);
+  assert.deepEqual(spec.series.map((s) => [s.role, s.trace, s.color]), [['asymptote', 0, '#3b74e0'], ['curve', 0, '#3b74e0'], ['curve', 1, '#e0743b']]);
+  assert.deepEqual(spec.series[0].points, [[0.1, 20], [1, 20], [100, -20]]);
+  assert.deepEqual(cursorCurves(spec).map((c) => c.label), ['A_v', 'Z_out']);
+});
+
+test('a Bode sketch shows its magnitude and phase asymptotes, or neither', () => {
+  const sketch = {
+    range: { low: -1, high: 1 },
+    points: [{ w: 0.1, db: 0, phase: 0 }, { w: 10, db: -20, phase: -84 }],
+    asymptote: [{ w: 0.1, db: 0 }, { w: 1, db: 0 }, { w: 10, db: -20 }],
+    phaseAsymptote: [{ w: 0.1, phase: 0 }, { w: 10, phase: -90 }],
+    unityGain: null,
+  };
+  const on = bodeSpecs(sketch);
+  assert.deepEqual(on.magnitude.series.map((s) => s.role), ['asymptote', 'curve']);
+  assert.deepEqual(on.phase.series.map((s) => s.role), ['asymptote', 'curve']);
+  assert.deepEqual(on.phase.series[0].points, [[0.1, 0], [10, -90]]);
+  const off = bodeSpecs(sketch, { asymptotes: false });
+  assert.deepEqual([off.magnitude.series.map((s) => s.role), off.phase.series.map((s) => s.role)], [['curve'], ['curve']]);
+});

@@ -479,6 +479,33 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     await h.key('W', { shiftKey: true });
     await h.until(`/Voltage gain is zero/.test(document.querySelector('.bode-plots-empty')?.textContent || '') && !document.querySelector('.bode-plots-empty').hidden`);
   });
+  test('the Plots window draws the magnitude and phase asymptotes, Annotate carries them, and turned off they go, saved with the design', async () => {
+    await h.open('loaded');
+    if (await h.evaluate(`document.getElementById('analysis-dialog').hidden`)) await h.click('#btn-analysis');
+    await h.until(`!document.getElementById('analysis-dialog').hidden`);
+    await derive();
+    await h.until(`!!document.querySelector('.plots-window .bode-plots-graph svg path')`, 60000);
+    const lines = () => h.evaluate(`[...document.querySelectorAll('.plots-window .bode-plots-graph .plot-view')].map((p) => p.querySelectorAll('.role-asymptote').length)`);
+    const toggle = '.plots-window .bode-asymptote-toggle input';
+    assert.equal(await h.evaluate(`document.querySelector(${JSON.stringify(toggle)}).checked`), true, 'on by default');
+    assert.deepEqual((await lines()).map((n) => n > 0), [true, true], 'magnitude and phase each have one');
+    // Annotated with its phase: both plots carry the trace's asymptote.
+    await h.evaluate(`(() => { const c = document.querySelector('.plots-window .bode-phase-toggle input'); c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    assert.equal(await plotsButton('Annotate'), true);
+    const plots = `${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].filter((l) => l.plot?.kind === 'response' && l.figure?.source === 'small-signal').map((l) => l.plot))`;
+    await h.until(`${plots}.then((p) => p.length === 2)`);
+    assert.deepEqual(await h.evaluate(`${plots}.then((p) => p.map((plot) => [plot.quantity || 'magnitude', plot.traces[0].asymptote?.length > 1]))`), [['magnitude', true], ['phase', true]]);
+    // Off: gone from the window, kept off in the design; back on, back.
+    await h.evaluate(`(() => { const c = document.querySelector(${JSON.stringify(toggle)}); c.checked = false; c.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await h.until(`[...document.querySelectorAll('.plots-window .bode-plots-graph .role-asymptote')].length === 0`);
+    assert.deepEqual(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.toJSON().windows?.bode)`), { asymptotes: false });
+    assert.equal(await h.evaluate(`document.querySelector(${JSON.stringify(toggle)}).checked`), false);
+    await h.evaluate(`(() => { const c = document.querySelector(${JSON.stringify(toggle)}); c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await h.until(`[...document.querySelectorAll('.plots-window .bode-plots-graph .plot-view')].every((p) => p.querySelectorAll('.role-asymptote').length > 0)`);
+    await h.evaluate(`(() => { const c = document.querySelector('.plots-window .bode-phase-toggle input'); c.checked = false; c.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await plotsButton('Clear graph');
+  });
+
   test('a Bode plot on the drawing updates at the values now from its right-click Update plot, its colors kept; before a Derive it says to derive first', async () => {
     await h.open('loaded');
     if (await h.evaluate(`document.getElementById('analysis-dialog').hidden`)) await h.click('#btn-analysis');
