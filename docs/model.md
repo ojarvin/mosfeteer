@@ -24,6 +24,7 @@ The routing-sensitive symbol contract is:
 | --- | --- | --- |
 | passives, switches, diode | `a=(-80,0)`, `b=(80,0)` | bbox `{-80,-40,160,80}` |
 | NMOS / PMOS | `g=(-120,0)`, `d=(0,-80)`, `s=(0,80)` | bbox `{-120,-80,120,160}`; PMOS mirrors Y by default |
+| transformer | `a1=(-80,-80)`, `b1=(-80,80)`, `a2=(80,-80)`, `b2=(80,80)` | bbox `{-120,-80,240,160}`; the inductor's coil turned clockwise (primary) and mirrored (secondary), two core lines between them, a dot beside each a-end; refdes `T`; no analysis models it (small-signal refuses it as a part with no model) |
 | bulk MOS | plain MOS plus `b=(0,0)` | bulk label offset `{40,-40}` |
 | NPN / PNP | `b=(-160,0)`, `c=(0,-120)`, `e=(0,120)` | bbox `{-160,-120,160,240}`; PNP collector/emitter are inverted |
 | current/voltage source, VCCS, VCVS | `a=(0,-80)`, `b=(0,80)` | bbox `{-40,-80,80,160}`; VCCS/VCVS are the diamond controlled sources; a voltage source may show a sine, a pulse, or noise in its circle (`waveform`, `SOURCE_WAVEFORMS`), drawn only |

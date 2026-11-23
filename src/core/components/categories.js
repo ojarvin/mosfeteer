@@ -11,7 +11,7 @@
 import { symbolTypeNames } from './index.js';
 
 export const SYMBOL_CATEGORY_RULES = [
-  ['Passives', /^(variable_)?(resistor|capacitor|inductor)$|^(impedance|diode)$/],
+  ['Passives', /^(variable_)?(resistor|capacitor|inductor)$|^(impedance|transformer|diode)$/],
   ['Semiconductors / actives', /^(nmos|pmos|nmosb|pmosb|npn|pnp)$/],
   ['Switches', /^switch_|^chopper$/],
   ['Sources & power', /^(current_source|voltage_source|vccs|vcvs|supply|ground|vcm)$/],

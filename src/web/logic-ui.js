@@ -25,7 +25,7 @@ const ANNOTATED_ROWS = 64;
 const ANNOTATED_COLUMNS = 16;
 
 const LOGIC_TYPES = /^(inverter|buffer|tristate_inverter|tristate_buffer|mux|(and|nand|or|nor|xor|xnor)[23]_gate|dff.*|latch.*)$/;
-const ANALOG_TYPES = /^(nmos|pmos|nmosb|pmosb|npn|pnp|resistor|capacitor|inductor|current_source|voltage_source|vccs|vcvs|opamp.*|gm.*|diode|switch_.*|tf_.*|gain|signal_.*)$/;
+const ANALOG_TYPES = /^(nmos|pmos|nmosb|pmosb|npn|pnp|resistor|capacitor|inductor|transformer|current_source|voltage_source|vccs|vcvs|opamp.*|gm.*|diode|switch_.*|tf_.*|gain|signal_.*)$/;
 
 let section = null;
 let latest = null; // { revision, result }

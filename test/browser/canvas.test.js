@@ -65,6 +65,19 @@ describe('canvas editing', { skip: browserSkip() }, () => {
     assert.equal(now.key, 'wire');
   });
 
+  test('a transformer is found by its alias, placed, and drawn with both coils, the core, and its dots', async () => {
+    await arm('xfmr');
+    assert.equal((await state()).pending, 'transformer');
+    const spot = await viewPoint(0.85, 0.2);
+    await clickAt(spot.x, spot.y);
+    await h.until(`${h.module('editor-state.js')}.then((m) => !!m.editor.circuit.getComponent('T1'))`);
+    assert.equal(await circuit(`c.getComponent('T1').type`), 'transformer');
+    assert.equal(await circuit(`c.labelOf('T1').text`), 'T_{1}');
+    assert.ok(await h.evaluate(`!!document.querySelector('[data-ref="T1"] path[d="M -12 -44 L -12 44"]')`), 'the core is drawn');
+    assert.equal(await h.evaluate(`document.querySelectorAll('[data-ref="T1"] circle').length`), 2, 'both dots');
+    await h.key('Escape');
+  });
+
   test('the insert search keeps every letter it is typed, tool keys included', async () => {
     await h.key('i');
     await type('wm');

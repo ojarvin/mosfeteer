@@ -526,6 +526,7 @@ test('refdes prefixes by component type', () => {
     resistor: 'R',
     capacitor: 'C',
     inductor: 'L',
+    transformer: 'T',
     impedance: 'Z',
     diode: 'D',
     vccs: 'G',
@@ -714,4 +715,42 @@ test('no stroked line ends on the edge of a filled shape: it runs into it, or ke
     }
   }
   assert.deepEqual(seams, []);
+});
+
+test('transformer: the inductor coil turned clockwise on the left, its mirror image on the right, core lines between, dots at the a-ends', () => {
+  const def = getSymbol('transformer');
+  assert.equal(def.refPrefix, 'T');
+  assert.deepEqual(def.terminals.map(({ name, x, y, dir }) => ({ name, x, y, dir })), [
+    { name: 'a1', x: -80, y: -80, dir: { x: 0, y: -1 } },
+    { name: 'b1', x: -80, y: 80, dir: { x: 0, y: 1 } },
+    { name: 'a2', x: 80, y: -80, dir: { x: 0, y: -1 } },
+    { name: 'b2', x: 80, y: 80, dir: { x: 0, y: 1 } },
+  ]);
+  assert.deepEqual(def.bbox, { x: -120, y: -80, w: 240, h: 160 });
+  const points = (d) => d.match(/-?\d*\.?\d+/g).map(Number).reduce((out, v, i, all) => (i % 2 ? out : [...out, [v, all[i + 1]]]), []);
+  const coil = points(getSymbol('inductor').graphics[0].d);
+  const [primary, secondary, ...core] = def.graphics.filter((g) => g.kind === 'path').map((g) => points(g.d));
+  // Two core lines in the gap, as tall as the coils' loops reach.
+  assert.deepEqual(core, [[[-12, -44], [-12, 44]], [[12, -44], [12, 44]]]);
+  const near = (a, b) => a.length === b.length && a.every(([x, y], i) => Math.abs(x - b[i][0]) < 0.01 && Math.abs(y - b[i][1]) < 0.01);
+  // Clockwise, as an inductor at r 90 draws: (x, y) -> (-y, x), about x = -80.
+  assert.ok(near(primary, coil.map(([x, y]) => [-80 - y, x])));
+  assert.ok(near(secondary, primary.map(([x, y]) => [-x, y])));
+  // Both coils are pin leads, so wires meet them without a seam.
+  assert.deepEqual(def.graphics.filter((g) => g.kind === 'path').map((g) => !!g.terminalLead), [true, true, false, false]);
+  const dots = def.graphics.filter((g) => g.kind === 'dot');
+  assert.deepEqual(dots.map(({ cx, cy }) => [cx, cy]), [[-58, -54], [58, -54]]);
+  // Each dot stays clear of its winding's lead and loops, inside the body.
+  for (const { cx, cy, r } of dots) {
+    assert.ok(Math.abs(Math.abs(cx) - 80) - r > 10);
+    assert.ok(cy - r > -80 && cy + r < -35);
+  }
+});
+
+test('a transformer is added, rotated, and listed by its four pins from the command line', () => {
+  const circuit = new Circuit();
+  const done = runCommand(circuit, 'add transformer --at 200 200');
+  assert.match(done.text, /added T1 \(transformer\) at \(200,200\) rot=0; terminals a1=\(120,120\) b1=\(120,280\) a2=\(280,120\) b2=\(280,280\)/);
+  assert.equal(circuit.labelOf('T1').text, 'T_{1}');
+  assert.match(runCommand(circuit, 'add transformer --at 1000 1000 --rot 90').text, /T2 .*a1=\(1080,920\) b1=\(920,920\)/);
 });

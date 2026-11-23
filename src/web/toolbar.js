@@ -17,7 +17,7 @@ export function shortPlacementLabel(type) {
 }
 
 export const PLACEMENT_LABELS = {
-  resistor: 'Resistor', capacitor: 'Capacitor', inductor: 'Inductor', impedance: 'Impedance', diode: 'Diode',
+  resistor: 'Resistor', capacitor: 'Capacitor', inductor: 'Inductor', transformer: 'Transformer', impedance: 'Impedance', diode: 'Diode',
   nmos: 'NMOS transistor', pmos: 'PMOS transistor',
   nmosb: 'NMOS transistor with bulk', pmosb: 'PMOS transistor with bulk',
   npn: 'NPN transistor', pnp: 'PNP transistor',
@@ -56,7 +56,7 @@ export const PLACEMENT_LABELS = {
 };
 
 export const PLACEMENT_ALIASES = {
-  resistor: ['res', 'resistance'], capacitor: ['cap'], inductor: ['coil'], impedance: ['load', 'network'],
+  resistor: ['res', 'resistance'], capacitor: ['cap'], inductor: ['coil'], transformer: ['xfmr', 'coupled inductors', 'balun', 'coil'], impedance: ['load', 'network'],
   nmos: ['mos', 'n-channel', 'fet'], pmos: ['mos', 'p-channel', 'fet'],
   nmosb: ['mos', 'body', 'bulk', 'n-channel', 'fet'], pmosb: ['mos', 'body', 'bulk', 'p-channel', 'fet'],
   npn: ['bjt'], pnp: ['bjt'],

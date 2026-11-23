@@ -106,7 +106,7 @@ const PART_GROUPS = [
   ['nmos', 'NMOS'], ['nmosb', 'NMOS with bulk'], ['pmos', 'PMOS'], ['pmosb', 'PMOS with bulk'],
   ['resistor', 'Resistors'], ['variable_resistor', 'Variable resistors'],
   ['capacitor', 'Capacitors'], ['variable_capacitor', 'Variable capacitors'],
-  ['inductor', 'Inductors'], ['variable_inductor', 'Variable inductors'], ['impedance', 'Impedances'],
+  ['inductor', 'Inductors'], ['variable_inductor', 'Variable inductors'], ['transformer', 'Transformers'], ['impedance', 'Impedances'],
   ['current_source', 'Current sources'], ['voltage_source', 'Voltage sources'],
 ];
 

@@ -132,7 +132,7 @@ describe('gestures', { skip: browserSkip() }, () => {
       await h.key('Escape');
       return labels;
     };
-    assert.deepEqual(await ring(1), ['R', 'C', 'L', 'Z', 'Diode', 'Var. R', 'Var. C', 'Var. L']);
+    assert.deepEqual(await ring(1), ['R', 'C', 'L', 'T', 'Z', 'Diode', 'Var. R', 'Var. C', 'Var. L']);
     assert.deepEqual(await ring(2), ['Open', 'Closed', 'Chopper']);
     assert.deepEqual(await ring(6), ['Op-amp', 'Diff', 'CMFB', 'Gm', 'Gm CMFB', 'Comp.', 'Clk. comp.', 'ADC', 'DAC']);
   });

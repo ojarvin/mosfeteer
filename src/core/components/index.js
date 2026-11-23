@@ -1,6 +1,7 @@
 import { resistor } from './resistor.js';
 import { capacitor } from './capacitor.js';
 import { inductor } from './inductor.js';
+import { transformer } from './transformer.js';
 import { diode } from './diode.js';
 import { nmos } from './nmos.js';
 import { pmos } from './pmos.js';
@@ -31,6 +32,7 @@ export const symbolTypes = {
   resistor,
   capacitor,
   inductor,
+  transformer,
   impedance,
   diode,
   nmos,

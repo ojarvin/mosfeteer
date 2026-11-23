@@ -186,6 +186,7 @@ mirror flag to override that default.
 |------|-----------|--------------------|
 | resistor / capacitor / inductor / impedance / switch_open / switch_closed | `a` (left) `b` (right) | x:-80..80, y:-40..40; impedance is an 80×40 box labeled `Z_1` |
 | diode | `a` (left) `b` (right) | x:-80..80, y:-40..40 |
+| transformer | primary `a1` (top) `b1` (bottom) at x:-80, secondary `a2` `b2` at x:80 | x:-120..120, y:-80..80; the inductor's coil turned clockwise on the left and its mirror image on the right, two core lines between them, a polarity dot beside each a-end; drawing only |
 | nmos / pmos | `g` (left) `d` (top) `s` (bottom) | bbox `{-120,-80,120,160}`; drain and source leads end at their terminals and share the wire-cap overlap |
 | nmosb / pmosb | `g` (left) `d` (top) `s` (bottom) `b` (channel center) | bbox `{-120,-80,120,160}`; bulk pin points right with a visible internal path ending at the terminal and sharing the wire-cap overlap |
 | npn / pnp | `b` (left) `c` (top) `e` (bottom) | x:-160..0, y:-120..120 |

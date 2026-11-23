@@ -25675,7 +25675,7 @@ let symbolTypeNames; __bind(() => { ({ symbolTypeNames } = __require("src/core/c
 
 
 const SYMBOL_CATEGORY_RULES = [
-  ['Passives', /^(variable_)?(resistor|capacitor|inductor)$|^(impedance|diode)$/],
+  ['Passives', /^(variable_)?(resistor|capacitor|inductor)$|^(impedance|transformer|diode)$/],
   ['Semiconductors / actives', /^(nmos|pmos|nmosb|pmosb|npn|pnp)$/],
   ['Switches', /^switch_|^chopper$/],
   ['Sources & power', /^(current_source|voltage_source|vccs|vcvs|supply|ground|vcm)$/],
@@ -26213,6 +26213,7 @@ __exports.seriesTerminalNames = seriesTerminalNames;
 let resistor; __bind(() => { ({ resistor } = __require("src/core/components/resistor.js")); });
 let capacitor; __bind(() => { ({ capacitor } = __require("src/core/components/capacitor.js")); });
 let inductor; __bind(() => { ({ inductor } = __require("src/core/components/inductor.js")); });
+let transformer; __bind(() => { ({ transformer } = __require("src/core/components/transformer.js")); });
 let diode; __bind(() => { ({ diode } = __require("src/core/components/diode.js")); });
 let nmos; __bind(() => { ({ nmos } = __require("src/core/components/nmos.js")); });
 let pmos; __bind(() => { ({ pmos } = __require("src/core/components/pmos.js")); });
@@ -26265,11 +26266,13 @@ let signal_sum, signal_multiply, oscillator, filter_lpf, filter_hpf, filter_bpf,
 
 
 
+
 /** All registered symbol definitions, keyed by type name. */
 const symbolTypes = {
   resistor,
   capacitor,
   inductor,
+  transformer,
   impedance,
   diode,
   nmos,
@@ -27553,6 +27556,64 @@ const switch_closed = makeSwitch('switch_closed', 'Switch (closed)', 'M -19.16 -
 
 __exports.switch_open = switch_open;
 __exports.switch_closed = switch_closed;
+};
+
+__modules["src/core/components/transformer.js"] = function (__require, __exports) {
+let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
+let inductor; __bind(() => { ({ inductor } = __require("src/core/components/inductor.js")); });
+
+
+
+/** The inductor's coil turned vertical, its axis at x = `axis`, running from
+ *  y = -80 down to y = 80: `side` -1 is the inductor turned clockwise (as an
+ *  inductor at `r` 1 draws), 1 its mirror image about the axis. */
+function verticalCoil(axis, side) {
+  const numbers = inductor.graphics[0].d.match(/-?\d*\.?\d+/g).map(Number);
+  let i = 0;
+  return inductor.graphics[0].d.replace(/-?\d*\.?\d+\s+-?\d*\.?\d+/g, () => {
+    const x = numbers[i++];
+    const y = numbers[i++];
+    return `${+(axis + side * y).toFixed(2)} ${x}`;
+  });
+}
+
+/** Radius of a polarity dot. */
+const TRANSFORMER_DOT_RADIUS = 7;
+
+/**
+ * Transformer (textbook style): two of the inductor's coils side by side, the
+ * secondary the primary's mirror image, two core lines between them, and a
+ * dot at each a-end. The primary
+ * runs a1 (top) to b1 (bottom) on the left, the secondary a2 to b2 on the
+ * right. Drawing only: no analysis models it.
+ */
+const transformer = defineSymbol({
+  type: 'transformer',
+  description: 'Transformer',
+  refPrefix: 'T',
+  terminals: [
+    { name: 'a1', x: -80, y: -80, direction: 'passive', dir: { x: 0, y: -1 } },
+    { name: 'b1', x: -80, y: 80, direction: 'passive', dir: { x: 0, y: 1 } },
+    { name: 'a2', x: 80, y: -80, direction: 'passive', dir: { x: 0, y: -1 } },
+    { name: 'b2', x: 80, y: 80, direction: 'passive', dir: { x: 0, y: 1 } },
+  ],
+  bbox: { x: -120, y: -80, w: 240, h: 160 },
+  graphics: [
+    { kind: 'path', d: verticalCoil(-80, -1), style: 'symbol' },
+    { kind: 'path', d: verticalCoil(80, 1), style: 'symbol' },
+    { kind: 'path', d: 'M -12 -44 L -12 44', style: 'symbol' },
+    { kind: 'path', d: 'M 12 -44 L 12 44', style: 'symbol' },
+    { kind: 'dot', cx: -58, cy: -54, r: TRANSFORMER_DOT_RADIUS },
+    { kind: 'dot', cx: 58, cy: -54, r: TRANSFORMER_DOT_RADIUS },
+  ],
+  textPos: null,
+  refPos: null,
+  labelOffset: { x: 0, y: -120 },
+  defaultValue: '',
+});
+
+__exports.TRANSFORMER_DOT_RADIUS = TRANSFORMER_DOT_RADIUS;
+__exports.transformer = transformer;
 };
 
 __modules["src/core/components/variable.js"] = function (__require, __exports) {
@@ -39912,7 +39973,7 @@ const PART_GROUPS = [
   ['nmos', 'NMOS'], ['nmosb', 'NMOS with bulk'], ['pmos', 'PMOS'], ['pmosb', 'PMOS with bulk'],
   ['resistor', 'Resistors'], ['variable_resistor', 'Variable resistors'],
   ['capacitor', 'Capacitors'], ['variable_capacitor', 'Variable capacitors'],
-  ['inductor', 'Inductors'], ['variable_inductor', 'Variable inductors'], ['impedance', 'Impedances'],
+  ['inductor', 'Inductors'], ['variable_inductor', 'Variable inductors'], ['transformer', 'Transformers'], ['impedance', 'Impedances'],
   ['current_source', 'Current sources'], ['voltage_source', 'Voltage sources'],
 ];
 
@@ -80584,7 +80645,7 @@ const ANNOTATED_ROWS = 64;
 const ANNOTATED_COLUMNS = 16;
 
 const LOGIC_TYPES = /^(inverter|buffer|tristate_inverter|tristate_buffer|mux|(and|nand|or|nor|xor|xnor)[23]_gate|dff.*|latch.*)$/;
-const ANALOG_TYPES = /^(nmos|pmos|nmosb|pmosb|npn|pnp|resistor|capacitor|inductor|current_source|voltage_source|vccs|vcvs|opamp.*|gm.*|diode|switch_.*|tf_.*|gain|signal_.*)$/;
+const ANALOG_TYPES = /^(nmos|pmos|nmosb|pmosb|npn|pnp|resistor|capacitor|inductor|transformer|current_source|voltage_source|vccs|vcvs|opamp.*|gm.*|diode|switch_.*|tf_.*|gain|signal_.*)$/;
 
 let section = null;
 let latest = null; // { revision, result }
@@ -94040,7 +94101,7 @@ const part = (type, label = shortPlacementLabel(type)) => ({
 const PALETTE = [
   { ...part('nmos', 'NMOS'), children: [part('nmos', 'NMOS'), part('nmosb', 'NMOS bulk'), part('npn', 'NPN')] },
   { ...part('resistor', 'Passives'), children: [
-    part('resistor', 'R'), part('capacitor', 'C'), part('inductor', 'L'), part('impedance', 'Z'), part('diode', 'Diode'),
+    part('resistor', 'R'), part('capacitor', 'C'), part('inductor', 'L'), part('transformer', 'T'), part('impedance', 'Z'), part('diode', 'Diode'),
     part('variable_resistor', 'Var. R'), part('variable_capacitor', 'Var. C'), part('variable_inductor', 'Var. L'),
   ] },
   { ...part('switch_open', 'Switches'), children: [part('switch_open', 'Open'), part('switch_closed', 'Closed'), part('chopper', 'Chopper')] },
@@ -101344,7 +101405,7 @@ let saveFrame = 0;
 function suggested(circuit) {
   const parts = [...circuit.components.values()];
   return parts.some((c) => switchState(c)) && parts.some((c) => c.type === 'capacitor')
-    && !parts.some((c) => /^(nmos|pmos|nmosb|pmosb|npn|pnp|resistor|inductor|current_source|voltage_source|vccs|vcvs|gm|gm_cmfb|diode)$/.test(c.type));
+    && !parts.some((c) => /^(nmos|pmos|nmosb|pmosb|npn|pnp|resistor|inductor|transformer|current_source|voltage_source|vccs|vcvs|gm|gm_cmfb|diode)$/.test(c.type));
 }
 
 /** TeX as MathML, inline or on a line of its own. */
@@ -103743,7 +103804,7 @@ function shortPlacementLabel(type) {
 }
 
 const PLACEMENT_LABELS = {
-  resistor: 'Resistor', capacitor: 'Capacitor', inductor: 'Inductor', impedance: 'Impedance', diode: 'Diode',
+  resistor: 'Resistor', capacitor: 'Capacitor', inductor: 'Inductor', transformer: 'Transformer', impedance: 'Impedance', diode: 'Diode',
   nmos: 'NMOS transistor', pmos: 'PMOS transistor',
   nmosb: 'NMOS transistor with bulk', pmosb: 'PMOS transistor with bulk',
   npn: 'NPN transistor', pnp: 'PNP transistor',
@@ -103782,7 +103843,7 @@ const PLACEMENT_LABELS = {
 };
 
 const PLACEMENT_ALIASES = {
-  resistor: ['res', 'resistance'], capacitor: ['cap'], inductor: ['coil'], impedance: ['load', 'network'],
+  resistor: ['res', 'resistance'], capacitor: ['cap'], inductor: ['coil'], transformer: ['xfmr', 'coupled inductors', 'balun', 'coil'], impedance: ['load', 'network'],
   nmos: ['mos', 'n-channel', 'fet'], pmos: ['mos', 'p-channel', 'fet'],
   nmosb: ['mos', 'body', 'bulk', 'n-channel', 'fet'], pmosb: ['mos', 'body', 'bulk', 'p-channel', 'fet'],
   npn: ['bjt'], pnp: ['bjt'],

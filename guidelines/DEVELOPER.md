@@ -46,6 +46,7 @@ src/
 │   │   ├── index.js    Symbol registry: getSymbol(type), symbolTypeNames.
 │   │   ├── nmos.js …   One file per symbol. Each exports a factory returning
 │   │                   { def: { terminals, bbox, graphics, labelOffset, ... } }.
+│   │   ├── transformer.js Two inductor coils, the secondary mirrored.
 │   │   └── variable.js Composed symbols (variable_resistor/cap/inductor).
 │   ├── grid.js         GRID = 40; snap/ceilGrid.
 │   ├── geometry.js     bbox/transform helpers.

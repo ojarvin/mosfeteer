@@ -70,7 +70,7 @@ const part = (type, label = shortPlacementLabel(type)) => ({
 const PALETTE = [
   { ...part('nmos', 'NMOS'), children: [part('nmos', 'NMOS'), part('nmosb', 'NMOS bulk'), part('npn', 'NPN')] },
   { ...part('resistor', 'Passives'), children: [
-    part('resistor', 'R'), part('capacitor', 'C'), part('inductor', 'L'), part('impedance', 'Z'), part('diode', 'Diode'),
+    part('resistor', 'R'), part('capacitor', 'C'), part('inductor', 'L'), part('transformer', 'T'), part('impedance', 'Z'), part('diode', 'Diode'),
     part('variable_resistor', 'Var. R'), part('variable_capacitor', 'Var. C'), part('variable_inductor', 'Var. L'),
   ] },
   { ...part('switch_open', 'Switches'), children: [part('switch_open', 'Open'), part('switch_closed', 'Closed'), part('chopper', 'Chopper')] },

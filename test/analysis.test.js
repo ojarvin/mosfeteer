@@ -284,3 +284,13 @@ test('a part with no small-signal model on the analyzed circuit is refused, else
   assert.equal(on.ok, false);
   assert.match(on.error, /Q1 has no small-signal model/);
 });
+
+test('a transformer on the analyzed circuit is refused as a part with no small-signal model', () => {
+  const circuit = divider();
+  circuit.addComponent('transformer', { refdes: 'T1', x: 1200, y: 1200 });
+  circuit.nets.get([...circuit.nets.values()].find((n) => n.name === 'VOUT').id).terminals.push({ comp: 'T1', term: 'a1' });
+  circuit.nets.get([...circuit.nets.values()].find((n) => n.name === 'VSS').id).terminals.push({ comp: 'T1', term: 'b1' });
+  const on = analyzeSmallSignal(circuit, { input: 'VIN', output: 'VOUT' });
+  assert.equal(on.ok, false);
+  assert.match(on.error, /T1 has no small-signal model/);
+});
