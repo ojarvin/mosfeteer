@@ -451,7 +451,11 @@ h2 { font-size: 14pt; margin: 18pt 0 8pt; }
 h3 { font-size: 12pt; margin: 14pt 0 6pt; }
 h4, h5, h6 { font-size: 10.5pt; margin: 12pt 0 4pt; }
 .section-number { margin-right: 0.9em; }
-.note-toc .section-number { display: inline-block; min-width: 1.8em; margin-right: 0.4em; }
+/* LaTeX's number boxes: 1.5 em for a section, 2.3 em for a subsection,
+   3.2 em below (the space after the number is part of them). */
+.note-toc .section-number { display: inline-block; min-width: 2em; margin-right: 0; }
+.note-toc .toc-level-0 .section-number { min-width: 1.2em; }
+.note-toc :is(.toc-level-2, .toc-level-3, .toc-level-4) .section-number { min-width: 2.9em; }
 .section-author { margin: -2pt 0 8pt; font-style: italic; text-indent: 0; }
 p { margin: 0; text-align: justify; }
 p + p { text-indent: 1.5em; }
@@ -482,13 +486,16 @@ a { color: #1d4e89; text-decoration: none; }
 .note-toc ol { list-style: none; padding: 0; margin: 0; }
 .note-toc li { display: flex; align-items: baseline; margin: 1pt 0; }
 .note-toc li > a { flex: 0 1 auto; }
-.note-toc .toc-leader { flex: 1 1 auto; min-width: 1em; margin: 0 0.4em; border-bottom: 1pt dotted #555; transform: translateY(-0.25em); }
-.note-toc .toc-level-0 > .toc-leader { border-bottom-color: transparent; }
+/* LaTeX's leaders: a period every 0.78 em (its own width, and 4.5 mu each
+   side), set from the right, so the dots of every line stand in columns. */
+.note-toc .toc-leader { flex: 1 1 0; min-width: 1em; margin: 0 0.25em 0 0.5em; overflow: hidden; white-space: nowrap; direction: rtl; }
+.note-toc .toc-leader::after { content: "${'.'.repeat(240)}"; letter-spacing: 0.5em; }
+.note-toc .toc-level-0 > .toc-leader::after { content: none; }
 .note-toc .toc-page { flex: none; min-width: 1.6em; text-align: right; }
 /* Unprinted (the browser's print dialog): no page to lead to. */
 .note-toc li:has(> .toc-page:empty) > .toc-leader { visibility: hidden; }
 .note-toc .toc-level-0 { margin-top: 6pt; font-weight: bold; }
-.note-toc .toc-level-1 { padding-left: 1.6em; }
+.note-toc .toc-level-1 { padding-left: 1.5em; }
 .note-toc .toc-level-2 { padding-left: 3.8em; }
 .note-toc .toc-level-3, .note-toc .toc-level-4 { padding-left: 5.6em; }
 .note-toc a { color: inherit; }
