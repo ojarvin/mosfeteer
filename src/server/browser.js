@@ -10,6 +10,8 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { printPagesHtml } from '../core/print-pages.js';
+import { reportPageTargets, reportWithPages } from '../core/report.js';
+import { pdfDestinationPages } from './pdf-pages.js';
 
 function onPath(names, env) {
   const dirs = String(env.PATH || '').split(delimiter).filter(Boolean);
@@ -87,4 +89,26 @@ export async function printHtmlToPdf(html, { browser = findChromium(), timeoutMs
   } finally {
     await rm(work, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+/**
+ * A report (core/report.js) printed to PDF with its contents' page numbers:
+ * printed once to see where each section landed (pdf-pages.js), the numbers
+ * put in their slots -- which keep their width, so nothing moves -- and
+ * printed again, until the numbers hold (at most three prints). Returns
+ * `{ pdf, html }`, the HTML with the numbers in it. A report without
+ * contents prints once.
+ */
+export async function printReportToPdf(html, options = {}) {
+  if (!reportPageTargets(html).length) return { pdf: await printHtmlToPdf(html, options), html };
+  let pdf = await printHtmlToPdf(html, options);
+  let numbered = html;
+  for (let pass = 0; pass < 2; pass += 1) {
+    const pages = pdfDestinationPages(pdf);
+    const next = reportWithPages(numbered, (id) => pages.get(id));
+    if (next === numbered) break;
+    numbered = next;
+    pdf = await printHtmlToPdf(numbered, options);
+  }
+  return { pdf, html: numbered };
 }

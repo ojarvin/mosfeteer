@@ -15,7 +15,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadDocument } from '../src/core/document.js';
 import { buildReport } from '../src/core/report.js';
-import { printHtmlToPdf } from '../src/server/browser.js';
+import { printReportToPdf } from '../src/server/browser.js';
 import { REPORT_EXAMPLE_NAMES, reportExampleDesigns } from '../src/web/examples/report-example.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -46,7 +46,7 @@ const report = buildReport(top.circuit, {
 if (report.warnings.length) throw new Error(`the report example has warnings:\n${report.warnings.join('\n')}`);
 
 const pdf = join(ROOT, 'docs', 'report-example.pdf');
-await writeFile(pdf, await printHtmlToPdf(report.html));
+await writeFile(pdf, (await printReportToPdf(report.html)).pdf);
 
 const work = await mkdtemp(join(tmpdir(), 'mosfeteer-report-'));
 try {

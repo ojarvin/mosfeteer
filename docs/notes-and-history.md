@@ -126,7 +126,14 @@ warnings, and writes the HTML.
   there and numbers the headings (1, 1.1, ...): every heading but the title
   (a `#` heading the notes start with), References included. Each entry
   links to its heading. One contents: the first
-  `[TOC]` (`numberSections`); notes without one are not numbered. In a
+  `[TOC]` (`numberSections`); notes without one are not numbered. A
+  report's entries keep a slot for their page, after a dotted leader
+  (`reportWithPages`): the server prints the report once, reads where
+  each section landed from the PDF's named destinations
+  (`src/server/pdf-pages.js`), puts the numbers in, and prints again
+  (`printReportToPdf`), so the PDF and the HTML it writes carry them.
+  Chromium has no `target-counter()`, so the browser's print dialog
+  (browser-only) prints the contents without page numbers. In a
   report the numbering runs through the included designs' sections, whose
   own `[TOC]` lines are dropped.
 - **Outline.** Empty notes can start as a report: the notes window's

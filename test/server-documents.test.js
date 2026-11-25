@@ -365,6 +365,32 @@ serverTest('a report prints to a PDF of its own pages', async (t) => {
   assert.match(pdf, /\/MediaBox \[0 0 59[45]\.\d+ 84[12]\.\d+\]/, 'A4');
 });
 
+serverTest('a report\'s contents get the pages its sections were printed on, in the PDF and the HTML', async (t) => {
+  if (!findChromium()) {
+    t.skip('no Chromium-family browser installed');
+    return;
+  }
+  const { buildReport } = await import('../src/core/report.js');
+  const { pdfDestinationPages } = await import('../src/server/pdf-pages.js');
+  const circuit = new Circuit();
+  // Enough text that the second section starts on page 2 and the third on page 3.
+  const filler = Array.from({ length: 14 }, () => 'A paragraph of filler text that takes a few lines on the page, so that the sections fall on later pages. '.repeat(3)).join('\n\n');
+  circuit.notes = `# Report\n\n[TOC]\n\n## First\n\n${filler}\n\n## Second\n\n${filler}\n\n### Inside\n\nShort.\n\n## Third\n\nEnd.`;
+  const { html } = buildReport(circuit, { name: 'report' });
+  const app = await startServer();
+  t.after(() => app.stop());
+  const response = await app.request('/api/export', { method: 'POST', body: { dir: join(app.root, 'exports'), name: 'paged', formats: ['pdf', 'html'], report: html } });
+  assert.equal(response.status, 200, await response.clone().text());
+  const pdf = await readFile(join(app.root, 'exports', 'paged.pdf'));
+  const written = await readFile(join(app.root, 'exports', 'paged.html'), 'utf8');
+  const printed = pdfDestinationPages(pdf);
+  const listed = Object.fromEntries([...written.matchAll(/data-toc-page="([^"]+)">(\d*)<\/span>/g)].map(([, id, page]) => [id, Number(page)]));
+  assert.deepEqual(Object.keys(listed), ['sec-1', 'sec-2', 'sec-2-1', 'sec-3']);
+  for (const [id, page] of Object.entries(listed)) assert.equal(page, printed.get(id), `${id} is listed on the page it was printed on`);
+  assert.equal(listed['sec-1'], 1);
+  assert.ok(listed['sec-2'] > listed['sec-1'] && listed['sec-3'] > listed['sec-2'], JSON.stringify(listed));
+});
+
 serverTest('the server listens on loopback only, whatever HOST says', async (t) => {
   // 192.0.2.1 is a documentation address no machine owns: listening there
   // would fail, and listening on a real interface would expose the file API.

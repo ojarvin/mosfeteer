@@ -234,6 +234,20 @@ describe('design notes', { skip: browserSkip() }, () => {
     await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.notes === '')`);
   });
 
+  test('the report example keeps its math labels\' measured sizes: figures drawn outside the editor are framed as the editor frames them', async () => {
+    const { reportExampleDesigns } = await import('../../src/web/examples/report-example.js');
+    for (const { name, state } of reportExampleDesigns()) {
+      await h.evaluate(`window.__load(${JSON.stringify(JSON.stringify(state))})`);
+      const measured = await h.evaluate(`${h.module('main.js')}.then(async (m) => {
+        const { editor } = await import('./editor-state.js');
+        for (let i = 0; i < 4 && m.syncRenderedLabelMetrics(); i++) { editor.committedCanvasKey = ''; m.render(); }
+        return Object.fromEntries(editor.circuit.toJSON().labels.filter((l) => l.mathBox).map((l) => [l.id, l.mathBox]));
+      })`);
+      const stored = Object.fromEntries(state.labels.filter((l) => l.mathBox).map((l) => [l.id, l.mathBox]));
+      assert.deepEqual(stored, measured, `${name}: a stored math size is stale; measure the example again and save it`);
+    }
+  });
+
   test('Learn\'s report example opens unsaved, its integrator from the bundle, and saving keeps both designs', async () => {
     const exists = (name) => readFile(join(h.workspace, `${name}.json`), 'utf8').then(() => true, () => false);
     // Opened from Learn over the Atlas, it shows in the editor.

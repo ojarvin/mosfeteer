@@ -385,7 +385,7 @@ export function buildReport(circuit, { name = 'Design', guide = null, fontCss = 
   const references = citations.length ? referencesHtml(citations, 2) : '';
   const titled = /^#\s/.test(notes);
   const title = titled ? '' : `<h1>${escapeHtml(name)}</h1>\n${reportAuthor ? `${authorsHtml(reportAuthor)}\n` : ''}`;
-  let content = numberSections(`${body}${references ? `\n${references}` : ''}`, { titleLevel: 1 });
+  let content = numberSections(`${body}${references ? `\n${references}` : ''}`, { titleLevel: 1, pages: true });
   if (titled && reportAuthor) content = afterFirstHeading(content, authorsHtml(reportAuthor));
   const html = `<!doctype html>
 <html lang="en">
@@ -408,6 +408,23 @@ ${title}${content}
     })),
     warnings,
   };
+}
+
+const TOC_PAGE = /<span class="toc-page" data-toc-page="([^"]+)">[^<]*<\/span>/g;
+
+/** The section ids whose pages a report's contents list. */
+export function reportPageTargets(html) {
+  return [...String(html).matchAll(TOC_PAGE)].map((match) => match[1]);
+}
+
+/**
+ * The report with its contents' page numbers: `pageOf(id)` the page a
+ * section starts on (from the PDF printed of it, server/pdf-pages.js), its
+ * slot left empty where it gives none. The slots keep their width, so the
+ * pages stay as they were printed.
+ */
+export function reportWithPages(html, pageOf) {
+  return String(html).replace(TOC_PAGE, (_, id) => `<span class="toc-page" data-toc-page="${id}">${pageOf(id) ?? ''}</span>`);
 }
 
 function reportCss(page) {
@@ -463,7 +480,13 @@ a { color: #1d4e89; text-decoration: none; }
 .note-toc { margin: 0 0 18pt; break-inside: avoid; }
 .note-toc-title { margin: 0 0 8pt; font-size: 14pt; font-weight: bold; }
 .note-toc ol { list-style: none; padding: 0; margin: 0; }
-.note-toc li { margin: 1pt 0; }
+.note-toc li { display: flex; align-items: baseline; margin: 1pt 0; }
+.note-toc li > a { flex: 0 1 auto; }
+.note-toc .toc-leader { flex: 1 1 auto; min-width: 1em; margin: 0 0.4em; border-bottom: 1pt dotted #555; transform: translateY(-0.25em); }
+.note-toc .toc-level-0 > .toc-leader { border-bottom-color: transparent; }
+.note-toc .toc-page { flex: none; min-width: 1.6em; text-align: right; }
+/* Unprinted (the browser's print dialog): no page to lead to. */
+.note-toc li:has(> .toc-page:empty) > .toc-leader { visibility: hidden; }
 .note-toc .toc-level-0 { margin-top: 6pt; font-weight: bold; }
 .note-toc .toc-level-1 { padding-left: 1.6em; }
 .note-toc .toc-level-2 { padding-left: 3.8em; }

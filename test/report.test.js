@@ -5,7 +5,8 @@ import { runCommand } from '../src/core/commands.js';
 import { newFigureId } from '../src/core/figures.js';
 import { addBeat } from '../src/core/beats.js';
 import { normalizePageGuide, parsePageGuide, pageGuideWidth } from '../src/core/page-guide.js';
-import { buildReport, notesOutline, reportFigureSize, reportPage, reportTargets, resolveReportTarget } from '../src/core/report.js';
+import { buildReport, notesOutline, reportFigureSize, reportPage, reportPageTargets, reportTargets, reportWithPages, resolveReportTarget } from '../src/core/report.js';
+import { pdfDestinationPages } from '../src/server/pdf-pages.js';
 import { DESIGN_LINK, noteCompletion, noteDesignLinks, noteFigures } from '../src/core/notes.js';
 import { renderNotes } from '../src/core/notes-markdown.js';
 
@@ -376,4 +377,36 @@ test('an included design is a section under the heading its embed stands under',
     ['1 Circuit', '2 Blocks', '2.1 Amplifier', '2.1.1 Gain', '2.1.1.1 Load', '2.1.1.1.1 sub', '3 Results']);
   assert.match(html, /<h3 id="sec-2-1"><span class="section-number">2\.1<\/span> Amplifier<\/h3>/);
   assert.match(html, /<section id="design-sub" class="design-section">\n<h6 id="sec-2-1-1-1-1">/);
+});
+
+test('a report\'s contents keep a page slot per section, filled from the print without changing its width', () => {
+  const circuit = divider();
+  circuit.notes = '# Divider\n\n[TOC]\n\n## One\n\nText.\n\n### Inner\n\nText.\n\n## Two\n\nText.';
+  const { html } = buildReport(circuit, { name: 'divider' });
+  assert.deepEqual(reportPageTargets(html), ['sec-1', 'sec-1-1', 'sec-2']);
+  assert.match(html, /<li class="toc-level-0"><a href="#sec-1"><span class="section-number">1<\/span> One<\/a><span class="toc-leader"><\/span><span class="toc-page" data-toc-page="sec-1"><\/span><\/li>/);
+  const pages = { 'sec-1': 1, 'sec-1-1': 2 };
+  const filled = reportWithPages(html, (id) => pages[id]);
+  assert.match(filled, /data-toc-page="sec-1">1<\/span>/);
+  assert.match(filled, /data-toc-page="sec-1-1">2<\/span>/);
+  assert.match(filled, /data-toc-page="sec-2"><\/span>/, 'a section the print did not place stays empty');
+  assert.equal(reportWithPages(filled, (id) => pages[id]), filled, 'filling again changes nothing');
+  assert.deepEqual(reportPageTargets(filled), ['sec-1', 'sec-1-1', 'sec-2']);
+  // The notes window's contents have no page slots.
+  assert.doesNotMatch(renderNotes(circuit.notes), /toc-page/);
+});
+
+test('a PDF\'s named destinations read as pages, through a nested page tree', () => {
+  const pdf = [
+    '%PDF-1.4',
+    '1 0 obj\n<</Type /Catalog\n/Pages 2 0 R\n/Dests 9 0 R>>\nendobj',
+    '2 0 obj\n<</Type /Pages\n/Count 3\n/Kids [3 0 R 4 0 R]>>\nendobj',
+    '3 0 obj\n<</Type /Page /Parent 2 0 R>>\nendobj',
+    '4 0 obj\n<</Type /Pages\n/Count 2\n/Kids [5 0 R 6 0 R]>>\nendobj',
+    '5 0 obj\n<</Type /Page /Parent 4 0 R>>\nendobj',
+    '6 0 obj\n<</Type /Page /Parent 4 0 R>>\nendobj',
+    '9 0 obj\n<</sec-1 [3 0 R /XYZ 0 450 0]\n/sec-2 [6 0 R /XYZ 0 265 0]\n/fig#2D1 [5 0 R /XYZ 0 841 0]\n/gone [7 0 R /XYZ 0 1 0]>>\nendobj',
+  ].join('\n');
+  assert.deepEqual([...pdfDestinationPages(Buffer.from(pdf, 'latin1'))], [['sec-1', 1], ['sec-2', 3], ['fig-1', 2]]);
+  assert.deepEqual([...pdfDestinationPages('%PDF-1.4 nothing here')], []);
 });

@@ -329,7 +329,7 @@ const TOC_PLACE = '<nav class="note-toc"></nav>';
  * with -- is not numbered; the References are a section like any other.
  * Without a `[TOC]`, the HTML as it is.
  */
-export function numberSections(html, { titleLevel = 1 } = {}) {
+export function numberSections(html, { titleLevel = 1, pages = false } = {}) {
   if (!html.includes(TOC_PLACE)) return html;
   const heading = /<h([1-6])>([\s\S]*?)<\/h\1>/g;
   const found = [...html.matchAll(heading)];
@@ -348,7 +348,11 @@ export function numberSections(html, { titleLevel = 1 } = {}) {
     entries.push({ depth, number, id, text });
     return `<h${level} id="${id}"><span class="section-number">${number}</span> ${text}</h${level}>`;
   });
-  const list = entries.map((entry) => `<li class="toc-level-${entry.depth}"><a href="#${entry.id}"><span class="section-number">${entry.number}</span> ${entry.text}</a></li>`).join('');
+  // With `pages` (a report), each entry keeps a slot for the page its
+  // section starts on, a dotted leader before it: filled once the report is
+  // printed (report.js reportWithPages), the slot the same width either way.
+  const page = (entry) => (pages ? `<span class="toc-leader"></span><span class="toc-page" data-toc-page="${entry.id}"></span>` : '');
+  const list = entries.map((entry) => `<li class="toc-level-${entry.depth}"><a href="#${entry.id}"><span class="section-number">${entry.number}</span> ${entry.text}</a>${page(entry)}</li>`).join('');
   const contents = `<nav class="note-toc"><h${top} class="note-toc-title">Contents</h${top}><ol>${list}</ol></nav>`;
   let placed = false;
   return out.replaceAll(TOC_PLACE, () => (placed ? '' : ((placed = true), contents)));

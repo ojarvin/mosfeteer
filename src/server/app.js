@@ -22,7 +22,7 @@ import {
   absolutePath, browseFolder, browseNearestFolder, deleteDocumentFile, describeDocument, documentNameFromPath, documentPathFor,
   fileRevision, isJsonFile, listDocuments, readDocumentFile, readPreviousState, serializeDocument, validDocumentName, writeFileAtomic,
 } from './documents.js';
-import { findChromium, printHtmlToPdf, printSvgToPdf } from './browser.js';
+import { findChromium, printHtmlToPdf, printReportToPdf, printSvgToPdf } from './browser.js';
 import { svgPixelSize, svgString } from '../core/render.js';
 import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
 import { symbolSheet } from '../core/symbol-sheet.js';
@@ -465,8 +465,9 @@ export async function startApp({
     }
   }
 
-  /** A report (core/report.js): its HTML as it is, and a PDF printed from
-   *  it by headless Chromium. A report has no image to fall back on. */
+  /** A report (core/report.js): its HTML, and a PDF printed from it by
+   *  headless Chromium, its contents' page numbers put in from the print
+   *  (both files then carry them). A report has no image to fall back on. */
   async function exportReport(body, dir, name) {
     const formats = [...new Set((Array.isArray(body.formats) ? body.formats : []).filter((format) => ['html', 'pdf'].includes(format)))];
     if (!formats.length) throw httpError('choose PDF or HTML for a report');
@@ -476,7 +477,7 @@ export async function startApp({
     const contents = { html: body.report };
     if (paths.pdf) {
       try {
-        contents.pdf = await printHtmlToPdf(body.report, { browser: pdfBrowser });
+        Object.assign(contents, await printReportToPdf(body.report, { browser: pdfBrowser }));
       } catch (error) {
         throw httpError(error.code === 'no-browser'
           ? 'a report\'s PDF needs Chrome, Chromium, Edge, or Brave; export it as HTML and print that from a browser'
