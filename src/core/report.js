@@ -3,7 +3,9 @@
  * the drawing where the notes embed them (`![[circuit|caption]]`, notes.js).
  * Every figure is drawn at the page guide's width, centered: one narrower
  * than the guide is padded to it, so every figure's text is the guide's
- * size; one wider is fitted to it, its text smaller, and the report says so.
+ * size; one wider is fitted to it, its text smaller, and the report says so
+ * when a guide is chosen. A caption that fits on one line is centered; a
+ * longer one is a justified paragraph, as IEEE papers set them.
  * A plot is drawn again, its box three fifths of the guide's width (less
  * where its legend would reach past the guide), its own text at the
  * guide's size.
@@ -87,16 +89,32 @@ function targetSelection(circuit, target) {
 function targetShows(circuit, target, found) {
   if (target.kind === 'drawing') return true;
   if (target.kind === 'picture') return false;
-  const selection = targetSelection(circuit, target.kind === 'beat' ? { kind: 'circuit' } : target);
+  const selection = target.kind === 'beat' ? beatSelection(circuit) : targetSelection(circuit, target);
   return found.kind === 'component' ? selection.refs.has(found.refdes) : found.ids.some((id) => selection.netIds.has(id));
 }
 
+/** What a beat figure draws: the circuit, and the timing diagram when one
+ *  is drawn, where the beat's band shades its place in the period. */
+function beatSelection(circuit) {
+  const selection = targetSelection(circuit, { kind: 'circuit' });
+  const timing = listFigures(circuit).find((figure) => figure.kind === 'timing');
+  if (!timing) return selection;
+  const diagram = targetSelection(circuit, { kind: 'figure', figure: timing });
+  return {
+    refs: new Set([...selection.refs, ...diagram.refs]),
+    labels: [...selection.labels, ...diagram.labels],
+    netIds: new Set([...selection.netIds, ...diagram.netIds]),
+    wireKeys: new Set(),
+  };
+}
+
 /** The target drawn with the guide, as SVG. A beat is the circuit as that
- *  beat shows it, without the figures. */
+ *  beat shows it, with the timing diagram (beatSelection), without the
+ *  other figures. */
 function targetSvg(circuit, target, guide) {
   if (target.kind === 'beat') {
     const view = resolveBeat(circuit, target.beat);
-    return { svg: selectionDrawing(circuit, targetSelection(circuit, { kind: 'circuit' }), { pageGuide: guide, beat: { view, timing: timingBeatBands(circuit, view.index) } }) };
+    return { svg: selectionDrawing(circuit, beatSelection(circuit), { pageGuide: guide, beat: { view, timing: timingBeatBands(circuit, view.index) } }) };
   }
   if (target.kind === 'figure' && target.figure.kind === 'plot') {
     const plot = reportPlot(circuit, target.figure, guide);
@@ -214,10 +232,14 @@ const sectionId = (name) => `design-${figureKey(name).replace(/[^a-z0-9]+/g, '-'
  * notes is its circuit. `figures` lists each figure, `{ number, name,
  * caption, kind, textPt, design }` (`kind` null: nothing to draw;
  * `design` the section's design, null at the top); `warnings` says what
- * to look at: a missing figure, small text, a reference to no figure.
+ * to look at: a missing figure, small text (against a chosen guide), a
+ * reference to no figure.
  */
 export function buildReport(circuit, { name = 'Design', guide = null, fontCss = '', design = () => null } = {}) {
-  const pageGuide = normalizePageGuide(guide) || normalizePageGuide('a4');
+  // Without a guide the A4 one sizes the figures, and their text size is
+  // nothing to warn about.
+  const chosenGuide = normalizePageGuide(guide);
+  const pageGuide = chosenGuide || normalizePageGuide('a4');
   const page = reportPage(pageGuide);
   const warnings = [];
   const listed = [];
@@ -286,7 +308,7 @@ export function buildReport(circuit, { name = 'Design', guide = null, fontCss = 
       const { svg, ...sizing } = targetSvg(owner, figure.target, pageGuide);
       const [, , width, height] = svg.match(/viewBox="([^"]+)"/)[1].split(/\s+/).map(Number);
       const size = reportFigureSize(pageGuide, page, width, height, sizing);
-      if (size.textPt < pageGuide.textPt - 0.05) warnings.push(`${label(figure)} (${figure.name}${depth ? ` of ${ownerName}` : ''}): its text is ${size.textPt.toFixed(1)} pt, below the guide's ${pageGuide.textPt} pt.`);
+      if (chosenGuide && size.textPt < pageGuide.textPt - 0.05) warnings.push(`${label(figure)} (${figure.name}${depth ? ` of ${ownerName}` : ''}): its text is ${size.textPt.toFixed(1)} pt, below the guide's ${pageGuide.textPt} pt.`);
       drawn.set(figure, { svg: sizedSvg(svg, size), ...size });
       figure.textPt = size.textPt;
     }
@@ -412,7 +434,7 @@ a { color: #1d4e89; text-decoration: none; }
 .note-picture-missing { color: #b42318; text-decoration: line-through; }
 figure { margin: 14pt 0; break-inside: avoid; page-break-inside: avoid; }
 figure svg { display: block; margin: 0 auto; }
-figcaption { margin: 6pt auto 0; max-width: ${pt(page.textWidthPt)}; font-size: 9pt; text-align: center; }
+figcaption { width: fit-content; max-width: 100%; margin: 6pt auto 0; font-size: 9pt; text-align: justify; hyphens: auto; }
 .figure-number { font-weight: bold; }
 figure.missing p { margin: 0 auto; padding: 18pt; border: 1pt dashed #b42318; color: #b42318; text-align: center; }
 `;

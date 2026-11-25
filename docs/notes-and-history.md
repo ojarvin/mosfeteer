@@ -95,7 +95,8 @@ warnings, and writes the HTML.
   the order the notes place them (`noteFigures`). A target is `circuit`
   (the drawing without the figures the tools annotated, as `coreBounds`
   counts it), `drawing` (all of it), `beat N` (the circuit as that beat
-  shows it), or an annotated figure's id (`F2`, `timing`; the `figures`
+  shows it, with the timing diagram when one is drawn: its band marks
+  the beat's place in the period), or an annotated figure's id (`F2`, `timing`; the `figures`
   command lists them). An embed inside a line stays text. Typing `![[`
   offers the targets.
 - **Sections.** `![[amp]]` on a line of its own, naming another design of
@@ -152,9 +153,12 @@ warnings, and writes the HTML.
 - **Sizes.** Every figure is drawn at the page guide's width (the A4 one
   without a guide), centered: one narrower than the guide is padded to it,
   so its text is the guide's size; one wider is fitted to it, its text
-  smaller, and the report warns. The page is A4 with 25 mm margins, its side
+  smaller, and the report warns when a page guide is chosen. The page is A4 with 25 mm margins, its side
   margins narrowing (to 12 mm) for a guide wider than 16 cm; a figure wider
-  or taller than the page is scaled to fit, with the same warning. A plot
+  or taller than the page is scaled to fit, with the same warning. A
+  caption that fits on one line is centered under its figure; a longer
+  one is a justified paragraph as wide as the text, as IEEE papers set
+  them. A plot
   is drawn again for the report (a copy; the drawing is left as it is), its
   box resized in its own proportions to three fifths of the guide's width
   (narrower where its legend would reach past the guide), its legend

@@ -94,6 +94,26 @@ test('every figure is set at the guide width, so narrow figures keep its text si
   assert.equal(svgWidthPt(svgs(narrow.html)[0].svg), 252);
 });
 
+test('without a page guide the figures are sized for A4 and their text size is no warning', () => {
+  const circuit = new Circuit();
+  run(circuit, 'add resistor R1 --at 0 0', 'add resistor R2 --at 4000 0');
+  circuit.notes = '![[circuit]]';
+  const report = buildReport(circuit);
+  assert.ok(report.figures[0].textPt < 8, 'fitted to the A4 width');
+  assert.deepEqual(report.warnings, []);
+});
+
+test('a caption that fits on one line is centered; a longer one is a justified paragraph', () => {
+  const circuit = divider();
+  circuit.notes = '![[circuit|The divider.]]';
+  const { html } = buildReport(circuit);
+  const rule = html.match(/figcaption \{([^}]*)\}/)[1];
+  assert.match(rule, /width: fit-content;/);
+  assert.match(rule, /margin: 6pt auto 0;/);
+  assert.match(rule, /text-align: justify;/);
+  assert.doesNotMatch(rule, /text-align: center/);
+});
+
 test('the page holds the guide: A4 text by default, wider for a wider guide, and a figure never taller than the page', () => {
   const a4 = reportPage(normalizePageGuide('a4'));
   assert.ok(Math.abs(a4.textWidthPt - 453.54) < 0.01);
@@ -140,6 +160,24 @@ test('a beat figure draws the circuit as that beat shows it, without the figures
   assert.doesNotMatch(beat, /data-ref="R2"/);
   assert.match(beat, /data-ref="R1"/);
   assert.doesNotMatch(beat, /Gain/);
+});
+
+test('a beat figure draws the timing diagram with the circuit, its band inside the frame', () => {
+  const circuit = new Circuit();
+  run(circuit, 'add switch_open S1 --at 0 0', 'value S1 P1', 'add switch_open S2 --at 400 0', 'value S2 P2', 'timing P1=10 P2=01', 'beat phases');
+  circuit.addLabel({ text: '\\text{Gain} & A_v = 1/2', math: true, x: 1200, y: 0, figure: { id: newFigureId(circuit), kind: 'equations', source: 'small-signal' } });
+  circuit.notes = '![[beat 1]]\n\n![[circuit]]';
+  const { html, warnings } = buildReport(circuit);
+  assert.deepEqual(warnings, []);
+  const [beat, plain] = html.split('<figure').slice(1);
+  const viewBox = (svg) => svg.match(/viewBox="([^"]+)"/)[1].split(/\s+/).map(Number);
+  const [, y, , h] = viewBox(beat);
+  const bands = [...beat.matchAll(/<g class="timing-beat"[^>]*>(.*?)<\/g>/g)].flatMap((m) => [...m[1].matchAll(/y="([-\d.]+)" width="[-\d.]+" height="([-\d.]+)"/g)]);
+  assert.ok(bands.length > 0, 'the beat shades its place in the diagram');
+  for (const [, top, height] of bands) assert.ok(Number(top) >= y && Number(top) + Number(height) <= y + h, 'every band inside the frame');
+  assert.ok(viewBox(beat)[3] > viewBox(plain)[3], 'taller than the circuit alone: the diagram is in it');
+  assert.doesNotMatch(beat, /Gain/, 'no other figure');
+  assert.doesNotMatch(plain, /timing-beat/);
 });
 
 test('the report command lists the figures and warnings, and writes the HTML', () => {
