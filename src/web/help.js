@@ -369,7 +369,7 @@ function reportExampleEntry() {
   entry.className = 'help-tutorial';
   entry.append(
     Object.assign(document.createElement('h3'), { textContent: 'Report example' }),
-    Object.assign(document.createElement('p'), { textContent: 'A delta-sigma modulator and the switched-capacitor integrator inside it, with notes written as a report: contents, figures, beats, equations, plots, citations, and the integrator as a section of the modulator\'s report. Opens unsaved; saving keeps both designs.' }),
+    Object.assign(document.createElement('p'), { textContent: 'A delta-sigma modulator and the switched-capacitor integrator inside it, with notes written as a report: authors, contents, figures, beats, equations, tables, plots, citations, and the integrator as a section of the modulator\'s report. Opens unsaved; saving keeps both designs.' }),
     open,
   );
   return entry;

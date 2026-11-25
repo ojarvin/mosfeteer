@@ -67,8 +67,17 @@ phase shows its switches open or closed, with the cut-off parts dimmed.
 </p>
 
 Export SVG, PDF, or PNG cut to the drawing. Set the page to an IEEE
-column, and the text comes out at the right size. Your notes can become a
-report with numbered figures. Each design keeps its own save history.
+column, and the text comes out at the right size. Each design keeps its
+own save history.
+
+Your notes can become a report: a PDF with numbered figures, equations,
+tables, citations, and the notes of the designs it uses as sections.
+[The sample report](docs/report-example.pdf) is Learn's report example,
+made in Mosfeteer. Its authors and references are placeholders.
+
+<p align="center">
+  <a href="docs/report-example.pdf"><img src="docs/images/report-example.webp" width="420" alt="The first page of the sample report: a first-order delta-sigma modulator, by Claude, marked as a sample document, with numbered contents, an introduction with a list, and the start of the section on the loop."></a>
+</p>
 
 ## Organize
 

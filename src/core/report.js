@@ -438,6 +438,8 @@ h4, h5, h6 { font-size: 10.5pt; margin: 12pt 0 4pt; }
 .section-author { margin: -2pt 0 8pt; font-style: italic; text-indent: 0; }
 p { margin: 0; text-align: justify; }
 p + p { text-indent: 1.5em; }
+/* A paragraph that leads into a table or an equation stays on its page. */
+p:has(+ table), p:has(+ .note-display-math) { break-after: avoid; page-break-after: avoid; }
 .report-authors + p, .section-author + p { text-indent: 0; }
 ul, ol, blockquote, pre, table, .note-display-math { margin: 6pt 0; }
 ul, ol { padding-left: 1.6em; text-align: justify; }
@@ -448,7 +450,7 @@ li > ul, li > ol { margin: 0; }
 blockquote { margin-left: 2em; margin-right: 2em; padding: 0; }
 code { font: 0.92em "Latin Modern Mono", ui-monospace, Menlo, Consolas, monospace; }
 pre { padding: 0; white-space: pre-wrap; break-inside: avoid; }
-table { border-collapse: collapse; break-inside: avoid; margin-left: auto; margin-right: auto; border-top: 0.8pt solid #111; border-bottom: 0.8pt solid #111; }
+table { border-collapse: collapse; break-inside: avoid; margin: 10pt auto; border-top: 0.8pt solid #111; border-bottom: 0.8pt solid #111; }
 th, td { padding: 2pt 8pt; text-align: left; }
 thead th { border-bottom: 0.5pt solid #111; }
 hr { border: 0; border-top: 0.5pt solid #111; margin: 12pt 0; }

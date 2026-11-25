@@ -147,7 +147,12 @@ warnings, and writes the HTML.
   link and its peek, the notes, the report -- from the bundle
   (`src/web/example-designs.js`, an `example:` path), and opening it opens
   it unsaved. Saving the modulator saves the integrator beside it; one
-  already there is left as it is.
+  already there is left as it is. Its notes say they are a sample, by
+  placeholder authors, citing placeholder references: `npm run
+  report-example` (`scripts/build_report_example.mjs`) prints it as the
+  README's `docs/report-example.pdf`, with its first page as
+  `docs/images/report-example.webp`; run it after changing the example
+  or the report's look.
 - **In the notes window** a figure shows as its number, target, and caption,
   its target in red when there is nothing of that name to draw.
 - **Sizes.** Every figure is drawn at the page guide's width (the A4 one

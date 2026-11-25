@@ -7,6 +7,7 @@
     "start": "node launch.mjs",
     "serve": "node --watch src/server/serve.js",
     "browser-only": "node scripts/build_browser_only.mjs",
+    "report-example": "node scripts/build_report_example.mjs",
     "cli": "node src/cli/index.js",
     "install-launcher": "node launch.mjs --install",
     "test": "node --test --test-timeout=120000 test/*.test.js",
