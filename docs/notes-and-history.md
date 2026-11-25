@@ -185,7 +185,10 @@ rotated out.
 - **Storage.** Entries newest first, each a line patch from the entry before
   it -- the newest from the file's own drawing -- with the hash of its text;
   the history has the hash of the text its newest patch starts from
-  (`base`). Ten save points of a 240 KB design take about 5 KB.
+  (`base`). Ten save points of a 240 KB design take about 5 KB. The history
+  also keeps that base text, compressed (`anchor`, raw DEFLATE in base64,
+  `src/core/deflate.js`): about a seventh of the drawing's text, packed
+  again only when the drawing changed.
 - **Every writer carries it.** Whatever writes a document file passes the
   state through `settledHistory` with the file's previous contents: the
   server's `PUT /api/document` and command runs (`src/server/app.js`), and
@@ -194,9 +197,19 @@ rotated out.
   sends (`historyBase`: a design saved under a new name, or first saved
   from a dropped file); failing those, the file's own history if it fits;
   failing both, the history is written as it came -- never applied, never
-  dropped. A history that fits no text (the file edited outside the
-  editor) stays unreadable rather than guessed at, until the history window's
-  **Remove it and start afresh** takes it out.
+  dropped.
+- **Edited outside the editor.** A file whose JSON another program changed
+  (an agent writing the notes, a hand edit) has a history that fits no
+  text; it is read against its anchor instead, once the anchor's text has
+  the history's `base` hash. The drawing the file had before the edit is
+  then the newest entry, marked `outside` (an entry already when the last
+  write was a Save; else one added, with the time of that write), and no
+  entry is the file's. Restoring it undoes the edit, which becomes a save
+  point first, as any drawing in no entry does. The next write stores the
+  history against the edited drawing; the edit itself is no save point
+  until a Save. A history with no anchor that fits (written before anchors,
+  or the anchor damaged) stays unreadable rather than guessed at, until the
+  history window's **Remove it and start afresh** takes it out.
 - **Save points.** Only the editor's Save (`savePoint`) adds one, and only
   when the history does not hold the drawing already; scripted commands, window-state
   writes, and tag or relink rewrites carry the history over without one.
@@ -209,7 +222,8 @@ rotated out.
 More → History, or `:history`, shows the history window
 (`src/web/history-window.js`), which reads the history from the file each
 time it shows it or the file changes, and writes every change straight to
-the file -- unsaved drawing edits stay unsaved. Per entry: **View** shows it
+the file -- unsaved drawing edits stay unsaved. After an edit outside the
+editor it says so, and marks the entry from before it. Per entry: **View** shows it
 in a reference window (read-only, not remembered with the windows);
 **Restore** puts the drawing back as it was and writes it to the file with
 no save point of its own, so the entry is marked as the file's and nothing
@@ -226,10 +240,11 @@ file): `history [list]`; `history checkpoint [NAME] [--comment TEXT]` pins
 the drawing; `history pin ENTRY [NAME] [--comment TEXT]` pins or renames
 one, `history unpin`, `remove`, and `restore ENTRY` -- ENTRY an id or a
 checkpoint's name. A restore keeps the drawing it replaces as a save point
-when it is none yet, as the window's does. A history that fits no drawing
-is refused. In the editor, where the drawing may be ahead of its file, a
+when it is none yet, as the window's does. `history list` marks the entry
+from before an outside edit `before outside edit`. A history that fits no
+drawing, even through its anchor, is refused. In the editor, where the drawing may be ahead of its file, a
 `history` command with arguments points to the window instead.
 
-Tests: `test/notes.test.js`, `test/save-history.test.js`, the history test
+Tests: `test/notes.test.js`, `test/save-history.test.js`, `test/deflate.test.js`, the history test
 in `test/server-documents.test.js` and `test/browser-persistence.test.js`,
 and `test/browser/notes.test.js`, `test/browser/history.test.js`.

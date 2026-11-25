@@ -1511,8 +1511,8 @@ function historyCommand(circuit, pos, flags, result) {
     if (found.length !== 1) throw new Error(found.length ? `${found.length} checkpoints are named "${key}": use the id` : `no history entry "${key}" (history list shows them)`);
     return found[0];
   };
-  const describe = (entry) => `${entry.id}  ${entry.time}${entry.pinned ? `  checkpoint${entry.name ? ` "${entry.name}"` : ''}` : ''}${entry.comment ? `  -- ${entry.comment}` : ''}`;
-  const listed = (entry) => ({ id: entry.id, time: entry.time, ...(entry.pinned ? { pinned: true } : {}), ...(entry.name ? { name: entry.name } : {}), ...(entry.comment ? { comment: entry.comment } : {}) });
+  const describe = (entry) => `${entry.id}  ${entry.time}${entry.pinned ? `  checkpoint${entry.name ? ` "${entry.name}"` : ''}` : ''}${entry.outside ? '  before outside edit' : ''}${entry.comment ? `  -- ${entry.comment}` : ''}`;
+  const listed = (entry) => ({ id: entry.id, time: entry.time, ...(entry.pinned ? { pinned: true } : {}), ...(entry.name ? { name: entry.name } : {}), ...(entry.comment ? { comment: entry.comment } : {}), ...(entry.outside ? { outside: true } : {}) });
   const comment = flags.comment ? flags.comment[0] : '';
   const store = (history, text, entry) => {
     circuit.history = history;

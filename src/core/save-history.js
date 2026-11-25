@@ -11,11 +11,18 @@
  * save that moved one part costs a few lines, not a copy of the design.
  * Every entry carries its text's hash, and the history the hash of the text
  * its newest patch starts from (`base`): a chain that does not fit the
- * text it is read against is never applied (an edit made outside the
- * editor), and stays as it was rather than being guessed at.
+ * text it is read against is never applied, rather than guessed at.
+ *
+ * An edit made outside the editor (the file's JSON changed by hand or by
+ * another program) leaves the chain fitting no text. So the history also
+ * keeps that base text itself, compressed (`anchor`, deflate.js): read
+ * against it, the chain fits again, and the drawing the file had before
+ * the edit is its newest entry (`outside`) -- one to restore. The next
+ * write stores the chain against the edited drawing.
  *
  * Stored form (`history` in the document):
- *   { base: HASH, entries: [{ id, time, hash, patch, pinned?, name?, comment? }] }
+ *   { base: HASH, anchor?: { time, text: BASE64 },
+ *     entries: [{ id, time, hash, patch, pinned?, name?, comment? }] }
  * A patch is a list: a positive number keeps that many lines, a negative
  * one drops them, a list of strings puts those lines in; the rest of the
  * lines are kept.
@@ -26,12 +33,16 @@
  * the editor's Save adds a save point.
  */
 
+import { packText, unpackText } from './deflate.js';
+
 /** Save points kept besides the pinned checkpoints. */
 export const SAVE_POINTS_KEPT = 10;
 /** Entries a history may hold at most (pinned ones included). */
 const MAX_ENTRIES = 200;
 /** Above this many differing lines a patch replaces the changed stretch whole. */
 const MAX_EDIT_DISTANCE = 1500;
+/** The longest anchor read (base64 characters). */
+const MAX_ANCHOR = 16 * 1024 * 1024;
 
 // ----- the text a save point keeps -----------------------------------------------
 
@@ -191,33 +202,70 @@ export function normalizeHistory(value) {
       ...(textValue(entry.comment, 2000).trim() ? { comment: textValue(entry.comment, 2000).trim() } : {}),
     });
   }
-  return { base: value.base.slice(0, 80), entries };
+  const anchor = value.anchor && typeof value.anchor === 'object' && typeof value.anchor.text === 'string'
+    && value.anchor.text.length <= MAX_ANCHOR && /^[A-Za-z0-9+/]*=*$/.test(value.anchor.text)
+    ? { time: textValue(value.anchor.time, 40), text: value.anchor.text } : null;
+  return { base: value.base.slice(0, 80), ...(anchor ? { anchor } : {}), entries };
 }
 
-const meta = ({ text, patch, hash, ...rest }) => rest;
+const meta = ({ text, patch, hash, outside, ...rest }) => rest;
 
-/**
- * The entries with their texts, newest first, read against `baseText` (the
- * text of the drawing the history was stored with): null when the history
- * does not fit that text. An entry whose text fails its hash ends the list.
- */
-export function historyEntries(history, baseText) {
-  const value = normalizeHistory(history);
-  if (!value) return [];
-  if (value.base !== textHash(baseText)) return null;
+/** The text a history's anchor holds, when it is the text of its base. */
+function anchorText(value) {
+  if (!value?.anchor) return null;
+  try {
+    const text = unpackText(value.anchor.text);
+    return textHash(text) === value.base ? text : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The entries read along the chain from `text`, the base's own. */
+function readChain(value, text) {
   const entries = [];
-  let lines = String(baseText).split('\n');
+  let lines = String(text).split('\n');
   for (const entry of value.entries) {
     try { lines = applyPatch(lines, entry.patch); } catch { break; }
-    const text = lines.join('\n');
-    if (textHash(text) !== entry.hash) break;
-    entries.push({ ...meta(entry), text });
+    const next = lines.join('\n');
+    if (textHash(next) !== entry.hash) break;
+    entries.push({ ...meta(entry), text: next });
   }
   return entries;
 }
 
-/** Entries with their texts stored against `baseText`. */
-function encodeHistory(entries, baseText) {
+/**
+ * The entries with their texts, newest first, read against `baseText` (the
+ * text of the drawing the history was stored with). An entry whose text
+ * fails its hash ends the list.
+ *
+ * When the history does not fit that text -- the file was edited outside
+ * the editor -- it is read against its anchor, the text it was stored
+ * with; the drawing that was is then the newest entry, marked `outside`
+ * (an entry already, or one added with the anchor's time). With
+ * `recover: false`, or no anchor that fits, null.
+ */
+export function historyEntries(history, baseText, { recover = true } = {}) {
+  const value = normalizeHistory(history);
+  if (!value) return [];
+  if (value.base === textHash(baseText)) return readChain(value, baseText);
+  const before = recover ? anchorText(value) : null;
+  if (before === null) return null;
+  const entries = readChain(value, before);
+  const key = drawingKey(before);
+  const held = entries.findIndex((entry) => drawingKey(entry.text) === key);
+  if (held >= 0) entries[held] = { ...entries[held], outside: true };
+  else entries.unshift({ id: `o${value.base.replace(/[^a-z0-9]/g, '').slice(-9)}`, time: value.anchor.time, text: before, outside: true });
+  return entries;
+}
+
+/** The last anchor packed, by the hash of its text: a write that leaves
+ *  the drawing as it was packs nothing again. */
+let lastAnchor = { hash: null, text: null };
+
+/** Entries with their texts stored against `baseText`, with the anchor
+ *  (`anchor`, an existing one to keep when it holds that text). */
+function encodeHistory(entries, baseText, { now = new Date(), anchor = null } = {}) {
   let lines = String(baseText).split('\n');
   const stored = [];
   for (const entry of entries) {
@@ -225,7 +273,13 @@ function encodeHistory(entries, baseText) {
     stored.push({ ...meta(entry), hash: textHash(entry.text), patch: diffLines(lines, next) });
     lines = next;
   }
-  return { base: textHash(baseText), entries: stored };
+  const base = textHash(baseText);
+  let kept = anchor?.base === base && anchor.anchor ? anchor.anchor : null;
+  if (!kept) {
+    if (lastAnchor.hash !== base) lastAnchor = { hash: base, text: packText(baseText) };
+    kept = { time: now.toISOString(), text: lastAnchor.text };
+  }
+  return { base, anchor: kept, entries: stored };
 }
 
 /** The newest SAVE_POINTS_KEPT unpinned entries and every pinned one. */
@@ -257,14 +311,18 @@ export function settledHistory(next, { previous = null, sent = null, baseText = 
   const own = normalizeHistory(next?.history);
   const prior = previous ? historyText(previous) : null;
   let entries = null;
+  const texts = [prior, sent ? historyText(sent) : null, baseText, nextText].filter((text) => typeof text === 'string');
   if (own) {
-    for (const text of [prior, sent ? historyText(sent) : null, baseText, nextText]) {
-      if (typeof text !== 'string') continue;
-      const read = historyEntries(own, text);
+    for (const text of texts) {
+      const read = historyEntries(own, text, { recover: false });
       if (read) { entries = read; break; }
     }
   }
   const theirs = previous ? normalizeHistory(previous.history) : null;
+  if (!entries && theirs) entries = historyEntries(theirs, prior, { recover: false });
+  // Edited outside the editor: read against the anchor, the drawing before
+  // the edit its newest entry.
+  if (!entries && own) entries = historyEntries(own, texts[0]);
   if (!entries && theirs) entries = historyEntries(theirs, prior);
   if (!entries) {
     // Unreadable: kept as it came, never guessed at.
@@ -276,7 +334,7 @@ export function settledHistory(next, { previous = null, sent = null, baseText = 
   if (savePoint && !entries.some((entry) => drawingKey(entry.text) === drawingKey(nextText))) entries.unshift({ id: newId(), time: now.toISOString(), text: nextText });
   entries = rotate(entries, keep);
   if (!entries.length && !own && !theirs) return null;
-  return encodeHistory(entries, nextText);
+  return encodeHistory(entries, nextText, { now, anchor: own || theirs });
 }
 
 /**
@@ -287,7 +345,7 @@ export function settledHistory(next, { previous = null, sent = null, baseText = 
 function editHistory(history, baseText, edit) {
   const entries = historyEntries(history, baseText);
   if (!entries) return null;
-  return encodeHistory(edit(entries.map((entry) => ({ ...entry }))), baseText);
+  return encodeHistory(edit(entries.map((entry) => ({ ...entry }))), baseText, { anchor: normalizeHistory(history) });
 }
 
 /** Pin entry `id` as a checkpoint, named (and with a comment). */

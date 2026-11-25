@@ -123,11 +123,59 @@ test('a writer whose history is stale gets the file\'s; one that fits nothing is
   const stale = { ...moved(saved, 'M2'), history: start.history };
   const next = write(saved, stale, { savePoint: true });
   assert.equal(entries(next).length, 3);
-  // Edited outside the editor: nothing fits, nothing is applied or lost.
-  const outside = { ...saved, components: saved.components.slice(1) };
+  // A history from before anchors, edited outside the editor: nothing
+  // fits, nothing is applied or lost.
+  const { anchor, ...bare } = saved.history;
+  const outside = { ...saved, components: saved.components.slice(1), history: bare };
   const kept = write(null, outside);
-  assert.deepEqual(kept.history, saved.history);
+  assert.deepEqual(kept.history, bare);
   assert.equal(entries(kept), null);
+});
+
+test('a file edited outside the editor reads against its anchor: the drawing before the edit is the newest entry', () => {
+  let disk = write(null, design(), { savePoint: true });
+  disk = write(disk, moved(disk), { savePoint: true });
+  const before = entries(disk);
+  // Another program changes the drawing and the notes, leaving the history.
+  const edited = JSON.parse(JSON.stringify({ ...disk, components: disk.components.slice(1), notes: 'Edited by hand.' }));
+  const read = entries(edited);
+  assert.deepEqual(read.map((entry) => entry.id), before.map((entry) => entry.id), 'the last save is the drawing before the edit: no entry added');
+  assert.equal(read[0].outside, true);
+  assert.equal(read[0].text, historyText(disk));
+  assert.deepEqual(read.map((entry) => entry.text), before.map((entry) => entry.text));
+  assert.equal(historyEntries(edited.history, historyText(edited), { recover: false }), null);
+  // The next write stores the chain against the edited drawing.
+  const next = write(edited, edited);
+  assert.deepEqual(entries(next).map((entry) => entry.text), before.map((entry) => entry.text));
+  assert.equal(entries(next)[0].outside, undefined);
+  assert.equal(next.history.base, textHash(historyText(edited)));
+  // A Save keeps the edited drawing as a save point over it.
+  const saved = write(edited, edited, { savePoint: true });
+  assert.equal(entries(saved).length, 3);
+  assert.equal(entries(saved)[0].text, historyText(edited));
+});
+
+test('a drawing written by a script, then edited outside, is an entry of its own with the anchor\'s time', () => {
+  let disk = write(null, design(), { savePoint: true });
+  disk = write(disk, moved(disk), { now: new Date('2026-01-02T03:04:05Z') });
+  const edited = { ...disk, notes: 'Edited by hand.' };
+  const read = entries(edited);
+  assert.equal(read.length, 2);
+  assert.equal(read[0].outside, true);
+  assert.equal(read[0].time, '2026-01-02T03:04:05.000Z');
+  assert.equal(read[0].text, historyText(disk));
+  // Its id stays put, so the history window can act on it.
+  assert.equal(entries(edited)[0].id, read[0].id);
+  const pinned = pinHistoryEntry(edited.history, historyText(edited), read[0].id, { name: 'before the agent' });
+  assert.equal(historyEntries(pinned, historyText(edited))[0].name, 'before the agent');
+});
+
+test('an anchor that does not hold its base text is not used', () => {
+  const disk = write(null, design(), { savePoint: true });
+  const other = write(null, moved(design()), { savePoint: true });
+  const edited = { ...disk, notes: 'Edited by hand.', history: { ...disk.history, anchor: other.history.anchor } };
+  assert.equal(entries(edited), null);
+  assert.equal(entries({ ...edited, history: { ...disk.history, anchor: { time: '', text: 'AAAA' } } }), null);
 });
 
 test('a design saved under a new name keeps its history read against the file it came from', () => {
@@ -153,7 +201,8 @@ test('pin, unpin, remove, and checkpoint edit the entries in place', () => {
   assert.equal(historyEntries(pinned, base)[2].name, 'first');
   const unpinned = unpinHistoryEntry(pinned, base, oldest.id);
   assert.equal(historyEntries(unpinned, base)[2].pinned, undefined);
-  assert.equal(removeHistoryEntry(disk.history, 'not the file', middle.id), null);
+  const { anchor, ...bare } = disk.history;
+  assert.equal(removeHistoryEntry(bare, 'not the file', middle.id), null);
 
   // A checkpoint of the file pins its newest entry when that is the drawing...
   const same = checkpointHistory(disk.history, base, { name: 'works' });

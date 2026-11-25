@@ -4,7 +4,7 @@
 
 import { describe, before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { start, browserSkip } from './harness.js';
 import { amplifier } from './fixtures.js';
@@ -130,5 +130,33 @@ describe('save history', { skip: browserSkip() }, () => {
     assert.equal(await m1x(), 40);
     assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.history)`), null);
     await h.until(`!!document.querySelector('.history-message:not([hidden])')`);
+  });
+
+  test('a file edited outside the editor keeps its history: the drawing before the edit is marked, and Restore brings it back', async () => {
+    const path = join(h.workspace, 'other.json');
+    await h.open('other');
+    await h.evaluate(`window.__run('move M1 40 0')`);
+    await save();
+    // Another program rewrites the file: a part moved, the notes written.
+    const state = JSON.parse(await readFile(path, 'utf8'));
+    state.components.find((part) => part.refdes === 'M1').transform.x = 400;
+    state.notes = 'Written by an agent.';
+    await writeFile(path, JSON.stringify(state, null, 2));
+    await h.open('other');
+    await h.until(`window.__circuit().comps.find((c) => c.refdes === 'M1').x === 400`);
+    if (!await h.evaluate(`!!document.querySelector('.history-window:not([hidden])')`)) await h.click('#btn-history');
+    await h.until(`!!document.querySelector('.history-entry .history-outside')`);
+    assert.match(await h.evaluate(`document.querySelector('.history-message').textContent`), /changed outside Mosfeteer/);
+    assert.equal(await h.evaluate(`document.querySelectorAll('.history-entry .history-current:not(.history-outside)').length`), 0, 'no entry is the file\'s');
+    await rowButton(0, 'Restore');
+    await h.until(`window.__circuit().comps.find((c) => c.refdes === 'M1').x === 40`);
+    const restored = JSON.parse(await readFile(path, 'utf8'));
+    assert.equal(restored.notes, undefined);
+    // The outside edit is a save point of its own now; the file is the restored drawing.
+    const list = historyEntries(restored.history, historyText(restored));
+    assert.equal(list.length, 2);
+    assert.ok(list.some((entry) => entry.text.includes('Written by an agent.')));
+    assert.ok(list.every((entry) => !entry.outside));
+    await h.until(`!document.querySelector('.history-entry .history-outside')`);
   });
 });

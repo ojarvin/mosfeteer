@@ -234,6 +234,7 @@ function row(entry) {
     el('span', { class: `history-label${entry.pinned ? ' pinned' : ''}`, text: label(entry) }),
     el('span', { class: 'history-time', text: when(entry), title: exactTime(entry) }),
     ...(current ? [el('span', { class: 'history-current', text: 'current version', title: 'The file holds this drawing now' })] : []),
+    ...(entry.outside ? [el('span', { class: 'history-current history-outside', text: 'before outside edit', title: 'The file held this drawing before it was changed outside Mosfeteer' })] : []),
   ]);
   const actions = el('div', { class: 'history-actions' }, [
     el('button', { type: 'button', text: 'View', title: 'Show it in a reference window', onclick: () => view(entry) }),
@@ -274,7 +275,9 @@ function renderList() {
     win.list.replaceChildren(el('li', {}, [el('button', { type: 'button', class: 'history-afresh window-action', text: 'Remove it and start afresh', onclick: () => void startAfresh() })]));
     return;
   }
-  message(file.entries.length ? '' : 'No save points yet: the next Save is the first.');
+  message(file.entries.some((entry) => entry.outside)
+    ? 'The file was changed outside Mosfeteer. Restore the marked entry to undo that change.'
+    : file.entries.length ? '' : 'No save points yet: the next Save is the first.');
   const pinned = file.entries.filter((entry) => entry.pinned);
   const points = file.entries.filter((entry) => !entry.pinned);
   win.list.replaceChildren(
