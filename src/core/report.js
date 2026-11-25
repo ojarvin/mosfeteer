@@ -225,7 +225,7 @@ const afterFirstHeading = (html, extra) => {
 const sectionId = (name) => `design-${figureKey(name).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'section'}`;
 
 /**
- * The report of `circuit`: `{ html, figures, warnings }`. `name` titles it
+ * The report of `circuit`: `{ html, figures, warnings, page }`. `name` titles it
  * (unless the notes start with a `#` heading of their own); `guide` sizes
  * its figures (A4 without one); `fontCss` is put in its style sheet (the math
  * face, which only the caller can read); `design(name)` gives another
@@ -407,6 +407,8 @@ ${title}${content}
       ...(figure.textPt !== undefined ? { textPt: figure.textPt } : {}), design: figure.owner,
     })),
     warnings,
+    // The text area of its pages, for laying them out (web/report-pages.js).
+    page: { textWidthPt: page.textWidthPt, textHeightPt: page.textHeightPt },
   };
 }
 

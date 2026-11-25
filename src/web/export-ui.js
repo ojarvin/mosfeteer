@@ -17,6 +17,7 @@ import { DRAWING_EXPORT_OPTIONS, hasDrawableSelection, selectionDrawing, selecti
 import { svgPixelSize } from '../core/render.js';
 import { svgToPngDataUrl, applyExportDarkTheme, embeddedMathFontFace, embeddedReportFontFaces, withEmbeddedMathFont } from './drawing-export.js';
 import { buildReport, embeddedDesignNames } from '../core/report.js';
+import { paginateReport } from './report-pages.js';
 import { loadDesign } from './example-designs.js';
 import { loadDocument } from '../core/document.js';
 import { writeDrawingToClipboard } from './clipboard.js';
@@ -282,7 +283,10 @@ async function runReportExport({ dir, name, formats }) {
     logLine(`Exporting ${formats.map((format) => `${name}.${format}`).join(', ')}…`);
     const prepared = persistence.prepareExport ? await persistence.prepareExport({ name, formats: [], dir }) : null;
     settleLabelMetrics();
-    const report = await currentReport(`${await embeddedMathFontFace()}${await embeddedReportFontFaces()}`);
+    const built = await currentReport(`${await embeddedMathFontFace()}${await embeddedReportFontFaces()}`);
+    // Its pages laid out here, the contents numbered: the print dialog
+    // cannot number them, and the server checks them against its print.
+    const report = { ...built, html: (await paginateReport(built.html, built.page)).html };
     // Browser-only, the PDF is printed from the report's own pages.
     const printing = !!persistence.printsPdf && formats.includes('pdf');
     const fileFormats = printing ? formats.filter((format) => format !== 'pdf') : formats;
