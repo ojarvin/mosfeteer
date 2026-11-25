@@ -164,10 +164,25 @@ warnings, and writes the HTML.
   (narrower where its legend would reach past the guide), its legend
   beside it, with its own text -- ticks, axis names, legend -- at the
   guide's size; on the canvas a plot's text is smaller than the labels'.
+- **Authors.** A line `Author: Ada Lovelace` (or `Authors: A, B and C`)
+  right under the notes' `#` title, or first without one, names who wrote
+  them (`noteAuthor`, `src/core/notes.js`): the notes window shows it as a
+  byline, and the report centers the names under its title, one column
+  each. A section whose author line names other people (case and order
+  aside, `sameAuthors`) shows its names under its heading; the same
+  people's sections show none.
 - **Layout.** The notes' `#` heading titles the report; without one the
   design's name does. Notes that place no figure get the whole drawing on
   top, unnumbered. Headings stay with what follows, figures are never split
-  across pages, and pages are numbered.
+  across pages, and pages are numbered. The type is a LaTeX article's:
+  Latin Modern Roman (`src/web/fonts/lmroman10-*.woff2`, put in the report
+  by the editor, `embeddedReportFontFaces`; the browser-only build carries
+  them in its bundle), the title centered, bold numbered sections,
+  justified and hyphenated paragraphs indented after the first, ruled
+  tables. The page's margins hold only its number: its own empty margin
+  boxes keep a browser's print headers and footers (date, title, address)
+  off it. Firefox, which has no margin boxes, prints its own unless its
+  print dialog's Headers and footers is off.
 
 ## Save history
 

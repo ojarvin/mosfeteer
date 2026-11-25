@@ -34,7 +34,7 @@ import { loadDocument, renderDocument } from './document.js';
 import { plotFontSize } from './render.js';
 import { normalizePageGuide } from './page-guide.js';
 import { numberSections, referencesHtml, renderNotes } from './notes-markdown.js';
-import { FIGURE_EMBED_LINE, figureKey, pictureTarget, noteCitations, noteFigures, normalizeNotes, resolveMention } from './notes.js';
+import { FIGURE_EMBED_LINE, authorNames, figureKey, noteAuthor, pictureTarget, noteCitations, noteFigures, normalizeNotes, resolveMention, sameAuthors } from './notes.js';
 
 const MM = 72 / 25.4;
 /** The sheet: A4, 25 mm margins; the side margins give way, down to 12 mm,
@@ -212,6 +212,15 @@ export function embeddedDesignNames(circuit) {
   return noteFigures(circuit.notes).filter((entry) => !resolveReportTarget(circuit, entry.name, targets)).map((entry) => entry.name);
 }
 
+/** The report's authors under its title, each name a column of the row. */
+const authorsHtml = (author) => `<p class="report-authors">${authorNames(author).map((name) => `<span class="report-author">${escapeHtml(name)}</span>`).join('')}</p>`;
+
+/** The HTML with `extra` after its first heading (its title). */
+const afterFirstHeading = (html, extra) => {
+  const end = html.match(/<\/h[1-6]>/);
+  return end ? `${html.slice(0, end.index + end[0].length)}\n${extra}${html.slice(end.index + end[0].length)}` : `${extra}\n${html}`;
+};
+
 /** The anchor of a design's section. */
 const sectionId = (name) => `design-${figureKey(name).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'section'}`;
 
@@ -269,11 +278,16 @@ export function buildReport(circuit, { name = 'Design', guide = null, fontCss = 
   };
   const citations = noteCitations(readingOrder(circuit));
   const rendered = new Set([figureKey(name)]);
+  // The report's author, under its title; a section by someone else names
+  // its own under its heading.
+  const reportAuthor = noteAuthor(circuit.notes)?.author || null;
 
   /** One design's notes as HTML, `depth` sections down, its title an
    *  `h{level}`. */
   const section = (owner, ownerName, depth, level) => {
-    const notes = normalizeNotes(owner.notes);
+    // The author line is placed by the report, under the title or heading.
+    const authored = noteAuthor(owner.notes);
+    const notes = authored ? normalizeNotes(owner.notes).split('\n').filter((_, i) => i !== authored.line).join('\n') : normalizeNotes(owner.notes);
     const targets = reportTargets(owner);
     const isDesign = isDesignIn(owner);
     const embeds = noteFigures(notes, { isDesign });
@@ -321,6 +335,7 @@ export function buildReport(circuit, { name = 'Design', guide = null, fontCss = 
     let index = 0;
     const body = renderNotes(source, {
       headingLevel: level,
+      author: 'drop',
       // One contents for the report, where its own notes place it.
       toc: depth ? 'drop' : 'place',
       isDesign,
@@ -349,7 +364,10 @@ export function buildReport(circuit, { name = 'Design', guide = null, fontCss = 
           // A level below the heading the embed stands under.
           const inner = Math.min((under ?? level) + 1, 6);
           const heading = /^#\s/.test(own) ? '' : `<h${inner}>${escapeHtml(known.name)}</h${inner}>\n`;
-          return `<section id="${known.id}" class="design-section">\n${heading}${section(known.circuit, known.name, depth + 1, inner)}\n</section>`;
+          const theirs = noteAuthor(known.circuit.notes)?.author;
+          let body = `${heading}${section(known.circuit, known.name, depth + 1, inner)}`;
+          if (theirs && !(reportAuthor && sameAuthors(theirs, reportAuthor))) body = afterFirstHeading(body, `<p class="section-author">${escapeHtml(authorNames(theirs).join(', '))}</p>`);
+          return `<section id="${known.id}" class="design-section">\n${body}\n</section>`;
         }
         const caption = figure.number
           ? `<figcaption><span class="figure-number">Fig. ${figure.number}.</span>${captionHtml ? ` ${captionHtml}` : ''}</figcaption>`
@@ -365,8 +383,10 @@ export function buildReport(circuit, { name = 'Design', guide = null, fontCss = 
   const notes = normalizeNotes(circuit.notes);
   const body = section(circuit, name, 0, 1);
   const references = citations.length ? referencesHtml(citations, 2) : '';
-  const title = /^#\s/.test(notes) ? '' : `<h1>${escapeHtml(name)}</h1>\n`;
-  const content = numberSections(`${body}${references ? `\n${references}` : ''}`, { titleLevel: 1 });
+  const titled = /^#\s/.test(notes);
+  const title = titled ? '' : `<h1>${escapeHtml(name)}</h1>\n${reportAuthor ? `${authorsHtml(reportAuthor)}\n` : ''}`;
+  let content = numberSections(`${body}${references ? `\n${references}` : ''}`, { titleLevel: 1 });
+  if (titled && reportAuthor) content = afterFirstHeading(content, authorsHtml(reportAuthor));
   const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -391,43 +411,64 @@ ${title}${content}
 }
 
 function reportCss(page) {
+  // A LaTeX article's look: Latin Modern Roman (embedded by the editor, see
+  // fontCss), a centered title and authors, justified paragraphs indented
+  // after the first, bold numbered sections. The page's own margin boxes
+  // -- empty but the page number -- keep a print dialog's date, title, and
+  // address out of the margins.
+  const serif = '"Latin Modern Roman", "LM Roman 10", "CMU Serif", "Computer Modern Serif", Georgia, "Times New Roman", serif';
   return `
-@page { size: A4; margin: ${pt(PAGE.marginPt)} ${pt(page.sidePt)}; @bottom-center { content: counter(page); font: 9pt Georgia, "Times New Roman", serif; color: #555; } }
-html { color: #111; background: #fff; font: 10.5pt/1.45 Georgia, "Times New Roman", serif; }
-body { max-width: ${pt(page.textWidthPt)}; margin: 0 auto; }
+@page {
+  size: A4; margin: ${pt(PAGE.marginPt)} ${pt(page.sidePt)};
+  @top-left { content: ''; } @top-center { content: ''; } @top-right { content: ''; }
+  @bottom-left { content: ''; } @bottom-right { content: ''; }
+  @bottom-center { content: counter(page); font: 10pt ${serif}; color: #111; }
+}
+html { color: #111; background: #fff; font: 10.5pt/1.3 ${serif}; }
+body { max-width: ${pt(page.textWidthPt)}; margin: 0 auto; hyphens: auto; font-kerning: normal; }
 @media screen { body { padding: 36pt 16pt; } }
 h1, h2, h3, h4, h5, h6 { line-height: 1.25; break-after: avoid; page-break-after: avoid; }
-h1 { font-size: 18pt; margin: 0 0 14pt; }
-h2 { font-size: 13.5pt; margin: 18pt 0 6pt; }
-h3 { font-size: 11.5pt; margin: 14pt 0 4pt; }
+h1 { margin: 12pt 0 14pt; font-size: 17pt; font-weight: normal; text-align: center; }
+.report-authors { display: flex; flex-wrap: wrap; justify-content: center; gap: 4pt 2.2em; margin: 0 0 24pt; font-size: 12pt; text-align: center; text-indent: 0; }
+h2 { font-size: 14pt; margin: 18pt 0 8pt; }
+h3 { font-size: 12pt; margin: 14pt 0 6pt; }
 h4, h5, h6 { font-size: 10.5pt; margin: 12pt 0 4pt; }
-p, ul, ol, blockquote, pre, table { margin: 0 0 8pt; }
-ul, ol { padding-left: 1.4em; }
+.section-number { margin-right: 0.9em; }
+.note-toc .section-number { display: inline-block; min-width: 1.8em; margin-right: 0.4em; }
+.section-author { margin: -2pt 0 8pt; font-style: italic; text-indent: 0; }
+p { margin: 0; text-align: justify; }
+p + p { text-indent: 1.5em; }
+.report-authors + p, .section-author + p { text-indent: 0; }
+ul, ol, blockquote, pre, table, .note-display-math { margin: 6pt 0; }
+ul, ol { padding-left: 1.6em; text-align: justify; }
 li > ul, li > ol { margin: 0; }
 .note-task { list-style: none; margin-left: -1.2em; }
-.note-check { display: inline-block; width: 0.7em; height: 0.7em; margin-right: 0.4em; border: 1px solid #555; vertical-align: -0.05em; }
-.note-task.done .note-check { background: #555; }
-blockquote { margin-left: 0; padding-left: 10pt; border-left: 2pt solid #ccc; color: #444; }
-code { font: 0.9em ui-monospace, Menlo, Consolas, monospace; }
-pre { padding: 6pt 8pt; background: #f4f4f4; white-space: pre-wrap; break-inside: avoid; }
-table { border-collapse: collapse; break-inside: avoid; }
-th, td { padding: 2pt 8pt; border: 0.5pt solid #999; text-align: left; }
-hr { border: 0; border-top: 0.5pt solid #999; margin: 12pt 0; }
+.note-check { display: inline-block; width: 0.7em; height: 0.7em; margin-right: 0.4em; border: 0.6pt solid #333; vertical-align: -0.05em; }
+.note-task.done .note-check { background: #333; }
+blockquote { margin-left: 2em; margin-right: 2em; padding: 0; }
+code { font: 0.92em "Latin Modern Mono", ui-monospace, Menlo, Consolas, monospace; }
+pre { padding: 0; white-space: pre-wrap; break-inside: avoid; }
+table { border-collapse: collapse; break-inside: avoid; margin-left: auto; margin-right: auto; border-top: 0.8pt solid #111; border-bottom: 0.8pt solid #111; }
+th, td { padding: 2pt 8pt; text-align: left; }
+thead th { border-bottom: 0.5pt solid #111; }
+hr { border: 0; border-top: 0.5pt solid #111; margin: 12pt 0; }
 math { font-family: "Latin Modern Math", "STIX Two Math", "Cambria Math", serif; }
-.note-display-math { margin: 0 0 8pt; text-align: center; }
+.note-display-math { text-align: center; }
 a { color: #1d4e89; text-decoration: none; }
+@media print { a { color: inherit; } }
 .mention { font-style: italic; }
 .note-cite { white-space: nowrap; }
-.note-toc { margin: 0 0 14pt; break-inside: avoid; }
+.note-toc { margin: 0 0 18pt; break-inside: avoid; }
+.note-toc-title { margin: 0 0 8pt; font-size: 14pt; font-weight: bold; }
 .note-toc ol { list-style: none; padding: 0; margin: 0; }
-.note-toc li { margin: 2pt 0; }
+.note-toc li { margin: 1pt 0; }
+.note-toc .toc-level-0 { margin-top: 6pt; font-weight: bold; }
 .note-toc .toc-level-1 { padding-left: 1.6em; }
-.note-toc .toc-level-2 { padding-left: 3.2em; }
-.note-toc .toc-level-3, .note-toc .toc-level-4 { padding-left: 4.8em; }
+.note-toc .toc-level-2 { padding-left: 3.8em; }
+.note-toc .toc-level-3, .note-toc .toc-level-4 { padding-left: 5.6em; }
 .note-toc a { color: inherit; }
-.section-number { margin-right: 0.35em; }
 .note-references { break-before: avoid; }
-.note-references ol { padding-left: 2em; font-size: 9.5pt; }
+.note-references ol { padding-left: 2em; font-size: 9.5pt; text-align: left; }
 .note-references li { margin-bottom: 3pt; overflow-wrap: anywhere; }
 .note-figure-ref.broken, .note-math-error { color: #b42318; }
 .note-picture { max-width: 100%; height: auto; vertical-align: middle; }

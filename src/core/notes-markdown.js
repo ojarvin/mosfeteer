@@ -11,7 +11,7 @@
  */
 
 import { texToMathML } from './render.js';
-import { CITATION, FIGURE_EMBED, FIGURE_EMBED_LINE, FIGURE_REFERENCE, MENTION, PICTURE, PICTURE_LINE, citationOf, figureKey, normalizeNotes, noteCitations, noteFigures, tokenName } from './notes.js';
+import { CITATION, FIGURE_EMBED, FIGURE_EMBED_LINE, FIGURE_REFERENCE, MENTION, PICTURE, PICTURE_LINE, citationOf, figureKey, normalizeNotes, noteAuthor, noteCitations, noteFigures, tokenName } from './notes.js';
 
 const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
 
@@ -208,6 +208,9 @@ export function renderNotes(source, context = {}) {
     };
   }
   const lines = normalizeNotes(source).split('\n');
+  // The author line (notes.js noteAuthor): a byline under the title, or
+  // left out where the caller places it (`author: 'drop'`, a report).
+  const byline = top ? noteAuthor(source) : null;
   const out = [];
   let paragraph = [];
   const flush = () => {
@@ -217,6 +220,11 @@ export function renderNotes(source, context = {}) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (!line.trim()) { flush(); continue; }
+    if (byline && i === byline.line) {
+      flush();
+      if (context.author !== 'drop') out.push(`<p class="note-author">${escapeHtml(byline.author)}</p>`);
+      continue;
+    }
     const fence = line.match(/^```\s*(\S*)/);
     if (fence) {
       flush();

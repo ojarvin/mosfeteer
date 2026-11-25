@@ -71,7 +71,7 @@ test('the notes place numbered figures, refer to them, and link a mention to the
   assert.doesNotMatch(tableFigure.slice(0, tableFigure.indexOf('</figure>')), /data-ref="R1"/);
   // A printable, self-contained page.
   assert.match(html, /^<!doctype html>/);
-  assert.match(html, /@page \{ size: A4; margin: 70\.87pt/);
+  assert.match(html, /@page \{\n  size: A4; margin: 70\.87pt/);
   assert.match(html, /Content-Security-Policy/);
   assert.doesNotMatch(html, /<script/i);
 });
@@ -178,6 +178,34 @@ test('a beat figure draws the timing diagram with the circuit, its band inside t
   assert.ok(viewBox(beat)[3] > viewBox(plain)[3], 'taller than the circuit alone: the diagram is in it');
   assert.doesNotMatch(beat, /Gain/, 'no other figure');
   assert.doesNotMatch(plain, /timing-beat/);
+});
+
+test('the authors stand under the title; a section by other people names its own under its heading', () => {
+  const top = divider();
+  top.notes = '# Divider\n\nAuthor: Ada Lovelace and Alan Turing\n\nThe divider.\n\n![[amp]]\n\n![[buffer]]';
+  const amp = divider();
+  amp.notes = '# Amplifier\nAuthors: Grace Hopper\n\nIts text.';
+  const buffer = divider();
+  buffer.notes = '# Buffer\nAuthor: alan turing, Ada Lovelace\n\nIts text.';
+  const designs = { amp, buffer };
+  const { html } = buildReport(top, { name: 'divider', design: (name) => (designs[name] ? { name, circuit: designs[name] } : null) });
+  assert.match(html, /<h1>Divider<\/h1>\n<p class="report-authors"><span class="report-author">Ada Lovelace<\/span><span class="report-author">Alan Turing<\/span><\/p>/);
+  assert.match(html, /<h2>Amplifier<\/h2>\n<p class="section-author">Grace Hopper<\/p>/);
+  assert.doesNotMatch(html, /<h2>Buffer<\/h2>\n<p class="section-author">/, 'the same people, in another order and case: no byline');
+  assert.doesNotMatch(html, /Author:|Authors:/, 'the author lines are placed, not printed as text');
+  // A section with no figure of its own gets its circuit and still its byline.
+  assert.match(html, /<h2>Amplifier<\/h2>\n<p class="section-author">Grace Hopper<\/p>\n<figure/);
+  // Notes without a title: the design's name titles the report, the authors under it.
+  top.notes = 'Author: Ada Lovelace\n\nText.';
+  assert.match(buildReport(top, { name: 'divider' }).html, /<h1>divider<\/h1>\n<p class="report-authors"><span class="report-author">Ada Lovelace<\/span><\/p>/);
+});
+
+test('the page keeps a print dialog\'s headers and footers off its margins: its own boxes are empty but the number', () => {
+  const circuit = divider();
+  circuit.notes = 'Text.';
+  const page = buildReport(circuit).html.match(/@page \{([\s\S]*?)\n\}/)[1];
+  for (const box of ['top-left', 'top-center', 'top-right', 'bottom-left', 'bottom-right']) assert.match(page, new RegExp(`@${box} \\{ content: ''; \\}`), box);
+  assert.match(page, /@bottom-center \{ content: counter\(page\)/);
 });
 
 test('the report command lists the figures and warnings, and writes the HTML', () => {

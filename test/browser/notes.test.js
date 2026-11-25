@@ -262,6 +262,8 @@ describe('design notes', { skip: browserSkip() }, () => {
     await h.evaluate(`${h.module('export-ui.js')}.then((m) => m.exportCircuit({ content: 'report' }))`);
     await h.until(`document.getElementById('export-report-summary').textContent.includes('a section from another design')`);
     await h.evaluate(`document.getElementById('export-dialog').close()`);
+    // The report's text faces load from the editor's fonts folder.
+    assert.equal(await h.evaluate(`${h.module('drawing-export.js')}.then(async (m) => ((await m.embeddedReportFontFaces()).match(/font-family:"Latin Modern Roman";src:url\\(data:font\\/woff2;base64,/g) || []).length)`), 4);
     // Saving keeps the modulator, and the integrator beside it.
     await h.key('s', { ctrlKey: true });
     await h.until(`${h.module('editor-state.js')}.then((m) => !!m.editor.currentDocumentPath)`);

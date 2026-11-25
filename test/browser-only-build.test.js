@@ -79,12 +79,15 @@ test('browser-only bundle runs the optimizer worker from its own source, which s
   assert.ok(Math.abs(sent[1].scores[0].specs[0] - 20 * Math.log10(2)) < 1e-6);
 });
 
-test('browser-only build ships the math font once, inside the bundle', async () => {
+test('browser-only build ships the math font and the report faces once, inside the bundle', async () => {
   const { access } = await import('node:fs/promises');
   const source = await readFile(new URL('../browser-only/browser-only.js', import.meta.url), 'utf8');
   const css = await readFile(new URL('../browser-only/style.css', import.meta.url), 'utf8');
-  assert.equal(source.match(/data:font\/woff2;base64,[A-Za-z0-9+/]{1000}/g).length, 1);
+  // The math face, and the report's four text faces (each once).
+  assert.equal(source.match(/data:font\/woff2;base64,[A-Za-z0-9+/]{1000}/g).length, 5);
   assert.match(source, /new FontFace\('Latin Modern Math'/);
+  const reportFonts = JSON.parse(source.match(/globalThis\.__MOSFETEER_REPORT_FONTS = (\{.*\});/)[1]);
+  assert.deepEqual(Object.keys(reportFonts), ['regular', 'italic', 'bold', 'bolditalic']);
   assert.doesNotMatch(css, /latinmodern-math\.woff2/);
   await assert.rejects(access(new URL('../browser-only/fonts/latinmodern-math.woff2', import.meta.url)));
 });

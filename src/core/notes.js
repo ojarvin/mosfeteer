@@ -54,6 +54,39 @@ export function normalizeNotes(value) {
   return text.trim() ? text : '';
 }
 
+// ----- author ------------------------------------------------------------------
+
+const AUTHOR_LINE = /^\s*authors?:\s*(\S.*?)\s*$/i;
+
+/**
+ * Who wrote the notes: a line `Author: Ada Lovelace` (or `Authors: A, B`)
+ * right under the notes' `#` title, or first when they have none (blank
+ * lines between allowed). `{ author, line }`, the line's index in the
+ * normalized notes; null when there is none.
+ */
+export function noteAuthor(notes) {
+  const lines = normalizeNotes(notes).split('\n');
+  let i = 0;
+  while (i < lines.length && !lines[i].trim()) i++;
+  if (/^#\s/.test(lines[i] || '')) {
+    i++;
+    while (i < lines.length && !lines[i].trim()) i++;
+  }
+  const match = (lines[i] || '').match(AUTHOR_LINE);
+  return match ? { author: match[1], line: i } : null;
+}
+
+/** An author line's names, each a name: split at commas and "and". */
+export function authorNames(author) {
+  return String(author || '').split(/\s*,\s*(?:and\s+)?|\s+and\s+/).map((name) => name.trim()).filter(Boolean);
+}
+
+/** Two author lines name the same people (case and order aside). */
+export function sameAuthors(a, b) {
+  const key = (author) => authorNames(author).map((name) => name.toLowerCase().replace(/\s+/g, ' ')).sort().join('|');
+  return key(a) === key(b);
+}
+
 // ----- mentions ----------------------------------------------------------------
 
 // `@` not inside a word or an address (a@b.com), then a braced name or a

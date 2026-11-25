@@ -238,6 +238,7 @@ export const GUIDES = Object.freeze([
         title: 'Text',
         rows: [
           ['# Title', 'A heading. ## and ### start sections under it.'],
+          ['Author: Ada Lovelace', 'Who wrote the notes, on the line under the # title. Separate several names with commas.'],
           ['**bold**  *italic*  ~~struck~~', 'Bold, italic, and struck-through text.'],
           ['`code`', 'Code, shown as typed. Three backticks on lines of their own fence a block.'],
           ['- item   1. item', 'A list. Indent a line by two spaces to make a sublist.'],
@@ -312,12 +313,14 @@ export const GUIDES = Object.freeze([
           'Each design is in the report once, where it is first included. Including it again reads "See amp" with a link to that section.',
           'An included design can include others in turn, so sections nest as deep as the designs do.',
           'A design with no notes shows its circuit. Notes that place no figure get the whole drawing at the top.',
+          'An included design whose author line names someone else shows that author under its heading.',
           'Renaming a design updates the lines that include it.',
         ],
       },
       {
         title: 'Size and layout',
         items: [
+          'The report is set like a LaTeX article: the title and the authors centered at the top, numbered sections, and justified paragraphs.',
           'Figures are drawn at the page guide\'s width, so their text is the guide\'s size. Without a guide, the A4 width is used.',
           'A caption that fits on one line is centered. A longer one is set as a justified paragraph.',
           'Learn → Tutorial → **Report example** opens a finished report to look at.',

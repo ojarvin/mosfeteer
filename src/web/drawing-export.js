@@ -75,6 +75,40 @@ export async function embeddedMathFontFace() {
   return mathFontFaceCss;
 }
 
+/** The report's text faces: Latin Modern Roman, regular, italic, bold, and
+ *  bold italic (fonts/lmroman10-*.woff2; the browser-only build carries them
+ *  in its bundle, `__MOSFETEER_REPORT_FONTS`). */
+const REPORT_FACES = [
+  { file: 'regular', weight: 'normal', style: 'normal' },
+  { file: 'italic', weight: 'normal', style: 'italic' },
+  { file: 'bold', weight: 'bold', style: 'normal' },
+  { file: 'bolditalic', weight: 'bold', style: 'italic' },
+];
+let reportFontFaceCss = null;
+
+/** The report's text faces as @font-face rules with data URLs, for a report
+ *  that reads the same on any machine; empty when they cannot be read (the
+ *  report then falls back to the system's serif). */
+export async function embeddedReportFontFaces() {
+  if (reportFontFaceCss !== null) return reportFontFaceCss;
+  try {
+    const faces = await Promise.all(REPORT_FACES.map(async (face) => {
+      let url = globalThis.__MOSFETEER_REPORT_FONTS?.[face.file];
+      if (!url) {
+        const bytes = new Uint8Array(await (await fetch(`fonts/lmroman10-${face.file}.woff2`)).arrayBuffer());
+        let binary = '';
+        for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+        url = `data:font/woff2;base64,${btoa(binary)}`;
+      }
+      return `@font-face{font-family:"Latin Modern Roman";src:url(${url}) format("woff2");font-weight:${face.weight};font-style:${face.style}}`;
+    }));
+    reportFontFaceCss = faces.join('');
+  } catch {
+    reportFontFaceCss = '';
+  }
+  return reportFontFaceCss;
+}
+
 export async function withEmbeddedMathFont(svg) {
   if (!svg.includes('schematic-math-label') && !svg.includes('Latin Modern Math')) return svg;
   const face = await embeddedMathFontFace();

@@ -15,7 +15,7 @@ import { DEFAULT_EXPORT_TEXT_PT, normalizePngDpi, pngRasterScale } from '../core
 import { renderDocument } from '../core/document.js';
 import { DRAWING_EXPORT_OPTIONS, hasDrawableSelection, selectionDrawing, selectionSubset } from '../core/selection-drawing.js';
 import { svgPixelSize } from '../core/render.js';
-import { svgToPngDataUrl, applyExportDarkTheme, embeddedMathFontFace, withEmbeddedMathFont } from './drawing-export.js';
+import { svgToPngDataUrl, applyExportDarkTheme, embeddedMathFontFace, embeddedReportFontFaces, withEmbeddedMathFont } from './drawing-export.js';
 import { buildReport, embeddedDesignNames } from '../core/report.js';
 import { loadDesign } from './example-designs.js';
 import { loadDocument } from '../core/document.js';
@@ -282,7 +282,7 @@ async function runReportExport({ dir, name, formats }) {
     logLine(`Exporting ${formats.map((format) => `${name}.${format}`).join(', ')}…`);
     const prepared = persistence.prepareExport ? await persistence.prepareExport({ name, formats: [], dir }) : null;
     settleLabelMetrics();
-    const report = await currentReport(await embeddedMathFontFace());
+    const report = await currentReport(`${await embeddedMathFontFace()}${await embeddedReportFontFaces()}`);
     // Browser-only, the PDF is printed from the report's own pages.
     const printing = !!persistence.printsPdf && formats.includes('pdf');
     const fileFormats = printing ? formats.filter((format) => format !== 'pdf') : formats;

@@ -270,3 +270,18 @@ test('a picture on a line of its own is numbered with the drawing\'s figures, re
   assert.match(report.html, /Measured in <a[^>]*href="#fig-2"[^>]*>Fig\. 2<\/a>/);
   assert.deepEqual(report.warnings, []);
 });
+
+test('an author line under the title names who wrote the notes, and the notes show it as a byline', async () => {
+  const { noteAuthor, authorNames, sameAuthors } = await import('../src/core/notes.js');
+  const { renderNotes: render } = await import('../src/core/notes-markdown.js');
+  assert.deepEqual(noteAuthor('# Amp\n\nAuthor: Ada Lovelace\n\nText'), { author: 'Ada Lovelace', line: 2 });
+  assert.deepEqual(noteAuthor('\nAuthors:  A, B  \nText'), { author: 'A, B', line: 1 });
+  assert.equal(noteAuthor('# Amp\n\nText\n\nAuthor: late'), null, 'only right under the title');
+  assert.equal(noteAuthor('Author:'), null);
+  assert.deepEqual(authorNames('Ada Lovelace, Alan Turing and Grace Hopper'), ['Ada Lovelace', 'Alan Turing', 'Grace Hopper']);
+  assert.deepEqual(authorNames('A, B, and C'), ['A', 'B', 'C']);
+  assert.ok(sameAuthors('Ada Lovelace and Alan Turing', 'alan turing, Ada  Lovelace'));
+  assert.ok(!sameAuthors('Ada Lovelace', 'Ada Lovelace, Alan Turing'));
+  assert.equal(render('# Amp\nAuthor: Ada <b>\n\nText'), '<h3>Amp</h3>\n<p class="note-author">Ada &lt;b&gt;</p>\n<p>Text</p>');
+  assert.equal(render('# Amp\nAuthor: Ada\n\nText', { author: 'drop' }), '<h3>Amp</h3>\n<p>Text</p>');
+});

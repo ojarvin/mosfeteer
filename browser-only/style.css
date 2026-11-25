@@ -1305,6 +1305,7 @@ button:disabled {
 .notes-view code { padding: 0 3px; border-radius: var(--radius-xs); background: var(--bg-elevated); font: 0.92em var(--font-mono); }
 .notes-view pre { padding: 8px; overflow-x: auto; border-radius: var(--radius-sm); background: var(--bg-elevated); }
 .notes-view pre code { padding: 0; background: none; }
+.notes-view .note-author { margin-top: -4px; color: var(--text-dim); font-style: italic; }
 .notes-view hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
 .notes-view table { border-collapse: collapse; }
 .notes-view :is(th, td) { padding: 3px 8px; border: 1px solid var(--border); text-align: left; }

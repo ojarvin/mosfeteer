@@ -83,6 +83,8 @@ describe('browser-only, opened from a file', { skip: browserSkip() }, () => {
     assert.match(notes, /<title>bias-notes<\/title>|<h1[^>]*>Bias/);
     assert.match(notes, /The resistor sets the bias/);
     assert.match(notes, /@page/);
+    // Set in Latin Modern Roman, all four faces carried in the report.
+    assert.equal((notes.match(/@font-face\{font-family:"Latin Modern Roman";src:url\(data:font\/woff2;base64,/g) || []).length, 4);
     const drawing = await exportAs('drawing', 'bias');
     assert.match(drawing, /<title>bias<\/title>/);
     assert.match(drawing, /@page p0\{size:[\d.]+px [\d.]+px;margin:0\}/);
