@@ -351,6 +351,7 @@ function createWindow(doc = null, { model = false } = {}) {
     onClose: () => (model || windows.filter((other) => !other.model).length > 1 ? closeWindow(win) : setHidden(true)),
     // At the top left, each further window a step lower and to the right.
     place: () => ({ x: 8 + (slot - 1) * 36, y: 8 + (slot - 1) * 36 }),
+    help: 'reference',
   });
   title.addEventListener('click', () => { if (!model) openPicker(win); });
   another.addEventListener('click', () => {

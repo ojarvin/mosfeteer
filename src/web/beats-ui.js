@@ -1536,7 +1536,7 @@ function openTimingDialog() {
     renderNotes();
     syncAnnotate();
   };
-  timingEditor = { dialog, grid, close, follow, window: floatingWindow(dialog, { key: 'timing', onClose: close }) };
+  timingEditor = { dialog, grid, close, follow, window: floatingWindow(dialog, { key: 'timing', onClose: close, help: 'timing' }) };
   timingEditor.window.place();
   syncTimingToggle();
   syncAnnotate();
@@ -1830,5 +1830,5 @@ export function installBeatsUi() {
   document.getElementById('btn-beats')?.addEventListener('click', toggleBeatStrip);
   document.getElementById('btn-window-beats')?.addEventListener('click', toggleBeatStrip);
   document.getElementById('btn-window-timing')?.addEventListener('click', toggleTimingDialog);
-  if (beatStripEl) beatWindow = floatingWindow(beatStripEl, { key: 'beats', place: PLACE.bottomCenter, toggleKey: 'B' });
+  if (beatStripEl) beatWindow = floatingWindow(beatStripEl, { key: 'beats', place: PLACE.bottomCenter, toggleKey: 'B', help: 'beats' });
 }

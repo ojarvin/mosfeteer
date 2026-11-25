@@ -133,7 +133,7 @@ function build() {
   node.style.setProperty('--calculator-rows', String(SHOWN));
   input.addEventListener('keydown', onKey);
   canvasEl.closest('.canvas-pane').append(node);
-  const chrome = floatingWindow(node, { key: 'calculator', onClose: hide, resizable: true, place: PLACE.bottomLeft, toggleKey: 'E' });
+  const chrome = floatingWindow(node, { key: 'calculator', onClose: hide, resizable: true, place: PLACE.bottomLeft, toggleKey: 'E', help: 'calculator' });
   win = { el: node, list, empty, input, chrome };
 }
 

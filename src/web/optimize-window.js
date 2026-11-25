@@ -63,7 +63,7 @@ export function openRunWindow({ title, plotAt, onStop, onClose = () => {}, legen
     if (event.key === 'Escape') dispose();
   });
   canvasEl.closest('.canvas-pane').append(dialog);
-  const handle = floatingWindow(dialog, { key: 'run', onClose: dispose, place: PLACE.topCenter, resizable: true });
+  const handle = floatingWindow(dialog, { key: 'run', onClose: dispose, place: PLACE.topCenter, resizable: true, help: 'optimize' });
   handle.place();
   open = { dialog, dispose };
 

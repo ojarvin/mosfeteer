@@ -2069,6 +2069,51 @@ html.dark.invert-pictures .light-picture {
   border-radius: var(--radius-sm);
 }
 
+.help-guide-section h4 {
+  margin: 14px 0 6px;
+  font-size: var(--text-md);
+}
+
+.help-guide-table {
+  width: 100%;
+  margin: 0 0 8px;
+  border-collapse: collapse;
+}
+
+.help-guide-table td {
+  padding: 4px 8px 4px 0;
+  vertical-align: top;
+  border-top: 1px solid var(--border);
+}
+
+.help-guide-table td:first-child {
+  width: 40%;
+}
+
+.help-guide code {
+  font: var(--text-sm)/1.5 var(--font-mono);
+}
+
+.help-guide-table code {
+  font: var(--text-sm)/1.5 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.help-guide-items {
+  margin: 0 0 8px;
+  padding-left: 1.2em;
+}
+
+.help-guide-items li {
+  margin: 0 0 4px;
+}
+
+.help-guide-related {
+  margin: 12px 0 6px;
+  color: var(--text-dim);
+}
+
 .help-guide-more {
   margin: 0;
   color: var(--text-dim);
@@ -7986,7 +8031,8 @@ body.chrome-away [data-editor-edge="right"] {
    A docked window is a section of the side panel: full width, sharing the
    column's height with the panel's own sections, its title bar a heading
    that folds it. */
-.floating-window-dock {
+.floating-window-dock,
+.floating-window-help {
   display: inline-grid;
   flex: none;
   place-items: center;
@@ -8001,9 +8047,16 @@ body.chrome-away [data-editor-edge="right"] {
 }
 
 .floating-window-dock:hover,
-.floating-window-dock:focus-visible {
+.floating-window-dock:focus-visible,
+.floating-window-help:hover,
+.floating-window-help:focus-visible {
   color: var(--text);
   background: var(--bg-hover);
+}
+
+.floating-window-help {
+  font-size: var(--text-md);
+  font-weight: 600;
 }
 
 .floating-window-dock .button-icon {

@@ -115,10 +115,13 @@ const DOCK_ICON = '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d=
  * to that bar. Where a window is, docked or not, is kept per window in this
  * browser. `toggleKey` (with Shift: 'S' for Shift+S) is the key that opens
  * and closes it, which closes it from inside it too, where the drawing's
- * keys do not reach (not while typing in a field). Returns { place() }, to call after showing it (it also comes to
+ * keys do not reach (not while typing in a field). `help` is the id of the
+ * window's guide in Learn (guides.js), or a function giving it (a window
+ * whose guide follows its mode): its ? button, before the dock button,
+ * opens that guide. Returns { place() }, to call after showing it (it also comes to
  * the front, popping into place), and dispose(), for a window that is removed rather than hidden.
  */
-export function floatingWindow(el, { key, onClose, place = PLACE.topRight, resizable = true, toggleKey = null }) {
+export function floatingWindow(el, { key, onClose, place = PLACE.topRight, resizable = true, toggleKey = null, help = null }) {
   const pane = el.closest('.canvas-pane') || el.parentElement;
   const panel = document.getElementById('side-panel');
   const header = el.querySelector('.floating-window-header');
@@ -163,6 +166,20 @@ export function floatingWindow(el, { key, onClose, place = PLACE.topRight, resiz
   dockButton.append(iconSvg(DOCK_ICON));
   if (closeButton) header?.insertBefore(dockButton, closeButton);
   else header?.append(dockButton);
+  if (help && header) {
+    const helpButton = document.createElement('button');
+    helpButton.type = 'button';
+    helpButton.className = 'floating-window-help';
+    helpButton.textContent = '?';
+    helpButton.title = 'Help';
+    helpButton.setAttribute('aria-label', 'Help');
+    helpButton.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const id = typeof help === 'function' ? help() : help;
+      if (id) el.dispatchEvent(new CustomEvent('guide-request', { bubbles: true, detail: { id } }));
+    });
+    header.insertBefore(helpButton, dockButton);
+  }
   const syncDockButton = () => {
     const on = docked();
     dockButton.setAttribute('aria-pressed', String(on));

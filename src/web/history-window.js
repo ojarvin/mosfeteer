@@ -309,7 +309,7 @@ function build() {
   clear.addEventListener('click', () => void removeSavePoints());
   canvasEl.closest('.canvas-pane').append(node);
   // At the left, so a save point viewed (a reference window, at the right) sits beside it.
-  const chrome = floatingWindow(node, { key: 'history', onClose: hide, resizable: true, place: (pane, size) => ({ x: 64, y: 56 }), toggleKey: 'Y' });
+  const chrome = floatingWindow(node, { key: 'history', onClose: hide, resizable: true, place: (pane, size) => ({ x: 64, y: 56 }), toggleKey: 'Y', help: 'history' });
   win = { el: node, list, message, checkpoint, clear, top, chrome };
 }
 

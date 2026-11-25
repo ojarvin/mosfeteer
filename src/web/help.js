@@ -214,13 +214,37 @@ function renderTips() {
   }
 }
 
-/** A guide's text: plain words, controls in bold, keys as key caps. */
+/** A guide's text: plain words, controls in bold, typed text as code, keys as key caps. */
 function appendGuideText(parent, text) {
+  const tags = { control: 'strong', typed: 'code', key: 'kbd' };
   for (const run of guideRuns(text)) {
     if (run.kind === 'text') parent.append(document.createTextNode(run.text));
-    else parent.append(Object.assign(document.createElement(run.kind === 'key' ? 'kbd' : 'strong'), { textContent: run.text }));
+    else parent.append(Object.assign(document.createElement(tags[run.kind]), { textContent: run.text }));
   }
   return parent;
+}
+
+/** A guide's reference section: a table of syntax as typed and what it
+ *  does, or a list. */
+function guideSection(section) {
+  const block = Object.assign(document.createElement('section'), { className: 'help-guide-section' });
+  block.append(Object.assign(document.createElement('h4'), { textContent: section.title }));
+  if (section.rows) {
+    const table = Object.assign(document.createElement('table'), { className: 'help-guide-table' });
+    for (const [syntax, meaning] of section.rows) {
+      const row = table.insertRow();
+      const code = Object.assign(document.createElement('code'), { textContent: syntax });
+      row.insertCell().append(code);
+      appendGuideText(row.insertCell(), meaning);
+    }
+    block.append(table);
+  }
+  if (section.items) {
+    const list = Object.assign(document.createElement('ul'), { className: 'help-guide-items' });
+    for (const item of section.items) list.append(appendGuideText(document.createElement('li'), item));
+    block.append(list);
+  }
+  return block;
 }
 
 function renderGuide(guide) {
@@ -235,7 +259,21 @@ function renderGuide(guide) {
     Object.assign(document.createElement('h3'), { textContent: guide.title }),
     appendGuideText(Object.assign(document.createElement('p'), { className: 'help-guide-intro' }), guide.intro),
     steps,
+    ...(guide.sections || []).map(guideSection),
   );
+  const related = (guide.related || []).map((id) => GUIDES.find((other) => other.id === id)).filter(Boolean);
+  if (related.length) {
+    const see = Object.assign(document.createElement('p'), { className: 'help-guide-related' });
+    see.append('See also: ');
+    related.forEach((other, index) => {
+      if (index) see.append(' · ');
+      const link = Object.assign(document.createElement('button'), { type: 'button', className: 'help-link', textContent: other.title });
+      link.dataset.guide = other.id;
+      link.addEventListener('click', () => showGuide(other.id));
+      see.append(link);
+    });
+    host.append(see);
+  }
   const tutorial = TUTORIALS.find((t) => t.id === guide.tutorial);
   const url = guideDocUrl(guide);
   if (!tutorial && !url) return;
@@ -338,6 +376,8 @@ function reportExampleEntry() {
 }
 
 export function installHelp() {
+  // A tool window's ? asks for its guide (floating-window.js `help`).
+  document.addEventListener('guide-request', (ev) => showGuide(ev.detail?.id));
   helpSearch?.addEventListener('input', renderHelpSearch);
   helpSearch?.addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter') ev.preventDefault();

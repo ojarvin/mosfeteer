@@ -155,6 +155,13 @@ let latestAnalysisReport = null;
 // Refreshes the folded Options' summary (installOptionsSummary).
 let optionsSummarySync = () => {};
 
+/** The guide for the analysis window's mode (guides.js). */
+const MODE_GUIDES = { circuit: 'small-signal', 'signal-flow': 'signal-flow', 'switched-cap': 'switched-cap', logic: 'logic', synthesis: 'logic' };
+function analysisGuide() {
+  const mode = analysisDialog?.querySelector('.analysis-mode [aria-pressed="true"]')?.dataset.mode || 'circuit';
+  return MODE_GUIDES[mode] || 'small-signal';
+}
+
 export function clearLatestAnalysisResult() {
   latestAnalysisReport = null;
   if (analysisResult) {
@@ -1346,7 +1353,7 @@ export function installAnalysisUi() {
   // Plots is every mode's: the window shows the current mode's view.
   document.getElementById('analysis-show-plots')?.addEventListener('click', () => showPlots());
 
-  if (analysisDialog) analysisWindow = floatingWindow(analysisDialog, { key: 'analysis', resizable: true, toggleKey: 'S' });
+  if (analysisDialog) analysisWindow = floatingWindow(analysisDialog, { key: 'analysis', resizable: true, toggleKey: 'S', help: analysisGuide });
 
   analysisButton?.addEventListener('click', () => toggleAnalysisDock());
 

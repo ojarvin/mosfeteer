@@ -37,7 +37,7 @@ function build() {
     if (ev.key === 'Escape' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(ev.target.tagName)) hidePlots();
   });
   canvasEl.closest('.canvas-pane').append(node);
-  const chrome = floatingWindow(node, { key: 'plots', onClose: hidePlots, resizable: true, toggleKey: 'W' });
+  const chrome = floatingWindow(node, { key: 'plots', onClose: hidePlots, resizable: true, toggleKey: 'W', help: 'plots' });
   win = { el: node, body, chrome };
 }
 

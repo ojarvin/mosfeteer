@@ -138,6 +138,11 @@ history follows the drawing; only the editor's Save adds a save point.
   reading its source; stop only processes you started (never a broad
   `pkill`). `window.__circuit()`, `window.__run(command)`, and
   `window.__load(state)` serve isolated verification.
+- User help lives once, in Learn's guides (`src/web/guides.js`), each tool
+  window's ? opening its own; `docs/` is for agents and never duplicated
+  there. A change to a window's controls, keys, or syntax updates its
+  guide; `test/guides.test.js` fails on a control, key, figure target, or
+  example the program no longer has, and on a window without a guide.
 - Update this file only for durable cross-cutting invariants; put feature
   contracts in the focused docs and implementation facts in source and
   tests. Remove stale prose instead of appending.

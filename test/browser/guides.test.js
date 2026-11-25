@@ -61,6 +61,47 @@ describe('Learn\'s guides', { skip: browserSkip() }, () => {
     await h.untilDiscarding(`${h.module('editor-state.js')}.then((m) => m.editor.tutorial?.id === 'sdm')`);
     assert.equal(await h.evaluate(`document.getElementById('help-dialog').open`), false);
   });
+  test('each tool window\'s ? opens its guide in Learn', async () => {
+    const opened = async (key) => {
+      const before = await h.evaluate(`[...document.querySelectorAll('.floating-window:not([hidden])')].length`);
+      await h.key(key, { shiftKey: true });
+      await h.until(`document.querySelectorAll('.floating-window:not([hidden])').length > ${before}`);
+    };
+    const windows = [
+      ['N', 'Write notes'], ['Y', 'Go back to an earlier save'], ['E', 'Use the calculator'],
+      ['Z', 'Set transistor sizes and part values'], ['S', 'Run a small-signal analysis', 'circuit'],
+      ['S', 'Analyze a block diagram (signal flow)', 'signal-flow'], ['W', 'Look into plots'],
+      ['B', 'Make beats and present them'], ['V', 'Show another design beside the drawing'],
+    ];
+    if (await h.evaluate(`document.getElementById('help-dialog').open`)) await h.evaluate(`document.getElementById('help-dialog').close()`);
+    for (const [key, title, mode] of windows) {
+      await h.evaluate(`window.__shown = new Set(document.querySelectorAll('.floating-window:not([hidden])'))`);
+      await opened(key);
+      // The analysis window's guide follows its mode.
+      if (mode) await h.evaluate(`document.querySelector('.analysis-mode [data-mode="${mode}"]').click()`);
+      await h.evaluate(`[...document.querySelectorAll('.floating-window:not([hidden])')].find((w) => !window.__shown.has(w)).querySelector('.floating-window-help').click()`);
+      await h.until(`document.getElementById('help-dialog').open && document.querySelector('#help-guide h3')?.textContent === ${JSON.stringify(title)}`);
+      assert.equal(await h.evaluate(`document.getElementById('help-panel-guides').hidden`), false, `${key}: the Guides tab`);
+      await h.evaluate(`document.getElementById('help-dialog').close()`);
+      await h.key(key, { shiftKey: true });
+    }
+  });
+
+  test('a tool guide shows its syntax as a table and links its related guides', async () => {
+    await h.key('N', { shiftKey: true });
+    await h.until(`!!document.querySelector('.notes-window:not([hidden]) .floating-window-help')`);
+    await h.click('.notes-window .floating-window-help');
+    await h.until(`document.querySelector('#help-guide h3')?.textContent === 'Write notes'`);
+    const rows = await h.evaluate(`[...document.querySelectorAll('#help-guide .help-guide-table tr')].map((r) => r.querySelector('code').textContent)`);
+    assert.ok(rows.includes('@M1   @V_{out}'), 'syntax as typed');
+    assert.ok(await h.evaluate(`[...document.querySelectorAll('#help-guide code')].some((c) => c.textContent === '[[')`), 'typed text as code');
+    await h.click('#help-guide .help-guide-related [data-guide="report"]');
+    await h.until(`document.querySelector('#help-guide h3')?.textContent === 'Make a report'`);
+    assert.ok(await h.evaluate(`[...document.querySelectorAll('#help-guide h4')].some((t) => t.textContent === 'Designs inside designs')`));
+    await h.evaluate(`document.getElementById('help-dialog').close()`);
+    await h.key('N', { shiftKey: true });
+  });
+
   test('the Math tab lists the TeX the labels take, each drawn beside what is typed', async () => {
     if (!await h.evaluate(`document.getElementById('help-dialog').open`)) {
       await h.click('#btn-help');

@@ -15,7 +15,7 @@ describe('floating windows', { skip: browserSkip() }, () => {
   const shown = (selector) => h.evaluate(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); return !!el && !el.hidden && !!el.offsetParent; })()`);
   const closeAll = () => h.evaluate(`[...document.querySelectorAll('.floating-window:not([hidden]) .floating-window-close')].forEach((b) => b.click())`);
 
-  test('every window has one title bar holding only its title, a dock button, and a close ×, and floats over the drawing', async () => {
+  test('every window has one title bar holding only its title, a help ?, a dock button, and a close ×, and floats over the drawing', async () => {
     await h.open('beats');
     for (const key of ['S', 'B', 'K', 'W', 'E', 'Y', 'Z', 'V']) await h.key(key, { shiftKey: true });
     await h.key('N', { shiftKey: true });
@@ -36,7 +36,7 @@ describe('floating windows', { skip: browserSkip() }, () => {
     for (const w of windows) {
       assert.equal(w.headers, 1, w.cls);
       assert.equal(w.title, true, w.cls);
-      assert.deepEqual(w.buttons, ['floating-window-dock', 'floating-window-close'], `${w.cls}: its actions are in its footer`);
+      assert.deepEqual(w.buttons, ['floating-window-help', 'floating-window-dock', 'floating-window-close'], `${w.cls}: its actions are in its footer`);
       assert.equal(w.close, '×', w.cls);
       assert.equal(w.inPane, true, w.cls);
       assert.equal(w.closeButtons, 0, `${w.cls}: no second Close at the bottom`);

@@ -321,7 +321,7 @@ function build() {
     if (!editing && !ev.target.closest('a')) startEditing();
   });
   canvasEl.closest('.canvas-pane').append(node);
-  const chrome = floatingWindow(node, { key: 'notes', onClose: hide, resizable: true, toggleKey: 'N' });
+  const chrome = floatingWindow(node, { key: 'notes', onClose: hide, resizable: true, toggleKey: 'N', help: 'notes' });
   win = { el: node, view, source, edit, copy, outline, empty, chrome };
 }
 

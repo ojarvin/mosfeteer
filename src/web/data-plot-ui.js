@@ -633,7 +633,7 @@ export function openPlotSettings(box) {
     plotEdit.key(event);
   });
   canvasEl.closest('.canvas-pane').append(node);
-  chrome = floatingWindow(node, { key: 'plot-settings', onClose: close, place: PLACE.topCenter, resizable: true });
+  chrome = floatingWindow(node, { key: 'plot-settings', onClose: close, place: PLACE.topCenter, resizable: true, help: 'data-plot' });
   chrome.place();
   sweep?.bind(applyButton);
   // Its plot gone (deleted, undone, another design), it goes; given back

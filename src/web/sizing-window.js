@@ -939,7 +939,7 @@ function build() {
   });
   window.addEventListener('mouseup', () => { dragging = false; });
   canvasEl.closest('.canvas-pane').append(node);
-  const chrome = floatingWindow(node, { key: 'sizing', onClose: hide, resizable: true, toggleKey: 'Z' });
+  const chrome = floatingWindow(node, { key: 'sizing', onClose: hide, resizable: true, toggleKey: 'Z', help: 'sizes-values' });
   win = { el: node, grid, table, body, head, cols: colOf, filter, group, empty, status, chrome };
   applyWidths();
 }
