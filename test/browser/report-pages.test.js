@@ -46,6 +46,13 @@ describe('report pages laid out in the editor', { skip: browserSkip() }, () => {
 
   test('the report example prints on the pages its contents list', async () => {
     const result = await paginated();
+    // Its leaders written in as text, a section's own line without one.
+    const leaders = [...result.html.matchAll(/<li class="toc-level-(\d)">.*?<span class="toc-leader">([^<]*)<\/span>/g)].map(([, level, dots]) => [Number(level), dots]);
+    assert.ok(leaders.length >= 10);
+    for (const [level, dots] of leaders) {
+      if (level === 0) assert.equal(dots, '');
+      else assert.match(dots, /^\.{20,}$/);
+    }
     const printed = await check(result);
     assert.ok(Math.max(...printed.values()) >= 6, 'several pages');
   });

@@ -125,6 +125,22 @@ function cutParagraph(element, top) {
   return rest;
 }
 
+/** The contents' dotted leaders as text: as many periods as each leader's
+ *  width holds at its spacing, set from the right so they stand in
+ *  columns. Text prints in every print path; the stylesheet's generated
+ *  dots did not in a print dialog. A section's own line has none. */
+function writeLeaders(doc) {
+  for (const leader of doc.querySelectorAll('.note-toc li:not(.toc-level-0) > .toc-leader')) {
+    const probe = doc.createElement('span');
+    probe.textContent = '.'.repeat(20);
+    leader.append(probe);
+    const advance = probe.getBoundingClientRect().width / 20;
+    probe.remove();
+    const width = leader.getBoundingClientRect().width;
+    leader.textContent = advance > 0 ? '.'.repeat(Math.max(0, Math.floor(width / advance))) : '';
+  }
+}
+
 /** Start a page at `element`: forced, its top margin dropped. */
 function breakBefore(element) {
   element.style.breakBefore = 'page';
@@ -212,6 +228,7 @@ export async function paginateReport(html, page) {
       const top = box(heading).top;
       pages.set(heading.id, 1 + tops.filter((t) => t <= top + 0.5).length);
     }
+    writeLeaders(doc);
     measure.remove();
     const out = `<!doctype html>\n${doc.documentElement.outerHTML}\n`;
     return { html: reportWithPages(out, (id) => pages.get(id)), pages };

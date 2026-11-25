@@ -45100,10 +45100,13 @@ a { color: #1d4e89; text-decoration: none; }
 .note-toc li { display: flex; align-items: baseline; margin: 1pt 0; }
 .note-toc li > a { flex: 0 1 auto; }
 /* LaTeX's leaders: a period every 0.78 em (its own width, and 4.5 mu each
-   side), set from the right, so the dots of every line stand in columns. */
-.note-toc .toc-leader { flex: 1 1 0; min-width: 1em; margin: 0 0.25em 0 0.5em; overflow: hidden; white-space: nowrap; direction: rtl; }
-.note-toc .toc-leader::after { content: "${'.'.repeat(240)}"; letter-spacing: 0.5em; }
-.note-toc .toc-level-0 > .toc-leader::after { content: none; }
+   side), set from the right, so the dots of every line stand in columns.
+   The editor writes them in as text when it lays the pages out
+   (web/report-pages.js); a report it did not lay out draws them here. */
+.note-toc .toc-leader { flex: 1 1 0; min-width: 1em; margin: 0 0.25em 0 0.5em; overflow: hidden; white-space: nowrap; text-align: right; letter-spacing: 0.5em; }
+.note-toc .toc-leader:empty { direction: rtl; }
+.note-toc .toc-leader:empty::after { content: "${'.'.repeat(240)}"; }
+.note-toc .toc-level-0 > .toc-leader:empty::after { content: none; }
 .note-toc .toc-page { flex: none; min-width: 1.6em; text-align: right; }
 /* Unprinted (the browser's print dialog): no page to lead to. */
 .note-toc li:has(> .toc-page:empty) > .toc-leader { visibility: hidden; }
@@ -96773,6 +96776,22 @@ function cutParagraph(element, top) {
   return rest;
 }
 
+/** The contents' dotted leaders as text: as many periods as each leader's
+ *  width holds at its spacing, set from the right so they stand in
+ *  columns. Text prints in every print path; the stylesheet's generated
+ *  dots did not in a print dialog. A section's own line has none. */
+function writeLeaders(doc) {
+  for (const leader of doc.querySelectorAll('.note-toc li:not(.toc-level-0) > .toc-leader')) {
+    const probe = doc.createElement('span');
+    probe.textContent = '.'.repeat(20);
+    leader.append(probe);
+    const advance = probe.getBoundingClientRect().width / 20;
+    probe.remove();
+    const width = leader.getBoundingClientRect().width;
+    leader.textContent = advance > 0 ? '.'.repeat(Math.max(0, Math.floor(width / advance))) : '';
+  }
+}
+
 /** Start a page at `element`: forced, its top margin dropped. */
 function breakBefore(element) {
   element.style.breakBefore = 'page';
@@ -96860,6 +96879,7 @@ async function paginateReport(html, page) {
       const top = box(heading).top;
       pages.set(heading.id, 1 + tops.filter((t) => t <= top + 0.5).length);
     }
+    writeLeaders(doc);
     measure.remove();
     const out = `<!doctype html>\n${doc.documentElement.outerHTML}\n`;
     return { html: reportWithPages(out, (id) => pages.get(id)), pages };

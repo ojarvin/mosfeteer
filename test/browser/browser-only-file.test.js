@@ -89,6 +89,7 @@ describe('browser-only, opened from a file', { skip: browserSkip() }, () => {
     assert.equal((notes.match(/@font-face\{font-family:"Latin Modern Roman";src:url\(data:font\/woff2;base64,/g) || []).length, 4);
     // Laid out in the editor: its page breaks forced, its contents numbered.
     assert.match(notes, /break-before: page/);
+    assert.doesNotMatch(notes, /<li class="toc-level-0">.*?<span class="toc-leader">\./, 'a section\'s line has no dots');
     const listed = [...notes.matchAll(/data-toc-page="([^"]+)">(\d+)<\/span>/g)].map(([, id, page]) => [id, Number(page)]);
     assert.deepEqual(listed.map(([id]) => id), ['sec-1', 'sec-2', 'sec-3']);
     assert.equal(listed[0][1], 1);
