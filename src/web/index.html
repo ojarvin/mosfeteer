@@ -214,7 +214,10 @@
   </dialog>
   <dialog id="export-dialog" class="confirm-dialog export-dialog" aria-labelledby="export-dialog-title">
     <form id="export-form">
-      <h2 id="export-dialog-title">Export document</h2>
+      <div class="export-dialog-head">
+        <h2 id="export-dialog-title">Export document</h2>
+        <button type="button" id="export-help" class="floating-window-help" aria-label="Help" title="Help">?</button>
+      </div>
       <fieldset class="export-location">
         <legend>Save to</legend>
         <div class="export-folder-row">

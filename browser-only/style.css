@@ -939,10 +939,25 @@ button:disabled {
   background: var(--scrim);
 }
 
+.export-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .confirm-dialog h2 {
   margin: 0 0 8px;
   font-size: var(--text-lg);
   font-weight: 600;
+}
+
+.export-dialog-head {
+  margin: 0 0 8px;
+}
+
+.confirm-dialog .export-dialog-head h2 {
+  margin: 0;
 }
 
 .confirm-dialog p {

@@ -73798,6 +73798,8 @@ const PDF_FALLBACK_MAX_PX = 4096;
 
 // What the document's export writes: the drawing, or the report.
 let exportContent = 'drawing';
+/** The guide the dialog's ? opens, by what it exports (guides.js). */
+const EXPORT_GUIDES = { drawing: 'export', report: 'report' };
 
 // What the open dialog exports: null for the document, or the Atlas sheet
 // ({ name, key, summary, build({ grid }) -> { svg, scale, count } }).
@@ -74300,6 +74302,8 @@ function exportAtlasSheet(target) {
 }
 
 function installExportUi() {
+  const help = document.getElementById('export-help');
+  help?.addEventListener('click', () => help.dispatchEvent(new CustomEvent('guide-request', { bubbles: true, detail: { id: EXPORT_GUIDES[exportContent] } })));
   exportCircuitBtn?.addEventListener('click', exportCircuit);
 
   exportCancel?.addEventListener('click', () => exportDialog?.close());

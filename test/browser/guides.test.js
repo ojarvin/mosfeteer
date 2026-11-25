@@ -87,6 +87,21 @@ describe('Learn\'s guides', { skip: browserSkip() }, () => {
     }
   });
 
+  test('the export dialog\'s ? opens the export guide, or the report guide when it exports the report', async () => {
+    await h.key('e', { ctrlKey: true });
+    await h.until(`document.getElementById('export-dialog').open`);
+    await h.click('#export-help');
+    await h.until(`document.getElementById('help-dialog').open && document.querySelector('#help-guide h3')?.textContent === 'Export a figure'`);
+    await h.evaluate(`document.getElementById('help-dialog').close()`);
+    assert.equal(await h.evaluate(`document.getElementById('export-dialog').open`), true, 'the export dialog stays open under Learn');
+    await h.click('[data-export-content="report"]');
+    await h.click('#export-help');
+    await h.until(`document.getElementById('help-dialog').open && document.querySelector('#help-guide h3')?.textContent === 'Make a report'`);
+    await h.evaluate(`document.getElementById('help-dialog').close()`);
+    await h.click('[data-export-content="drawing"]');
+    await h.evaluate(`document.getElementById('export-dialog').close()`);
+  });
+
   test('a tool guide shows its syntax as a table and links its related guides', async () => {
     await h.key('N', { shiftKey: true });
     await h.until(`!!document.querySelector('.notes-window:not([hidden]) .floating-window-help')`);

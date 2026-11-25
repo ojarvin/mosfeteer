@@ -98,6 +98,9 @@ test('every tool window opens a guide that exists, and related guides exist', ()
   const analysis = readFileSync(new URL('analysis-ui.js', dir), 'utf8');
   const modes = analysis.match(/const MODE_GUIDES = \{([^}]*)\}/)[1];
   for (const [, id] of modes.matchAll(/'([\w-]+)'(?=\s*[,}]|$)/g)) assert.ok(ids.has(id), `analysis mode guide ${id}`);
+  // The export dialog's, by what it exports.
+  const exporting = readFileSync(new URL('export-ui.js', dir), 'utf8').match(/const EXPORT_GUIDES = \{([^}]*)\}/)[1];
+  for (const [, id] of exporting.matchAll(/'([\w-]+)'(?=\s*[,}]|$)/g)) assert.ok(ids.has(id), `export guide ${id}`);
 });
 
 test('the notes guide\'s syntax is what the notes render: no example is left as plain text', () => {
