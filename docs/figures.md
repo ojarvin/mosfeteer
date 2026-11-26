@@ -106,7 +106,9 @@ columns separated by spaces (`src/core/csv-data.js`, `src/core/data-plot.js`,
 
 - The file is read once and never kept. The plot keeps its traces as
   `[x, y]` points to six digits, up to 8 traces of 2000 points (a longer
-  trace is thinned, keeping each stretch's lowest and highest point), each
+  trace is thinned, keeping each stretch's first, last, lowest and highest
+  point; traces with the same x values are thinned together, to the same
+  rows, `thinTraces`), each
   axis's name and scale (`linear`, `log`), its zoom (`view`), and the
   file's name.
 - Reading guesses the separator (tab, semicolon, comma, spaces), the
@@ -115,8 +117,11 @@ columns separated by spaces (`src/core/csv-data.js`, `src/core/data-plot.js`,
   name for each. Lines starting with `#`, `%`, or `//` are comments. A
   cell is a number or a value with an SI suffix (`2.2k`); anything else
   is a gap. The first column of numbers is x and the next ones are the
-  traces; a positive column over more than three decades is suggested a
-  log scale.
+  traces, but a column of the same values as x; a positive column over
+  more than three decades is suggested a log scale. A file of x,y column
+  pairs (named `... X`, `... Y`, as Cadence ViVA exports them) suggests
+  its y columns, each read against its own x column while x is one of
+  the pairs' (`pairs`).
 - **More → Data plot…** chooses the file and shows the guesses, the first
   rows, and the columns to plot; under them is the plot editor that
   **Plot settings…** (right-click, or double-click) shows too: the plot to

@@ -128,8 +128,10 @@ export function suggestScale(values) {
  * before the data, `header` whether the last of those names the columns.
  * `columns[c]` are column c's numbers in the data rows (NaN for a gap),
  * `numeric` the columns at least half numbers. `x` and `y` suggest the
- * columns to plot: the first numeric column against the next ones. Every
- * guess can be given in `options` instead.
+ * columns to plot: the first numeric column against the next ones, but
+ * those that repeat it. `pairs`, for a file of x,y column pairs (xyPairs),
+ * maps each y column to its x column. Every guess can be given in
+ * `options` instead.
  */
 export function readTable(text, options = {}) {
   const guessed = guessFormat(text);
@@ -146,20 +148,46 @@ export function readTable(text, options = {}) {
   const named = !!last && last.length >= width && last.slice(0, width).every((cell) => cell && !Number.isFinite(cellNumber(cell, decimal)));
   const header = typeof options.header === 'boolean' ? options.header && !!last : named;
   const names = Array.from({ length: width }, (_, c) => (header && last?.[c] ? last[c].replace(/^"|"$/g, '') : `Column ${c + 1}`));
+  const pairs = header ? xyPairs(names) : null;
   const x = numeric.length > 1 ? numeric[0] : null;
-  const y = numeric.filter((c) => c !== x).slice(0, MAX_DATA_TRACES);
+  // The y columns of x,y pairs; else not a column that repeats x (another
+  // x column of the same values).
+  const y = numeric.filter((c) => c !== x && (pairs ? pairs.has(c) : !(x !== null && sameValues(columns[c], columns[x])))).slice(0, MAX_DATA_TRACES);
   return {
-    separator, decimal, skip, header, rows, names, columns, numeric, x, y,
+    separator, decimal, skip, header, rows, names, columns, numeric, x, y, ...(pairs ? { pairs } : {}),
     scale: { x: x === null ? 'linear' : suggestScale(columns[x]), y: suggestScale(y.flatMap((c) => columns[c])) },
   };
 }
 
+/** Whether two columns hold the same numbers, gaps in the same rows. */
+function sameValues(a, b) {
+  return a.length === b.length && a.every((v, i) => v === b[i] || (Number.isNaN(v) && Number.isNaN(b[i])));
+}
+
+/**
+ * A simulator's export of x,y column pairs (Cadence ViVA: `/out X,/out Y,
+ * /in X,/in Y`): each column named `... Y` after one named `... X`. A
+ * map from each y column to its x column, or null.
+ */
+function xyPairs(names) {
+  if (names.length < 4 || names.length % 2) return null;
+  const pairs = new Map();
+  for (let c = 0; c < names.length; c += 2) {
+    if (!/(^|[\s_])x$/i.test(names[c].trim()) || !/(^|[\s_])y$/i.test(names[c + 1].trim())) return null;
+    pairs.set(c + 1, c);
+  }
+  return pairs;
+}
+
 /** Traces of `table`'s columns `y` against column `x` (null: the row
  *  number): `[{ label, points: [[x, y]] }]`, points in file order, the rows
- *  missing either number left out. */
+ *  missing either number left out. In a file of x,y pairs, with `x` one of
+ *  its x columns, each y column is read against its own x column. */
 export function tableTraces(table, x, y) {
-  const xs = x === null || x === undefined ? null : table.columns[x];
+  const own = x !== null && x !== undefined && table.pairs && [...table.pairs.values()].includes(x);
   return y.slice(0, MAX_DATA_TRACES).map((c) => {
+    const column = own && table.pairs.has(c) ? table.pairs.get(c) : x;
+    const xs = column === null || column === undefined ? null : table.columns[column];
     const ys = table.columns[c] || [];
     const points = [];
     ys.forEach((value, i) => {

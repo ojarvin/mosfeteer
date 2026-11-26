@@ -362,3 +362,18 @@ test('the lowest y number is left out when both axes number the plot\'s corner',
   const stepNumbers = step.items.filter((item) => item.role === 'number' && item.anchor === 'end').map((item) => Number(item.text));
   assert.ok(stepNumbers[0] > step.ranges.y[0], `${stepNumbers} ${step.ranges.y}`);
 });
+
+test('a data plot\'s traces of one x column are thinned to the same rows', async () => {
+  const { MAX_DATA_POINTS } = await import('../src/core/model.js');
+  // A transient's time steps: finer at the start.
+  const xs = Array.from({ length: 12000 }, (_, i) => (i * i) * 1e-15);
+  const trace = (f) => ({ points: xs.map((x, i) => [x, f(i)]) });
+  const plot = normalizePlot({ kind: 'data', traces: [trace((i) => Math.sin(i / 50)), trace((i) => (i * 7919) % 13), trace((i) => Math.cos(i / 900))] });
+  const rows = plot.traces.map((t) => t.points.map(([x]) => x));
+  assert.ok(rows.every((x) => x.length === rows[0].length && x.every((v, i) => v === rows[0][i])), 'the same x in every trace');
+  assert.ok(rows[0].length <= MAX_DATA_POINTS, String(rows[0].length));
+  assert.equal(rows[0][0], 0);
+  assert.ok(plot.traces[1].points.some(([, y]) => y === 12) && plot.traces[1].points.some(([, y]) => y === 0), 'each trace keeps its peaks');
+  // Read again, it stays as it is.
+  assert.deepEqual(normalizePlot(plot), plot);
+});

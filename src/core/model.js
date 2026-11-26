@@ -1371,12 +1371,14 @@ export const MAX_PLOT_EXTRA = 8;
  *  frequency), to six digits, thinned as a data plot's are. Updating the
  *  plot from its analysis keeps them. */
 function extraOf(plot, { positiveX = false } = {}) {
-  const extra = (Array.isArray(plot.extra) ? plot.extra : []).slice(0, MAX_PLOT_EXTRA).map((trace) => ({
+  const read = (Array.isArray(plot.extra) ? plot.extra : []).slice(0, MAX_PLOT_EXTRA).map((trace) => ({
     label: typeof trace?.label === 'string' ? trace.label.slice(0, 400) : '',
     color: /^#[0-9a-f]{6}$/i.test(trace?.color || '') ? trace.color : '#3b74e0',
-    points: thinDataPoints((Array.isArray(trace?.points) ? trace.points : [])
-      .filter((p) => Array.isArray(p) && finite(p[0]) && finite(p[1]) && (!positiveX || p[0] > 0)).map((p) => [round(p[0], 6), round(p[1], 6)])),
-  })).filter((trace) => trace.points.length > 1);
+    points: (Array.isArray(trace?.points) ? trace.points : [])
+      .filter((p) => Array.isArray(p) && finite(p[0]) && finite(p[1]) && (!positiveX || p[0] > 0)).map((p) => [round(p[0], 6), round(p[1], 6)]),
+  }));
+  const thinned = thinTraces(read.map((trace) => trace.points));
+  const extra = read.map((trace, i) => ({ ...trace, points: thinned[i] })).filter((trace) => trace.points.length > 1);
   return extra.length ? { extra } : {};
 }
 
@@ -1437,23 +1439,57 @@ export const MAX_DATA_POINTS = 2000;
  * points in no order (a loop, a scatter) are taken evenly.
  */
 export function thinDataPoints(points, max = MAX_DATA_POINTS) {
-  if (points.length <= max) return points;
-  const ordered = points.every((p, i) => !i || p[0] >= points[i - 1][0]);
-  if (!ordered) return Array.from({ length: max }, (_, i) => points[Math.round((i * (points.length - 1)) / (max - 1))]);
-  const buckets = Math.floor(max / 4);
-  const out = [];
-  for (let b = 0; b < buckets; b++) {
-    const slice = points.slice(Math.floor((b * points.length) / buckets), Math.floor(((b + 1) * points.length) / buckets));
-    if (!slice.length) continue;
-    let lowest = slice[0];
-    let highest = slice[0];
-    for (const p of slice) {
-      if (p[1] < lowest[1]) lowest = p;
-      if (p[1] > highest[1]) highest = p;
-    }
-    out.push(...[slice[0], lowest, highest, slice[slice.length - 1]].filter((p, i, all) => all.indexOf(p) === i).sort((p, q) => p[0] - q[0]));
+  return thinTraces([points], max)[0];
+}
+
+/**
+ * Each of `lists` (a trace's points) thinned as thinDataPoints thins one,
+ * the traces that have the same x values (columns of one file against one
+ * x column) together: they keep the same rows, each stretch's first and
+ * last and every one of their lowest and highest, so their points stay at
+ * the same x.
+ */
+export function thinTraces(lists, max = MAX_DATA_POINTS) {
+  const out = lists.slice();
+  const groups = new Map();
+  lists.forEach((points, i) => {
+    if (points.length <= max) return;
+    const key = points.map((p) => p[0]).join(',');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(i);
+  });
+  for (const members of groups.values()) {
+    const rows = keptRows(members.map((i) => lists[i]), max);
+    for (const i of members) out[i] = rows.map((row) => lists[i][row]);
   }
   return out;
+}
+
+/** The rows traces of the same x keep (thinTraces), in order. */
+function keptRows(traces, max) {
+  const points = traces[0];
+  const n = points.length;
+  const ordered = points.every((p, i) => !i || p[0] >= points[i - 1][0]);
+  if (!ordered) return [...new Set(Array.from({ length: max }, (_, i) => Math.round((i * (n - 1)) / (max - 1))))];
+  const buckets = Math.max(1, Math.floor(max / (2 + 2 * traces.length)));
+  const rows = [];
+  for (let b = 0; b < buckets; b++) {
+    const from = Math.floor((b * n) / buckets);
+    const to = Math.floor(((b + 1) * n) / buckets);
+    if (to <= from) continue;
+    const kept = new Set([from, to - 1]);
+    for (const trace of traces) {
+      let lowest = from;
+      let highest = from;
+      for (let i = from; i < to; i++) {
+        if (trace[i][1] < trace[lowest][1]) lowest = i;
+        if (trace[i][1] > trace[highest][1]) highest = i;
+      }
+      kept.add(lowest).add(highest);
+    }
+    rows.push(...[...kept].sort((a, b) => a - b));
+  }
+  return rows;
 }
 
 /** A data plot (columns read from a file, csv-data.js): its traces as
@@ -1462,12 +1498,14 @@ export function thinDataPoints(points, max = MAX_DATA_POINTS) {
 function normalizeDataPlot(plot) {
   const text = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
   const axis = (a) => ({ label: text(a?.label, 200), scale: a?.scale === 'log' ? 'log' : 'linear' });
-  const traces = (Array.isArray(plot.traces) ? plot.traces : []).slice(0, 8).map((trace) => ({
+  const read = (Array.isArray(plot.traces) ? plot.traces : []).slice(0, 8).map((trace) => ({
     label: text(trace?.label, 400),
     color: /^#[0-9a-f]{6}$/i.test(trace?.color || '') ? trace.color : '#3b74e0',
-    points: thinDataPoints((Array.isArray(trace?.points) ? trace.points : [])
-      .filter((p) => Array.isArray(p) && finite(p[0]) && finite(p[1])).map((p) => [round(p[0], 6), round(p[1], 6)])),
-  })).filter((trace) => trace.points.length > 1);
+    points: (Array.isArray(trace?.points) ? trace.points : [])
+      .filter((p) => Array.isArray(p) && finite(p[0]) && finite(p[1])).map((p) => [round(p[0], 6), round(p[1], 6)]),
+  }));
+  const thinned = thinTraces(read.map((trace) => trace.points));
+  const traces = read.map((trace, i) => ({ ...trace, points: thinned[i] })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   const x = axis(plot.x);
   const y = axis(plot.y);

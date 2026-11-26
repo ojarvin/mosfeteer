@@ -68,3 +68,24 @@ test('a positive column over more than three decades is suggested a log scale', 
   const bode = readTable('f,dB\n1,0\n10,-1\n1e5,-40\n');
   assert.deepEqual(bode.scale, { x: 'log', y: 'linear' });
 });
+
+test('a simulator\'s x,y column pairs: each y is read against its own x, and the x columns are not suggested', () => {
+  // As Cadence ViVA exports them: the second signal on a grid of its own.
+  const lines = ['/out X,/out Y,/in X,/in Y'];
+  for (let i = 0; i < 6; i++) lines.push([i, i, i * 2, -i].join(','));
+  const table = readTable(lines.join('\n'));
+  assert.equal(table.x, 0);
+  assert.deepEqual(table.y, [1, 3]);
+  assert.deepEqual([...table.pairs], [[1, 0], [3, 2]]);
+  const [out, input] = tableTraces(table, 0, table.y);
+  assert.deepEqual(out.points.slice(0, 3), [[0, 0], [1, 1], [2, 2]]);
+  assert.deepEqual(input.points.slice(0, 3), [[0, 0], [2, -1], [4, -2]]);
+  // Against the row number, the pairs do not apply.
+  assert.deepEqual(tableTraces(table, null, [3])[0].points[1], [1, -1]);
+});
+
+test('a column that repeats the x column is not suggested as a trace', () => {
+  const table = readTable('t,a,t2,b\n0,1,0,4\n1,2,1,5\n2,3,2,6');
+  assert.equal(table.pairs, undefined);
+  assert.deepEqual(table.y, [1, 3]);
+});
