@@ -10,7 +10,7 @@
 import { TRACE_COLORS } from './analysis/signal-flow.js';
 import { newFigureId, placeFigure, settlePlaced } from './figures.js';
 import { GRID, snap } from './grid.js';
-import { MAX_PLOT_EXTRA, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, plotLegendCurves } from './model.js';
+import { MAX_DATA_POINTS, MAX_PLOT_EXTRA, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, plotLegendCurves } from './model.js';
 import { COLOR_PALETTE, colorToken } from './style.js';
 import { MAX_DATA_TRACES, readTable, tableTraces } from './csv-data.js';
 import { remapCursorTraces } from './plot-cursors.js';
@@ -22,11 +22,12 @@ export const PLOT_BOX = { w: 20, h: 12 };
 /** The plot `table`'s columns `y` against `x` make (null when they make no
  *  trace of two points), its axes named after the columns: one trace's own
  *  name on y, or none for several, which the legend names. */
-export function dataPlot(table, { x = table.x, y = table.y, file = '', scale = table.scale } = {}) {
-  const traces = tableTraces(table, x, y).map((trace, i) => ({ ...trace, color: TRACE_COLORS[i % TRACE_COLORS.length] }));
+export function dataPlot(table, { x = table.x, y = table.y, file = '', scale = table.scale, every = 1 } = {}) {
+  const traces = tableTraces(table, x, y, { every }).map((trace, i) => ({ ...trace, color: TRACE_COLORS[i % TRACE_COLORS.length] }));
   return normalizePlot({
     kind: 'data',
     file,
+    every,
     x: { label: x === null || x === undefined ? 'Row' : table.names[x], scale: scale?.x || 'linear' },
     y: { label: traces.length === 1 ? traces[0].label : '', scale: scale?.y || 'linear' },
     traces,
@@ -49,13 +50,16 @@ export function columnIndex(table, name) {
 
 /** Read `text` as `options` say (csv-data.js readTable, columns by number
  *  or name) and make its plot. Throws when there is nothing to plot. */
-export function dataPlotFromText(text, { file = '', x, y, xscale, yscale, ...read } = {}) {
+export function dataPlotFromText(text, { file = '', x, y, xscale, yscale, every = 1, ...read } = {}) {
   const table = readTable(text, read);
+  const rows = table.rows.length - table.skip;
+  if (!(Number.isInteger(every) && every >= 1)) throw new Error('--every is a whole number of rows, 1 or more');
+  if (Math.ceil(rows / every) > MAX_DATA_POINTS) throw new Error(`the file has ${rows} rows and a trace keeps ${MAX_DATA_POINTS} points: read one row in ${Math.ceil(rows / MAX_DATA_POINTS)} or fewer (--every ${Math.ceil(rows / MAX_DATA_POINTS)})`);
   const xi = x === undefined ? table.x : columnIndex(table, x);
   const yi = y === undefined ? table.y.filter((c) => c !== xi) : String(y).split(',').map((name) => columnIndex(table, name));
   if (!yi.length) throw new Error('no column of numbers to plot');
   if (yi.length > MAX_DATA_TRACES) throw new Error(`at most ${MAX_DATA_TRACES} traces`);
-  const plot = dataPlot(table, { x: xi, y: yi, file, scale: { x: xscale || table.scale.x, y: yscale || table.scale.y } });
+  const plot = dataPlot(table, { x: xi, y: yi, file, every, scale: { x: xscale || table.scale.x, y: yscale || table.scale.y } });
   if (!plot) throw new Error('the columns have no two rows of numbers to plot');
   return plot;
 }
@@ -368,6 +372,6 @@ export function replaceDataPlotTraces(circuit, box, plot, { math = false } = {})
   const legend = circuit.plotLegend(box);
   const at = legend.length ? { x: Math.min(...legend.map((l) => l.bbox().x)), y: Math.min(...legend.map((l) => l.bbox().y)) } : null;
   for (const label of legend) circuit.removeLabel(label.id);
-  box.plot = normalizePlot({ ...old, file: plot.file || old.file, ...(plot.y ? { y: plot.y } : {}), traces: plot.traces });
+  box.plot = normalizePlot({ ...old, file: plot.file || old.file, every: plot.every, ...(plot.y ? { y: plot.y } : {}), traces: plot.traces });
   return writeLegend(circuit, box, box.plot.traces, at, { math });
 }

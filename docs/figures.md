@@ -105,12 +105,17 @@ columns separated by spaces (`src/core/csv-data.js`, `src/core/data-plot.js`,
 `test/data-plot.test.js`, `test/browser/data-plot.test.js`).
 
 - The file is read once and never kept. The plot keeps its traces as
-  `[x, y]` points to six digits, up to 8 traces of 2000 points (a longer
-  trace is thinned, keeping each stretch's first, last, lowest and highest
-  point; traces with the same x values are thinned together, to the same
-  rows, `thinTraces`), each
-  axis's name and scale (`linear`, `log`), its zoom (`view`), and the
-  file's name.
+  `[x, y]` points to six digits, every row read, up to 8 traces of
+  20000 points (`MAX_DATA_POINTS`), each axis's name and scale (`linear`,
+  `log`), its zoom (`view`), the file's name, and `every`: the file read
+  one row in N (rows 1, N+1, 2N+1, ..., the same rows for every trace;
+  `tableTraces`). Nothing is otherwise thinned or smoothed. Every row is
+  read unless N is asked for; a file with more rows than a trace keeps
+  takes the least N that fits (the dialog starts there, `annotation
+  dataplot` refuses without `--every`), and one past 2000 rows is offered
+  the N that keeps about 2000 (`suggestedEvery`). A design file with a
+  longer trace (written by hand) keeps one point in the least N that fits
+  (`fitPoints`).
 - Reading guesses the separator (tab, semicolon, comma, spaces), the
   decimal sign (a comma when the separator is not one), and the rows
   before the data; the last of those names the columns when it has a
@@ -193,7 +198,7 @@ columns separated by spaces (`src/core/csv-data.js`, `src/core/data-plot.js`,
 saves the numbers a plot keeps as CSV (`src/core/plot-export.js`; tests
 `test/plot-export.test.js`, `test/browser/plot-export.test.js`): an
 analysis plot's samples as rounded when annotated, a data plot's points as
-thinned. The traces to include, the separator (comma, semicolon, tab),
+kept. The traces to include, the separator (comma, semicolon, tab),
 and the decimal sign are chosen over a preview; a decimal comma takes a
 semicolon. Traces on the same x values share one x column; otherwise each
 brings its own; traces added from files come after the plot's own. Save

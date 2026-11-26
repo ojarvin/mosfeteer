@@ -7697,7 +7697,7 @@ details.analysis-options > * + * {
 }
 
 .timing-keys p {
-  margin: 4px 0 0;
+  margin: 0 0 4px;
 }
 
 /* The way to and from the beats closes the window. */
@@ -9939,4 +9939,23 @@ html.dark[data-accent] {
 
 .picture-dialog #picture-embed {
   user-select: all;
+}
+
+.data-plot-every-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px;
+}
+
+.data-plot-every {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.data-plot-every .data-plot-every-hint {
+  min-height: var(--control-h);
+  margin: 0;
 }

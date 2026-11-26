@@ -133,6 +133,7 @@ const FLAG_ARITY = {
   x: 1,
   y: 1,
   skip: 1,
+  every: 1,
   sep: 1,
   decimal: 1,
   'no-header': 0,
@@ -581,8 +582,8 @@ export function commandHelp() {
     '  annotation bend ID X Y         - bend a two-point line or arrow through X Y at its middle (on the line: straight)',
     '  annotation bend ID off         - straighten a bent line or arrow',
     '  annotation plotcolors PLOT on|off - a plot\'s traces in their colors, or in black told apart by dash (a new plot\'s)',
-    '  annotation dataplot FILE [--x COL|row] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y | --into PLOT [--hz] [--ratio]]',
-    '                                   - plot a CSV file\'s columns (by number or name), or add them to a plot (an analysis\'s too; --hz: x in Hz, --ratio: a magnitude ratio, on a response); unset options are guessed. The file is read, never kept',
+    '  annotation dataplot FILE [--x COL|row] [--y COL,COL] [--skip N] [--every N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y | --into PLOT [--hz] [--ratio]]',
+    '                                   - plot a CSV file\'s columns (by number or name), or add them to a plot (an analysis\'s too; --hz: x in Hz, --ratio: a magnitude ratio, on a response; --every N: one row in N, every row by default); unset options are guessed. The file is read, never kept',
     '  annotation plotcsv PLOT [--traces N,N] [--sep comma|semicolon|tab] [--decimal point|comma] - any plot\'s numbers as CSV text (traces from 1)',
     '  annotation plotaxis PLOT x|y [--label TEXT] [--scale log|linear] - name a data plot\'s axis, or set its scale',
     '  annotation plotview PLOT x|y LOW HIGH|fit - zoom a data plot\'s axis, or fit it to the data',
@@ -1709,7 +1710,7 @@ function annotationCommand(circuit, pos, result, flags = {}, io) {
   }
   if (op === 'dataplot') {
     const file = pos[1];
-    if (!file || pos.length !== 2) throw new Error('usage: annotation dataplot FILE [--x COL] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y | --into PLOT [--hz] [--ratio]]');
+    if (!file || pos.length !== 2) throw new Error('usage: annotation dataplot FILE [--x COL] [--y COL,COL] [--skip N] [--every N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y | --into PLOT [--hz] [--ratio]]');
     if (!io?.readDataFile) throw new Error('dataplot reads a file: use the CLI, or Insert → Data plot… in the editor');
     const separators = { tab: '\t', semicolon: ';', comma: ',', space: ' ' };
     const decimals = { point: '.', comma: ',' };
@@ -1719,8 +1720,9 @@ function annotationCommand(circuit, pos, result, flags = {}, io) {
     for (const name of ['xscale', 'yscale']) if (one(name) !== undefined && !['log', 'linear'].includes(one(name))) throw new Error(`--${name} is log or linear`);
     const skip = one('skip') === undefined ? undefined : Number(one('skip'));
     if (skip !== undefined && !(Number.isInteger(skip) && skip >= 0)) throw new Error('--skip is a whole number of rows');
+    const every = one('every') === undefined ? 1 : Number(one('every'));
     const plot = dataPlotFromText(io.readDataFile(file), {
-      file: file.split(/[\\/]/).pop(), x: one('x'), y: one('y'), skip,
+      file: file.split(/[\\/]/).pop(), x: one('x'), y: one('y'), skip, every,
       separator: separators[one('sep')], decimal: decimals[one('decimal')], ...(flags['no-header'] ? { header: false } : {}),
       xscale: one('xscale'), yscale: one('yscale'),
     });

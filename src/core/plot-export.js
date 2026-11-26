@@ -1,7 +1,7 @@
 /**
  * Any plot on the drawing as columns of numbers, and those as CSV: the
  * numbers the plot keeps (model.js normalizePlot), as it keeps them -- an
- * analysis's samples rounded, a data plot's thinned -- never sampled again.
+ * analysis's samples rounded, a data plot's as it keeps them -- never sampled again.
  *
  * `plotSeries(plot)` gives each curve as `{ name, columns, rows }`: its
  * column names, x first, and its rows of numbers (null for a gap).

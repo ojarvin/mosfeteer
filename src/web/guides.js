@@ -436,6 +436,7 @@ export const GUIDES = Object.freeze([
           '**Add file…** adds a second file\'s traces to the same plot. **Replace file…** puts new traces in place of the old ones.',
           '**Markers** put numbered points on a trace, with their readings.',
           'The plot keeps the zoom that is shown when you apply.',
+          'Every row of the file is plotted. For a large file, set **Every Nth row** to plot one row in N, the same rows for every trace. A trace keeps 20000 points at most.',
         ],
       },
     ],

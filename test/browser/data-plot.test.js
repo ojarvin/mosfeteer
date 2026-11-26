@@ -182,6 +182,28 @@ describe('data plot', { skip: browserSkip() }, () => {
     assert.equal((await plot()).plot.traces[0].label, 'Ua');
   });
 
+  test('a large file is read every row unless one row in N is chosen; past what a trace keeps, it starts there', async () => {
+    const rows = (n) => ['t,v', ...Array.from({ length: n }, (_, i) => `${i},${i % 7}`)].join('\n');
+    const open = (n) => h.evaluate(`${h.module('data-plot-ui.js')}.then((m) => m.openDataPlotDialog(${JSON.stringify(rows(n))}, 'big.csv'))`);
+    const read = () => h.evaluate(`({ every: document.getElementById('data-plot-every').value, status: document.querySelector('.data-plot-dialog .field-hint[aria-live]').textContent,
+      offer: [...document.querySelectorAll('.data-plot-every-hint button')].map((b) => b.textContent) })`);
+    await open(5000);
+    await h.until(`!!document.querySelector('.data-plot-dialog .plot-view svg path')`);
+    assert.deepEqual(await read(), { every: '1', status: '1 trace from big.csv, 5000 points from 5000 rows.', offer: ['Read one row in 3'] });
+    await h.evaluate(`${button('.data-plot-every-hint', 'Read one row in 3')}.click()`);
+    assert.deepEqual(await read(), { every: '3', status: '1 trace from big.csv, 1667 points from 5000 rows, one row in 3.', offer: ['Read every row'] });
+    await h.evaluate(`${button('.data-plot-dialog', 'Cancel')}.click()`);
+    await h.until(`!document.querySelector('.data-plot-dialog')`);
+    await open(45000);
+    await h.until(`!!document.querySelector('.data-plot-dialog .plot-view svg path')`);
+    const big = await read();
+    assert.equal(big.every, '3');
+    assert.equal(await h.evaluate(`document.getElementById('data-plot-every').min`), '3');
+    assert.deepEqual(big.offer, ['Read one row in 23']);
+    await h.evaluate(`${button('.data-plot-dialog', 'Cancel')}.click()`);
+    await h.until(`!document.querySelector('.data-plot-dialog')`);
+  });
+
   test('a double-click on a data plot opens its settings, not its text', async () => {
     const { box } = await plot();
     const p = await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.worldToClient(${box.x + box.w / 2}, ${box.y + box.h / 2}))`);

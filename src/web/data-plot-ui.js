@@ -14,7 +14,7 @@
  */
 
 import { element as el } from './dom.js';
-import { MAX_DATA_TRACES, readTable, tableTraces } from '../core/csv-data.js';
+import { MAX_DATA_TRACES, SUGGESTED_POINTS, readTable, suggestedEvery, tableTraces } from '../core/csv-data.js';
 import { TRACE_COLORS } from '../core/analysis/signal-flow.js';
 import { appendPlotTraces, fileUnits, inPlotUnits, movePlotTrace, placeDataPlot, removePlotTrace, replaceDataPlotTraces, setDataPlotAxis, setPlotCurveColors, setPlotCursors, setPlotTrace, setPlotTracesShown, setDataPlotView, takesFileTraces } from '../core/data-plot.js';
 import { texToMathML } from '../core/render.js';
@@ -344,6 +344,11 @@ export function openDataPlotDialog(text, name, target = null, { mode = 'replace'
   let table = readTable(text);
   let x = table.x;
   let y = table.y.slice(0, room());
+  // One row in `every`: every row unless asked, or unless a trace could
+  // not keep them all; read again, as the plot was read.
+  const dataRows = () => table.rows.length - table.skip;
+  const leastEvery = () => Math.max(1, Math.ceil(dataRows() / MAX_DATA_POINTS));
+  let every = Math.max(leastEvery(), target?.plot?.kind === 'data' && !adding ? target.plot.every || 1 : 1);
   // What was edited by hand stays when the columns change.
   const edited = { x: false, y: false };
   const draft = { x: { label: '', scale: table.scale.x }, y: { label: '', scale: table.scale.y }, traces: [] };
@@ -367,7 +372,7 @@ export function openDataPlotDialog(text, name, target = null, { mode = 'replace'
   function update() {
     const before = new Map(draft.traces.filter((t) => t.index === undefined).map((t) => [t.column, t]));
     const added = y.map((column) => {
-      let [trace] = tableTraces(table, x, [column]);
+      let [trace] = tableTraces(table, x, [column], { every });
       if (trace && analysis) [trace] = inPlotUnits(target.plot, [trace], units);
       if (!trace || trace.points.length < 2) return null;
       const old = before.get(column);
@@ -398,9 +403,8 @@ export function openDataPlotDialog(text, name, target = null, { mode = 'replace'
       return;
     }
     // The file's own traces: a plot added to has its others already.
-    const fresh = added.map((trace) => Math.min(trace.points.length, MAX_DATA_POINTS));
-    const points = fresh.reduce((sum, n) => sum + n, 0);
-    status.textContent = `${fresh.length} trace${fresh.length === 1 ? '' : 's'} from ${name}, ${points} points kept from ${table.rows.length - table.skip} rows.`;
+    const points = added.reduce((sum, trace) => sum + trace.points.length, 0);
+    status.textContent = `${added.length} trace${added.length === 1 ? '' : 's'} from ${name}, ${points} points from ${dataRows()} rows${every > 1 ? `, one row in ${every}` : ''}.`;
   }
 
   const reread = (change) => {
@@ -408,6 +412,7 @@ export function openDataPlotDialog(text, name, target = null, { mode = 'replace'
     const before = table;
     table = readTable(text, options);
     // A new reading of the columns starts their choice over.
+    every = Math.max(every, leastEvery());
     if (before.names.length !== table.names.length || before.skip !== table.skip) {
       x = table.x;
       y = table.y.slice(0, room());
@@ -431,6 +436,7 @@ export function openDataPlotDialog(text, name, target = null, { mode = 'replace'
         el('input', { type: 'checkbox', checked: table.header, disabled: !table.skip, onchange: (ev) => reread({ header: ev.target.checked }) }),
         ' The last of them names the columns',
       ]),
+      everyField(),
     );
     const first = Math.max(0, table.skip - 3);
     const rows = table.rows.slice(first, table.skip + PREVIEW_ROWS);
@@ -440,6 +446,33 @@ export function openDataPlotDialog(text, name, target = null, { mode = 'replace'
       el('tbody', {}, rows.map((row, i) => el('tr', { class: first + i < table.skip ? 'data-plot-skipped' : '' },
         Array.from({ length: width }, (_, c) => el('td', { text: row[c] ?? '' }))))),
     ]));
+  }
+
+  /** Every Nth row: 1 reads them all. A file past the points a trace
+   *  keeps takes one N at least; a large one is offered the N that keeps
+   *  about SUGGESTED_POINTS. */
+  function everyField() {
+    const least = leastEvery();
+    const suggested = Math.max(least, suggestedEvery(dataRows()));
+    const setEvery = (n) => {
+      every = Math.max(least, Math.floor(Number(n) || 1));
+      drawReading();
+      update();
+    };
+    const hint = least > 1
+      ? `${dataRows()} rows: a trace keeps ${MAX_DATA_POINTS} points at most.`
+      : dataRows() > SUGGESTED_POINTS ? `${dataRows()} rows.` : '';
+    return el('div', { class: 'data-plot-every' }, [
+      el('label', { class: 'data-plot-field', for: 'data-plot-every' }, [
+        el('span', { text: 'Every Nth row' }),
+        el('input', { id: 'data-plot-every', type: 'number', min: String(least), step: '1', value: String(every), onchange: (ev) => setEvery(ev.target.value) }),
+      ]),
+      ...(hint ? [el('p', { class: 'field-hint data-plot-every-hint' }, [
+        `${hint} `,
+        ...(suggested !== every ? [el('button', { type: 'button', class: 'window-action', text: `Read one row in ${suggested}`, onclick: () => setEvery(suggested) })] : []),
+        ...(every > 1 && least === 1 ? [el('button', { type: 'button', class: 'window-action', text: 'Read every row', onclick: () => setEvery(1) })] : []),
+      ])] : []),
+    ]);
   }
 
   function drawColumns() {
@@ -462,7 +495,7 @@ export function openDataPlotDialog(text, name, target = null, { mode = 'replace'
   }
 
   place.addEventListener('click', () => {
-    const plot = plotEdit.plot({ file: name });
+    const plot = plotEdit.plot({ file: name, every });
     if (!plot) return;
     const zoom = plotEdit.zoom();
     const old = target ? editor.circuit.plotLegend(target).map((label) => label.bbox()) : [];
@@ -598,7 +631,7 @@ export function openPlotSettings(box) {
     close();
     openPlotSettings(now);
   } }) : null;
-  const title = data ? (box.plot.sweep ? 'Sweep plot' : box.plot.file ? `Data plot from ${box.plot.file}` : 'Data plot') : 'Plot settings';
+  const title = data ? (box.plot.sweep ? 'Sweep plot' : box.plot.file ? `Data plot from ${box.plot.file}${box.plot.every ? `, one row in ${box.plot.every}` : ''}` : 'Data plot') : 'Plot settings';
   const node = el('section', { class: 'floating-window data-plot-dialog plot-settings-window', role: 'dialog', 'aria-label': 'Plot settings', 'aria-labelledby': 'plot-settings-title' }, [
     el('header', { class: 'floating-window-header' }, [
       el('h2', { id: 'plot-settings-title', class: 'floating-window-title', text: title }),

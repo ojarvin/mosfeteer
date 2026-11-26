@@ -179,11 +179,23 @@ function xyPairs(names) {
   return pairs;
 }
 
+/** Past this many rows a file is offered every Nth row (suggestedEvery). */
+export const SUGGESTED_POINTS = 2000;
+
+/** The N whose every Nth row keeps a file of `rows` data rows near
+ *  SUGGESTED_POINTS a trace: 1 (every row) for a file that small. */
+export function suggestedEvery(rows, most = SUGGESTED_POINTS) {
+  return rows > most ? Math.ceil(rows / most) : 1;
+}
+
 /** Traces of `table`'s columns `y` against column `x` (null: the row
  *  number): `[{ label, points: [[x, y]] }]`, points in file order, the rows
  *  missing either number left out. In a file of x,y pairs, with `x` one of
- *  its x columns, each y column is read against its own x column. */
-export function tableTraces(table, x, y) {
+ *  its x columns, each y column is read against its own x column. `every`
+ *  N reads the data's rows 1, N+1, 2N+1, ... only (the same rows for every
+ *  trace); 1 reads them all. */
+export function tableTraces(table, x, y, { every = 1 } = {}) {
+  const step = Number.isInteger(every) && every > 1 ? every : 1;
   const own = x !== null && x !== undefined && table.pairs && [...table.pairs.values()].includes(x);
   return y.slice(0, MAX_DATA_TRACES).map((c) => {
     const column = own && table.pairs.has(c) ? table.pairs.get(c) : x;
@@ -191,6 +203,7 @@ export function tableTraces(table, x, y) {
     const ys = table.columns[c] || [];
     const points = [];
     ys.forEach((value, i) => {
+      if (i % step) return;
       const at = xs ? xs[i] : i;
       if (Number.isFinite(at) && Number.isFinite(value)) points.push([at, value]);
     });

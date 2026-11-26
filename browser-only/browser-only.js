@@ -23788,6 +23788,7 @@ const FLAG_ARITY = {
   x: 1,
   y: 1,
   skip: 1,
+  every: 1,
   sep: 1,
   decimal: 1,
   'no-header': 0,
@@ -24236,8 +24237,8 @@ function commandHelp() {
     '  annotation bend ID X Y         - bend a two-point line or arrow through X Y at its middle (on the line: straight)',
     '  annotation bend ID off         - straighten a bent line or arrow',
     '  annotation plotcolors PLOT on|off - a plot\'s traces in their colors, or in black told apart by dash (a new plot\'s)',
-    '  annotation dataplot FILE [--x COL|row] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y | --into PLOT [--hz] [--ratio]]',
-    '                                   - plot a CSV file\'s columns (by number or name), or add them to a plot (an analysis\'s too; --hz: x in Hz, --ratio: a magnitude ratio, on a response); unset options are guessed. The file is read, never kept',
+    '  annotation dataplot FILE [--x COL|row] [--y COL,COL] [--skip N] [--every N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y | --into PLOT [--hz] [--ratio]]',
+    '                                   - plot a CSV file\'s columns (by number or name), or add them to a plot (an analysis\'s too; --hz: x in Hz, --ratio: a magnitude ratio, on a response; --every N: one row in N, every row by default); unset options are guessed. The file is read, never kept',
     '  annotation plotcsv PLOT [--traces N,N] [--sep comma|semicolon|tab] [--decimal point|comma] - any plot\'s numbers as CSV text (traces from 1)',
     '  annotation plotaxis PLOT x|y [--label TEXT] [--scale log|linear] - name a data plot\'s axis, or set its scale',
     '  annotation plotview PLOT x|y LOW HIGH|fit - zoom a data plot\'s axis, or fit it to the data',
@@ -25364,7 +25365,7 @@ function annotationCommand(circuit, pos, result, flags = {}, io) {
   }
   if (op === 'dataplot') {
     const file = pos[1];
-    if (!file || pos.length !== 2) throw new Error('usage: annotation dataplot FILE [--x COL] [--y COL,COL] [--skip N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y | --into PLOT [--hz] [--ratio]]');
+    if (!file || pos.length !== 2) throw new Error('usage: annotation dataplot FILE [--x COL] [--y COL,COL] [--skip N] [--every N] [--sep tab|semicolon|comma|space] [--decimal point|comma] [--no-header] [--xscale log|linear] [--yscale log|linear] [--at X Y | --into PLOT [--hz] [--ratio]]');
     if (!io?.readDataFile) throw new Error('dataplot reads a file: use the CLI, or Insert → Data plot… in the editor');
     const separators = { tab: '\t', semicolon: ';', comma: ',', space: ' ' };
     const decimals = { point: '.', comma: ',' };
@@ -25374,8 +25375,9 @@ function annotationCommand(circuit, pos, result, flags = {}, io) {
     for (const name of ['xscale', 'yscale']) if (one(name) !== undefined && !['log', 'linear'].includes(one(name))) throw new Error(`--${name} is log or linear`);
     const skip = one('skip') === undefined ? undefined : Number(one('skip'));
     if (skip !== undefined && !(Number.isInteger(skip) && skip >= 0)) throw new Error('--skip is a whole number of rows');
+    const every = one('every') === undefined ? 1 : Number(one('every'));
     const plot = dataPlotFromText(io.readDataFile(file), {
-      file: file.split(/[\\/]/).pop(), x: one('x'), y: one('y'), skip,
+      file: file.split(/[\\/]/).pop(), x: one('x'), y: one('y'), skip, every,
       separator: separators[one('sep')], decimal: decimals[one('decimal')], ...(flags['no-header'] ? { header: false } : {}),
       xscale: one('xscale'), yscale: one('yscale'),
     });
@@ -27834,6 +27836,7 @@ __exports.splitLine = splitLine;
 __exports.guessFormat = guessFormat;
 __exports.suggestScale = suggestScale;
 __exports.readTable = readTable;
+__exports.suggestedEvery = suggestedEvery;
 __exports.tableTraces = tableTraces;
 let valueNumber; __bind(() => { ({ valueNumber } = __require("src/core/part-value.js")); });
 /**
@@ -28017,11 +28020,23 @@ function xyPairs(names) {
   return pairs;
 }
 
+/** Past this many rows a file is offered every Nth row (suggestedEvery). */
+const SUGGESTED_POINTS = 2000;
+
+/** The N whose every Nth row keeps a file of `rows` data rows near
+ *  SUGGESTED_POINTS a trace: 1 (every row) for a file that small. */
+function suggestedEvery(rows, most = SUGGESTED_POINTS) {
+  return rows > most ? Math.ceil(rows / most) : 1;
+}
+
 /** Traces of `table`'s columns `y` against column `x` (null: the row
  *  number): `[{ label, points: [[x, y]] }]`, points in file order, the rows
  *  missing either number left out. In a file of x,y pairs, with `x` one of
- *  its x columns, each y column is read against its own x column. */
-function tableTraces(table, x, y) {
+ *  its x columns, each y column is read against its own x column. `every`
+ *  N reads the data's rows 1, N+1, 2N+1, ... only (the same rows for every
+ *  trace); 1 reads them all. */
+function tableTraces(table, x, y, { every = 1 } = {}) {
+  const step = Number.isInteger(every) && every > 1 ? every : 1;
   const own = x !== null && x !== undefined && table.pairs && [...table.pairs.values()].includes(x);
   return y.slice(0, MAX_DATA_TRACES).map((c) => {
     const column = own && table.pairs.has(c) ? table.pairs.get(c) : x;
@@ -28029,6 +28044,7 @@ function tableTraces(table, x, y) {
     const ys = table.columns[c] || [];
     const points = [];
     ys.forEach((value, i) => {
+      if (i % step) return;
       const at = xs ? xs[i] : i;
       if (Number.isFinite(at) && Number.isFinite(value)) points.push([at, value]);
     });
@@ -28037,6 +28053,7 @@ function tableTraces(table, x, y) {
 }
 
 __exports.MAX_DATA_TRACES = MAX_DATA_TRACES;
+__exports.SUGGESTED_POINTS = SUGGESTED_POINTS;
 };
 
 __modules["src/core/data-plot.js"] = function (__require, __exports) {
@@ -28060,7 +28077,7 @@ __exports.replaceDataPlotTraces = replaceDataPlotTraces;
 let TRACE_COLORS; __bind(() => { ({ TRACE_COLORS } = __require("src/core/analysis/signal-flow.js")); });
 let newFigureId, placeFigure, settlePlaced; __bind(() => { ({ newFigureId, placeFigure, settlePlaced } = __require("src/core/figures.js")); });
 let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
-let MAX_PLOT_EXTRA, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, plotLegendCurves; __bind(() => { ({ MAX_PLOT_EXTRA, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, plotLegendCurves } = __require("src/core/model.js")); });
+let MAX_DATA_POINTS, MAX_PLOT_EXTRA, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, plotLegendCurves; __bind(() => { ({ MAX_DATA_POINTS, MAX_PLOT_EXTRA, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, plotLegendCurves } = __require("src/core/model.js")); });
 let COLOR_PALETTE, colorToken; __bind(() => { ({ COLOR_PALETTE, colorToken } = __require("src/core/style.js")); });
 let MAX_DATA_TRACES, readTable, tableTraces; __bind(() => { ({ MAX_DATA_TRACES, readTable, tableTraces } = __require("src/core/csv-data.js")); });
 let remapCursorTraces; __bind(() => { ({ remapCursorTraces } = __require("src/core/plot-cursors.js")); });
@@ -28089,11 +28106,12 @@ const PLOT_BOX = { w: 20, h: 12 };
 /** The plot `table`'s columns `y` against `x` make (null when they make no
  *  trace of two points), its axes named after the columns: one trace's own
  *  name on y, or none for several, which the legend names. */
-function dataPlot(table, { x = table.x, y = table.y, file = '', scale = table.scale } = {}) {
-  const traces = tableTraces(table, x, y).map((trace, i) => ({ ...trace, color: TRACE_COLORS[i % TRACE_COLORS.length] }));
+function dataPlot(table, { x = table.x, y = table.y, file = '', scale = table.scale, every = 1 } = {}) {
+  const traces = tableTraces(table, x, y, { every }).map((trace, i) => ({ ...trace, color: TRACE_COLORS[i % TRACE_COLORS.length] }));
   return normalizePlot({
     kind: 'data',
     file,
+    every,
     x: { label: x === null || x === undefined ? 'Row' : table.names[x], scale: scale?.x || 'linear' },
     y: { label: traces.length === 1 ? traces[0].label : '', scale: scale?.y || 'linear' },
     traces,
@@ -28116,13 +28134,16 @@ function columnIndex(table, name) {
 
 /** Read `text` as `options` say (csv-data.js readTable, columns by number
  *  or name) and make its plot. Throws when there is nothing to plot. */
-function dataPlotFromText(text, { file = '', x, y, xscale, yscale, ...read } = {}) {
+function dataPlotFromText(text, { file = '', x, y, xscale, yscale, every = 1, ...read } = {}) {
   const table = readTable(text, read);
+  const rows = table.rows.length - table.skip;
+  if (!(Number.isInteger(every) && every >= 1)) throw new Error('--every is a whole number of rows, 1 or more');
+  if (Math.ceil(rows / every) > MAX_DATA_POINTS) throw new Error(`the file has ${rows} rows and a trace keeps ${MAX_DATA_POINTS} points: read one row in ${Math.ceil(rows / MAX_DATA_POINTS)} or fewer (--every ${Math.ceil(rows / MAX_DATA_POINTS)})`);
   const xi = x === undefined ? table.x : columnIndex(table, x);
   const yi = y === undefined ? table.y.filter((c) => c !== xi) : String(y).split(',').map((name) => columnIndex(table, name));
   if (!yi.length) throw new Error('no column of numbers to plot');
   if (yi.length > MAX_DATA_TRACES) throw new Error(`at most ${MAX_DATA_TRACES} traces`);
-  const plot = dataPlot(table, { x: xi, y: yi, file, scale: { x: xscale || table.scale.x, y: yscale || table.scale.y } });
+  const plot = dataPlot(table, { x: xi, y: yi, file, every, scale: { x: xscale || table.scale.x, y: yscale || table.scale.y } });
   if (!plot) throw new Error('the columns have no two rows of numbers to plot');
   return plot;
 }
@@ -28435,7 +28456,7 @@ function replaceDataPlotTraces(circuit, box, plot, { math = false } = {}) {
   const legend = circuit.plotLegend(box);
   const at = legend.length ? { x: Math.min(...legend.map((l) => l.bbox().x)), y: Math.min(...legend.map((l) => l.bbox().y)) } : null;
   for (const label of legend) circuit.removeLabel(label.id);
-  box.plot = normalizePlot({ ...old, file: plot.file || old.file, ...(plot.y ? { y: plot.y } : {}), traces: plot.traces });
+  box.plot = normalizePlot({ ...old, file: plot.file || old.file, every: plot.every, ...(plot.y ? { y: plot.y } : {}), traces: plot.traces });
   return writeLegend(circuit, box, box.plot.traces, at, { math });
 }
 
@@ -30952,8 +30973,7 @@ __exports.pictureName = pictureName;
 __exports.normalizePictures = normalizePictures;
 __exports.normalizeTimingSpec = normalizeTimingSpec;
 __exports.normalizePlot = normalizePlot;
-__exports.thinDataPoints = thinDataPoints;
-__exports.thinTraces = thinTraces;
+__exports.fitPoints = fitPoints;
 __exports.diagonalDraftPath = diagonalDraftPath;
 __exports.analyzedCircuit = analyzedCircuit;
 let RAIL_NAMES, railNameKey; __bind(() => { ({ RAIL_NAMES, railNameKey } = __require("src/core/rail-names.js")); });
@@ -32362,7 +32382,7 @@ const MAX_PLOT_EXTRA = 8;
 
 /** Traces added to an analysis plot from files: `extra: [{ label, color,
  *  points: [[x, y]] }]` in the plot's own units (a response's x a positive
- *  frequency), to six digits, thinned as a data plot's are. Updating the
+ *  frequency), to six digits, as many as a data plot's. Updating the
  *  plot from its analysis keeps them. */
 function extraOf(plot, { positiveX = false } = {}) {
   const read = (Array.isArray(plot.extra) ? plot.extra : []).slice(0, MAX_PLOT_EXTRA).map((trace) => ({
@@ -32371,8 +32391,8 @@ function extraOf(plot, { positiveX = false } = {}) {
     points: (Array.isArray(trace?.points) ? trace.points : [])
       .filter((p) => Array.isArray(p) && finite(p[0]) && finite(p[1]) && (!positiveX || p[0] > 0)).map((p) => [round(p[0], 6), round(p[1], 6)]),
   }));
-  const thinned = thinTraces(read.map((trace) => trace.points));
-  const extra = read.map((trace, i) => ({ ...trace, points: thinned[i] })).filter((trace) => trace.points.length > 1);
+  const fitted = fitPoints(read.map((trace) => trace.points));
+  const extra = read.map((trace, i) => ({ ...trace, points: fitted[i] })).filter((trace) => trace.points.length > 1);
   return extra.length ? { extra } : {};
 }
 
@@ -32424,71 +32444,27 @@ function normalizeStepPlot(plot) {
   return { kind: plot.kind === 'wave' ? 'wave' : 'step', unit: plot.unit === 'n' ? 'n' : 't', range: { low, high }, traces, ...viewOf(plot), ...extraOf(plot), ...cursorsOf(plot) };
 }
 
-/** The most points a data plot keeps of one trace (thinDataPoints). */
-const MAX_DATA_POINTS = 2000;
+/** The most points a data plot keeps of one trace. A file with more rows
+ *  is read every Nth row (`plot.every`), as its reader chooses. */
+const MAX_DATA_POINTS = 20000;
 
 /**
- * At most `max` of a trace's points. Points in order along x are kept per
- * stretch of x as their first, lowest, highest, and last, so peaks survive;
- * points in no order (a loop, a scatter) are taken evenly.
+ * Each of `lists` (a trace's points) as it is, but one longer than `max`
+ * (a design file written by hand): that one every Nth point, N the least
+ * that fits, so traces of the same length keep the same rows. Nothing is
+ * otherwise thinned or smoothed.
  */
-function thinDataPoints(points, max = MAX_DATA_POINTS) {
-  return thinTraces([points], max)[0];
-}
-
-/**
- * Each of `lists` (a trace's points) thinned as thinDataPoints thins one,
- * the traces that have the same x values (columns of one file against one
- * x column) together: they keep the same rows, each stretch's first and
- * last and every one of their lowest and highest, so their points stay at
- * the same x.
- */
-function thinTraces(lists, max = MAX_DATA_POINTS) {
-  const out = lists.slice();
-  const groups = new Map();
-  lists.forEach((points, i) => {
-    if (points.length <= max) return;
-    const key = points.map((p) => p[0]).join(',');
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(i);
+function fitPoints(lists, max = MAX_DATA_POINTS) {
+  return lists.map((points) => {
+    if (points.length <= max) return points;
+    const every = Math.ceil(points.length / max);
+    return points.filter((_, i) => i % every === 0);
   });
-  for (const members of groups.values()) {
-    const rows = keptRows(members.map((i) => lists[i]), max);
-    for (const i of members) out[i] = rows.map((row) => lists[i][row]);
-  }
-  return out;
-}
-
-/** The rows traces of the same x keep (thinTraces), in order. */
-function keptRows(traces, max) {
-  const points = traces[0];
-  const n = points.length;
-  const ordered = points.every((p, i) => !i || p[0] >= points[i - 1][0]);
-  if (!ordered) return [...new Set(Array.from({ length: max }, (_, i) => Math.round((i * (n - 1)) / (max - 1))))];
-  const buckets = Math.max(1, Math.floor(max / (2 + 2 * traces.length)));
-  const rows = [];
-  for (let b = 0; b < buckets; b++) {
-    const from = Math.floor((b * n) / buckets);
-    const to = Math.floor(((b + 1) * n) / buckets);
-    if (to <= from) continue;
-    const kept = new Set([from, to - 1]);
-    for (const trace of traces) {
-      let lowest = from;
-      let highest = from;
-      for (let i = from; i < to; i++) {
-        if (trace[i][1] < trace[lowest][1]) lowest = i;
-        if (trace[i][1] > trace[highest][1]) highest = i;
-      }
-      kept.add(lowest).add(highest);
-    }
-    rows.push(...[...kept].sort((a, b) => a - b));
-  }
-  return rows;
 }
 
 /** A data plot (columns read from a file, csv-data.js): its traces as
  *  [x, y] points to six digits, its axes' names and scales, the file's name
- *  to read it again from. */
+ *  to read it again from, and `every`: the file read every Nth row. */
 function normalizeDataPlot(plot) {
   const text = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
   const axis = (a) => ({ label: text(a?.label, 200), scale: a?.scale === 'log' ? 'log' : 'linear' });
@@ -32498,13 +32474,14 @@ function normalizeDataPlot(plot) {
     points: (Array.isArray(trace?.points) ? trace.points : [])
       .filter((p) => Array.isArray(p) && finite(p[0]) && finite(p[1])).map((p) => [round(p[0], 6), round(p[1], 6)]),
   }));
-  const thinned = thinTraces(read.map((trace) => trace.points));
-  const traces = read.map((trace, i) => ({ ...trace, points: thinned[i] })).filter((trace) => trace.points.length > 1);
+  const fitted = fitPoints(read.map((trace) => trace.points));
+  const traces = read.map((trace, i) => ({ ...trace, points: fitted[i] })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   const x = axis(plot.x);
   const y = axis(plot.y);
   const file = text(plot.file, 200);
-  return { kind: 'data', ...(file ? { file } : {}), x, y, traces, ...viewOf(plot, { positiveX: x.scale === 'log', positiveY: y.scale === 'log' }), ...cursorsOf(plot), ...sweepOf(plot.sweep, traces) };
+  const every = Number.isInteger(plot.every) && plot.every > 1 && plot.every <= 1e6 ? plot.every : null;
+  return { kind: 'data', ...(file ? { file } : {}), ...(every ? { every } : {}), x, y, traces, ...viewOf(plot, { positiveX: x.scale === 'log', positiveY: y.scale === 'log' }), ...cursorsOf(plot), ...sweepOf(plot.sweep, traces) };
 }
 
 /** The most sweeps a sweep plot names (the held ones and the live one). */
@@ -41378,7 +41355,7 @@ let axisName; __bind(() => { ({ axisName } = __require("src/core/plot-spec.js"))
 /**
  * Any plot on the drawing as columns of numbers, and those as CSV: the
  * numbers the plot keeps (model.js normalizePlot), as it keeps them -- an
- * analysis's samples rounded, a data plot's thinned -- never sampled again.
+ * analysis's samples rounded, a data plot's as it keeps them -- never sampled again.
  *
  * `plotSeries(plot)` gives each curve as `{ name, columns, rows }`: its
  * column names, x first, and its rows of numbers (null for a gap).
@@ -70532,7 +70509,7 @@ __exports.openDataPlotDialog = openDataPlotDialog;
 __exports.openPlotSettings = openPlotSettings;
 __exports.installDataPlotUi = installDataPlotUi;
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
-let MAX_DATA_TRACES, readTable, tableTraces; __bind(() => { ({ MAX_DATA_TRACES, readTable, tableTraces } = __require("src/core/csv-data.js")); });
+let MAX_DATA_TRACES, SUGGESTED_POINTS, readTable, suggestedEvery, tableTraces; __bind(() => { ({ MAX_DATA_TRACES, SUGGESTED_POINTS, readTable, suggestedEvery, tableTraces } = __require("src/core/csv-data.js")); });
 let TRACE_COLORS; __bind(() => { ({ TRACE_COLORS } = __require("src/core/analysis/signal-flow.js")); });
 let appendPlotTraces, fileUnits, inPlotUnits, movePlotTrace, placeDataPlot, removePlotTrace, replaceDataPlotTraces, setDataPlotAxis, setPlotCurveColors, setPlotCursors, setPlotTrace, setPlotTracesShown, setDataPlotView, takesFileTraces; __bind(() => { ({ appendPlotTraces, fileUnits, inPlotUnits, movePlotTrace, placeDataPlot, removePlotTrace, replaceDataPlotTraces, setDataPlotAxis, setPlotCurveColors, setPlotCursors, setPlotTrace, setPlotTracesShown, setDataPlotView, takesFileTraces } = __require("src/core/data-plot.js")); });
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
@@ -70895,6 +70872,11 @@ function openDataPlotDialog(text, name, target = null, { mode = 'replace' } = {}
   let table = readTable(text);
   let x = table.x;
   let y = table.y.slice(0, room());
+  // One row in `every`: every row unless asked, or unless a trace could
+  // not keep them all; read again, as the plot was read.
+  const dataRows = () => table.rows.length - table.skip;
+  const leastEvery = () => Math.max(1, Math.ceil(dataRows() / MAX_DATA_POINTS));
+  let every = Math.max(leastEvery(), target?.plot?.kind === 'data' && !adding ? target.plot.every || 1 : 1);
   // What was edited by hand stays when the columns change.
   const edited = { x: false, y: false };
   const draft = { x: { label: '', scale: table.scale.x }, y: { label: '', scale: table.scale.y }, traces: [] };
@@ -70918,7 +70900,7 @@ function openDataPlotDialog(text, name, target = null, { mode = 'replace' } = {}
   function update() {
     const before = new Map(draft.traces.filter((t) => t.index === undefined).map((t) => [t.column, t]));
     const added = y.map((column) => {
-      let [trace] = tableTraces(table, x, [column]);
+      let [trace] = tableTraces(table, x, [column], { every });
       if (trace && analysis) [trace] = inPlotUnits(target.plot, [trace], units);
       if (!trace || trace.points.length < 2) return null;
       const old = before.get(column);
@@ -70949,9 +70931,8 @@ function openDataPlotDialog(text, name, target = null, { mode = 'replace' } = {}
       return;
     }
     // The file's own traces: a plot added to has its others already.
-    const fresh = added.map((trace) => Math.min(trace.points.length, MAX_DATA_POINTS));
-    const points = fresh.reduce((sum, n) => sum + n, 0);
-    status.textContent = `${fresh.length} trace${fresh.length === 1 ? '' : 's'} from ${name}, ${points} points kept from ${table.rows.length - table.skip} rows.`;
+    const points = added.reduce((sum, trace) => sum + trace.points.length, 0);
+    status.textContent = `${added.length} trace${added.length === 1 ? '' : 's'} from ${name}, ${points} points from ${dataRows()} rows${every > 1 ? `, one row in ${every}` : ''}.`;
   }
 
   const reread = (change) => {
@@ -70959,6 +70940,7 @@ function openDataPlotDialog(text, name, target = null, { mode = 'replace' } = {}
     const before = table;
     table = readTable(text, options);
     // A new reading of the columns starts their choice over.
+    every = Math.max(every, leastEvery());
     if (before.names.length !== table.names.length || before.skip !== table.skip) {
       x = table.x;
       y = table.y.slice(0, room());
@@ -70982,6 +70964,7 @@ function openDataPlotDialog(text, name, target = null, { mode = 'replace' } = {}
         el('input', { type: 'checkbox', checked: table.header, disabled: !table.skip, onchange: (ev) => reread({ header: ev.target.checked }) }),
         ' The last of them names the columns',
       ]),
+      everyField(),
     );
     const first = Math.max(0, table.skip - 3);
     const rows = table.rows.slice(first, table.skip + PREVIEW_ROWS);
@@ -70991,6 +70974,33 @@ function openDataPlotDialog(text, name, target = null, { mode = 'replace' } = {}
       el('tbody', {}, rows.map((row, i) => el('tr', { class: first + i < table.skip ? 'data-plot-skipped' : '' },
         Array.from({ length: width }, (_, c) => el('td', { text: row[c] ?? '' }))))),
     ]));
+  }
+
+  /** Every Nth row: 1 reads them all. A file past the points a trace
+   *  keeps takes one N at least; a large one is offered the N that keeps
+   *  about SUGGESTED_POINTS. */
+  function everyField() {
+    const least = leastEvery();
+    const suggested = Math.max(least, suggestedEvery(dataRows()));
+    const setEvery = (n) => {
+      every = Math.max(least, Math.floor(Number(n) || 1));
+      drawReading();
+      update();
+    };
+    const hint = least > 1
+      ? `${dataRows()} rows: a trace keeps ${MAX_DATA_POINTS} points at most.`
+      : dataRows() > SUGGESTED_POINTS ? `${dataRows()} rows.` : '';
+    return el('div', { class: 'data-plot-every' }, [
+      el('label', { class: 'data-plot-field', for: 'data-plot-every' }, [
+        el('span', { text: 'Every Nth row' }),
+        el('input', { id: 'data-plot-every', type: 'number', min: String(least), step: '1', value: String(every), onchange: (ev) => setEvery(ev.target.value) }),
+      ]),
+      ...(hint ? [el('p', { class: 'field-hint data-plot-every-hint' }, [
+        `${hint} `,
+        ...(suggested !== every ? [el('button', { type: 'button', class: 'window-action', text: `Read one row in ${suggested}`, onclick: () => setEvery(suggested) })] : []),
+        ...(every > 1 && least === 1 ? [el('button', { type: 'button', class: 'window-action', text: 'Read every row', onclick: () => setEvery(1) })] : []),
+      ])] : []),
+    ]);
   }
 
   function drawColumns() {
@@ -71013,7 +71023,7 @@ function openDataPlotDialog(text, name, target = null, { mode = 'replace' } = {}
   }
 
   place.addEventListener('click', () => {
-    const plot = plotEdit.plot({ file: name });
+    const plot = plotEdit.plot({ file: name, every });
     if (!plot) return;
     const zoom = plotEdit.zoom();
     const old = target ? editor.circuit.plotLegend(target).map((label) => label.bbox()) : [];
@@ -71149,7 +71159,7 @@ function openPlotSettings(box) {
     close();
     openPlotSettings(now);
   } }) : null;
-  const title = data ? (box.plot.sweep ? 'Sweep plot' : box.plot.file ? `Data plot from ${box.plot.file}` : 'Data plot') : 'Plot settings';
+  const title = data ? (box.plot.sweep ? 'Sweep plot' : box.plot.file ? `Data plot from ${box.plot.file}${box.plot.every ? `, one row in ${box.plot.every}` : ''}` : 'Data plot') : 'Plot settings';
   const node = el('section', { class: 'floating-window data-plot-dialog plot-settings-window', role: 'dialog', 'aria-label': 'Plot settings', 'aria-labelledby': 'plot-settings-title' }, [
     el('header', { class: 'floating-window-header' }, [
       el('h2', { id: 'plot-settings-title', class: 'floating-window-title', text: title }),
@@ -77592,6 +77602,7 @@ const GUIDES = Object.freeze([
           '**Add file…** adds a second file\'s traces to the same plot. **Replace file…** puts new traces in place of the old ones.',
           '**Markers** put numbered points on a trace, with their readings.',
           'The plot keeps the zoom that is shown when you apply.',
+          'Every row of the file is plotted. For a large file, set **Every Nth row** to plot one row in N, the same rows for every trace. A trace keeps 20000 points at most.',
         ],
       },
     ],

@@ -1376,7 +1376,7 @@ export const MAX_PLOT_EXTRA = 8;
 
 /** Traces added to an analysis plot from files: `extra: [{ label, color,
  *  points: [[x, y]] }]` in the plot's own units (a response's x a positive
- *  frequency), to six digits, thinned as a data plot's are. Updating the
+ *  frequency), to six digits, as many as a data plot's. Updating the
  *  plot from its analysis keeps them. */
 function extraOf(plot, { positiveX = false } = {}) {
   const read = (Array.isArray(plot.extra) ? plot.extra : []).slice(0, MAX_PLOT_EXTRA).map((trace) => ({
@@ -1385,8 +1385,8 @@ function extraOf(plot, { positiveX = false } = {}) {
     points: (Array.isArray(trace?.points) ? trace.points : [])
       .filter((p) => Array.isArray(p) && finite(p[0]) && finite(p[1]) && (!positiveX || p[0] > 0)).map((p) => [round(p[0], 6), round(p[1], 6)]),
   }));
-  const thinned = thinTraces(read.map((trace) => trace.points));
-  const extra = read.map((trace, i) => ({ ...trace, points: thinned[i] })).filter((trace) => trace.points.length > 1);
+  const fitted = fitPoints(read.map((trace) => trace.points));
+  const extra = read.map((trace, i) => ({ ...trace, points: fitted[i] })).filter((trace) => trace.points.length > 1);
   return extra.length ? { extra } : {};
 }
 
@@ -1438,71 +1438,27 @@ function normalizeStepPlot(plot) {
   return { kind: plot.kind === 'wave' ? 'wave' : 'step', unit: plot.unit === 'n' ? 'n' : 't', range: { low, high }, traces, ...viewOf(plot), ...extraOf(plot), ...cursorsOf(plot) };
 }
 
-/** The most points a data plot keeps of one trace (thinDataPoints). */
-export const MAX_DATA_POINTS = 2000;
+/** The most points a data plot keeps of one trace. A file with more rows
+ *  is read every Nth row (`plot.every`), as its reader chooses. */
+export const MAX_DATA_POINTS = 20000;
 
 /**
- * At most `max` of a trace's points. Points in order along x are kept per
- * stretch of x as their first, lowest, highest, and last, so peaks survive;
- * points in no order (a loop, a scatter) are taken evenly.
+ * Each of `lists` (a trace's points) as it is, but one longer than `max`
+ * (a design file written by hand): that one every Nth point, N the least
+ * that fits, so traces of the same length keep the same rows. Nothing is
+ * otherwise thinned or smoothed.
  */
-export function thinDataPoints(points, max = MAX_DATA_POINTS) {
-  return thinTraces([points], max)[0];
-}
-
-/**
- * Each of `lists` (a trace's points) thinned as thinDataPoints thins one,
- * the traces that have the same x values (columns of one file against one
- * x column) together: they keep the same rows, each stretch's first and
- * last and every one of their lowest and highest, so their points stay at
- * the same x.
- */
-export function thinTraces(lists, max = MAX_DATA_POINTS) {
-  const out = lists.slice();
-  const groups = new Map();
-  lists.forEach((points, i) => {
-    if (points.length <= max) return;
-    const key = points.map((p) => p[0]).join(',');
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(i);
+export function fitPoints(lists, max = MAX_DATA_POINTS) {
+  return lists.map((points) => {
+    if (points.length <= max) return points;
+    const every = Math.ceil(points.length / max);
+    return points.filter((_, i) => i % every === 0);
   });
-  for (const members of groups.values()) {
-    const rows = keptRows(members.map((i) => lists[i]), max);
-    for (const i of members) out[i] = rows.map((row) => lists[i][row]);
-  }
-  return out;
-}
-
-/** The rows traces of the same x keep (thinTraces), in order. */
-function keptRows(traces, max) {
-  const points = traces[0];
-  const n = points.length;
-  const ordered = points.every((p, i) => !i || p[0] >= points[i - 1][0]);
-  if (!ordered) return [...new Set(Array.from({ length: max }, (_, i) => Math.round((i * (n - 1)) / (max - 1))))];
-  const buckets = Math.max(1, Math.floor(max / (2 + 2 * traces.length)));
-  const rows = [];
-  for (let b = 0; b < buckets; b++) {
-    const from = Math.floor((b * n) / buckets);
-    const to = Math.floor(((b + 1) * n) / buckets);
-    if (to <= from) continue;
-    const kept = new Set([from, to - 1]);
-    for (const trace of traces) {
-      let lowest = from;
-      let highest = from;
-      for (let i = from; i < to; i++) {
-        if (trace[i][1] < trace[lowest][1]) lowest = i;
-        if (trace[i][1] > trace[highest][1]) highest = i;
-      }
-      kept.add(lowest).add(highest);
-    }
-    rows.push(...[...kept].sort((a, b) => a - b));
-  }
-  return rows;
 }
 
 /** A data plot (columns read from a file, csv-data.js): its traces as
  *  [x, y] points to six digits, its axes' names and scales, the file's name
- *  to read it again from. */
+ *  to read it again from, and `every`: the file read every Nth row. */
 function normalizeDataPlot(plot) {
   const text = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
   const axis = (a) => ({ label: text(a?.label, 200), scale: a?.scale === 'log' ? 'log' : 'linear' });
@@ -1512,13 +1468,14 @@ function normalizeDataPlot(plot) {
     points: (Array.isArray(trace?.points) ? trace.points : [])
       .filter((p) => Array.isArray(p) && finite(p[0]) && finite(p[1])).map((p) => [round(p[0], 6), round(p[1], 6)]),
   }));
-  const thinned = thinTraces(read.map((trace) => trace.points));
-  const traces = read.map((trace, i) => ({ ...trace, points: thinned[i] })).filter((trace) => trace.points.length > 1);
+  const fitted = fitPoints(read.map((trace) => trace.points));
+  const traces = read.map((trace, i) => ({ ...trace, points: fitted[i] })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   const x = axis(plot.x);
   const y = axis(plot.y);
   const file = text(plot.file, 200);
-  return { kind: 'data', ...(file ? { file } : {}), x, y, traces, ...viewOf(plot, { positiveX: x.scale === 'log', positiveY: y.scale === 'log' }), ...cursorsOf(plot), ...sweepOf(plot.sweep, traces) };
+  const every = Number.isInteger(plot.every) && plot.every > 1 && plot.every <= 1e6 ? plot.every : null;
+  return { kind: 'data', ...(file ? { file } : {}), ...(every ? { every } : {}), x, y, traces, ...viewOf(plot, { positiveX: x.scale === 'log', positiveY: y.scale === 'log' }), ...cursorsOf(plot), ...sweepOf(plot.sweep, traces) };
 }
 
 /** The most sweeps a sweep plot names (the held ones and the live one). */

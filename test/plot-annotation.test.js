@@ -175,7 +175,7 @@ test('a lone curve has its line sample too; a note after the curves (an SNDR) ha
   assert.equal(note.anchor.x, at.note, 'the note stays');
 });
 
-test('a data plot keeps its points to six digits, thinned past its limit, and its axes as given', async () => {
+test('a data plot keeps its points to six digits, every one, and its axes as given', async () => {
   const { MAX_DATA_POINTS } = await import('../src/core/model.js');
   const many = Array.from({ length: 10000 }, (_, i) => [i * 1e-9, i === 5000 ? 9 : Math.sin(i / 300)]);
   const plot = normalizePlot({
@@ -189,11 +189,11 @@ test('a data plot keeps its points to six digits, thinned past its limit, and it
   assert.deepEqual(plot.traces.map((t) => t.label), ['CH1', 'CH2']);
   assert.deepEqual(plot.traces[1].points, [[0, 0.333333], [2, 2]]);
   assert.equal(plot.traces[1].color, '#3b74e0');
-  // Thinned, in order, the spike kept.
+  // Every point kept as it is, the spike too.
   const kept = plot.traces[0].points;
-  assert.ok(kept.length <= MAX_DATA_POINTS && kept.length > MAX_DATA_POINTS / 2, String(kept.length));
-  assert.ok(kept.some(([, v]) => v === 9));
-  assert.ok(kept.every((p, i) => !i || p[0] >= kept[i - 1][0]));
+  assert.equal(kept.length, 10000);
+  assert.ok(kept.length <= MAX_DATA_POINTS);
+  assert.deepEqual(kept[5000], [5e-6, 9]);
   assert.deepEqual(plot.view, { x: [0, 5e-6], y: [-1, 0] });
   // A log axis keeps only a positive view on it.
   const log = normalizePlot({ kind: 'data', x: { scale: 'log' }, y: { scale: 'log' }, traces: [{ points: [[1, 1], [10, 100]] }], view: { x: [0, 10], y: [1, 100] } });
@@ -363,17 +363,17 @@ test('the lowest y number is left out when both axes number the plot\'s corner',
   assert.ok(stepNumbers[0] > step.ranges.y[0], `${stepNumbers} ${step.ranges.y}`);
 });
 
-test('a data plot\'s traces of one x column are thinned to the same rows', async () => {
+test('a data plot past its points keeps every Nth of a trace, the same rows in traces of one length', async () => {
   const { MAX_DATA_POINTS } = await import('../src/core/model.js');
-  // A transient's time steps: finer at the start.
-  const xs = Array.from({ length: 12000 }, (_, i) => (i * i) * 1e-15);
-  const trace = (f) => ({ points: xs.map((x, i) => [x, f(i)]) });
-  const plot = normalizePlot({ kind: 'data', traces: [trace((i) => Math.sin(i / 50)), trace((i) => (i * 7919) % 13), trace((i) => Math.cos(i / 900))] });
+  const n = MAX_DATA_POINTS * 2 + 10;
+  const trace = (f) => ({ points: Array.from({ length: n }, (_, i) => [i, f(i)]) });
+  const plot = normalizePlot({ kind: 'data', every: 4, traces: [trace((i) => i % 7), trace((i) => -i)] });
   const rows = plot.traces.map((t) => t.points.map(([x]) => x));
-  assert.ok(rows.every((x) => x.length === rows[0].length && x.every((v, i) => v === rows[0][i])), 'the same x in every trace');
-  assert.ok(rows[0].length <= MAX_DATA_POINTS, String(rows[0].length));
-  assert.equal(rows[0][0], 0);
-  assert.ok(plot.traces[1].points.some(([, y]) => y === 12) && plot.traces[1].points.some(([, y]) => y === 0), 'each trace keeps its peaks');
+  assert.equal(rows[0].length, Math.ceil(n / 3));
+  assert.deepEqual(rows[0].slice(0, 3), [0, 3, 6]);
+  assert.deepEqual(rows[1], rows[0]);
+  assert.equal(plot.every, 4);
+  assert.equal(normalizePlot({ kind: 'data', every: 1, traces: [trace((i) => i)] }).every, undefined);
   // Read again, it stays as it is.
   assert.deepEqual(normalizePlot(plot), plot);
 });

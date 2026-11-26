@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cellNumber, guessFormat, readTable, splitLine, suggestScale, tableTraces } from '../src/core/csv-data.js';
+import { cellNumber, guessFormat, readTable, splitLine, suggestScale, suggestedEvery, tableTraces } from '../src/core/csv-data.js';
+import { dataPlotFromText } from '../src/core/data-plot.js';
+import { MAX_DATA_POINTS } from '../src/core/model.js';
 
 test('a cell is a number, a value with an SI suffix, or a gap', () => {
   assert.equal(cellNumber(' 1.5e-3 '), 1.5e-3);
@@ -88,4 +90,22 @@ test('a column that repeats the x column is not suggested as a trace', () => {
   const table = readTable('t,a,t2,b\n0,1,0,4\n1,2,1,5\n2,3,2,6');
   assert.equal(table.pairs, undefined);
   assert.deepEqual(table.y, [1, 3]);
+});
+
+test('a file is read every row unless every Nth is asked for; past what a trace keeps, it must be', () => {
+  const lines = ['t,a,b'];
+  for (let i = 0; i < 10; i++) lines.push(`${i},${i * i},${-i}`);
+  const table = readTable(lines.join('\n'));
+  assert.equal(tableTraces(table, 0, [1])[0].points.length, 10);
+  const [a, b] = tableTraces(table, 0, [1, 2], { every: 3 });
+  assert.deepEqual(a.points, [[0, 0], [3, 9], [6, 36], [9, 81]]);
+  assert.deepEqual(b.points.map(([x]) => x), [0, 3, 6, 9], 'the same rows in every trace');
+  assert.equal(suggestedEvery(2000), 1);
+  assert.equal(suggestedEvery(12001), 7);
+  const plot = dataPlotFromText(lines.join('\n'), { every: 3 });
+  assert.equal(plot.every, 3);
+  assert.equal(plot.traces[0].points.length, 4);
+  const big = ['t,v', ...Array.from({ length: MAX_DATA_POINTS * 2 + 1 }, (_, i) => `${i},${i % 5}`)].join('\n');
+  assert.throws(() => dataPlotFromText(big), /read one row in 3 or fewer \(--every 3\)/);
+  assert.equal(dataPlotFromText(big, { every: 3 }).traces[0].points.length, Math.ceil((MAX_DATA_POINTS * 2 + 1) / 3));
 });
