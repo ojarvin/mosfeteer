@@ -30,6 +30,7 @@ import { shortPlacementLabel } from './toolbar.js';
 import { swapCandidates } from '../core/swap.js';
 import { appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename } from './side-panel.js';
 import { openPlotSettings } from './data-plot-ui.js';
+import { openPictureOptions } from './picture-options.js';
 import { updatablePlot, updatePlot } from './signal-flow-ui.js';
 import { figureUpdate } from './annotate-menu.js';
 import { takesFileTraces } from '../core/data-plot.js';
@@ -827,6 +828,7 @@ function appendContextActions(menu, target) {
     const lines = selectedLines();
     if (target.value.kind === 'line' && lines.length > 1) appendContextItem(group, `Join ${lines.length} lines`, joinSelectedLines);
     if (takesFileTraces(target.value)) appendContextItem(group, 'Plot settings…', later(() => openPlotSettings(target.value)));
+    if (target.value.kind === 'box' && target.value.image) appendContextItem(group, 'Picture…', later(() => openPictureOptions(target.value)));
     if (updatablePlot(target.value)) appendContextItem(group, 'Update plot', later(() => void updatePlot(target.value)));
     else appendFigureUpdateItem(group, target.value);
     if (target.value.plot) appendContextItem(group, 'Export data…', later(() => openPlotExport(target.value)));

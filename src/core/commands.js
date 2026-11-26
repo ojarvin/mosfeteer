@@ -32,7 +32,7 @@ import { fixAllIssues, tidySelection } from './tidy.js';
 import { applyArrangement, arrangementCandidates } from './arrange.js';
 import { builtInDrawings, cellPatterns } from './arrange-builtins.js';
 import { arrangeFigures, figureBounds, listFigures } from './figures.js';
-import { buildReport, notesOutline } from './report.js';
+import { buildReport, namePicture, notesOutline } from './report.js';
 import { parsePageGuide } from './page-guide.js';
 import { findInLabels, replaceInLabels } from './label-search.js';
 import { normalizeNotes, notesMarkdown } from './notes.js';
@@ -121,6 +121,7 @@ const FLAG_ARITY = {
   break: 1,
   clear: 1,
   arrange: 0,
+  unnamed: 0,
   list: 0,
   pick: 1,
   guide: 1,
@@ -549,8 +550,10 @@ export function commandHelp() {
     '                                   --list lists the ways, --pick N draws the Nth (default the first)',
     '  figures [--arrange]            - list what the tools annotated (tables, equations, plots, models, the timing diagram);',
     '                                   --arrange puts each where a new one goes: tables right of the circuit, the rest below',
+    '  pictures                       - list the pictures pasted onto the drawing, with their names',
+    '  picture ID NAME | --unnamed    - name a picture on the drawing, for the notes: ![[NAME]] places it, [[#NAME]] reads its number',
     '  report [--file F.html] [--guide G] [--name TITLE] - the notes as a report: each ![[circuit|caption]] line a numbered figure of the drawing',
-    '                                   (circuit, drawing, beat N, or a figure\'s id), [[#circuit]] its number, ![[design]] that design\'s',
+    '                                   (circuit, drawing, beat N, a figure\'s id, or a picture\'s name), [[#circuit]] its number, ![[design]] that design\'s',
     '                                   notes as a section; lists the figures and what to look at; G sizes the figures: ieee-1col, ieee-2col, a4 (default), or WIDTH@PT (12cm@9)',
     '  fix                            - apply the safe Design Check repairs (reroute, snap to grid, move label)',
     '  rail REF.TERM ground|supply|vcm - a ground, supply, or VCM wired one cell out from an unconnected pin',
@@ -1249,6 +1252,19 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const figures = listFigures(circuit).map((figure) => ({ id: figure.id, kind: figure.kind, source: figure.source, ...(figure.key ? { key: figure.key } : {}), bounds: figureBounds(circuit, figure) }));
     const text = figures.length ? figures.map((f) => `${f.id} ${f.kind}${f.source ? ` (${f.source})` : ''} at ${f.bounds.x},${f.bounds.y} ${f.bounds.w}x${f.bounds.h}`).join('\n') : '(no figures)';
     return result(text, figures, false);
+  }
+  if (cmd === 'pictures' || cmd === 'picture') {
+    const pictures = [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.image);
+    if (!pos.length) {
+      const rows = pictures.map((label) => ({ id: label.id, name: label.image.name || '', bounds: label.bbox() }));
+      const text = rows.length ? rows.map((r) => `${r.id}${r.name ? ` "${r.name}"` : ''} at ${r.bounds.x},${r.bounds.y} ${r.bounds.w}x${r.bounds.h}`).join('\n') : '(no pictures)';
+      return result(text, rows, false);
+    }
+    const [id, ...words] = pos;
+    if (!flags.unnamed && !words.length) throw new Error('usage: picture ID NAME | picture ID --unnamed');
+    const changed = namePicture(circuit, id, flags.unnamed ? '' : words.join(' '));
+    const name = circuit.labels.get(id).image.name;
+    return result(name ? `${id} is named "${name}": ![[${name}]] places it` : `${id} has no name`, { id, name: name || '' }, changed);
   }
   if (cmd === 'report') {
     const guide = flags.guide ? parsePageGuide(flags.guide[0]) : null;

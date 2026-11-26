@@ -95,6 +95,7 @@ import { acceptArrangeSuggestion, dismissArrangeSuggestion, installArrangeSugges
 import { shortNetsAtPlacedSolder, askNameForNewNetNameConflict } from './net-names.js';
 import { installRenumberUi } from './renumber-ui.js';
 import { installDataPlotUi, openPlotSettings } from './data-plot-ui.js';
+import { openPictureOptions } from './picture-options.js';
 import { takesFileTraces } from '../core/data-plot.js';
 import { installArrangeFigures } from './figure-annotate.js';
 import { installCalculator, toggleCalculator } from './calculator-window.js';
@@ -2882,13 +2883,14 @@ if (!mathFontReady) {
   document.fonts.load(MATH_FONT_PROBE).then(releaseMathMeasurement, releaseMathMeasurement);
 }
 
-/** What a double-click on a label opens: a plot's settings, else its text
- *  in place. */
+/** What a double-click on a label opens: a plot's settings, a picture's
+ *  options, else its text in place. */
 function editLabelOpened(label) {
   // A plot opens its settings (a Bode sketch has none): never its box's text.
   if (label.plot) {
     if (takesFileTraces(label)) openPlotSettings(label);
-  } else inlineEditLabel(label);
+  } else if (label.image) openPictureOptions(label);
+  else inlineEditLabel(label);
 }
 
 // A label's anchor is the center of its box, but for an aligned free
@@ -5012,8 +5014,8 @@ function canvasMouseDown(ev) {
     }
     setSelection([]);
     setLabelSelection([annotationGeometry.id]);
-    // A plot opens its settings on a double-click.
-    if (ev.detail >= 2 && annotationGeometry.plot) {
+    // A plot opens its settings on a double-click, a picture its options.
+    if (ev.detail >= 2 && (annotationGeometry.plot || annotationGeometry.image)) {
       render();
       setTimeout(() => editLabelOpened(annotationGeometry), 0);
       return;

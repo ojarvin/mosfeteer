@@ -303,7 +303,7 @@ describe('documents and sessions', { skip: browserSkip() }, () => {
       await h.evaluate(`window.__run('notes set "![[circuit|The amplifier.]]\\n\\nSee @M1 in [[#circuit]]."')`);
       await h.key('N', { shiftKey: true });
       await h.until(`!!document.querySelector('.notes-view:not([hidden]) .note-figure')`);
-      assert.equal(await h.evaluate(`document.querySelector('.note-figure-ref').textContent`), 'Fig. 1');
+      assert.equal(await h.evaluate(`document.querySelector('.note-figure-ref').textContent`), 'Fig.\u00a01');
       await h.evaluate(`${h.module('document-session.js')}.then(({ persistence }) => {
         window.__exports = [];
         window.__exported = 0;

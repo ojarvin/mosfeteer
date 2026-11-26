@@ -7,7 +7,7 @@ import { addBeat } from '../src/core/beats.js';
 import { normalizePageGuide, parsePageGuide, pageGuideWidth } from '../src/core/page-guide.js';
 import { buildReport, notesOutline, reportFigureSize, reportPage, reportPageTargets, reportTargets, reportWithPages, resolveReportTarget } from '../src/core/report.js';
 import { pdfDestinationPages } from '../src/server/pdf-pages.js';
-import { DESIGN_LINK, noteCompletion, noteDesignLinks, noteFigures } from '../src/core/notes.js';
+import { DESIGN_LINK, noteAuthor, noteCompletion, noteDesignLinks, noteFigures } from '../src/core/notes.js';
 import { renderNotes } from '../src/core/notes-markdown.js';
 
 const run = (circuit, ...lines) => lines.map((line) => runCommand(circuit, line));
@@ -55,8 +55,8 @@ test('the notes place numbered figures, refer to them, and link a mention to the
   // The notes' own heading titles it.
   assert.match(html, /<h1>Divider<\/h1>/);
   assert.doesNotMatch(html, /<h1>divider<\/h1>/);
-  assert.match(html, /<a href="#fig-2" class="note-figure-ref" data-figure="F1">Fig\. 2<\/a>/);
-  assert.match(html, /<a href="#fig-1" class="note-figure-ref" data-figure="circuit">Fig\. 1<\/a>/);
+  assert.match(html, /<a href="#fig-2" class="note-figure-ref" data-figure="F1">Fig\.\u00a02<\/a>/);
+  assert.match(html, /<a href="#fig-1" class="note-figure-ref" data-figure="circuit">Fig\.\u00a01<\/a>/);
   assert.match(html, /<a class="mention" href="#fig-1">R<sub>1<\/sub><\/a>|<a class="mention" href="#fig-1">R1<\/a>/);
   assert.match(html, /<figcaption><span class="figure-number">Fig\. 1\.<\/span> The divider, <math/);
   assert.match(html, /Inline !\[\[F1\]\] stays text\./);
@@ -228,7 +228,7 @@ test('embeds and figure references are neither design links nor broken in the no
   assert.deepEqual(noteFigures('![[circuit|A]]\n\n```\n![[drawing]]\n```\n> ![[F1]]').map((f) => [f.number, f.name, f.caption]), [[1, 'circuit', 'A'], [2, 'F1', '']]);
   const circuit = divider();
   const html = renderNotes('See [[#F1]].\n\n![[F1|The gain.]]\n\n![[F5]]', { figure: (name) => resolveReportTarget(circuit, name) });
-  assert.match(html, /<a href="#fig-1" class="note-figure-ref" data-figure="F1">Fig\. 1<\/a>/);
+  assert.match(html, /<a href="#fig-1" class="note-figure-ref" data-figure="F1">Fig\.\u00a01<\/a>/);
   assert.match(html, /<div id="fig-1" class="note-figure" data-figure="F1"><span class="note-figure-number">Fig\. 1<\/span> <span class="note-figure-name">F1<\/span><span class="note-figure-caption">The gain\.<\/span><\/div>/);
   assert.match(html, /class="note-figure broken" data-figure="F5"/);
 });
@@ -263,18 +263,19 @@ test('an outline places the circuit, the beats and timing, and every annotated f
   circuit.addLabel({ text: 'Parts', x: 1200, y: 0, table: { parts: ['R1', 'R2'] }, figure: { id: newFigureId(circuit), kind: 'table', source: 'sizing' } });
   const outline = notesOutline(circuit, { name: 'divider' });
   assert.equal(outline, [
-    '# divider', '[TOC]', '## Circuit', 'What the circuit is and does.', '![[circuit|The circuit.]]',
+    '# divider', 'Author: Your name', '[TOC]', '## Circuit', 'What the circuit is and does.', '![[circuit|The circuit.]]',
     '## Operation', 'How it works, step by step.', '![[beat 1|Beat 1: $\\varphi_1$.]]', '![[beat 2|Beat 2.]]',
     '## Analysis', 'What the analysis shows.', '![[F1|Equations (small-signal analysis).]]',
     '## Sizing', 'How the parts are sized.', '![[F2|Parts.]]',
   ].join('\n\n') + '\n');
-  // Every figure it places draws.
+  // Every figure it places draws, and its author line is read as one.
   circuit.notes = outline;
+  assert.equal(noteAuthor(outline).author, 'Your name');
   assert.deepEqual(buildReport(circuit).warnings, []);
   // A bare circuit: its heading, text, and figure only.
   const bare = new Circuit();
   run(bare, 'add resistor R1 --at 0 0');
-  assert.equal(notesOutline(bare), '# Design\n\n[TOC]\n\n## Circuit\n\nWhat the circuit is and does.\n\n![[circuit|The circuit.]]\n');
+  assert.equal(notesOutline(bare), '# Design\n\nAuthor: Your name\n\n[TOC]\n\n## Circuit\n\nWhat the circuit is and does.\n\n![[circuit|The circuit.]]\n');
 });
 
 test('notes outline starts empty notes and never replaces written ones', () => {
@@ -302,14 +303,14 @@ test('a design embedded by name is a section: its notes a level down, figures nu
   assert.match(html, /<section id="design-amp" class="design-section">\n<h2>Amplifier<\/h2>/);
   assert.match(html, /<section id="design-sub" class="design-section">\n<h3>sub<\/h3>\n<figure id="fig-3">/);
   // In the section, its own figures and parts.
-  assert.match(html, /<a class="mention" href="#fig-2">R1<\/a> is in <a href="#fig-2" class="note-figure-ref" data-figure="circuit">Fig\. 2<\/a>/);
+  assert.match(html, /<a class="mention" href="#fig-2">R1<\/a> is in <a href="#fig-2" class="note-figure-ref" data-figure="circuit">Fig\.\u00a02<\/a>/);
   // Embedded again, or embedding the report's own design: a link to its section.
   assert.equal(html.match(/<section id="design-amp"/g).length, 1);
   assert.match(html, /<p class="see-section">See <a class="design" href="#design-amp">amp<\/a>\.<\/p>/);
   assert.match(html, /<p class="see-section">See <a class="design" href="#design-system">system<\/a>\.<\/p>/);
   // Citations numbered in reading order, one list at the end.
-  assert.match(html, /<a href="#ref-1" class="note-cite" title="B · https:\/\/b\.example">\[1\]<\/a> <a href="#ref-2" class="note-cite"/);
-  assert.match(html, /Cites <a href="#ref-2" class="note-cite"/);
+  assert.match(html, /<a href="#ref-1" class="note-cite" title="B · https:\/\/b\.example">\[1\]<\/a>\u00a0<a href="#ref-2" class="note-cite"/);
+  assert.match(html, /Cites\u00a0<a href="#ref-2" class="note-cite"/);
   assert.equal(html.match(/<section class="note-references">/g).length, 1);
   assert.match(html, /<section class="note-references"><h2>References<\/h2><ol><li id="ref-1">B\./);
   // Without the design, the embed is a missing figure.
@@ -409,4 +410,39 @@ test('a PDF\'s named destinations read as pages, through a nested page tree', ()
   ].join('\n');
   assert.deepEqual([...pdfDestinationPages(Buffer.from(pdf, 'latin1'))], [['sec-1', 1], ['sec-2', 3], ['fig-1', 2]]);
   assert.deepEqual([...pdfDestinationPages('%PDF-1.4 nothing here')], []);
+});
+
+test('a picture on the drawing given a name is a figure the notes place and refer to', () => {
+  const circuit = divider();
+  const src = 'data:image/png;base64,iVBORw0KGgo=';
+  const picture = circuit.addAnnotation('box', { x: 400, y: 0, end: { x: 560, y: 120 }, image: { src, aspect: 4 / 3 } });
+  assert.match(run(circuit, 'pictures')[0].text, new RegExp(`^${picture.id} at `));
+  const [named] = run(circuit, `picture ${picture.id} Bench capture`);
+  assert.equal(named.mutated, true);
+  assert.equal(picture.image.name, 'Bench capture');
+  assert.match(run(circuit, 'pictures')[0].text, /"Bench capture"/);
+  // Kept with the design; a name another target has is refused.
+  const again = Circuit.fromJSON(circuit.toJSON());
+  assert.equal(again.labels.get(picture.id).image.name, 'Bench capture');
+  assert.throws(() => run(circuit, `picture ${picture.id} circuit`), /the name "circuit" is taken/);
+  const other = circuit.addAnnotation('box', { x: 600, y: 0, end: { x: 760, y: 120 }, image: { src, aspect: 4 / 3 } });
+  assert.throws(() => run(circuit, `picture ${other.id} bench capture`), /is taken/);
+  assert.throws(() => run(circuit, 'picture R1 x'), /no picture on the drawing/);
+  // Brackets and bars, which write an embed, are left out of a name.
+  assert.equal(run(circuit, `picture ${other.id} a[b]|c`)[0].json.name, 'a b c');
+  run(circuit, `picture ${other.id} --unnamed`);
+
+  circuit.notes = 'The output, measured in [[#bench capture]].\n\n![[circuit|The divider.]]\n\n![[Bench capture|On the bench.]]';
+  const { html, warnings, figures } = buildReport(circuit);
+  assert.deepEqual(warnings, []);
+  assert.match(html, /<a href="#fig-2" class="note-figure-ref" data-figure="Bench capture">Fig\. 2<\/a>/);
+  assert.match(html, new RegExp(`<figure id="fig-2"><img class="note-picture" src="${src.replace(/[+/]/g, '\\$&')}" alt="On the bench\\.">`));
+  // The circuit's figure leaves the named picture out, and the unnamed one in.
+  const circuitFigure = html.match(/<figure id="fig-1">[\s\S]*?<\/figure>/)[0];
+  assert.equal((circuitFigure.match(/<image /g) || []).length, 1);
+  assert.equal(figures[1].name, 'Bench capture');
+  // Unnamed, it is no figure again.
+  assert.equal(run(circuit, `picture ${picture.id} --unnamed`)[0].text, `${picture.id} has no name`);
+  assert.equal(picture.image.name, undefined);
+  assert.match(buildReport(circuit).warnings[0], /nothing named "Bench capture"/);
 });

@@ -227,7 +227,7 @@ describe('design notes', { skip: browserSkip() }, () => {
     await h.until(`document.querySelector('.notes-outline').hidden === false`);
     await h.click('.notes-outline');
     await h.until(`document.querySelector('.notes-source').value.startsWith('# amp')`);
-    assert.match(await editor('editor.circuit.notes'), /^# amp\n\n\[TOC\]\n\n## Circuit\n\nWhat the circuit is and does\.\n\n!\[\[circuit\|The circuit\.\]\]/);
+    assert.match(await editor('editor.circuit.notes'), /^# amp\n\nAuthor: Your name\n\n\[TOC\]\n\n## Circuit\n\nWhat the circuit is and does\.\n\n!\[\[circuit\|The circuit\.\]\]/);
     assert.equal(await h.evaluate(`document.querySelector('.notes-outline').hidden`), true);
     await h.evaluate(`document.querySelector('.notes-source').blur()`);
     await h.key('z', { ctrlKey: true });
@@ -286,6 +286,57 @@ describe('design notes', { skip: browserSkip() }, () => {
     assert.equal(await exists('report-example-modulator'), true);
     const integrator = JSON.parse(await readFile(join(h.workspace, 'report-example-integrator.json'), 'utf8'));
     assert.match(integrator.notes, /^# SC integrator with correlated level shifting/);
+  });
+
+  test('Table, while writing, puts an empty table of the columns and rows picked at the caret', async () => {
+    await h.click('.notes-edit');
+    await typeNotes('Intro');
+    assert.equal(await h.evaluate(`document.querySelector('.notes-table').hidden`), false, 'shown while writing');
+    await h.evaluate(`(() => { const f = document.querySelector('.notes-source'); f.focus(); f.setSelectionRange(5, 5); })()`);
+    await h.click('.notes-table');
+    await h.until(`!!document.querySelector('.notes-table-grid')`);
+    await h.evaluate(`document.querySelector('.notes-table-cell[data-column="3"][data-row="2"]').dispatchEvent(new PointerEvent('pointerenter'))`);
+    assert.equal(await h.evaluate(`document.querySelector('.context-menu-heading').textContent`), 'Table 3 × 2');
+    assert.equal(await h.evaluate(`document.querySelectorAll('.notes-table-cell.chosen').length`), 6);
+    await h.click('.notes-table-cell[data-column="3"][data-row="2"]');
+    assert.equal(await h.evaluate(`document.querySelector('.notes-source').value`), 'Intro\n\n|   |   |   |\n| --- | --- | --- |\n|   |   |   |\n');
+    assert.equal(await h.evaluate(`document.querySelector('.notes-source').selectionStart`), 9, 'the caret in the first heading cell');
+    assert.match(await editor('editor.circuit.notes'), /\| --- \| --- \| --- \|/);
+    await finish();
+    await h.until(`!!document.querySelector('.notes-view table')`);
+    assert.equal(await h.evaluate(`document.querySelector('.notes-table').hidden`), true, 'hidden when read');
+  });
+
+  test('a double-click on a picture on the drawing opens its options; its name places it in the notes', async () => {
+    const id = await h.evaluate(`Promise.all([${h.module('editor-state.js')}, ${h.module('main.js')}]).then(([s, m]) => {
+      const box = s.editor.circuit.addAnnotation('box', { x: 2000, y: 0, end: { x: 2160, y: 120 }, image: { src: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', aspect: 4 / 3 } });
+      m.render();
+      return box.id;
+    })`);
+    const p = await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.worldToClient(2080, 60))`);
+    await h.mouse('mousePressed', p.x, p.y, { clickCount: 1 });
+    await h.mouse('mouseReleased', p.x, p.y, { clickCount: 1 });
+    await h.mouse('mousePressed', p.x, p.y, { clickCount: 2 });
+    await h.mouse('mouseReleased', p.x, p.y, { clickCount: 2 });
+    await h.until(`!!document.querySelector('#picture-dialog[open]')`);
+    // A name another target has is refused in the dialog.
+    await h.evaluate(`(() => { const f = document.getElementById('picture-name'); f.value = 'circuit'; f.dispatchEvent(new Event('input')); })()`);
+    await h.click('#picture-submit');
+    assert.match(await h.evaluate(`document.querySelector('#picture-dialog .page-guide-error').textContent`), /taken/);
+    await h.evaluate(`(() => { const f = document.getElementById('picture-name'); f.value = 'Scope'; f.dispatchEvent(new Event('input'));
+      f.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); })()`);
+    await h.until(`!document.getElementById('picture-dialog')`);
+    assert.equal(await editor(`editor.circuit.labels.get(${JSON.stringify(id)}).image.name`), 'Scope');
+    await h.click('.notes-edit');
+    await typeNotes('See [[#scope]].\n\n![[Scope|The bench.]]');
+    await finish();
+    await h.until(`!!document.querySelector('.notes-view .note-figure-ref')`);
+    assert.equal(await h.evaluate(`document.querySelector('.notes-view .note-figure-ref').textContent`), 'Fig. 1');
+    // Undo takes the notes back, then the name.
+    await h.key('u');
+    await h.until(`${h.module('editor-state.js')}.then((m) => !m.editor.circuit.notes.includes('Scope'))`);
+    await h.key('u');
+    await h.until(`${h.module('editor-state.js')}.then((m) => !m.editor.circuit.labels.get(${JSON.stringify(id)})?.image.name)`);
   });
 
   test('another design shows its own notes, and n closes the window', async () => {

@@ -47,6 +47,8 @@ function inlineHtml(text, context) {
     .replace(/`([^`]+)`/g, (_, code) => hold(`<code>${escapeHtml(code)}</code>`))
     .replace(/\$\$([^$]+)\$\$/g, (_, tex) => hold(mathHtml(tex, true)))
     .replace(/(^|[^\\$])\$([^$\n]+?)\$/g, (_, before, tex) => before + hold(mathHtml(tex, false)));
+  // A citation stays on the line of the word before it, as LaTeX's ~\\cite.
+  source = source.replace(/ +(?=\[\^)/g, '\u00a0');
   source = source.replace(CITATION, (whole, target) => {
     const citation = citationOf(context.citations || [], target);
     if (!citation) return whole;
@@ -65,8 +67,8 @@ function inlineHtml(text, context) {
   source = source.replace(FIGURE_REFERENCE, (_, name) => {
     const figure = context.figures?.find((entry) => !entry.design && entry.number && figureKey(entry.name) === figureKey(name));
     return hold(figure
-      ? `<a href="#${figure.id || `fig-${figure.number}`}" class="note-figure-ref" data-figure="${escapeHtml(figure.name)}">Fig. ${figure.number}</a>`
-      : `<span class="note-figure-ref broken" title="No figure of the notes shows ${escapeHtml(name.trim())}">Fig. ?</span>`);
+      ? `<a href="#${figure.id || `fig-${figure.number}`}" class="note-figure-ref" data-figure="${escapeHtml(figure.name)}">Fig.\u00a0${figure.number}</a>`
+      : `<span class="note-figure-ref broken" title="No figure of the notes shows ${escapeHtml(name.trim())}">Fig.\u00a0?</span>`);
   });
   source = source.replace(/\[\[([^[\]\n|]+)\]\]/g, (_, name) => {
     const design = name.trim();
@@ -85,6 +87,8 @@ function inlineHtml(text, context) {
     const title = target ? '' : ' title="Nothing of this name in the design"';
     return before + hold(`<a href="#" class="note-mention note-mention-${kind}" data-mention="${escapeHtml(name)}"${title}>@${markupHtml(name)}</a>`);
   });
+  // An abbreviation stays on the line of the number it names: Fig. 2, Eq. (3).
+  source = source.replace(/\b([A-Z][a-z]{0,4}\.) (?=[(\d])/g, '$1\u00a0');
   let html = escapeHtml(source)
     .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')

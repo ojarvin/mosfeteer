@@ -96,9 +96,17 @@ warnings, and writes the HTML.
   (the drawing without the figures the tools annotated, as `coreBounds`
   counts it), `drawing` (all of it), `beat N` (the circuit as that beat
   shows it, with the timing diagram when one is drawn: its band marks
-  the beat's place in the period), or an annotated figure's id (`F2`, `timing`; the `figures`
-  command lists them). An embed inside a line stays text. Typing `![[`
+  the beat's place in the period), an annotated figure's id (`F2`, `timing`; the `figures`
+  command lists them), or a picture on the drawing by its name. An embed inside a line stays text. Typing `![[`
   offers the targets.
+- **Named pictures.** A picture pasted onto the drawing is a figure once it
+  has a name (`image.name`, `pictureName`: one line, no brackets or bar):
+  a double-click on it, or its right-click **Picture…**, opens its options
+  (`src/web/picture-options.js`); scripted, `pictures` lists them and
+  `picture ID NAME` / `picture ID --unnamed` names one (`namePicture`,
+  report.js). A name another target has is refused. The report draws it
+  as pasted, at most the text's width, and the `circuit` figure leaves it
+  out. A pasted copy has no name.
 - **Sections.** `![[amp]]` on a line of its own, naming another design of
   the workspace (and no figure of this one), puts that design's notes there
   as a section: its `#` heading a level below the heading the embed stands
@@ -138,7 +146,7 @@ warnings, and writes the HTML.
   own `[TOC]` lines are dropped.
 - **Outline.** Empty notes can start as a report: the notes window's
   **Outline** (shown while the notes are empty) or `notes outline` writes a
-  heading, a `[TOC]`, a Circuit section, an Operation section (the timing diagram, a figure a
+  heading, an author line (`Author: Your name`), a `[TOC]`, a Circuit section, an Operation section (the timing diagram, a figure a
   beat), an Analysis section (the annotated equations, models, plots, and
   noise tables), a Sizing section (the parts tables), and a Blocks section
   embedding each design its parts link to, once, each figure with a

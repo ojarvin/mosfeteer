@@ -16,7 +16,7 @@
  * it draws; Report… exports the notes with their figures (core/report.js).
  */
 
-import { normalizeNotes, notesMarkdown, resolveMention } from '../core/notes.js';
+import { normalizeNotes, notesMarkdown, notesTable, resolveMention } from '../core/notes.js';
 import { renderNotes } from '../core/notes-markdown.js';
 import { canvasEl } from './elements.js';
 import { editor } from './editor-state.js';
@@ -28,7 +28,7 @@ import { logLine } from './status-bar-ui.js';
 import { beginSettingsEdit, endSettingsEdit, markSettingsChanged, render, setSelection } from './main.js';
 import { element as el } from './dom.js';
 import { attachNoteCompletion } from './notes-completion.js';
-import { appendContextItem, openMenuAt } from './context-menu.js';
+import { appendContextItem, closeComponentContextMenu, openMenuAt } from './context-menu.js';
 import { showDesignInReference } from './reference-window.js';
 import { notesOutline, reportTargets, resolveReportTarget } from '../core/report.js';
 import { exportCircuit } from './export-ui.js';
@@ -150,6 +150,7 @@ function startEditing() {
   win.empty.hidden = true;
   win.edit.textContent = 'Done';
   win.edit.title = 'Done (Esc)';
+  win.table.hidden = false;
   win.source.value = notes();
   win.source.focus();
 }
@@ -162,6 +163,7 @@ function stopEditing() {
   win.source.hidden = true;
   win.edit.textContent = 'Edit';
   win.edit.title = 'Edit (double-click)';
+  win.table.hidden = true;
   shownKey = null;
   renderView();
 }
@@ -207,6 +209,66 @@ function onSourceKey(ev) {
     stopEditing();
     (win.view.hidden ? win.el : win.view).focus({ preventScroll: true });
   }
+}
+
+// ----- inserting a table ------------------------------------------------------------
+
+/** The most columns and rows the Table grid offers. */
+const TABLE_GRID = { columns: 8, rows: 8 };
+
+/** Table: a grid to pick the columns and rows (the heading row among them)
+ *  from; the table goes in at the caret, on lines of its own. */
+function openTableGrid() {
+  if (!win || !editing) return;
+  const field = win.source;
+  const [start, end] = [field.selectionStart, field.selectionEnd];
+  const box = win.table.getBoundingClientRect();
+  const menu = openMenuAt(box.left, box.bottom + 4, 'Table');
+  if (!menu) return;
+  const heading = menu.querySelector('.context-menu-heading');
+  const cells = [];
+  const mark = (columns, rows) => {
+    heading.textContent = columns ? `Table ${columns} × ${rows}` : 'Table';
+    for (const cell of cells) cell.classList.toggle('chosen', Number(cell.dataset.column) <= columns && Number(cell.dataset.row) <= rows);
+  };
+  const grid = el('div', { class: 'notes-table-grid', role: 'grid', 'aria-label': 'Columns and rows' });
+  for (let row = 1; row <= TABLE_GRID.rows; row++) {
+    for (let column = 1; column <= TABLE_GRID.columns; column++) {
+      const cell = el('button', { type: 'button', class: 'notes-table-cell', 'data-column': String(column), 'data-row': String(row), 'aria-label': `${column} × ${row}` });
+      cell.addEventListener('pointerenter', () => mark(column, row));
+      cell.addEventListener('focus', () => mark(column, row));
+      cell.addEventListener('click', () => {
+        closeComponentContextMenu();
+        insertTable(field, start, end, column, row);
+      });
+      cells.push(cell);
+      grid.append(cell);
+    }
+  }
+  grid.addEventListener('pointerleave', () => mark(0, 0));
+  menu.append(grid);
+  cells[0].focus();
+}
+
+function insertTable(field, start, end, columns, rows) {
+  if (!win || field !== win.source) return;
+  const { value } = field;
+  // A blank line on each side: a table is a block of its own.
+  const before = value.slice(0, start);
+  const after = value.slice(end);
+  const lead = !before ? '' : before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
+  const trail = !after ? '\n' : after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n';
+  const text = `${lead}${notesTable(columns, rows)}${trail}`;
+  field.focus();
+  field.setSelectionRange(start, end);
+  // insertText keeps the field's own undo (Ctrl+Z) working.
+  if (!document.execCommand?.('insertText', false, text)) {
+    field.setRangeText(text, start, end, 'end');
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  // The caret in the first heading cell.
+  const first = start + lead.length + 2;
+  field.setSelectionRange(first, first);
 }
 
 // ----- mentions and links -----------------------------------------------------------
@@ -291,18 +353,22 @@ function build() {
   const copy = el('button', { type: 'button', class: 'notes-copy window-action', title: 'Copy as Markdown', text: 'Copy' });
   const report = el('button', { type: 'button', class: 'notes-report window-action', title: 'Export the notes and their figures', text: 'Report…' });
   const outline = el('button', { type: 'button', class: 'notes-outline window-action', title: 'Start the notes with every figure of the drawing', text: 'Outline' });
+  const table = el('button', { type: 'button', class: 'notes-table window-action', title: 'Insert a table', text: 'Table', hidden: true });
   const view = el('div', { class: 'notes-view', tabindex: '0', 'aria-label': 'Notes' });
   const empty = el('p', { class: 'field-hint notes-empty', text: 'Double-click to write. Markdown with $math$; @M1 mentions a part or net, [[amp]] links a design, ![[circuit]] places a figure.' });
   const source = el('textarea', { class: 'notes-source', 'aria-label': 'Notes (Markdown)', spellcheck: 'true', hidden: true, placeholder: 'Markdown: # headings, $math$, @M1 for a part or net, [[design]] for a link, a pasted picture' });
   const node = el('section', { class: 'floating-window notes-window', 'aria-labelledby': 'notes-title', hidden: true }, [
     el('header', { class: 'floating-window-header' }, [el('h2', { id: 'notes-title', class: 'floating-window-title', text: 'Notes' }), close]),
     el('div', { class: 'notes-body' }, [empty, view, source]),
-    el('footer', { class: 'window-footer' }, [outline, report, copy, edit]),
+    el('footer', { class: 'window-footer' }, [outline, table, report, copy, edit]),
   ]);
   edit.addEventListener('click', () => (editing ? stopEditing() : startEditing()));
   copy.addEventListener('click', copyMarkdown);
   report.addEventListener('click', () => exportCircuit({ content: 'report' }));
   outline.addEventListener('click', writeOutline);
+  // Pressed, the field keeps its caret (and the editing its focus).
+  table.addEventListener('pointerdown', (ev) => ev.preventDefault());
+  table.addEventListener('click', openTableGrid);
   source.addEventListener('input', onInput);
   source.addEventListener('paste', onSourcePaste);
   // Before the field's own keys: an open list takes Tab and Esc.
@@ -322,7 +388,7 @@ function build() {
   });
   canvasEl.closest('.canvas-pane').append(node);
   const chrome = floatingWindow(node, { key: 'notes', onClose: hide, resizable: true, toggleKey: 'N', help: 'notes' });
-  win = { el: node, view, source, edit, copy, outline, empty, chrome };
+  win = { el: node, view, source, edit, copy, outline, table, empty, chrome };
 }
 
 /** Empty notes started as a report (core/report.js `notesOutline`): one
@@ -393,6 +459,7 @@ export function notesDocumentShown() {
     win.el.classList.remove('editing');
     win.source.hidden = true;
     win.edit.textContent = 'Edit';
+    win.table.hidden = true;
   }
   shownKey = null;
   renderNotesWindow();

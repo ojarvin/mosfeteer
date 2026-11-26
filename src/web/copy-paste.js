@@ -682,7 +682,8 @@ export function pasteClipboard({ recordHistory = true, connect = true } = {}) {
           x: l.x + dx, y: l.y + dy, end: l.end && { x: l.end.x + dx, y: l.end.y + dy },
           points: l.points?.map((point) => ({ x: point.x + dx, y: point.y + dy })), style: l.style,
           ...(l.plot ? { plot: l.plot } : {}),
-          ...(l.image ? { image: l.image } : {}),
+          // A copy has no name: the name places the picture it was given to.
+          ...(l.image ? { image: { src: l.image.src, aspect: l.image.aspect } } : {}),
           ...(l.table ? { table: { parts: l.table.parts && l.table.parts.map((refdes) => refMap.get(refdes) || refdes) } } : {}),
           ...(l.stack ? { stack: l.stack } : {}),
           ...(l.curve ? { curve: true } : {}),

@@ -9888,3 +9888,55 @@ html.dark[data-accent] {
   width: auto;
   flex: none;
 }
+
+/* The notes window's Table: a grid of columns by rows to pick from. */
+.notes-table-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 18px);
+  gap: 3px;
+  padding: 8px;
+}
+
+.component-context-menu .notes-table-cell {
+  display: block;
+  width: 18px;
+  min-height: 0;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: transparent;
+}
+
+.component-context-menu .notes-table-cell:focus-visible {
+  background: transparent;
+  outline: 2px solid var(--accent);
+}
+
+.component-context-menu .notes-table-cell.chosen {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.picture-dialog {
+  width: min(24rem, calc(100vw - 32px));
+}
+
+.picture-field {
+  display: grid;
+  grid-template-columns: 4rem 1fr;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.picture-field input {
+  min-width: 0;
+}
+
+.picture-dialog .field-hint {
+  margin: 0 0 12px 4rem;
+}
+
+.picture-dialog #picture-embed {
+  user-select: all;
+}

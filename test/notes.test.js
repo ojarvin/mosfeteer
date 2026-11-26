@@ -4,7 +4,7 @@ import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
 import { loadDocument, relinkDocumentState } from '../src/core/document.js';
 import { designIndex, searchDesign } from '../src/core/design-index.js';
-import { findMentions, mentionToken, noteDesignLinks, normalizeNotes, noteCompletion, notesMarkdown, relinkNotes, renameMentions, resolveMention } from '../src/core/notes.js';
+import { findMentions, mentionToken, noteDesignLinks, normalizeNotes, noteCompletion, notesMarkdown, notesTable, relinkNotes, renameMentions, resolveMention } from '../src/core/notes.js';
 import { renderNotes } from '../src/core/notes-markdown.js';
 
 const run = (circuit, ...lines) => lines.map((line) => runCommand(circuit, line));
@@ -100,6 +100,14 @@ test('rendered notes escape HTML and keep only safe links', () => {
   assert.ok(!html.includes('href="javascript'));
   assert.ok(html.includes('<a href="https://example.com" target="_blank" rel="noopener noreferrer">ok</a>'));
   assert.ok(html.includes('<strong>b</strong>') && html.includes('<em>i</em>'));
+});
+
+test('rendered notes keep a number on the line of what names it', () => {
+  const html = renderNotes('See Fig. 2 and Eq. (3), as shown [^https://a.example].');
+  assert.match(html, /Fig\.\u00a02 and Eq\.\u00a0\(3\)/);
+  assert.match(html, /shown\u00a0<a href="#ref-1" class="note-cite"/);
+  // A sentence's end is left as it is.
+  assert.match(renderNotes('It ends. 3 more'), /ends\. 3 more/);
 });
 
 test('rendered notes: blocks, math, mentions, and design links', () => {
@@ -263,11 +271,11 @@ test('a picture on a line of its own is numbered with the drawing\'s figures, re
   circuit.notes = '# Amp\n\n![[circuit|The stage]]\n\nMeasured in [[#picture 1]]:\n\n![Bench capture](picture:1)\n\nSee [[#circuit]].';
   circuit.pictures = { 1: png };
   const window = renderNotes(circuit.notes, { picture: (id) => circuit.pictures[id], figure: (name) => resolveReportTarget(circuit, name) });
-  assert.match(window, /href="#fig-2"[^>]*>Fig\. 2<\/a>:/);
+  assert.match(window, /href="#fig-2"[^>]*>Fig\.\u00a02<\/a>:/);
   assert.match(window, /<figure id="fig-2" class="note-picture-figure"/);
   const report = buildReport(circuit, { name: 'amp' });
   assert.match(report.html, /<figure id="fig-2"><img class="note-picture" src="data:image\/png;base64,iVBORw0KGgo=" alt="Bench capture"><figcaption><span class="figure-number">Fig\. 2\.<\/span> Bench capture<\/figcaption><\/figure>/);
-  assert.match(report.html, /Measured in <a[^>]*href="#fig-2"[^>]*>Fig\. 2<\/a>/);
+  assert.match(report.html, /Measured in <a[^>]*href="#fig-2"[^>]*>Fig\.\u00a02<\/a>/);
   assert.deepEqual(report.warnings, []);
 });
 
@@ -284,4 +292,11 @@ test('an author line under the title names who wrote the notes, and the notes sh
   assert.ok(!sameAuthors('Ada Lovelace', 'Ada Lovelace, Alan Turing'));
   assert.equal(render('# Amp\nAuthor: Ada <b>\n\nText'), '<h3>Amp</h3>\n<p class="note-author">Ada &lt;b&gt;</p>\n<p>Text</p>');
   assert.equal(render('# Amp\nAuthor: Ada\n\nText', { author: 'drop' }), '<h3>Amp</h3>\n<p>Text</p>');
+});
+
+test('the notes window\'s Table writes an empty table of the columns and rows picked', () => {
+  const table = notesTable(3, 2);
+  assert.equal(table, '|   |   |   |\n| --- | --- | --- |\n|   |   |   |');
+  assert.match(renderNotes(table), /^<table><thead><tr>(<th><\/th>){3}<\/tr><\/thead><tbody><tr>(<td><\/td>){3}<\/tr><\/tbody><\/table>/);
+  assert.equal(notesTable(1, 1).split('\n').length, 2, 'a heading row alone');
 });

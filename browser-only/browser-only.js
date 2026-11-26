@@ -23648,7 +23648,7 @@ let fixAllIssues, tidySelection; __bind(() => { ({ fixAllIssues, tidySelection }
 let applyArrangement, arrangementCandidates; __bind(() => { ({ applyArrangement, arrangementCandidates } = __require("src/core/arrange.js")); });
 let builtInDrawings, cellPatterns; __bind(() => { ({ builtInDrawings, cellPatterns } = __require("src/core/arrange-builtins.js")); });
 let arrangeFigures, figureBounds, listFigures; __bind(() => { ({ arrangeFigures, figureBounds, listFigures } = __require("src/core/figures.js")); });
-let buildReport, notesOutline; __bind(() => { ({ buildReport, notesOutline } = __require("src/core/report.js")); });
+let buildReport, namePicture, notesOutline; __bind(() => { ({ buildReport, namePicture, notesOutline } = __require("src/core/report.js")); });
 let parsePageGuide; __bind(() => { ({ parsePageGuide } = __require("src/core/page-guide.js")); });
 let findInLabels, replaceInLabels; __bind(() => { ({ findInLabels, replaceInLabels } = __require("src/core/label-search.js")); });
 let normalizeNotes, notesMarkdown; __bind(() => { ({ normalizeNotes, notesMarkdown } = __require("src/core/notes.js")); });
@@ -23776,6 +23776,7 @@ const FLAG_ARITY = {
   break: 1,
   clear: 1,
   arrange: 0,
+  unnamed: 0,
   list: 0,
   pick: 1,
   guide: 1,
@@ -24204,8 +24205,10 @@ function commandHelp() {
     '                                   --list lists the ways, --pick N draws the Nth (default the first)',
     '  figures [--arrange]            - list what the tools annotated (tables, equations, plots, models, the timing diagram);',
     '                                   --arrange puts each where a new one goes: tables right of the circuit, the rest below',
+    '  pictures                       - list the pictures pasted onto the drawing, with their names',
+    '  picture ID NAME | --unnamed    - name a picture on the drawing, for the notes: ![[NAME]] places it, [[#NAME]] reads its number',
     '  report [--file F.html] [--guide G] [--name TITLE] - the notes as a report: each ![[circuit|caption]] line a numbered figure of the drawing',
-    '                                   (circuit, drawing, beat N, or a figure\'s id), [[#circuit]] its number, ![[design]] that design\'s',
+    '                                   (circuit, drawing, beat N, a figure\'s id, or a picture\'s name), [[#circuit]] its number, ![[design]] that design\'s',
     '                                   notes as a section; lists the figures and what to look at; G sizes the figures: ieee-1col, ieee-2col, a4 (default), or WIDTH@PT (12cm@9)',
     '  fix                            - apply the safe Design Check repairs (reroute, snap to grid, move label)',
     '  rail REF.TERM ground|supply|vcm - a ground, supply, or VCM wired one cell out from an unconnected pin',
@@ -24904,6 +24907,19 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const figures = listFigures(circuit).map((figure) => ({ id: figure.id, kind: figure.kind, source: figure.source, ...(figure.key ? { key: figure.key } : {}), bounds: figureBounds(circuit, figure) }));
     const text = figures.length ? figures.map((f) => `${f.id} ${f.kind}${f.source ? ` (${f.source})` : ''} at ${f.bounds.x},${f.bounds.y} ${f.bounds.w}x${f.bounds.h}`).join('\n') : '(no figures)';
     return result(text, figures, false);
+  }
+  if (cmd === 'pictures' || cmd === 'picture') {
+    const pictures = [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.image);
+    if (!pos.length) {
+      const rows = pictures.map((label) => ({ id: label.id, name: label.image.name || '', bounds: label.bbox() }));
+      const text = rows.length ? rows.map((r) => `${r.id}${r.name ? ` "${r.name}"` : ''} at ${r.bounds.x},${r.bounds.y} ${r.bounds.w}x${r.bounds.h}`).join('\n') : '(no pictures)';
+      return result(text, rows, false);
+    }
+    const [id, ...words] = pos;
+    if (!flags.unnamed && !words.length) throw new Error('usage: picture ID NAME | picture ID --unnamed');
+    const changed = namePicture(circuit, id, flags.unnamed ? '' : words.join(' '));
+    const name = circuit.labels.get(id).image.name;
+    return result(name ? `${id} is named "${name}": ![[${name}]] places it` : `${id} has no name`, { id, name: name || '' }, changed);
   }
   if (cmd === 'report') {
     const guide = flags.guide ? parsePageGuide(flags.guide[0]) : null;
@@ -30932,6 +30948,7 @@ __exports.normalizeComponentRefdes = normalizeComponentRefdes;
 __exports.componentNameIdentity = componentNameIdentity;
 __exports.componentLabelText = componentLabelText;
 __exports.normalizeImage = normalizeImage;
+__exports.pictureName = pictureName;
 __exports.normalizePictures = normalizePictures;
 __exports.normalizeTimingSpec = normalizeTimingSpec;
 __exports.normalizePlot = normalizePlot;
@@ -31971,7 +31988,15 @@ function normalizeImage(image) {
   const aspect = Number(image?.aspect);
   if (src.length > MAX_IMAGE_DATA || !/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/.test(src)) return null;
   if (!(aspect > 0) || !Number.isFinite(aspect)) return null;
-  return { src, aspect };
+  const name = pictureName(image?.name);
+  return { src, aspect, ...(name ? { name } : {}) };
+}
+
+/** A picture's name on the drawing, as the notes place it (`![[name]]`):
+ *  one line of at most 60 characters, without the brackets and bar an
+ *  embed is written with. */
+function pictureName(value) {
+  return typeof value === 'string' ? value.replace(/[[\]|\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60).trim() : '';
 }
 
 /** The pictures the notes place, as saved: one no longer placed is left out. */
@@ -39328,6 +39353,8 @@ function inlineHtml(text, context) {
     .replace(/`([^`]+)`/g, (_, code) => hold(`<code>${escapeHtml(code)}</code>`))
     .replace(/\$\$([^$]+)\$\$/g, (_, tex) => hold(mathHtml(tex, true)))
     .replace(/(^|[^\\$])\$([^$\n]+?)\$/g, (_, before, tex) => before + hold(mathHtml(tex, false)));
+  // A citation stays on the line of the word before it, as LaTeX's ~\\cite.
+  source = source.replace(/ +(?=\[\^)/g, '\u00a0');
   source = source.replace(CITATION, (whole, target) => {
     const citation = citationOf(context.citations || [], target);
     if (!citation) return whole;
@@ -39346,8 +39373,8 @@ function inlineHtml(text, context) {
   source = source.replace(FIGURE_REFERENCE, (_, name) => {
     const figure = context.figures?.find((entry) => !entry.design && entry.number && figureKey(entry.name) === figureKey(name));
     return hold(figure
-      ? `<a href="#${figure.id || `fig-${figure.number}`}" class="note-figure-ref" data-figure="${escapeHtml(figure.name)}">Fig. ${figure.number}</a>`
-      : `<span class="note-figure-ref broken" title="No figure of the notes shows ${escapeHtml(name.trim())}">Fig. ?</span>`);
+      ? `<a href="#${figure.id || `fig-${figure.number}`}" class="note-figure-ref" data-figure="${escapeHtml(figure.name)}">Fig.\u00a0${figure.number}</a>`
+      : `<span class="note-figure-ref broken" title="No figure of the notes shows ${escapeHtml(name.trim())}">Fig.\u00a0?</span>`);
   });
   source = source.replace(/\[\[([^[\]\n|]+)\]\]/g, (_, name) => {
     const design = name.trim();
@@ -39366,6 +39393,8 @@ function inlineHtml(text, context) {
     const title = target ? '' : ' title="Nothing of this name in the design"';
     return before + hold(`<a href="#" class="note-mention note-mention-${kind}" data-mention="${escapeHtml(name)}"${title}>@${markupHtml(name)}</a>`);
   });
+  // An abbreviation stays on the line of the number it names: Fig. 2, Eq. (3).
+  source = source.replace(/\b([A-Z][a-z]{0,4}\.) (?=[(\d])/g, '$1\u00a0');
   let html = escapeHtml(source)
     .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
@@ -39644,6 +39673,7 @@ function numberSections(html, { titleLevel = 1, pages = false } = {}) {
 __modules["src/core/notes.js"] = function (__require, __exports) {
 __exports.notePictureIds = notePictureIds;
 __exports.normalizeNotes = normalizeNotes;
+__exports.notesTable = notesTable;
 __exports.noteAuthor = noteAuthor;
 __exports.authorNames = authorNames;
 __exports.sameAuthors = sameAuthors;
@@ -39718,6 +39748,13 @@ function normalizeNotes(value) {
 // ----- author ------------------------------------------------------------------
 
 const AUTHOR_LINE = /^\s*authors?:\s*(\S.*?)\s*$/i;
+
+/** A Markdown table of `columns` by `rows` (its heading row among them),
+ *  its cells empty: the notes window's Table. */
+function notesTable(columns, rows) {
+  const line = (cell) => `|${Array.from({ length: columns }, () => cell).join('|')}|`;
+  return [line('   '), line(' --- '), ...Array.from({ length: Math.max(0, rows - 1) }, () => line('   '))].join('\n');
+}
 
 /**
  * Who wrote the notes: a line `Author: Ada Lovelace` (or `Authors: A, B`)
@@ -44658,6 +44695,7 @@ __exports.RENUMBER_ORDERS = RENUMBER_ORDERS;
 
 __modules["src/core/report.js"] = function (__require, __exports) {
 __exports.reportTargets = reportTargets;
+__exports.namePicture = namePicture;
 __exports.resolveReportTarget = resolveReportTarget;
 __exports.reportPage = reportPage;
 __exports.reportFigureSize = reportFigureSize;
@@ -44666,7 +44704,7 @@ __exports.buildReport = buildReport;
 __exports.reportPageTargets = reportPageTargets;
 __exports.reportWithPages = reportWithPages;
 __exports.notesOutline = notesOutline;
-let LABEL_FONT_SIZE; __bind(() => { ({ LABEL_FONT_SIZE } = __require("src/core/model.js")); });
+let LABEL_FONT_SIZE, pictureName; __bind(() => { ({ LABEL_FONT_SIZE, pictureName } = __require("src/core/model.js")); });
 let listFigures; __bind(() => { ({ listFigures } = __require("src/core/figures.js")); });
 let beatTitle, resolveBeat; __bind(() => { ({ beatTitle, resolveBeat } = __require("src/core/beats.js")); });
 let timingBeatBands; __bind(() => { ({ timingBeatBands } = __require("src/core/timing-diagram.js")); });
@@ -44736,7 +44774,31 @@ function reportTargets(circuit) {
   }
   // The pictures pasted into the notes (`![caption](picture:N)`).
   for (const id of Object.keys(circuit.pictures || {})) targets.push({ name: pictureTarget(id), kind: 'picture', id, detail: 'a picture pasted into the notes' });
+  // The pictures on the drawing given a name.
+  for (const label of namedPictures(circuit)) targets.push({ name: label.image.name, kind: 'image', label, detail: 'a picture on the drawing' });
   return targets;
+}
+
+/** The pictures on the drawing that have a name, which places them. */
+function namedPictures(circuit) {
+  return [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.image?.name);
+}
+
+/**
+ * Name the picture `id` on the drawing (an empty name takes it away), for
+ * the notes to place it (`![[name]]`) and refer to it (`[[#name]]`). A name
+ * another target has already is refused. Returns whether it changed.
+ */
+function namePicture(circuit, id, value) {
+  const label = circuit.labels.get(id);
+  if (label?.kind !== 'box' || !label.image) throw new Error(`"${id}" is no picture on the drawing`);
+  const name = pictureName(value);
+  const taken = name ? resolveReportTarget(circuit, name) : null;
+  if (taken && taken.label !== label) throw new Error(`the name "${name}" is taken`);
+  if ((label.image.name || '') === name) return false;
+  const { name: _old, ...image } = label.image;
+  label.image = name ? { ...image, name } : image;
+  return true;
 }
 
 /** The target `name` embeds, or null. */
@@ -44759,14 +44821,15 @@ function targetSelection(circuit, target) {
   const parts = [...circuit.components.values()].filter((c) => !c.figure && !c.drawingOnly && c.type !== 'solder');
   const refs = new Set(parts.map((c) => c.refdes));
   const netIds = new Set([...circuit.nets.values()].filter((net) => !net.terminals.length || net.terminals.some((t) => refs.has(t.comp))).map((net) => net.id));
-  const labels = [...circuit.labels.values()].filter((label) => !label.owner && !label.netId && !theirLabels.has(label));
+  // A named picture is a figure of its own.
+  const labels = [...circuit.labels.values()].filter((label) => !label.owner && !label.netId && !theirLabels.has(label) && !label.image?.name);
   return { refs, labels, netIds, wireKeys: new Set() };
 }
 
 /** Whether a figure of `target` shows what a mention found. */
 function targetShows(circuit, target, found) {
   if (target.kind === 'drawing') return true;
-  if (target.kind === 'picture') return false;
+  if (target.kind === 'picture' || target.kind === 'image') return false;
   const selection = target.kind === 'beat' ? beatSelection(circuit) : targetSelection(circuit, target);
   return found.kind === 'component' ? selection.refs.has(found.refdes) : found.ids.some((id) => selection.netIds.has(id));
 }
@@ -44995,6 +45058,10 @@ function buildReport(circuit, { name = 'Design', guide = null, fontCss = '', des
       // A picture as pasted, at most the text's width.
       if (figure.target.kind === 'picture') {
         drawn.set(figure, { svg: `<img class="note-picture" src="${escapeHtml(owner.pictures[figure.target.id])}" alt="${escapeHtml(figure.caption)}">` });
+        continue;
+      }
+      if (figure.target.kind === 'image') {
+        drawn.set(figure, { svg: `<img class="note-picture" src="${escapeHtml(figure.target.label.image.src)}" alt="${escapeHtml(figure.caption)}">` });
         continue;
       }
       const { svg, ...sizing } = targetSvg(owner, figure.target, pageGuide);
@@ -45233,7 +45300,7 @@ const OUTLINE_SECTIONS = [
  */
 function notesOutline(circuit, { name = 'Design' } = {}) {
   const figures = listFigures(circuit);
-  const blocks = [`# ${name}`, '[TOC]', '## Circuit', 'What the circuit is and does.', '![[circuit|The circuit.]]'];
+  const blocks = [`# ${name}`, 'Author: Your name', '[TOC]', '## Circuit', 'What the circuit is and does.', '![[circuit|The circuit.]]'];
   for (const section of OUTLINE_SECTIONS) {
     const embeds = [];
     for (const kind of section.kinds) {
@@ -67769,6 +67836,7 @@ const DOCUMENT_COMMANDS = [
   { name: 'tag', aliases: ['tags', 'label-design'], help: 'tag add|rm|set NAME ... (the document\'s tags, searched in the Atlas)' },
   { name: 'fix', aliases: ['autofix', 'repair'], help: 'fix (apply the safe Design Check repairs)' },
   { name: 'figures', aliases: ['annotations'], help: 'figures [--arrange] (what the tools annotated; --arrange puts each where a new one goes)' },
+  { name: 'pictures', aliases: ['picture'], help: 'pictures | picture ID NAME | picture ID --unnamed (name a picture on the drawing, for the notes)' },
   { name: 'report', help: 'report [--guide G] (the notes as a report: the figures they embed and what to look at)' },
   { name: 'rail', help: 'rail REF.TERM ground|supply (a rail wired to a pin)' },
   { name: 'supplybar', help: 'supplybar on|off <refdes> ...' },
@@ -68489,6 +68557,7 @@ let shortPlacementLabel; __bind(() => { ({ shortPlacementLabel } = __require("sr
 let swapCandidates; __bind(() => { ({ swapCandidates } = __require("src/core/swap.js")); });
 let appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename; __bind(() => { ({ appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename } = __require("src/web/side-panel.js")); });
 let openPlotSettings; __bind(() => { ({ openPlotSettings } = __require("src/web/data-plot-ui.js")); });
+let openPictureOptions; __bind(() => { ({ openPictureOptions } = __require("src/web/picture-options.js")); });
 let updatablePlot, updatePlot; __bind(() => { ({ updatablePlot, updatePlot } = __require("src/web/signal-flow-ui.js")); });
 let figureUpdate; __bind(() => { ({ figureUpdate } = __require("src/web/annotate-menu.js")); });
 let takesFileTraces; __bind(() => { ({ takesFileTraces } = __require("src/core/data-plot.js")); });
@@ -68503,6 +68572,7 @@ let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); 
  * selection, style, switch, signal-flow, and small-signal submenus, and the
  * panel rows' renames it offers.
  */
+
 
 
 
@@ -69327,6 +69397,7 @@ function appendContextActions(menu, target) {
     const lines = selectedLines();
     if (target.value.kind === 'line' && lines.length > 1) appendContextItem(group, `Join ${lines.length} lines`, joinSelectedLines);
     if (takesFileTraces(target.value)) appendContextItem(group, 'Plot settings…', later(() => openPlotSettings(target.value)));
+    if (target.value.kind === 'box' && target.value.image) appendContextItem(group, 'Picture…', later(() => openPictureOptions(target.value)));
     if (updatablePlot(target.value)) appendContextItem(group, 'Update plot', later(() => void updatePlot(target.value)));
     else appendFigureUpdateItem(group, target.value);
     if (target.value.plot) appendContextItem(group, 'Export data…', later(() => openPlotExport(target.value)));
@@ -70302,7 +70373,8 @@ function pasteClipboard({ recordHistory = true, connect = true } = {}) {
           x: l.x + dx, y: l.y + dy, end: l.end && { x: l.end.x + dx, y: l.end.y + dy },
           points: l.points?.map((point) => ({ x: point.x + dx, y: point.y + dy })), style: l.style,
           ...(l.plot ? { plot: l.plot } : {}),
-          ...(l.image ? { image: l.image } : {}),
+          // A copy has no name: the name places the picture it was given to.
+          ...(l.image ? { image: { src: l.image.src, aspect: l.image.aspect } } : {}),
           ...(l.table ? { table: { parts: l.table.parts && l.table.parts.map((refdes) => refMap.get(refdes) || refdes) } } : {}),
           ...(l.stack ? { stack: l.stack } : {}),
           ...(l.curve ? { curve: true } : {}),
@@ -77315,6 +77387,7 @@ const GUIDES = Object.freeze([
       'Click **Edit**, or double-click the notes, to write. Press `Esc` to see them rendered.',
       'Type ``@`` to list the parts and nets, or ``[[`` to list the other designs, and press `Enter` to put one in.',
       'Paste a picture, such as a screenshot, into the notes to keep it with the design.',
+      'While writing, click **Table** and pick the columns and rows to put in an empty table.',
       'Click **Copy** to put the notes on the clipboard as plain Markdown.',
     ],
     sections: [
@@ -77370,7 +77443,7 @@ const GUIDES = Object.freeze([
     title: 'Make a report',
     intro: 'A report is the notes set as a printable page with numbered figures from the drawing. A design can include other designs\' notes as sections, so a block diagram and its blocks make one document.',
     steps: [
-      'In empty notes, click **Outline** to start from a heading, a contents list, and a figure for each part of the drawing.',
+      'In empty notes, click **Outline** to start from a heading, an author line, a contents list, and a figure for each part of the drawing.',
       'Put a figure on a line of its own, such as ``![[circuit|The amplifier.]]``. Type ``![[`` to list what can be shown.',
       'Put a design\'s name on a line of its own, such as ``![[amp]]``, to include its notes as a section.',
       'Click **Report…** in the notes window, or choose **Report** in the export dialog, to write the PDF and the HTML.',
@@ -77383,6 +77456,7 @@ const GUIDES = Object.freeze([
           ['![[drawing]]', 'The whole drawing.'],
           ['![[beat 2]]', 'The circuit as beat 2 shows it, with the timing diagram when one is drawn.'],
           ['![[F2]]   ![[timing]]', 'One annotated figure, such as a plot, an equation table, or the timing diagram.'],
+          ['![[scope]]', 'A picture on the drawing, by its name. Double-click the picture to name it.'],
           ['[[#F2]]', 'Reads "Fig. N" and links to that figure.'],
           ['[^https://...|Title]', 'A citation, numbered [1], [2], ... and listed under References at the end.'],
           ['[^doi:10.1000/xyz]', 'A citation by DOI.'],
@@ -82464,6 +82538,7 @@ let acceptArrangeSuggestion, dismissArrangeSuggestion, installArrangeSuggestions
 let shortNetsAtPlacedSolder, askNameForNewNetNameConflict; __bind(() => { ({ shortNetsAtPlacedSolder, askNameForNewNetNameConflict } = __require("src/web/net-names.js")); });
 let installRenumberUi; __bind(() => { ({ installRenumberUi } = __require("src/web/renumber-ui.js")); });
 let installDataPlotUi, openPlotSettings; __bind(() => { ({ installDataPlotUi, openPlotSettings } = __require("src/web/data-plot-ui.js")); });
+let openPictureOptions; __bind(() => { ({ openPictureOptions } = __require("src/web/picture-options.js")); });
 let takesFileTraces; __bind(() => { ({ takesFileTraces } = __require("src/core/data-plot.js")); });
 let installArrangeFigures; __bind(() => { ({ installArrangeFigures } = __require("src/web/figure-annotate.js")); });
 let installCalculator, toggleCalculator; __bind(() => { ({ installCalculator, toggleCalculator } = __require("src/web/calculator-window.js")); });
@@ -82493,6 +82568,7 @@ let setHidden; __bind(() => { ({ setHidden } = __require("src/web/dom.js")); });
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -85358,13 +85434,14 @@ if (!mathFontReady) {
   document.fonts.load(MATH_FONT_PROBE).then(releaseMathMeasurement, releaseMathMeasurement);
 }
 
-/** What a double-click on a label opens: a plot's settings, else its text
- *  in place. */
+/** What a double-click on a label opens: a plot's settings, a picture's
+ *  options, else its text in place. */
 function editLabelOpened(label) {
   // A plot opens its settings (a Bode sketch has none): never its box's text.
   if (label.plot) {
     if (takesFileTraces(label)) openPlotSettings(label);
-  } else inlineEditLabel(label);
+  } else if (label.image) openPictureOptions(label);
+  else inlineEditLabel(label);
 }
 
 // A label's anchor is the center of its box, but for an aligned free
@@ -87488,8 +87565,8 @@ function canvasMouseDown(ev) {
     }
     setSelection([]);
     setLabelSelection([annotationGeometry.id]);
-    // A plot opens its settings on a double-click.
-    if (ev.detail >= 2 && annotationGeometry.plot) {
+    // A plot opens its settings on a double-click, a picture its options.
+    if (ev.detail >= 2 && (annotationGeometry.plot || annotationGeometry.image)) {
       render();
       setTimeout(() => editLabelOpened(annotationGeometry), 0);
       return;
@@ -91658,7 +91735,7 @@ __exports.renderNotesWindow = renderNotesWindow;
 __exports.showNotes = showNotes;
 __exports.installNotes = installNotes;
 __exports.notesDocumentShown = notesDocumentShown;
-let normalizeNotes, notesMarkdown, resolveMention; __bind(() => { ({ normalizeNotes, notesMarkdown, resolveMention } = __require("src/core/notes.js")); });
+let normalizeNotes, notesMarkdown, notesTable, resolveMention; __bind(() => { ({ normalizeNotes, notesMarkdown, notesTable, resolveMention } = __require("src/core/notes.js")); });
 let renderNotes; __bind(() => { ({ renderNotes } = __require("src/core/notes-markdown.js")); });
 let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
@@ -91670,7 +91747,7 @@ let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")
 let beginSettingsEdit, endSettingsEdit, markSettingsChanged, render, setSelection; __bind(() => { ({ beginSettingsEdit, endSettingsEdit, markSettingsChanged, render, setSelection } = __require("src/web/main.js")); });
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 let attachNoteCompletion; __bind(() => { ({ attachNoteCompletion } = __require("src/web/notes-completion.js")); });
-let appendContextItem, openMenuAt; __bind(() => { ({ appendContextItem, openMenuAt } = __require("src/web/context-menu.js")); });
+let appendContextItem, closeComponentContextMenu, openMenuAt; __bind(() => { ({ appendContextItem, closeComponentContextMenu, openMenuAt } = __require("src/web/context-menu.js")); });
 let showDesignInReference; __bind(() => { ({ showDesignInReference } = __require("src/web/reference-window.js")); });
 let notesOutline, reportTargets, resolveReportTarget; __bind(() => { ({ notesOutline, reportTargets, resolveReportTarget } = __require("src/core/report.js")); });
 let exportCircuit; __bind(() => { ({ exportCircuit } = __require("src/web/export-ui.js")); });
@@ -91827,6 +91904,7 @@ function startEditing() {
   win.empty.hidden = true;
   win.edit.textContent = 'Done';
   win.edit.title = 'Done (Esc)';
+  win.table.hidden = false;
   win.source.value = notes();
   win.source.focus();
 }
@@ -91839,6 +91917,7 @@ function stopEditing() {
   win.source.hidden = true;
   win.edit.textContent = 'Edit';
   win.edit.title = 'Edit (double-click)';
+  win.table.hidden = true;
   shownKey = null;
   renderView();
 }
@@ -91884,6 +91963,66 @@ function onSourceKey(ev) {
     stopEditing();
     (win.view.hidden ? win.el : win.view).focus({ preventScroll: true });
   }
+}
+
+// ----- inserting a table ------------------------------------------------------------
+
+/** The most columns and rows the Table grid offers. */
+const TABLE_GRID = { columns: 8, rows: 8 };
+
+/** Table: a grid to pick the columns and rows (the heading row among them)
+ *  from; the table goes in at the caret, on lines of its own. */
+function openTableGrid() {
+  if (!win || !editing) return;
+  const field = win.source;
+  const [start, end] = [field.selectionStart, field.selectionEnd];
+  const box = win.table.getBoundingClientRect();
+  const menu = openMenuAt(box.left, box.bottom + 4, 'Table');
+  if (!menu) return;
+  const heading = menu.querySelector('.context-menu-heading');
+  const cells = [];
+  const mark = (columns, rows) => {
+    heading.textContent = columns ? `Table ${columns} × ${rows}` : 'Table';
+    for (const cell of cells) cell.classList.toggle('chosen', Number(cell.dataset.column) <= columns && Number(cell.dataset.row) <= rows);
+  };
+  const grid = el('div', { class: 'notes-table-grid', role: 'grid', 'aria-label': 'Columns and rows' });
+  for (let row = 1; row <= TABLE_GRID.rows; row++) {
+    for (let column = 1; column <= TABLE_GRID.columns; column++) {
+      const cell = el('button', { type: 'button', class: 'notes-table-cell', 'data-column': String(column), 'data-row': String(row), 'aria-label': `${column} × ${row}` });
+      cell.addEventListener('pointerenter', () => mark(column, row));
+      cell.addEventListener('focus', () => mark(column, row));
+      cell.addEventListener('click', () => {
+        closeComponentContextMenu();
+        insertTable(field, start, end, column, row);
+      });
+      cells.push(cell);
+      grid.append(cell);
+    }
+  }
+  grid.addEventListener('pointerleave', () => mark(0, 0));
+  menu.append(grid);
+  cells[0].focus();
+}
+
+function insertTable(field, start, end, columns, rows) {
+  if (!win || field !== win.source) return;
+  const { value } = field;
+  // A blank line on each side: a table is a block of its own.
+  const before = value.slice(0, start);
+  const after = value.slice(end);
+  const lead = !before ? '' : before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
+  const trail = !after ? '\n' : after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n';
+  const text = `${lead}${notesTable(columns, rows)}${trail}`;
+  field.focus();
+  field.setSelectionRange(start, end);
+  // insertText keeps the field's own undo (Ctrl+Z) working.
+  if (!document.execCommand?.('insertText', false, text)) {
+    field.setRangeText(text, start, end, 'end');
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  // The caret in the first heading cell.
+  const first = start + lead.length + 2;
+  field.setSelectionRange(first, first);
 }
 
 // ----- mentions and links -----------------------------------------------------------
@@ -91968,18 +92107,22 @@ function build() {
   const copy = el('button', { type: 'button', class: 'notes-copy window-action', title: 'Copy as Markdown', text: 'Copy' });
   const report = el('button', { type: 'button', class: 'notes-report window-action', title: 'Export the notes and their figures', text: 'Report…' });
   const outline = el('button', { type: 'button', class: 'notes-outline window-action', title: 'Start the notes with every figure of the drawing', text: 'Outline' });
+  const table = el('button', { type: 'button', class: 'notes-table window-action', title: 'Insert a table', text: 'Table', hidden: true });
   const view = el('div', { class: 'notes-view', tabindex: '0', 'aria-label': 'Notes' });
   const empty = el('p', { class: 'field-hint notes-empty', text: 'Double-click to write. Markdown with $math$; @M1 mentions a part or net, [[amp]] links a design, ![[circuit]] places a figure.' });
   const source = el('textarea', { class: 'notes-source', 'aria-label': 'Notes (Markdown)', spellcheck: 'true', hidden: true, placeholder: 'Markdown: # headings, $math$, @M1 for a part or net, [[design]] for a link, a pasted picture' });
   const node = el('section', { class: 'floating-window notes-window', 'aria-labelledby': 'notes-title', hidden: true }, [
     el('header', { class: 'floating-window-header' }, [el('h2', { id: 'notes-title', class: 'floating-window-title', text: 'Notes' }), close]),
     el('div', { class: 'notes-body' }, [empty, view, source]),
-    el('footer', { class: 'window-footer' }, [outline, report, copy, edit]),
+    el('footer', { class: 'window-footer' }, [outline, table, report, copy, edit]),
   ]);
   edit.addEventListener('click', () => (editing ? stopEditing() : startEditing()));
   copy.addEventListener('click', copyMarkdown);
   report.addEventListener('click', () => exportCircuit({ content: 'report' }));
   outline.addEventListener('click', writeOutline);
+  // Pressed, the field keeps its caret (and the editing its focus).
+  table.addEventListener('pointerdown', (ev) => ev.preventDefault());
+  table.addEventListener('click', openTableGrid);
   source.addEventListener('input', onInput);
   source.addEventListener('paste', onSourcePaste);
   // Before the field's own keys: an open list takes Tab and Esc.
@@ -91999,7 +92142,7 @@ function build() {
   });
   canvasEl.closest('.canvas-pane').append(node);
   const chrome = floatingWindow(node, { key: 'notes', onClose: hide, resizable: true, toggleKey: 'N', help: 'notes' });
-  win = { el: node, view, source, edit, copy, outline, empty, chrome };
+  win = { el: node, view, source, edit, copy, outline, table, empty, chrome };
 }
 
 /** Empty notes started as a report (core/report.js `notesOutline`): one
@@ -92070,6 +92213,7 @@ function notesDocumentShown() {
     win.el.classList.remove('editing');
     win.source.hidden = true;
     win.edit.textContent = 'Edit';
+    win.table.hidden = true;
   }
   shownKey = null;
   renderNotesWindow();
@@ -94373,6 +94517,80 @@ function createPersistenceAdapter({ fetchImpl = globalThis.fetch, retry } = {}) 
 }
 
 __exports.validDocumentName = validDocumentName;
+};
+
+__modules["src/web/picture-options.js"] = function (__require, __exports) {
+__exports.openPictureOptions = openPictureOptions;
+let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let commit, render; __bind(() => { ({ commit, render } = __require("src/web/main.js")); });
+let pictureName; __bind(() => { ({ pictureName } = __require("src/core/model.js")); });
+let namePicture, resolveReportTarget; __bind(() => { ({ namePicture, resolveReportTarget } = __require("src/core/report.js")); });
+/**
+ * A picture on the drawing's options (a double-click on it): its name, by
+ * which the notes place it as a figure (`![[name]]`) and refer to it
+ * (`[[#name]]`, report.js namePicture).
+ */
+
+
+
+
+
+
+
+/** Open the options of the picture `label` (a box with an image). */
+function openPictureOptions(label) {
+  if (label?.kind !== 'box' || !label.image) return;
+  document.getElementById('picture-dialog')?.remove();
+  const input = el('input', { id: 'picture-name', type: 'text', value: label.image.name || '', placeholder: 'No name', spellcheck: 'false', autocomplete: 'off' });
+  const embed = el('code', { id: 'picture-embed' });
+  const error = el('p', { class: 'page-guide-error', role: 'alert' });
+  const dialog = el('dialog', { id: 'picture-dialog', class: 'confirm-dialog picture-dialog', 'aria-labelledby': 'picture-dialog-title' }, [
+    el('form', { method: 'dialog' }, [
+      el('h2', { id: 'picture-dialog-title', text: 'Picture' }),
+      el('label', { class: 'picture-field', for: 'picture-name' }, [el('span', { text: 'Name' }), input]),
+      el('p', { class: 'field-hint' }, ['In the notes: ', embed]),
+      error,
+      el('div', { class: 'dialog-actions' }, [
+        el('button', { value: 'cancel', formnovalidate: true, text: 'Cancel' }),
+        el('button', { id: 'picture-submit', value: 'save', class: 'confirm-action', text: 'OK' }),
+      ]),
+    ]),
+  ]);
+  const show = () => {
+    const name = pictureName(input.value);
+    embed.textContent = name ? `![[${name}]]` : '(no name: not placed)';
+    error.textContent = '';
+  };
+  input.addEventListener('input', show);
+  // Enter is OK (the form's first button is Cancel).
+  input.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    dialog.querySelector('form').requestSubmit(dialog.querySelector('#picture-submit'));
+  });
+  dialog.addEventListener('keydown', (event) => event.stopPropagation());
+  dialog.querySelector('form').addEventListener('submit', (event) => {
+    if (event.submitter?.value !== 'save') return;
+    event.preventDefault();
+    const name = pictureName(input.value);
+    const taken = name ? resolveReportTarget(editor.circuit, name) : null;
+    if (taken && taken.label?.id !== label.id) {
+      error.textContent = `The name "${name}" is taken.`;
+      return;
+    }
+    commit(() => namePicture(editor.circuit, label.id, name));
+    dialog.close();
+    render();
+  });
+  dialog.addEventListener('close', () => dialog.remove(), { once: true });
+  show();
+  document.body.append(dialog);
+  dialog.showModal();
+  input.focus();
+  input.select();
+}
+
 };
 
 __modules["src/web/picture-theme.js"] = function (__require, __exports) {

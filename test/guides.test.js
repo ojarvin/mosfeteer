@@ -119,6 +119,8 @@ test('the report guide\'s figures name what a report can show, and its reference
   const circuit = new Circuit();
   for (const line of ['add switch_open S1 --at 0 0', 'value S1 P1', 'add switch_open S2 --at 400 0', 'value S2 P2', 'timing P1=10 P2=01', 'beat phases']) runCommand(circuit, line);
   circuit.addLabel({ text: 'A_v', math: true, x: 1200, y: 0, figure: { id: newFigureId(circuit), kind: 'equations', source: 'small-signal' } });
+  const picture = circuit.addAnnotation('box', { x: 0, y: 400, end: { x: 160, y: 520 }, image: { src: 'data:image/png;base64,iVBORw0KGgo=', aspect: 4 / 3 } });
+  runCommand(circuit, `picture ${picture.id} scope`);
   assert.ok(resolveReportTarget(circuit, 'F2'), 'the fixture has F2');
   for (const row of section('report', 'Figures and references').rows) {
     for (const example of examples(row)) {

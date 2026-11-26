@@ -143,6 +143,7 @@ export const DOCUMENT_COMMANDS = [
   { name: 'tag', aliases: ['tags', 'label-design'], help: 'tag add|rm|set NAME ... (the document\'s tags, searched in the Atlas)' },
   { name: 'fix', aliases: ['autofix', 'repair'], help: 'fix (apply the safe Design Check repairs)' },
   { name: 'figures', aliases: ['annotations'], help: 'figures [--arrange] (what the tools annotated; --arrange puts each where a new one goes)' },
+  { name: 'pictures', aliases: ['picture'], help: 'pictures | picture ID NAME | picture ID --unnamed (name a picture on the drawing, for the notes)' },
   { name: 'report', help: 'report [--guide G] (the notes as a report: the figures they embed and what to look at)' },
   { name: 'rail', help: 'rail REF.TERM ground|supply (a rail wired to a pin)' },
   { name: 'supplybar', help: 'supplybar on|off <refdes> ...' },

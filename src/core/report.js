@@ -25,7 +25,7 @@
  * The report is HTML; the server prints it to PDF (`printHtmlToPdf`).
  */
 
-import { LABEL_FONT_SIZE } from './model.js';
+import { LABEL_FONT_SIZE, pictureName } from './model.js';
 import { listFigures } from './figures.js';
 import { beatTitle, resolveBeat } from './beats.js';
 import { timingBeatBands } from './timing-diagram.js';
@@ -58,7 +58,31 @@ export function reportTargets(circuit) {
   }
   // The pictures pasted into the notes (`![caption](picture:N)`).
   for (const id of Object.keys(circuit.pictures || {})) targets.push({ name: pictureTarget(id), kind: 'picture', id, detail: 'a picture pasted into the notes' });
+  // The pictures on the drawing given a name.
+  for (const label of namedPictures(circuit)) targets.push({ name: label.image.name, kind: 'image', label, detail: 'a picture on the drawing' });
   return targets;
+}
+
+/** The pictures on the drawing that have a name, which places them. */
+function namedPictures(circuit) {
+  return [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.image?.name);
+}
+
+/**
+ * Name the picture `id` on the drawing (an empty name takes it away), for
+ * the notes to place it (`![[name]]`) and refer to it (`[[#name]]`). A name
+ * another target has already is refused. Returns whether it changed.
+ */
+export function namePicture(circuit, id, value) {
+  const label = circuit.labels.get(id);
+  if (label?.kind !== 'box' || !label.image) throw new Error(`"${id}" is no picture on the drawing`);
+  const name = pictureName(value);
+  const taken = name ? resolveReportTarget(circuit, name) : null;
+  if (taken && taken.label !== label) throw new Error(`the name "${name}" is taken`);
+  if ((label.image.name || '') === name) return false;
+  const { name: _old, ...image } = label.image;
+  label.image = name ? { ...image, name } : image;
+  return true;
 }
 
 /** The target `name` embeds, or null. */
@@ -81,14 +105,15 @@ function targetSelection(circuit, target) {
   const parts = [...circuit.components.values()].filter((c) => !c.figure && !c.drawingOnly && c.type !== 'solder');
   const refs = new Set(parts.map((c) => c.refdes));
   const netIds = new Set([...circuit.nets.values()].filter((net) => !net.terminals.length || net.terminals.some((t) => refs.has(t.comp))).map((net) => net.id));
-  const labels = [...circuit.labels.values()].filter((label) => !label.owner && !label.netId && !theirLabels.has(label));
+  // A named picture is a figure of its own.
+  const labels = [...circuit.labels.values()].filter((label) => !label.owner && !label.netId && !theirLabels.has(label) && !label.image?.name);
   return { refs, labels, netIds, wireKeys: new Set() };
 }
 
 /** Whether a figure of `target` shows what a mention found. */
 function targetShows(circuit, target, found) {
   if (target.kind === 'drawing') return true;
-  if (target.kind === 'picture') return false;
+  if (target.kind === 'picture' || target.kind === 'image') return false;
   const selection = target.kind === 'beat' ? beatSelection(circuit) : targetSelection(circuit, target);
   return found.kind === 'component' ? selection.refs.has(found.refdes) : found.ids.some((id) => selection.netIds.has(id));
 }
@@ -317,6 +342,10 @@ export function buildReport(circuit, { name = 'Design', guide = null, fontCss = 
       // A picture as pasted, at most the text's width.
       if (figure.target.kind === 'picture') {
         drawn.set(figure, { svg: `<img class="note-picture" src="${escapeHtml(owner.pictures[figure.target.id])}" alt="${escapeHtml(figure.caption)}">` });
+        continue;
+      }
+      if (figure.target.kind === 'image') {
+        drawn.set(figure, { svg: `<img class="note-picture" src="${escapeHtml(figure.target.label.image.src)}" alt="${escapeHtml(figure.caption)}">` });
         continue;
       }
       const { svg, ...sizing } = targetSvg(owner, figure.target, pageGuide);
@@ -555,7 +584,7 @@ const OUTLINE_SECTIONS = [
  */
 export function notesOutline(circuit, { name = 'Design' } = {}) {
   const figures = listFigures(circuit);
-  const blocks = [`# ${name}`, '[TOC]', '## Circuit', 'What the circuit is and does.', '![[circuit|The circuit.]]'];
+  const blocks = [`# ${name}`, 'Author: Your name', '[TOC]', '## Circuit', 'What the circuit is and does.', '![[circuit|The circuit.]]'];
   for (const section of OUTLINE_SECTIONS) {
     const embeds = [];
     for (const kind of section.kinds) {

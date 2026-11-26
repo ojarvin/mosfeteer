@@ -1002,7 +1002,15 @@ export function normalizeImage(image) {
   const aspect = Number(image?.aspect);
   if (src.length > MAX_IMAGE_DATA || !/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/.test(src)) return null;
   if (!(aspect > 0) || !Number.isFinite(aspect)) return null;
-  return { src, aspect };
+  const name = pictureName(image?.name);
+  return { src, aspect, ...(name ? { name } : {}) };
+}
+
+/** A picture's name on the drawing, as the notes place it (`![[name]]`):
+ *  one line of at most 60 characters, without the brackets and bar an
+ *  embed is written with. */
+export function pictureName(value) {
+  return typeof value === 'string' ? value.replace(/[[\]|\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60).trim() : '';
 }
 
 /** The pictures the notes place, as saved: one no longer placed is left out. */

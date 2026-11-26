@@ -58,6 +58,13 @@ export function normalizeNotes(value) {
 
 const AUTHOR_LINE = /^\s*authors?:\s*(\S.*?)\s*$/i;
 
+/** A Markdown table of `columns` by `rows` (its heading row among them),
+ *  its cells empty: the notes window's Table. */
+export function notesTable(columns, rows) {
+  const line = (cell) => `|${Array.from({ length: columns }, () => cell).join('|')}|`;
+  return [line('   '), line(' --- '), ...Array.from({ length: Math.max(0, rows - 1) }, () => line('   '))].join('\n');
+}
+
 /**
  * Who wrote the notes: a line `Author: Ada Lovelace` (or `Authors: A, B`)
  * right under the notes' `#` title, or first when they have none (blank
