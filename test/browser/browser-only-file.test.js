@@ -64,9 +64,7 @@ describe('browser-only, opened from a file', { skip: browserSkip() }, () => {
     })()`);
     const circuit = new Circuit();
     runCommand(circuit, 'add resistor R1 --at 0 0');
-    // Contents, and sections long enough to fill pages.
-    const long = Array.from({ length: 30 }, () => 'The resistor sets the bias, and the mirror copies it to the output branch. ').join('');
-    circuit.notes = `# Bias\n\n[TOC]\n\n## Bias\n\nThe resistor sets the bias.\n\n${long}\n\n${long}\n\n## Mirror\n\n${long}\n\n${long}\n\n## Output\n\nEnd.`;
+    circuit.notes = '# Bias\n\n[TOC]\n\n## Bias\n\nThe resistor sets the bias.';
     await h.evaluate(`window.__load(${JSON.stringify(circuit.toJSON())})`);
     const exportAs = async (content, name) => {
       await h.click('#btn-export');
@@ -87,13 +85,10 @@ describe('browser-only, opened from a file', { skip: browserSkip() }, () => {
     assert.match(notes, /@page/);
     // Set in Latin Modern Roman, all four faces carried in the report.
     assert.equal((notes.match(/@font-face\{font-family:"Latin Modern Roman";src:url\(data:font\/woff2;base64,/g) || []).length, 4);
-    // Laid out in the editor: its page breaks forced, its contents numbered.
-    assert.match(notes, /break-before: page/);
-    assert.doesNotMatch(notes, /<li class="toc-level-0">.*?<span class="toc-leader">\./, 'a section\'s line has no dots');
-    const listed = [...notes.matchAll(/data-toc-page="([^"]+)">(\d+)<\/span>/g)].map(([, id, page]) => [id, Number(page)]);
-    assert.deepEqual(listed.map(([id]) => id), ['sec-1', 'sec-2', 'sec-3']);
-    assert.equal(listed[0][1], 1);
-    assert.ok(listed[1][1] > listed[0][1] && listed[2][1] >= listed[1][1], JSON.stringify(listed));
+    // The print dialog gives no pages back: the contents carry no numbers,
+    // and no page break is forced.
+    assert.match(notes, /<span class="toc-page" data-toc-page="sec-1"><\/span>/);
+    assert.doesNotMatch(notes, /break-before: page/);
     const drawing = await exportAs('drawing', 'bias');
     assert.match(drawing, /<title>bias<\/title>/);
     assert.match(drawing, /@page p0\{size:[\d.]+px [\d.]+px;margin:0\}/);

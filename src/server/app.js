@@ -38,11 +38,10 @@ const STATIC_DIRS = [join(APP_ROOT, 'src', 'web') + sep, join(APP_ROOT, 'src', '
 // The editor loads only its own module script and same-origin assets, so it can
 // run under a strict policy. Inline styles stay allowed: the page and the
 // rendered SVG both position elements with `style` attributes. `data:` images
-// are the PNG export's rasterization step. `data:` fonts are a report's own
-// faces, laid out in a frame that takes this policy (web/report-pages.js).
+// are the PNG export's rasterization step.
 const CONTENT_SECURITY_POLICY = [
   "default-src 'none'", "script-src 'self'", "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data:", "font-src 'self' data:", "connect-src 'self'",
+  "img-src 'self' data:", "font-src 'self'", "connect-src 'self'",
   "base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'",
 ].join('; ');
 const MIME = {

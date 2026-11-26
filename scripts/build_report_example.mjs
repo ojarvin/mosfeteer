@@ -1,10 +1,8 @@
 /**
  * The README's sample report: Learn's report example (src/web/examples/
- * report-example.js) built as the editor builds it -- the same fonts
- * embedded, A4, no page guide -- and printed as the server prints a report,
- * its contents numbered from the print (the editor also lays the pages out
- * itself first, web/report-pages.js, which needs a browser), to
- * docs/report-example.pdf, its first page drawn to
+ * report-example.js) built as the editor's Report export builds it -- the
+ * same fonts embedded, A4, no page guide -- and printed with headless
+ * Chromium to docs/report-example.pdf, its first page drawn to
  * docs/images/report-example.webp for the README. Run it after changing the
  * example or the report's look: `npm run report-example`. Needs Chromium,
  * and pdftoppm and ImageMagick for the picture.

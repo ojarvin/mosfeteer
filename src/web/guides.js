@@ -321,7 +321,6 @@ export const GUIDES = Object.freeze([
         title: 'Size and layout',
         items: [
           'The report is set like a LaTeX article: the title and the authors centered at the top, numbered sections, and justified paragraphs.',
-          'The contents list the page each section starts on. Mosfeteer chooses every page break itself, so the numbers hold in the browser\'s print dialog too.',
           'Figures are drawn at the page guide\'s width, so their text is the guide\'s size. Without a guide, the A4 width is used.',
           'A caption that fits on one line is centered. A longer one is set as a justified paragraph.',
           'Learn → Tutorial → **Report example** opens a finished report to look at.',

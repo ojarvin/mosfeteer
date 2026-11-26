@@ -132,18 +132,8 @@ warnings, and writes the HTML.
   each section landed from the PDF's named destinations
   (`src/server/pdf-pages.js`), puts the numbers in, and prints again
   (`printReportToPdf`), so the PDF and the HTML it writes carry them.
-  The browser's print dialog gives no PDF back, and Chromium has no
-  `target-counter()`, so the editor lays the pages out itself before any
-  report export (`paginateReport`, `src/web/report-pages.js`): the report
-  laid out off screen at its text width in its own fonts, every page break
-  chosen and forced, a paragraph cut at a line end into two (its last line
-  justified, the rest unindented, a hyphen kept), figures, tables,
-  equations, headings, and list items moved whole, a heading kept with what
-  follows; then the contents are numbered. The server's print checks the
-  numbers against its PDF. A face that fails to load leaves the report
-  unpaginated and its contents unnumbered. `test/browser/report-pages.test.js`
-  prints laid-out reports and holds every element the PDF names to the page
-  the editor gave it. In a
+  Chromium has no `target-counter()`, so the browser's print dialog
+  (browser-only) prints the contents without page numbers. In a
   report the numbering runs through the included designs' sections, whose
   own `[TOC]` lines are dropped.
 - **Outline.** Empty notes can start as a report: the notes window's

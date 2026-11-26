@@ -225,7 +225,7 @@ const afterFirstHeading = (html, extra) => {
 const sectionId = (name) => `design-${figureKey(name).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'section'}`;
 
 /**
- * The report of `circuit`: `{ html, figures, warnings, page }`. `name` titles it
+ * The report of `circuit`: `{ html, figures, warnings }`. `name` titles it
  * (unless the notes start with a `#` heading of their own); `guide` sizes
  * its figures (A4 without one); `fontCss` is put in its style sheet (the math
  * face, which only the caller can read); `design(name)` gives another
@@ -407,8 +407,6 @@ ${title}${content}
       ...(figure.textPt !== undefined ? { textPt: figure.textPt } : {}), design: figure.owner,
     })),
     warnings,
-    // The text area of its pages, for laying them out (web/report-pages.js).
-    page: { textWidthPt: page.textWidthPt, textHeightPt: page.textHeightPt },
   };
 }
 
@@ -489,13 +487,10 @@ a { color: #1d4e89; text-decoration: none; }
 .note-toc li { display: flex; align-items: baseline; margin: 1pt 0; }
 .note-toc li > a { flex: 0 1 auto; }
 /* LaTeX's leaders: a period every 0.78 em (its own width, and 4.5 mu each
-   side), set from the right, so the dots of every line stand in columns.
-   The editor writes them in as text when it lays the pages out
-   (web/report-pages.js); a report it did not lay out draws them here. */
-.note-toc .toc-leader { flex: 1 1 0; min-width: 1em; margin: 0 0.25em 0 0.5em; overflow: hidden; white-space: nowrap; text-align: right; letter-spacing: 0.5em; }
-.note-toc .toc-leader:empty { direction: rtl; }
-.note-toc .toc-leader:empty::after { content: "${'.'.repeat(240)}"; }
-.note-toc .toc-level-0 > .toc-leader:empty::after { content: none; }
+   side), set from the right, so the dots of every line stand in columns. */
+.note-toc .toc-leader { flex: 1 1 0; min-width: 1em; margin: 0 0.25em 0 0.5em; overflow: hidden; white-space: nowrap; direction: rtl; }
+.note-toc .toc-leader::after { content: "${'.'.repeat(240)}"; letter-spacing: 0.5em; }
+.note-toc .toc-level-0 > .toc-leader::after { content: none; }
 .note-toc .toc-page { flex: none; min-width: 1.6em; text-align: right; }
 /* Unprinted (the browser's print dialog): no page to lead to. */
 .note-toc li:has(> .toc-page:empty) > .toc-leader { visibility: hidden; }
