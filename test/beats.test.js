@@ -204,7 +204,8 @@ test('a beat drawing leaves hidden objects out, or fades them for the editor', (
   assert.ok(!omitted.includes('data-net-id="N1"'), 'a partial net is drawn as plain ink');
   const faded = svgString(circuit, { beat: { view, fade: true } });
   // Solid grays, not opacity: overlapping faint strokes would double up.
-  assert.ok(faded.includes(`class="wire-ink" d="M 200 163`) && faded.includes(`stroke="${BEAT_FADE_INK}"`));
+  const fadedInk = [...faded.matchAll(/<path class="wire-ink" [^>]+>/g)].map(([path]) => path).find((path) => path.includes(`stroke="${BEAT_FADE_INK}"`));
+  assert.ok(fadedInk?.includes('200 163'), 'the hidden part\'s lead in the faded ink');
   assert.ok(!faded.includes('opacity="0.12"'));
   assert.ok(faded.includes('data-net-id="N1"'), 'the editor keeps the net to click');
   // Every beat keeps the whole drawing's frame.

@@ -268,7 +268,10 @@ hover glows) in that color without changing their own styles.
   `emph`, `ground`, `supply`, plus legacy fallbacks) and the public helpers
   `strokeAttrs`, `styleAttrs`, `fontAttrs`, and `escapeSvg`.
 - Solid wires and terminal leads share square-capped `wire-ink` paths so
-  terminal joints rasterize once. Per-segment wire elements remain transparent
+  terminal joints rasterize once; within one, a lead and the wire that runs
+  on from its pin (straight or at a right angle, two ends only) are one
+  line (`src/core/ink-join.js`), the same ink with no overlap for a PDF
+  viewer that smooths each piece apart to paint twice. Per-segment wire elements remain transparent
   hit targets; ghost/dashed strokes retain their own painted elements.
 - Exports, the page guide, and fit-to-view frame the visible extent
   (`Circuit#inkBounds`: drawn symbol graphics, wires, label text), not the

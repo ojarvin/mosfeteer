@@ -19,6 +19,7 @@ import { plotFigure } from './plot-figure.js';
 import { cursorLayout } from './plot-cursors.js';
 import { plotSpec } from './plot-spec.js';
 import { mathItalic, mathRuns } from './math-text.js';
+import { joinInkPaths } from './ink-join.js';
 import { joinSegments, stackOutline, stackedBoxes, wireEchoes } from './box-stack.js';
 
 function pt(x, y) {
@@ -1406,7 +1407,11 @@ export function svgString(circuit, opts = {}) {
   // The faint layers go under the ink they sit beneath.
   const inkLayer = (attrs) => (attrs.includes(FADE_INK) ? 0 : attrs.includes(DIM_INK) ? 1 : 2);
   for (const [attrs, ds] of [...ink].sort(([a], [b]) => inkLayer(a) - inkLayer(b))) {
-    parts.push(`<path class="wire-ink" d="${ds.join(' ')}" fill="none" ${attrs} pointer-events="none"/>`);
+    // One line where a lead runs on into its wire (ink-join.js): no overlap
+    // for a viewer to paint twice.
+    const width = Number(attrs.match(/stroke-width="([\d.]+)"/)?.[1]);
+    const joinable = attrs.includes('stroke-linecap="square"') && attrs.includes('stroke-linejoin="miter"');
+    parts.push(`<path class="wire-ink" d="${joinable ? joinInkPaths(ds, width) : ds.join(' ')}" fill="none" ${attrs} pointer-events="none"/>`);
   }
 
   // A joined supply bar is drawn as one shape (below), so the slabs it covers

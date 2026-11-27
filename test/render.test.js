@@ -110,11 +110,10 @@ test('wires and pin leads share one square-capped ink path', () => {
   // Wires and pin leads share one square-capped ink path, so their overlap at
   // a terminal is rasterized once (no doubled anti-aliased edges). Leads are
   // pulled in by half the stroke width, so the cap ends exactly where the
-  // butt-ended lead did.
+  // butt-ended lead did; a lead and the wire it runs on into are one line.
   const ink = svg.match(/<path class="wire-ink"[^>]+>/)?.[0] || '';
-  assert.match(ink, /M 160 0 L 400 0/);
   assert.match(ink, /M 3 0 L 50 0 L 55 20/, 'R1 lead in world coordinates');
-  assert.match(ink, /L 157 0/, 'R1 terminal-side lead end');
+  assert.match(ink, /L 157 0 L 160 0 L 400 0 L 403 0/, 'R1 lead, the wire, and R2 lead as one line');
   assert.match(ink, /stroke-linecap="square"/);
   c.addComponent('capacitor', { refdes: 'C1', x: 80, y: 400 });
   const plates = svgString(c);
