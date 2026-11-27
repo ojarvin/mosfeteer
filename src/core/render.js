@@ -18,7 +18,7 @@ import { bodeFigure } from './bode-figure.js';
 import { plotFigure } from './plot-figure.js';
 import { cursorLayout } from './plot-cursors.js';
 import { plotSpec } from './plot-spec.js';
-import { mathRuns } from './math-text.js';
+import { mathItalic, mathRuns } from './math-text.js';
 import { joinSegments, stackOutline, stackedBoxes, wireEchoes } from './box-stack.js';
 
 function pt(x, y) {
@@ -905,26 +905,26 @@ function plotAnnotationSvg(label, opacity = '') {
 /**
  * A parts table (parts-table.js), set as the math tables are (the
  * equations, the kT/C noise): all in the math font with math labels'
- * outline, headers upright as text, names italic as math, sizes and values
- * upright, each block under its header and a rule as thick as theirs. No
- * border: a table reads by its columns.
+ * outline, headers upright as text, names and symbolic values as math
+ * (letters in the font's math italic, as MathML sets them; the font has no
+ * italic face to slant), sizes and numbers upright, each block under its
+ * header and a rule as thick as theirs. No border: a table reads by its
+ * columns.
  */
 function partsTableSvg(label, opacity = '') {
   const layout = label.syncTableBox();
   const { x, y } = label.anchor;
   const fontSize = labelFontSize(label.style?.width);
   const color = escapeSvg(resolveColor(label.style?.color || '#111'));
-  // In an italic name, digits stay upright, as math sets them (M_1).
-  const upright = (text, italic) => (italic
-    ? text.split(/(\d+)/).map((piece) => (/^\d+$/.test(piece) ? `<tspan font-style="normal">${escapeSvg(piece)}</tspan>` : escapeSvg(piece))).join('')
-    : escapeSvg(text));
-  const runsSvg = (runs, italic) => runs.map((run) => (run.sub || run.super
-    ? `<tspan baseline-shift="${run.sub ? '-' : ''}${fmt(fontSize * 0.25)}" font-size="${fmt(fontSize * 0.62)}">${upright(run.text, italic)}</tspan>`
-    : upright(run.text, italic))).join('');
+  // Each letter italic, digits and signs upright, as TeX sets M_{1}.
+  const letters = (text, math) => escapeSvg(math ? [...text].map(mathItalic).join('') : text);
+  const runsSvg = (runs, math) => runs.map((run) => (run.sub || run.super
+    ? `<tspan baseline-shift="${run.sub ? '-' : ''}${fmt(fontSize * 0.25)}" font-size="${fmt(fontSize * 0.62)}">${letters(run.text, math)}</tspan>`
+    : letters(run.text, math))).join('');
   const parts = layout.items.map((item) => {
     if (item.type === 'rule') return `<line x1="${fmt(item.x1)}" y1="${fmt(item.y)}" x2="${fmt(item.x2)}" y2="${fmt(item.y)}" stroke="${color}" stroke-width="${fmt(fontSize * MATH_RULE_EM)}" stroke-linecap="butt"/>`;
-    const italic = item.role === 'name';
-    return `<text x="${fmt(item.x)}" y="${fmt(item.y)}" text-anchor="${item.anchor}" font-size="${fmt(fontSize)}" font-family="${escapeSvg(MATH_FONT_FAMILY)}"${italic ? ' font-style="italic"' : ''} stroke="${color}" stroke-width="${fmt(fontSize * 0.02)}" fill="${color}">${runsSvg(item.runs, italic)}</text>`;
+    const math = item.role === 'name' || !!item.math;
+    return `<text x="${fmt(item.x)}" y="${fmt(item.y)}" text-anchor="${item.anchor}" font-size="${fmt(fontSize)}" font-family="${escapeSvg(MATH_FONT_FAMILY)}" stroke="${color}" stroke-width="${fmt(fontSize * 0.02)}" fill="${color}">${runsSvg(item.runs, math)}</text>`;
   }).join('');
   return `<g class="parts-table" transform="translate(${fmt(x)} ${fmt(y)})"${opacity}>${parts}</g>`;
 }

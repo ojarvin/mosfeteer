@@ -32,6 +32,7 @@ import { addPartsTable, groupPartRows, partKind, partLabelMode, partsTableFigure
 import { chooseFigure } from '../core/figures.js';
 import { setPartValue } from '../core/part-moves.js';
 import { componentNameIdentity, parseLabelRuns } from '../core/model.js';
+import { isNumberValue, valueMarkup } from '../core/part-value.js';
 import { canvasEl } from './elements.js';
 import { editor } from './editor-state.js';
 import { floatingWindow, windowToggle } from './floating-window.js';
@@ -196,10 +197,18 @@ function say(text, kind = '') {
 
 // ----- drawing the grid ---------------------------------------------------------------
 
+const runNodes = (source) => parseLabelRuns(source).map((run) => (run.sub ? el('sub', { text: run.text }) : run.super ? el('sup', { text: run.text }) : document.createTextNode(run.text)));
+
 function nameNode(c) {
   const name = editor.circuit.labelOf(c.refdes)?._text || c.refdes;
-  const source = /^\$.*\$$/.test(name) ? name.slice(1, -1) : name;
-  return parseLabelRuns(source).map((run) => (run.sub ? el('sub', { text: run.text }) : run.super ? el('sup', { text: run.text }) : document.createTextNode(run.text)));
+  return runNodes(/^\$.*\$$/.test(name) ? name.slice(1, -1) : name);
+}
+
+/** A value that is not a number with its scripts, as the drawing and the
+ *  table set it (valueMarkup); a number as typed. */
+function valueNode(c) {
+  const text = String(c.value ?? '');
+  return text.trim() && !isNumberValue(text, c.type) ? runNodes(valueMarkup(text, c.type)) : [text];
 }
 
 function matches(c) {
@@ -285,8 +294,9 @@ function buildRows() {
         class: `sizing-cell sizing-${column.key}${takes ? '' : ' sizing-none'}${draft ? ' sizing-draft' : ''}`,
         'data-key': column.key,
         ...(draft ? { title: 'Needs both W and L' } : {}),
-        text: takes && column.key !== 'label' ? column.text(c) : '',
+        text: takes && column.key !== 'label' && column.key !== 'value' ? column.text(c) : '',
       });
+      if (column.key === 'value' && takes) td.append(...valueNode(c));
       if (column.key === 'label' && labeled(c)) {
         td.append(el('span', { class: 'sizing-choice', text: column.text(c) }), el('span', { class: 'sizing-chevron', 'aria-hidden': 'true', text: '▾' }));
       }

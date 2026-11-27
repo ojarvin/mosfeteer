@@ -40482,6 +40482,8 @@ __modules["src/core/part-value.js"] = function (__require, __exports) {
 __exports.valueText = valueText;
 __exports.valueNumber = valueNumber;
 __exports.valueUnit = valueUnit;
+__exports.isNumberValue = isNumberValue;
+__exports.valueMarkup = valueMarkup;
 __exports.valueTex = valueTex;
 __exports.valueLabelTex = valueLabelTex;
 __exports.replacedNameLabels = replacedNameLabels;
@@ -40555,12 +40557,29 @@ function valueUnit(type) {
   return UNITS[type] || null;
 }
 
+/** Whether a value reads as a number with its unit (8p, 10k), not a
+ *  symbol (R_L). */
+function isNumberValue(value, type) {
+  return valueText(value, type).includes(THIN_SPACE);
+}
+
+/** A value that is not a number as label markup: math delimiters dropped,
+ *  and a script without braces taking the whole run after it, as analysis
+ *  reads a name (FSR_DPS is FSR_{DPS}, V_DD/2 is V_{DD}/2). A number is
+ *  valueText. The window, the table, and the label all read it so. */
+function valueMarkup(value, type) {
+  const text = valueText(value, type);
+  if (text.includes(THIN_SPACE)) return text;
+  const source = text.length >= 2 && text.startsWith('$') && text.endsWith('$') ? text.slice(1, -1) : text;
+  return source.replace(/([_^])([A-Za-z0-9]+)/g, '$1{$2}');
+}
+
 /** A value as TeX: a number and its unit upright, `\mathrm{8\,pF}`; a
- *  value that is not a number (R_{L}) as it is. */
+ *  value that is not a number as valueMarkup reads it (R_{L}). */
 function valueTex(value, type) {
   const text = valueText(value, type);
   const [number, unit] = text.split(THIN_SPACE);
-  return unit !== undefined ? `\\mathrm{${number}\\,${unit}}` : text;
+  return unit !== undefined ? `\\mathrm{${number}\\,${unit}}` : valueMarkup(value, type);
 }
 
 /** The value label's TeX: the value alone, below the name or in its
@@ -40606,7 +40625,7 @@ let MOS_SIZE_TYPES, lengthMeters; __bind(() => { ({ MOS_SIZE_TYPES, lengthMeters
 let parseLabelRuns; __bind(() => { ({ parseLabelRuns } = __require("src/core/model.js")); });
 let newFigureId, placeFigure, settlePlaced; __bind(() => { ({ newFigureId, placeFigure, settlePlaced } = __require("src/core/figures.js")); });
 let TABLE_RULE_ROOM_EM, labelFontSize; __bind(() => { ({ TABLE_RULE_ROOM_EM, labelFontSize } = __require("src/core/style.js")); });
-let THIN_SPACE, VALUE_TYPES, valueNumber, valueText, valueUnit; __bind(() => { ({ THIN_SPACE, VALUE_TYPES, valueNumber, valueText, valueUnit } = __require("src/core/part-value.js")); });
+let THIN_SPACE, VALUE_TYPES, isNumberValue, valueMarkup, valueNumber, valueText, valueUnit; __bind(() => { ({ THIN_SPACE, VALUE_TYPES, isNumberValue, valueMarkup, valueNumber, valueText, valueUnit } = __require("src/core/part-value.js")); });
 /**
  * Parts table: the parts a design is sized with -- each transistor's W, L
  * and multiplier (mos-size.js) and each passive's or source's value -- read
@@ -40771,15 +40790,16 @@ function lengthText(length) {
 }
 
 /** The cells of one part as text: name (label markup), and W, L, m or
- *  value; a missing one is a dash. */
+ *  value (a symbol in label markup, valueMarkup); a missing one is a dash.
+ *  `symbol` marks a value that is not a number, set as math as names are. */
 function partCells(circuit, component) {
   const name = circuit.labelOf(component.refdes)?._text || component.refdes;
   if (partKind(component) === 'size') {
     const size = component.size;
     return { name, w: size ? lengthText(size.w) : '–', l: size ? lengthText(size.l) : '–', m: size ? String(size.m) : '' };
   }
-  const value = valueText(component.value, component.type);
-  return { name, value: value || '–' };
+  const value = valueMarkup(component.value, component.type);
+  return { name, value: value || '–', symbol: !!value && !isNumberValue(component.value, component.type) };
 }
 
 /** A name shown as label markup: math delimiters dropped, the rest kept. */
@@ -40827,7 +40847,8 @@ const BLOCK_GAP = GRID;
  * numbers on the right. The width and height are whole cells.
  *
  * Returns { w, h, items: [{ type: 'text', x, y, runs, anchor, role } |
- * { type: 'rule', x1, x2, y }] } (role: 'head', 'name', or 'cell').
+ * { type: 'rule', x1, x2, y }] } (role: 'head', 'name', or 'cell'; a
+ * symbolic value's cell has `math`, set as math as a name is).
  */
 function partsTableLayout(circuit, table, { width = 'normal' } = {}) {
   const fontSize = labelFontSize(width);
@@ -40878,7 +40899,7 @@ function partsTableLayout(circuit, table, { width = 'normal' } = {}) {
     for (const r of block.rows) {
       items.push({ type: 'text', x: 0, y: baseline(row), runs: r.name, anchor: 'start', role: 'name' });
       block.columns.forEach(([, key], index) => {
-        if (r.cells[key]) items.push({ type: 'text', x: rights[index], y: baseline(row), runs: cellRuns(r.cells[key]), anchor: 'end', role: 'cell' });
+        if (r.cells[key]) items.push({ type: 'text', x: rights[index], y: baseline(row), runs: cellRuns(r.cells[key]), anchor: 'end', role: 'cell', ...(key === 'value' && r.cells.symbol ? { math: true } : {}) });
       });
       row += 1;
     }
@@ -42364,7 +42385,7 @@ let bodeFigure; __bind(() => { ({ bodeFigure } = __require("src/core/bode-figure
 let plotFigure; __bind(() => { ({ plotFigure } = __require("src/core/plot-figure.js")); });
 let cursorLayout; __bind(() => { ({ cursorLayout } = __require("src/core/plot-cursors.js")); });
 let plotSpec; __bind(() => { ({ plotSpec } = __require("src/core/plot-spec.js")); });
-let mathRuns; __bind(() => { ({ mathRuns } = __require("src/core/math-text.js")); });
+let mathItalic, mathRuns; __bind(() => { ({ mathItalic, mathRuns } = __require("src/core/math-text.js")); });
 let joinSegments, stackOutline, stackedBoxes, wireEchoes; __bind(() => { ({ joinSegments, stackOutline, stackedBoxes, wireEchoes } = __require("src/core/box-stack.js")); });
 
 
@@ -43273,26 +43294,26 @@ function plotAnnotationSvg(label, opacity = '') {
 /**
  * A parts table (parts-table.js), set as the math tables are (the
  * equations, the kT/C noise): all in the math font with math labels'
- * outline, headers upright as text, names italic as math, sizes and values
- * upright, each block under its header and a rule as thick as theirs. No
- * border: a table reads by its columns.
+ * outline, headers upright as text, names and symbolic values as math
+ * (letters in the font's math italic, as MathML sets them; the font has no
+ * italic face to slant), sizes and numbers upright, each block under its
+ * header and a rule as thick as theirs. No border: a table reads by its
+ * columns.
  */
 function partsTableSvg(label, opacity = '') {
   const layout = label.syncTableBox();
   const { x, y } = label.anchor;
   const fontSize = labelFontSize(label.style?.width);
   const color = escapeSvg(resolveColor(label.style?.color || '#111'));
-  // In an italic name, digits stay upright, as math sets them (M_1).
-  const upright = (text, italic) => (italic
-    ? text.split(/(\d+)/).map((piece) => (/^\d+$/.test(piece) ? `<tspan font-style="normal">${escapeSvg(piece)}</tspan>` : escapeSvg(piece))).join('')
-    : escapeSvg(text));
-  const runsSvg = (runs, italic) => runs.map((run) => (run.sub || run.super
-    ? `<tspan baseline-shift="${run.sub ? '-' : ''}${fmt(fontSize * 0.25)}" font-size="${fmt(fontSize * 0.62)}">${upright(run.text, italic)}</tspan>`
-    : upright(run.text, italic))).join('');
+  // Each letter italic, digits and signs upright, as TeX sets M_{1}.
+  const letters = (text, math) => escapeSvg(math ? [...text].map(mathItalic).join('') : text);
+  const runsSvg = (runs, math) => runs.map((run) => (run.sub || run.super
+    ? `<tspan baseline-shift="${run.sub ? '-' : ''}${fmt(fontSize * 0.25)}" font-size="${fmt(fontSize * 0.62)}">${letters(run.text, math)}</tspan>`
+    : letters(run.text, math))).join('');
   const parts = layout.items.map((item) => {
     if (item.type === 'rule') return `<line x1="${fmt(item.x1)}" y1="${fmt(item.y)}" x2="${fmt(item.x2)}" y2="${fmt(item.y)}" stroke="${color}" stroke-width="${fmt(fontSize * MATH_RULE_EM)}" stroke-linecap="butt"/>`;
-    const italic = item.role === 'name';
-    return `<text x="${fmt(item.x)}" y="${fmt(item.y)}" text-anchor="${item.anchor}" font-size="${fmt(fontSize)}" font-family="${escapeSvg(MATH_FONT_FAMILY)}"${italic ? ' font-style="italic"' : ''} stroke="${color}" stroke-width="${fmt(fontSize * 0.02)}" fill="${color}">${runsSvg(item.runs, italic)}</text>`;
+    const math = item.role === 'name' || !!item.math;
+    return `<text x="${fmt(item.x)}" y="${fmt(item.y)}" text-anchor="${item.anchor}" font-size="${fmt(fontSize)}" font-family="${escapeSvg(MATH_FONT_FAMILY)}" stroke="${color}" stroke-width="${fmt(fontSize * 0.02)}" fill="${color}">${runsSvg(item.runs, math)}</text>`;
   }).join('');
   return `<g class="parts-table" transform="translate(${fmt(x)} ${fmt(y)})"${opacity}>${parts}</g>`;
 }
@@ -77217,6 +77238,7 @@ const GUIDES = Object.freeze([
     steps: [
       'Select a part. The side panel shows it under **Selection**; press `Shift+P` if the panel is hidden.',
       'Type a size such as ``2u/180n x4`` into the **Size** field, or a value such as ``10k`` into the **Value** field, and press `Enter`.',
+      'A value that is not a number is a symbol: ``_`` makes the rest of the word a subscript, so ``FSR_DPS`` reads FSR with DPS below. Write ``FSR_{D}PS`` for a shorter one.',
       'Press `Shift+Z` to open the sizing window, which lists every part in one table. Type into its cells as you would in a spreadsheet.',
       'To show a size or a value on the drawing, right-click the part, choose **Sizing** or **Value**, and then choose **Below the name**.',
       'Click **Annotate** in the sizing window to put a parts table on the drawing.',
@@ -100047,6 +100069,7 @@ let addPartsTable, groupPartRows, partKind, partLabelMode, partsTableFigure, sor
 let chooseFigure; __bind(() => { ({ chooseFigure } = __require("src/core/figures.js")); });
 let setPartValue; __bind(() => { ({ setPartValue } = __require("src/core/part-moves.js")); });
 let componentNameIdentity, parseLabelRuns; __bind(() => { ({ componentNameIdentity, parseLabelRuns } = __require("src/core/model.js")); });
+let isNumberValue, valueMarkup; __bind(() => { ({ isNumberValue, valueMarkup } = __require("src/core/part-value.js")); });
 let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let floatingWindow, windowToggle; __bind(() => { ({ floatingWindow, windowToggle } = __require("src/web/floating-window.js")); });
@@ -100082,6 +100105,7 @@ let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
  * when it is chosen and kept while cells are edited, so a row never moves
  * out from under the range; parts added, removed, or filtered take it again.
  */
+
 
 
 
@@ -100252,10 +100276,18 @@ function say(text, kind = '') {
 
 // ----- drawing the grid ---------------------------------------------------------------
 
+const runNodes = (source) => parseLabelRuns(source).map((run) => (run.sub ? el('sub', { text: run.text }) : run.super ? el('sup', { text: run.text }) : document.createTextNode(run.text)));
+
 function nameNode(c) {
   const name = editor.circuit.labelOf(c.refdes)?._text || c.refdes;
-  const source = /^\$.*\$$/.test(name) ? name.slice(1, -1) : name;
-  return parseLabelRuns(source).map((run) => (run.sub ? el('sub', { text: run.text }) : run.super ? el('sup', { text: run.text }) : document.createTextNode(run.text)));
+  return runNodes(/^\$.*\$$/.test(name) ? name.slice(1, -1) : name);
+}
+
+/** A value that is not a number with its scripts, as the drawing and the
+ *  table set it (valueMarkup); a number as typed. */
+function valueNode(c) {
+  const text = String(c.value ?? '');
+  return text.trim() && !isNumberValue(text, c.type) ? runNodes(valueMarkup(text, c.type)) : [text];
 }
 
 function matches(c) {
@@ -100341,8 +100373,9 @@ function buildRows() {
         class: `sizing-cell sizing-${column.key}${takes ? '' : ' sizing-none'}${draft ? ' sizing-draft' : ''}`,
         'data-key': column.key,
         ...(draft ? { title: 'Needs both W and L' } : {}),
-        text: takes && column.key !== 'label' ? column.text(c) : '',
+        text: takes && column.key !== 'label' && column.key !== 'value' ? column.text(c) : '',
       });
+      if (column.key === 'value' && takes) td.append(...valueNode(c));
       if (column.key === 'label' && labeled(c)) {
         td.append(el('span', { class: 'sizing-choice', text: column.text(c) }), el('span', { class: 'sizing-chevron', 'aria-hidden': 'true', text: '▾' }));
       }

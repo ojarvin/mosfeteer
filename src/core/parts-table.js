@@ -16,7 +16,7 @@ import { MOS_SIZE_TYPES, lengthMeters } from './mos-size.js';
 import { parseLabelRuns } from './model.js';
 import { newFigureId, placeFigure, settlePlaced } from './figures.js';
 import { TABLE_RULE_ROOM_EM, labelFontSize } from './style.js';
-import { THIN_SPACE, VALUE_TYPES, valueNumber, valueText, valueUnit } from './part-value.js';
+import { THIN_SPACE, VALUE_TYPES, isNumberValue, valueMarkup, valueNumber, valueText, valueUnit } from './part-value.js';
 
 export { VALUE_TYPES, valueText };
 
@@ -162,15 +162,16 @@ export function lengthText(length) {
 }
 
 /** The cells of one part as text: name (label markup), and W, L, m or
- *  value; a missing one is a dash. */
+ *  value (a symbol in label markup, valueMarkup); a missing one is a dash.
+ *  `symbol` marks a value that is not a number, set as math as names are. */
 export function partCells(circuit, component) {
   const name = circuit.labelOf(component.refdes)?._text || component.refdes;
   if (partKind(component) === 'size') {
     const size = component.size;
     return { name, w: size ? lengthText(size.w) : '–', l: size ? lengthText(size.l) : '–', m: size ? String(size.m) : '' };
   }
-  const value = valueText(component.value, component.type);
-  return { name, value: value || '–' };
+  const value = valueMarkup(component.value, component.type);
+  return { name, value: value || '–', symbol: !!value && !isNumberValue(component.value, component.type) };
 }
 
 /** A name shown as label markup: math delimiters dropped, the rest kept. */
@@ -218,7 +219,8 @@ const BLOCK_GAP = GRID;
  * numbers on the right. The width and height are whole cells.
  *
  * Returns { w, h, items: [{ type: 'text', x, y, runs, anchor, role } |
- * { type: 'rule', x1, x2, y }] } (role: 'head', 'name', or 'cell').
+ * { type: 'rule', x1, x2, y }] } (role: 'head', 'name', or 'cell'; a
+ * symbolic value's cell has `math`, set as math as a name is).
  */
 export function partsTableLayout(circuit, table, { width = 'normal' } = {}) {
   const fontSize = labelFontSize(width);
@@ -269,7 +271,7 @@ export function partsTableLayout(circuit, table, { width = 'normal' } = {}) {
     for (const r of block.rows) {
       items.push({ type: 'text', x: 0, y: baseline(row), runs: r.name, anchor: 'start', role: 'name' });
       block.columns.forEach(([, key], index) => {
-        if (r.cells[key]) items.push({ type: 'text', x: rights[index], y: baseline(row), runs: cellRuns(r.cells[key]), anchor: 'end', role: 'cell' });
+        if (r.cells[key]) items.push({ type: 'text', x: rights[index], y: baseline(row), runs: cellRuns(r.cells[key]), anchor: 'end', role: 'cell', ...(key === 'value' && r.cells.symbol ? { math: true } : {}) });
       });
       row += 1;
     }

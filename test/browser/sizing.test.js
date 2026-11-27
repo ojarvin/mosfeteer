@@ -132,6 +132,17 @@ describe('sizing window', { skip: browserSkip() }, () => {
     assert.equal(await editor(`editor.circuit.components.get('C1').value`), '1p');
   });
 
+  test('a value that is not a number shows its scripts as the drawing sets them; its cell edits it as typed', async () => {
+    await h.evaluate(`window.__run('value R1 FSR_DPS/FSR_V')`);
+    await h.until(`document.querySelector(${JSON.stringify(cell('R1', 'value'))}).innerHTML === 'FSR<sub>DPS</sub>/FSR<sub>V</sub>'`);
+    await pickCell('R1', 'value');
+    await gridKey('F2');
+    await h.until(`document.querySelector('.sizing-input')?.value === 'FSR_DPS/FSR_V'`);
+    await h.evaluate(`document.querySelector('.sizing-input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))`);
+    await h.evaluate(`window.__run('value R1 10k')`);
+    await h.until(`document.querySelector(${JSON.stringify(cell('R1', 'value'))}).textContent === '10k'`);
+  });
+
   test('the Label menu shows the size labels of every row in the range', async () => {
     assert.equal(await editor(`editor.circuit.sizeLabelOf('M1')`), null);
     const closeMenu = () => h.evaluate(`${h.module('context-menu.js')}.then((m) => m.closeComponentContextMenu())`);
@@ -190,7 +201,7 @@ describe('sizing window', { skip: browserSkip() }, () => {
     await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some((l) => l.table))`);
     const svg = () => h.evaluate(`document.querySelector('#canvas g.parts-table')?.textContent || ''`);
     await h.until(`(document.querySelector('#canvas g.parts-table')?.textContent || '').includes('10\u2009µm')`);
-    assert.match(await svg(), /^WLmM110\u2009µm1\u2009µm2M210\u2009µm/);
+    assert.match(await svg(), /^WLm𝑀110\u2009µm1\u2009µm2𝑀210\u2009µm/u);
     await h.evaluate(`window.__run('size M1 7u/180n')`);
     await h.until(`(document.querySelector('#canvas g.parts-table')?.textContent || '').includes('7\u2009µm')`);
     // Right of everything else drawn, level with its top.

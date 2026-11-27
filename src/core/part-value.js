@@ -67,12 +67,29 @@ export function valueUnit(type) {
   return UNITS[type] || null;
 }
 
+/** Whether a value reads as a number with its unit (8p, 10k), not a
+ *  symbol (R_L). */
+export function isNumberValue(value, type) {
+  return valueText(value, type).includes(THIN_SPACE);
+}
+
+/** A value that is not a number as label markup: math delimiters dropped,
+ *  and a script without braces taking the whole run after it, as analysis
+ *  reads a name (FSR_DPS is FSR_{DPS}, V_DD/2 is V_{DD}/2). A number is
+ *  valueText. The window, the table, and the label all read it so. */
+export function valueMarkup(value, type) {
+  const text = valueText(value, type);
+  if (text.includes(THIN_SPACE)) return text;
+  const source = text.length >= 2 && text.startsWith('$') && text.endsWith('$') ? text.slice(1, -1) : text;
+  return source.replace(/([_^])([A-Za-z0-9]+)/g, '$1{$2}');
+}
+
 /** A value as TeX: a number and its unit upright, `\mathrm{8\,pF}`; a
- *  value that is not a number (R_{L}) as it is. */
+ *  value that is not a number as valueMarkup reads it (R_{L}). */
 export function valueTex(value, type) {
   const text = valueText(value, type);
   const [number, unit] = text.split(THIN_SPACE);
-  return unit !== undefined ? `\\mathrm{${number}\\,${unit}}` : text;
+  return unit !== undefined ? `\\mathrm{${number}\\,${unit}}` : valueMarkup(value, type);
 }
 
 /** The value label's TeX: the value alone, below the name or in its

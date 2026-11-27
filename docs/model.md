@@ -171,8 +171,10 @@ values, and renames (`renameComponent` rewrites `parts`), and a deleted
 part's row goes. Its box is the size of its layout (`syncTableBox`, whole
 cells from its top-left corner), never resized by hand; anywhere on it
 picks it. It is set as the math tables are (the equations, the kT/C
-noise): all in the math font, headers upright as text, names italic as
-math with their digits upright (M_1), numbers and units upright (`400 nm`,
+noise): all in the math font, headers upright as text, names and
+symbolic values as math, each letter in the font's math italic as MathML
+sets it (the font has no italic face to slant), digits upright (M_1),
+numbers and units upright (`400 nm`,
 a thin space between), and rules as thick as a table's `\hline`. All
 tables space alike: each row a band 1.75 em tall (two grid cells at the
 normal label size; the parts table's `ROW_PITCH`), its text's caps centered
@@ -182,7 +184,9 @@ math table's cells share their row's baseline, as TeX's do; a row taller
 than its band (a fraction) grows. A passive's or
 source's value takes its unit (`valueText`: Ω, F, H, A, V; the number as
 typed, `1.5n` reads 1.5 nF), and a value that is not a number reads as
-typed; each column is as
+typed, a script without braces taking its whole run (`valueMarkup`:
+FSR_DPS is FSR_{DPS}, as analysis reads a name), alike in the Sizing
+window, the table, and the value label; each column is as
 wide as its widest text, estimated from measured glyph widths, so the gaps
 between columns read equal. A new table goes right of the drawing, level
 with its top.

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
 import { svgString } from '../src/core/render.js';
-import { PART_VALUE_ROLE, replacedNameLabels, valueLabelTex } from '../src/core/part-value.js';
+import { PART_VALUE_ROLE, replacedNameLabels, valueLabelTex, valueMarkup } from '../src/core/part-value.js';
 
 function circuitWith(lines) {
   const circuit = new Circuit();
@@ -59,8 +59,12 @@ test('the label follows the value and the name, survives a reload, and deleting 
   assert.deepEqual(valueLabels(circuit), []);
 });
 
-test('a value that is not a number reads as typed', () => {
+test('a value that is not a number reads as typed, a script without braces taking its whole run', () => {
   assert.equal(valueLabelTex({ value: 'R_{L}', type: 'resistor' }), '$R_{L}$');
+  assert.equal(valueLabelTex({ value: 'FSR_DPS/FSR_V', type: 'voltage_source' }), '$FSR_{DPS}/FSR_{V}$');
+  assert.equal(valueLabelTex({ value: '$V_DD^2$', type: 'voltage_source' }), '$V_{DD}^{2}$', 'delimiters typed are not doubled');
+  assert.equal(valueMarkup('g_m r_o', 'resistor'), 'g_{m} r_{o}');
+  assert.equal(valueMarkup('10k', 'resistor'), '10\u2009kΩ', 'a number as valueText');
 });
 
 test('value --label refuses a part with no value label, and a mode it does not know', () => {

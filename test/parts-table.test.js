@@ -132,18 +132,22 @@ test('partstable refuses a part a table cannot show, and an empty design gets a 
   assert.deepEqual(texts(partsTableLayout(empty, tableOf(empty).table)), ['No sized parts']);
 });
 
-test('a parts table is set as the math tables are: the math font throughout, names italic with upright digits, their rule', () => {
+test('a parts table is set as the math tables are: the math font throughout, names in math italic letters with upright digits, their rule', () => {
   const circuit = new Circuit();
-  for (const line of ['add nmos M1 --at 0 0', 'size M1 2u/180n', 'add capacitor CS --at 400 0 --value 250f', 'partstable --at 800 0']) runCommand(circuit, line);
+  for (const line of ['add nmos M1 --at 0 0', 'size M1 2u/180n', 'add capacitor CS --at 400 0 --value 250f', 'add capacitor CLS1P --at 400 200 --value C_L', 'partstable --at 800 0']) runCommand(circuit, line);
+  circuit.labelOf('CLS1P').text = 'C_{CLS1P}';
   const svg = svgString(circuit);
   const table = svg.slice(svg.indexOf('class="parts-table"'), svg.indexOf('</g>', svg.indexOf('class="parts-table"')));
   assert.ok(!/sans-serif|font-weight="bold"/.test(table), 'no label face in the table');
   const texts = [...table.matchAll(/<text [^>]*>.*?<\/text>/g)].map(([t]) => t);
   assert.ok(texts.every((t) => t.includes('Latin Modern Math')), 'every text in the math font');
-  const value = texts.find((t) => t.includes('>Value<'));
-  assert.ok(value && !value.includes('font-style="italic"'), 'headers upright, as \\text is');
-  const name = texts.find((t) => t.includes('>M<'));
-  assert.ok(name.includes('font-style="italic"') && name.includes('<tspan font-style="normal">1</tspan>'), 'M_1 italic, its 1 upright');
+  assert.ok(!table.includes('font-style'), 'no slanted face: the font has none');
+  assert.ok(texts.some((t) => t.includes('>Value<')), 'headers upright, as \\text is');
+  const name = texts.find((t) => t.includes('>𝑀<'));
+  assert.ok(name && name.includes('>1</tspan>'), 'M_1 in math italic, its 1 upright');
+  assert.ok(texts.some((t) => t.includes('>𝐶<') && t.includes('>𝐶𝐿𝑆1𝑃</tspan>')), 'C_{CLS1P}: every letter math italic, the 1 upright');
+  assert.ok(texts.some((t) => t.includes('>𝐶<') && t.includes('>𝐿</tspan>')), 'a symbolic value set as math, C_L');
+  assert.ok(texts.some((t) => t.includes('>250\u2009fF<')), 'a number upright');
   // The rule as thick as a math table's \hline: 0.09 em.
   const width = Number(table.match(/<line [^>]*stroke-width="([\d.]+)"/)[1]);
   const fontSize = Number(texts[0].match(/font-size="([\d.]+)"/)[1]);

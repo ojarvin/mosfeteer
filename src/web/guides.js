@@ -51,6 +51,7 @@ export const GUIDES = Object.freeze([
     steps: [
       'Select a part. The side panel shows it under **Selection**; press `Shift+P` if the panel is hidden.',
       'Type a size such as ``2u/180n x4`` into the **Size** field, or a value such as ``10k`` into the **Value** field, and press `Enter`.',
+      'A value that is not a number is a symbol: ``_`` makes the rest of the word a subscript, so ``FSR_DPS`` reads FSR with DPS below. Write ``FSR_{D}PS`` for a shorter one.',
       'Press `Shift+Z` to open the sizing window, which lists every part in one table. Type into its cells as you would in a spreadsheet.',
       'To show a size or a value on the drawing, right-click the part, choose **Sizing** or **Value**, and then choose **Below the name**.',
       'Click **Annotate** in the sizing window to put a parts table on the drawing.',
