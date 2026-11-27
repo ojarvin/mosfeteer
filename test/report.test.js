@@ -286,10 +286,10 @@ test('an outline places the circuit, the beats and timing, and every annotated f
   circuit.addLabel({ text: 'Parts', x: 1200, y: 0, table: { parts: ['R1', 'R2'] }, figure: { id: newFigureId(circuit), kind: 'table', source: 'sizing' } });
   const outline = notesOutline(circuit, { name: 'divider' });
   assert.equal(outline, [
-    '# divider', 'Author: Your name', '[TOC]', '## Circuit', 'What the circuit is and does.', '![[circuit|The circuit.]]',
-    '## Operation', 'How it works, step by step.', '![[beat 1|Beat 1: $\\varphi_1$.]]', '![[beat 2|Beat 2.]]',
-    '## Analysis', 'What the analysis shows.', '![[F1|Equations (small-signal analysis).]]',
-    '## Sizing', 'How the parts are sized.', '![[F2|Parts.]]',
+    '# divider', 'Author: Your name', '[TOC]', '## Circuit', 'Text about the circuit.', '![[circuit|The circuit.]]',
+    '## Operation', 'Text about the operation.', '![[beat 1|Beat 1: $\\varphi_1$.]]', '![[beat 2|Beat 2.]]',
+    '## Analysis', 'Text about the analysis.', '![[F1|Equations (small-signal analysis).]]',
+    '## Sizing', 'Text about the sizing.', '![[F2|Parts.]]',
   ].join('\n\n') + '\n');
   // Every figure it places draws, and its author line is read as one.
   circuit.notes = outline;
@@ -298,7 +298,7 @@ test('an outline places the circuit, the beats and timing, and every annotated f
   // A bare circuit: its heading, text, and figure only.
   const bare = new Circuit();
   run(bare, 'add resistor R1 --at 0 0');
-  assert.equal(notesOutline(bare), '# Design\n\nAuthor: Your name\n\n[TOC]\n\n## Circuit\n\nWhat the circuit is and does.\n\n![[circuit|The circuit.]]\n');
+  assert.equal(notesOutline(bare), '# Design\n\nAuthor: Your name\n\n[TOC]\n\n## Circuit\n\nText about the circuit.\n\n![[circuit|The circuit.]]\n');
 });
 
 test('notes outline starts empty notes and never replaces written ones', () => {
@@ -358,7 +358,7 @@ test('an outline of a block diagram embeds each linked design once, as a section
   circuit.components.get('U1').link = 'ota';
   circuit.components.get('U2').link = 'filter';
   circuit.components.get('U3').link = 'ota';
-  assert.match(notesOutline(circuit), /\n\n## Blocks\n\nThe blocks, each from its own design\.\n\n!\[\[ota\]\]\n\n!\[\[filter\]\]\n$/);
+  assert.match(notesOutline(circuit), /\n\n## Blocks\n\nText about the blocks\.\n\n!\[\[ota\]\]\n\n!\[\[filter\]\]\n$/);
 });
 
 test('[TOC] lists the numbered sections where it stands, the references one of them, the title not', () => {

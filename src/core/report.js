@@ -572,7 +572,7 @@ const PLOT_CAPTIONS = {
 };
 const SOURCE_NAMES = { 'small-signal': 'small-signal', 'signal-flow': 'signal-flow', 'switched-cap': 'switched-capacitor' };
 
-/** What an annotated figure shows, as its caption in an outline. */
+/** An annotated figure's caption in an outline. */
 function figureCaption(figure) {
   const of = SOURCE_NAMES[figure.source] ? ` (${SOURCE_NAMES[figure.source]} analysis)` : '';
   if (figure.kind === 'plot') {
@@ -605,7 +605,7 @@ const OUTLINE_SECTIONS = [
  */
 export function notesOutline(circuit, { name = 'Design' } = {}) {
   const figures = listFigures(circuit);
-  const blocks = [`# ${name}`, 'Author: Your name', '[TOC]', '## Circuit', 'What the circuit is and does.', '![[circuit|The circuit.]]'];
+  const blocks = [`# ${name}`, 'Author: Your name', '[TOC]', '## Circuit', 'Text about the circuit.', '![[circuit|The circuit.]]'];
   for (const section of OUTLINE_SECTIONS) {
     const embeds = [];
     for (const kind of section.kinds) {
@@ -615,12 +615,12 @@ export function notesOutline(circuit, { name = 'Design' } = {}) {
       (circuit.beats || []).forEach((beat, index) => embeds.push(`![[beat ${index + 1}|Beat ${index + 1}${beat.name ? `: ${beat.name}` : ''}.]]`));
     }
     if (!embeds.length) continue;
-    const lead = { Operation: 'How it works, step by step.', Analysis: 'What the analysis shows.', Sizing: 'How the parts are sized.' }[section.title];
+    const lead = `Text about the ${section.title.toLowerCase()}.`;
     blocks.push(`## ${section.title}`, lead, ...embeds);
   }
   // The designs its parts link to, each once: their notes as sections.
   const linked = [...new Set([...circuit.components.values()].filter((part) => part.link && !part.figure)
     .sort((a, b) => a.refdes.localeCompare(b.refdes, undefined, { numeric: true })).map((part) => part.link))];
-  if (linked.length) blocks.push('## Blocks', 'The blocks, each from its own design.', ...linked.map((name) => `![[${name}]]`));
+  if (linked.length) blocks.push('## Blocks', 'Text about the blocks.', ...linked.map((name) => `![[${name}]]`));
   return `${blocks.join('\n\n')}\n`;
 }
