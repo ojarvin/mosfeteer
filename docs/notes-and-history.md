@@ -28,6 +28,14 @@ clipboard as plain Markdown (`notesMarkdown`): a mention as its name, in
 `$...$` when it has a subscript or superscript, a design link as the
 design's name; code is left as written.
 
+Text pasted into the source that reads as a table (`pastedTableRows`:
+two lines or more, every one split into the same number of cells, two or
+more, at tabs, else commas, else semicolons; a blank line inside or a
+quoted cell running over lines reads as text) asks at the caret: Table
+(the default) puts it in as a Markdown table (`markdownTable`, columns
+lined up, `|` escaped) on lines of its own, Text as it is; closing the
+menu any other way pastes the text.
+
 A picture pasted into the source (a screenshot, a bench capture) is kept
 in the design beside the notes (`Circuit#pictures`, `pictures` in the
 file: PNG, JPEG, or WebP data URLs by number, compressed as a picture

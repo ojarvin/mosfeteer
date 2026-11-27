@@ -39651,6 +39651,8 @@ __modules["src/core/notes.js"] = function (__require, __exports) {
 __exports.notePictureIds = notePictureIds;
 __exports.normalizeNotes = normalizeNotes;
 __exports.notesTable = notesTable;
+__exports.pastedTableRows = pastedTableRows;
+__exports.markdownTable = markdownTable;
 __exports.noteAuthor = noteAuthor;
 __exports.authorNames = authorNames;
 __exports.sameAuthors = sameAuthors;
@@ -39731,6 +39733,57 @@ const AUTHOR_LINE = /^\s*authors?:\s*(\S.*?)\s*$/i;
 function notesTable(columns, rows) {
   const line = (cell) => `|${Array.from({ length: columns }, () => cell).join('|')}|`;
   return [line('   '), line(' --- '), ...Array.from({ length: Math.max(0, rows - 1) }, () => line('   '))].join('\n');
+}
+
+/** One line's cells at `separator`: double quotes hold a separator, and
+ *  "" is a quote; null when a quote is left open (a cell running over
+ *  lines, which a paste cannot be read as a table with). */
+function separatedCells(line, separator) {
+  const cells = [];
+  let cell = '';
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (quoted) {
+      if (ch === '"' && line[i + 1] === '"') { cell += '"'; i += 1; } else if (ch === '"') quoted = false;
+      else cell += ch;
+    } else if (ch === '"' && !cell.trim()) quoted = true;
+    else if (ch === separator) { cells.push(cell.trim()); cell = ''; } else cell += ch;
+  }
+  if (quoted) return null;
+  cells.push(cell.trim());
+  return cells;
+}
+
+/**
+ * Pasted text as table rows, when it reads as one without guessing: two
+ * lines or more (a spreadsheet's range, a CSV file's lines), each split
+ * into the same number of cells, two or more, at tabs (what a spreadsheet
+ * copies), else at commas, else at semicolons. Blank lines around it are
+ * left out; a blank line inside, or a cell running over lines, makes it
+ * text. Returns `[[cell]]`, the first row the heading, or null.
+ */
+function pastedTableRows(text) {
+  const lines = String(text ?? '').replace(/^\uFEFF/, '').split(/\r\n|\r|\n/);
+  while (lines.length && !lines[0].trim()) lines.shift();
+  while (lines.length && !lines.at(-1).trim()) lines.pop();
+  if (lines.length < 2 || lines.some((line) => !line.trim())) return null;
+  for (const separator of ['\t', ',', ';']) {
+    if (!lines.every((line) => line.includes(separator))) continue;
+    const rows = lines.map((line) => separatedCells(line, separator));
+    if (rows.some((row) => !row) || rows.some((row) => row.length !== rows[0].length)) continue;
+    return rows;
+  }
+  return null;
+}
+
+/** Table rows as a Markdown table, its columns lined up in the source and
+ *  a `|` in a cell escaped. */
+function markdownTable(rows) {
+  const cells = rows.map((row) => row.map((cell) => cell.replace(/\|/g, '\\|')));
+  const widths = cells[0].map((_, k) => Math.max(3, ...cells.map((row) => row[k].length)));
+  const line = (row) => `| ${row.map((cell, k) => cell.padEnd(widths[k])).join(' | ')} |`;
+  return [line(cells[0]), line(widths.map((w) => '-'.repeat(w))), ...cells.slice(1).map(line)].join('\n');
 }
 
 /**
@@ -77470,6 +77523,7 @@ const GUIDES = Object.freeze([
       'Type ``@`` to list the parts and nets, or ``[[`` to list the other designs and the figures, and press `Enter` to put one in.',
       'Paste a picture, such as a screenshot, into the notes to keep it with the design.',
       'While writing, click **Table** and pick the columns and rows to put in an empty table.',
+      'Paste cells copied from a spreadsheet, or lines of a CSV file, and choose **Table** to put them in as a table, or **Text** to keep them as they are.',
       'Click **Copy** to put the notes on the clipboard as plain Markdown.',
     ],
     sections: [
@@ -91689,6 +91743,7 @@ function netPicker(items, onToggle) {
 };
 
 __modules["src/web/notes-completion.js"] = function (__require, __exports) {
+__exports.caretPoint = caretPoint;
 __exports.attachNoteCompletion = attachNoteCompletion;
 let noteCompletion; __bind(() => { ({ noteCompletion } = __require("src/core/notes.js")); });
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
@@ -91849,7 +91904,7 @@ __exports.renderNotesWindow = renderNotesWindow;
 __exports.showNotes = showNotes;
 __exports.installNotes = installNotes;
 __exports.notesDocumentShown = notesDocumentShown;
-let normalizeNotes, notesMarkdown, notesTable, resolveMention; __bind(() => { ({ normalizeNotes, notesMarkdown, notesTable, resolveMention } = __require("src/core/notes.js")); });
+let markdownTable, normalizeNotes, notesMarkdown, notesTable, pastedTableRows, resolveMention; __bind(() => { ({ markdownTable, normalizeNotes, notesMarkdown, notesTable, pastedTableRows, resolveMention } = __require("src/core/notes.js")); });
 let renderNotes; __bind(() => { ({ renderNotes } = __require("src/core/notes-markdown.js")); });
 let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
 let clientToWorld; __bind(() => { ({ clientToWorld } = __require("src/web/canvas-view.js")); });
@@ -91862,7 +91917,7 @@ let openDocumentPath; __bind(() => { ({ openDocumentPath } = __require("src/web/
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let beginSettingsEdit, endSettingsEdit, markSettingsChanged, render, setSelection; __bind(() => { ({ beginSettingsEdit, endSettingsEdit, markSettingsChanged, render, setSelection } = __require("src/web/main.js")); });
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
-let attachNoteCompletion; __bind(() => { ({ attachNoteCompletion } = __require("src/web/notes-completion.js")); });
+let attachNoteCompletion, caretPoint; __bind(() => { ({ attachNoteCompletion, caretPoint } = __require("src/web/notes-completion.js")); });
 let appendContextItem, closeComponentContextMenu, openMenuAt; __bind(() => { ({ appendContextItem, closeComponentContextMenu, openMenuAt } = __require("src/web/context-menu.js")); });
 let showDesignInReference; __bind(() => { ({ showDesignInReference } = __require("src/web/reference-window.js")); });
 let notesOutline, reportTargets, resolveReportTarget; __bind(() => { ({ notesOutline, reportTargets, resolveReportTarget } = __require("src/core/report.js")); });
@@ -92005,10 +92060,19 @@ function onInput() {
 }
 
 /** A picture pasted into the source: kept in the design under the next
- *  number, placed at the caret as `![](picture:N)`. */
+ *  number, placed at the caret as `![](picture:N)`. Text that reads as a
+ *  table (a spreadsheet's range, CSV lines: `pastedTableRows`) asks how it
+ *  goes in: as a Markdown table, or as the text it is. */
 function onSourcePaste(ev) {
   const file = [...(ev.clipboardData?.files || [])].find((item) => PASTED_IMAGE_TYPES.includes(item.type));
-  if (!file) return;
+  if (!file) {
+    const text = ev.clipboardData?.getData('text/plain') || '';
+    const rows = pastedTableRows(text);
+    if (!rows) return;
+    ev.preventDefault();
+    askPasteAsTable(text, rows);
+    return;
+  }
   ev.preventDefault();
   const field = win.source;
   const [start, end] = [field.selectionStart, field.selectionEnd];
@@ -92132,15 +92196,29 @@ function openTableGrid() {
   cells[0].focus();
 }
 
-function insertTable(field, start, end, columns, rows) {
+/** Ask at the caret how pasted table text goes in: Table (the default,
+ *  Enter) or Text; closing the menu any other way pastes the text. */
+function askPasteAsTable(text, rows) {
+  const field = win.source;
+  const [start, end] = [field.selectionStart, field.selectionEnd];
+  const box = field.getBoundingClientRect();
+  const at = caretPoint(field, start);
+  const menu = openMenuAt(box.left + at.x, box.top + at.y + 4, 'Paste');
+  if (!menu) return;
+  const put = (asTable) => {
+    editor.contextMenuDismiss = null;
+    if (asTable) insertBlock(field, start, end, markdownTable(rows), 2);
+    else insertText(field, start, end, text);
+  };
+  const table = appendContextItem(menu, `Table (${rows[0].length} × ${rows.length})`, () => put(true));
+  appendContextItem(menu, 'Text', () => put(false));
+  editor.contextMenuDismiss = () => { editor.contextMenuDismiss = null; insertText(field, start, end, text); };
+  table.focus();
+}
+
+/** Put `text` in for the field's start..end, as typing does. */
+function insertText(field, start, end, text) {
   if (!win || field !== win.source) return;
-  const { value } = field;
-  // A blank line on each side: a table is a block of its own.
-  const before = value.slice(0, start);
-  const after = value.slice(end);
-  const lead = !before ? '' : before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
-  const trail = !after ? '\n' : after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n';
-  const text = `${lead}${notesTable(columns, rows)}${trail}`;
   field.focus();
   field.setSelectionRange(start, end);
   // insertText keeps the field's own undo (Ctrl+Z) working.
@@ -92148,8 +92226,25 @@ function insertTable(field, start, end, columns, rows) {
     field.setRangeText(text, start, end, 'end');
     field.dispatchEvent(new Event('input', { bubbles: true }));
   }
+}
+
+function insertTable(field, start, end, columns, rows) {
+  insertBlock(field, start, end, notesTable(columns, rows), 2);
+}
+
+/** Put a block (a table) in for the field's start..end, on lines of its
+ *  own, the caret `caret` characters into it. */
+function insertBlock(field, start, end, block, caret) {
+  if (!win || field !== win.source) return;
+  const { value } = field;
+  // A blank line on each side: a table is a block of its own.
+  const before = value.slice(0, start);
+  const after = value.slice(end);
+  const lead = !before ? '' : before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
+  const trail = !after ? '\n' : after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n';
+  insertText(field, start, end, `${lead}${block}${trail}`);
   // The caret in the first heading cell.
-  const first = start + lead.length + 2;
+  const first = start + lead.length + caret;
   field.setSelectionRange(first, first);
 }
 

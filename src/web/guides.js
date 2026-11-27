@@ -233,6 +233,7 @@ export const GUIDES = Object.freeze([
       'Type ``@`` to list the parts and nets, or ``[[`` to list the other designs and the figures, and press `Enter` to put one in.',
       'Paste a picture, such as a screenshot, into the notes to keep it with the design.',
       'While writing, click **Table** and pick the columns and rows to put in an empty table.',
+      'Paste cells copied from a spreadsheet, or lines of a CSV file, and choose **Table** to put them in as a table, or **Text** to keep them as they are.',
       'Click **Copy** to put the notes on the clipboard as plain Markdown.',
     ],
     sections: [

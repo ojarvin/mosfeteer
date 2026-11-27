@@ -334,6 +334,41 @@ describe('design notes', { skip: browserSkip() }, () => {
     assert.equal(await h.evaluate(`document.querySelector('.notes-table').hidden`), true, 'hidden when read');
   });
 
+  test('text pasted from a spreadsheet asks Table or Text at the caret; Esc pastes the text', async () => {
+    await h.click('.notes-edit');
+    await typeNotes('Intro');
+    const paste = (text) => h.evaluate(`(() => {
+      const f = document.querySelector('.notes-source');
+      f.focus();
+      f.setSelectionRange(f.value.length, f.value.length);
+      const data = new DataTransfer();
+      data.setData('text/plain', ${JSON.stringify(text)});
+      f.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+    })()`);
+    const value = () => h.evaluate(`document.querySelector('.notes-source').value`);
+    const choose = (text) => h.evaluate(`[...document.querySelectorAll('.component-context-menu button')].find((b) => b.textContent.startsWith(${JSON.stringify(text)})).click()`);
+    const sheet = 'Part\tW\tL\r\nM1\t2u\t180n\r\nM2 | M3\t4u\t180n\r\n';
+    await paste(sheet);
+    await h.until(`!document.querySelector('.component-context-menu').hidden`);
+    assert.equal(await h.evaluate(`document.querySelector('.component-context-menu .context-menu-heading').textContent`), 'Paste');
+    assert.equal(await h.evaluate(`document.activeElement.textContent`), 'Table (3 × 3)', 'Enter takes the table');
+    await choose('Table');
+    assert.equal(await value(), 'Intro\n\n| Part     | W   | L    |\n| -------- | --- | ---- |\n| M1       | 2u  | 180n |\n| M2 \\| M3 | 4u  | 180n |\n');
+    await typeNotes('Intro ');
+    await paste('a,b\n1,2');
+    await h.until(`!document.querySelector('.component-context-menu').hidden`);
+    await choose('Text');
+    assert.equal(await value(), 'Intro a,b\n1,2');
+    await typeNotes('Intro ');
+    await paste('a,b\n1,2');
+    await h.until(`!document.querySelector('.component-context-menu').hidden`);
+    await h.evaluate(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))`);
+    await h.until(`document.querySelector('.component-context-menu').hidden`);
+    assert.equal(await value(), 'Intro a,b\n1,2', 'closed without a choice: the text');
+    assert.equal(await h.evaluate(`document.querySelector('.notes-source').hidden`), false, 'still writing');
+    await finish();
+  });
+
   test('a double-click on a picture on the drawing opens its options; its name places it in the notes', async () => {
     const id = await h.evaluate(`Promise.all([${h.module('editor-state.js')}, ${h.module('main.js')}]).then(([s, m]) => {
       const box = s.editor.circuit.addAnnotation('box', { x: 2000, y: 0, end: { x: 2160, y: 120 }, image: { src: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', aspect: 4 / 3 } });

@@ -65,6 +65,57 @@ export function notesTable(columns, rows) {
   return [line('   '), line(' --- '), ...Array.from({ length: Math.max(0, rows - 1) }, () => line('   '))].join('\n');
 }
 
+/** One line's cells at `separator`: double quotes hold a separator, and
+ *  "" is a quote; null when a quote is left open (a cell running over
+ *  lines, which a paste cannot be read as a table with). */
+function separatedCells(line, separator) {
+  const cells = [];
+  let cell = '';
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (quoted) {
+      if (ch === '"' && line[i + 1] === '"') { cell += '"'; i += 1; } else if (ch === '"') quoted = false;
+      else cell += ch;
+    } else if (ch === '"' && !cell.trim()) quoted = true;
+    else if (ch === separator) { cells.push(cell.trim()); cell = ''; } else cell += ch;
+  }
+  if (quoted) return null;
+  cells.push(cell.trim());
+  return cells;
+}
+
+/**
+ * Pasted text as table rows, when it reads as one without guessing: two
+ * lines or more (a spreadsheet's range, a CSV file's lines), each split
+ * into the same number of cells, two or more, at tabs (what a spreadsheet
+ * copies), else at commas, else at semicolons. Blank lines around it are
+ * left out; a blank line inside, or a cell running over lines, makes it
+ * text. Returns `[[cell]]`, the first row the heading, or null.
+ */
+export function pastedTableRows(text) {
+  const lines = String(text ?? '').replace(/^\uFEFF/, '').split(/\r\n|\r|\n/);
+  while (lines.length && !lines[0].trim()) lines.shift();
+  while (lines.length && !lines.at(-1).trim()) lines.pop();
+  if (lines.length < 2 || lines.some((line) => !line.trim())) return null;
+  for (const separator of ['\t', ',', ';']) {
+    if (!lines.every((line) => line.includes(separator))) continue;
+    const rows = lines.map((line) => separatedCells(line, separator));
+    if (rows.some((row) => !row) || rows.some((row) => row.length !== rows[0].length)) continue;
+    return rows;
+  }
+  return null;
+}
+
+/** Table rows as a Markdown table, its columns lined up in the source and
+ *  a `|` in a cell escaped. */
+export function markdownTable(rows) {
+  const cells = rows.map((row) => row.map((cell) => cell.replace(/\|/g, '\\|')));
+  const widths = cells[0].map((_, k) => Math.max(3, ...cells.map((row) => row[k].length)));
+  const line = (row) => `| ${row.map((cell, k) => cell.padEnd(widths[k])).join(' | ')} |`;
+  return [line(cells[0]), line(widths.map((w) => '-'.repeat(w))), ...cells.slice(1).map(line)].join('\n');
+}
+
 /**
  * Who wrote the notes: a line `Author: Ada Lovelace` (or `Authors: A, B`)
  * right under the notes' `#` title, or first when they have none (blank

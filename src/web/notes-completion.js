@@ -13,7 +13,7 @@ import { element as el } from './dom.js';
 
 /** Where the caret of `field` is, in pixels from the field's top-left
  *  (scrolling included): a hidden copy of the text up to the caret. */
-function caretPoint(field, index) {
+export function caretPoint(field, index) {
   const style = getComputedStyle(field);
   const mirror = el('div');
   for (const key of ['boxSizing', 'width', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',

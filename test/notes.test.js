@@ -4,7 +4,7 @@ import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
 import { loadDocument, relinkDocumentState } from '../src/core/document.js';
 import { designIndex, searchDesign } from '../src/core/design-index.js';
-import { findMentions, mentionToken, noteDesignLinks, normalizeNotes, noteCompletion, notesMarkdown, notesTable, relinkNotes, renameMentions, resolveMention } from '../src/core/notes.js';
+import { findMentions, markdownTable, mentionToken, noteDesignLinks, normalizeNotes, noteCompletion, notesMarkdown, notesTable, pastedTableRows, relinkNotes, renameMentions, resolveMention } from '../src/core/notes.js';
 import { renderNotes } from '../src/core/notes-markdown.js';
 
 const run = (circuit, ...lines) => lines.map((line) => runCommand(circuit, line));
@@ -183,6 +183,17 @@ test('lists nest by indentation, and indented lines continue their item', () => 
   assert.equal(html, '<ul><li>bias<ul><li>tail<ol><li>size</li><li>check</li></ol></li><li class="note-task done"><span class="note-check" aria-hidden="true"></span>mirror<br>ratio 1:4</li></ul></li><li>output</li></ul>\n<p>after</p>');
   // A tab counts as two spaces.
   assert.equal(renderNotes('- a\n\t- b'), '<ul><li>a<ul><li>b</li></ul></li></ul>');
+});
+
+test('pasted text reads as a table only when every line has the same cells, two or more', () => {
+  assert.deepEqual(pastedTableRows('Part\tW\r\nM1\t2u\r\n'), [['Part', 'W'], ['M1', '2u']], 'a spreadsheet range, its last line ending');
+  assert.deepEqual(pastedTableRows('x,y\n1,"2,5"\n'), [['x', 'y'], ['1', '2,5']], 'CSV with a quoted comma');
+  assert.deepEqual(pastedTableRows('a;b\n1;2'), [['a', 'b'], ['1', '2']]);
+  assert.deepEqual(pastedTableRows('a\t\tc\n1\t2\t'), [['a', '', 'c'], ['1', '2', '']], 'empty cells kept');
+  for (const text of ['one line, with a comma', 'Hello, world.\nNo comma here', 'a,b\n1,2,3', 'a\tb\n\n1\t2', '"a\nb",c\n1,2', 'single\ncolumn']) {
+    assert.equal(pastedTableRows(text), null, JSON.stringify(text));
+  }
+  assert.equal(markdownTable([['Part', 'W'], ['M|1', '2u']]), '| Part | W   |\n| ---- | --- |\n| M\\|1 | 2u  |');
 });
 
 test('completion offers designs after [[ and parts and nets after @, best matches first', () => {

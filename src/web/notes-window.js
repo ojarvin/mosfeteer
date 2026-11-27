@@ -16,7 +16,7 @@
  * it draws; Report… exports the notes with their figures (core/report.js).
  */
 
-import { normalizeNotes, notesMarkdown, notesTable, resolveMention } from '../core/notes.js';
+import { markdownTable, normalizeNotes, notesMarkdown, notesTable, pastedTableRows, resolveMention } from '../core/notes.js';
 import { renderNotes } from '../core/notes-markdown.js';
 import { canvasEl } from './elements.js';
 import { clientToWorld } from './canvas-view.js';
@@ -29,7 +29,7 @@ import { openDocumentPath } from './document-session.js';
 import { logLine } from './status-bar-ui.js';
 import { beginSettingsEdit, endSettingsEdit, markSettingsChanged, render, setSelection } from './main.js';
 import { element as el } from './dom.js';
-import { attachNoteCompletion } from './notes-completion.js';
+import { attachNoteCompletion, caretPoint } from './notes-completion.js';
 import { appendContextItem, closeComponentContextMenu, openMenuAt } from './context-menu.js';
 import { showDesignInReference } from './reference-window.js';
 import { notesOutline, reportTargets, resolveReportTarget } from '../core/report.js';
@@ -135,10 +135,19 @@ function onInput() {
 }
 
 /** A picture pasted into the source: kept in the design under the next
- *  number, placed at the caret as `![](picture:N)`. */
+ *  number, placed at the caret as `![](picture:N)`. Text that reads as a
+ *  table (a spreadsheet's range, CSV lines: `pastedTableRows`) asks how it
+ *  goes in: as a Markdown table, or as the text it is. */
 function onSourcePaste(ev) {
   const file = [...(ev.clipboardData?.files || [])].find((item) => PASTED_IMAGE_TYPES.includes(item.type));
-  if (!file) return;
+  if (!file) {
+    const text = ev.clipboardData?.getData('text/plain') || '';
+    const rows = pastedTableRows(text);
+    if (!rows) return;
+    ev.preventDefault();
+    askPasteAsTable(text, rows);
+    return;
+  }
   ev.preventDefault();
   const field = win.source;
   const [start, end] = [field.selectionStart, field.selectionEnd];
@@ -262,15 +271,29 @@ function openTableGrid() {
   cells[0].focus();
 }
 
-function insertTable(field, start, end, columns, rows) {
+/** Ask at the caret how pasted table text goes in: Table (the default,
+ *  Enter) or Text; closing the menu any other way pastes the text. */
+function askPasteAsTable(text, rows) {
+  const field = win.source;
+  const [start, end] = [field.selectionStart, field.selectionEnd];
+  const box = field.getBoundingClientRect();
+  const at = caretPoint(field, start);
+  const menu = openMenuAt(box.left + at.x, box.top + at.y + 4, 'Paste');
+  if (!menu) return;
+  const put = (asTable) => {
+    editor.contextMenuDismiss = null;
+    if (asTable) insertBlock(field, start, end, markdownTable(rows), 2);
+    else insertText(field, start, end, text);
+  };
+  const table = appendContextItem(menu, `Table (${rows[0].length} × ${rows.length})`, () => put(true));
+  appendContextItem(menu, 'Text', () => put(false));
+  editor.contextMenuDismiss = () => { editor.contextMenuDismiss = null; insertText(field, start, end, text); };
+  table.focus();
+}
+
+/** Put `text` in for the field's start..end, as typing does. */
+function insertText(field, start, end, text) {
   if (!win || field !== win.source) return;
-  const { value } = field;
-  // A blank line on each side: a table is a block of its own.
-  const before = value.slice(0, start);
-  const after = value.slice(end);
-  const lead = !before ? '' : before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
-  const trail = !after ? '\n' : after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n';
-  const text = `${lead}${notesTable(columns, rows)}${trail}`;
   field.focus();
   field.setSelectionRange(start, end);
   // insertText keeps the field's own undo (Ctrl+Z) working.
@@ -278,8 +301,25 @@ function insertTable(field, start, end, columns, rows) {
     field.setRangeText(text, start, end, 'end');
     field.dispatchEvent(new Event('input', { bubbles: true }));
   }
+}
+
+function insertTable(field, start, end, columns, rows) {
+  insertBlock(field, start, end, notesTable(columns, rows), 2);
+}
+
+/** Put a block (a table) in for the field's start..end, on lines of its
+ *  own, the caret `caret` characters into it. */
+function insertBlock(field, start, end, block, caret) {
+  if (!win || field !== win.source) return;
+  const { value } = field;
+  // A blank line on each side: a table is a block of its own.
+  const before = value.slice(0, start);
+  const after = value.slice(end);
+  const lead = !before ? '' : before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
+  const trail = !after ? '\n' : after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n';
+  insertText(field, start, end, `${lead}${block}${trail}`);
   // The caret in the first heading cell.
-  const first = start + lead.length + 2;
+  const first = start + lead.length + caret;
   field.setSelectionRange(first, first);
 }
 
