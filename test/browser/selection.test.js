@@ -19,6 +19,18 @@ function stubBesideRail() {
   return circuit.toJSON();
 }
 
+/** Lines and arrows of every kind of heads, a box, a note, and a part. */
+function strokes() {
+  const circuit = new Circuit();
+  runCommand(circuit, 'add resistor R1 --at 0 0 --rot 90');
+  const arrow = (y, arrowhead) => circuit.addAnnotation('arrow', { x: 200, y, end: { x: 400, y }, ...(arrowhead ? { style: { arrowhead } } : {}) }).id;
+  const ids = { one: arrow(0), back: arrow(80, 'start'), both: arrow(160, 'both') };
+  ids.line = circuit.addAnnotation('line', { points: [{ x: 200, y: 240 }, { x: 400, y: 240 }] }).id;
+  ids.box = circuit.addAnnotation('box', { x: 520, y: 0, end: { x: 680, y: 160 } }).id;
+  ids.note = circuit.addLabel({ text: 'note', x: 520, y: 280 }).id;
+  return { json: circuit.toJSON(), ids };
+}
+
 describe('selection and editing', { skip: browserSkip() }, () => {
   let h;
   before(async () => { h = await start({ docs: { edit: editing() }, width: 1400, height: 900 }); });
@@ -51,6 +63,31 @@ describe('selection and editing', { skip: browserSkip() }, () => {
   const until = (expression) => h.until(`${h.module('editor-state.js')}.then((m) => { const e = m.editor; const c = e.circuit; return ${expression}; })`);
   const selected = () => ed(`({ parts: [...e.multi].length ? [...e.multi] : (e.selected ? [e.selected] : []), labels: [...e.selLabels].map((id) => c.labels.get(id)?.text ?? id) })`);
   const noteId = () => ed(`[...c.labels.values()].find((l) => l.text === 'note').id`);
+
+  test('Select same arrowheads picks the arrows with as many heads, either way; same line style only what draws a dashed or solid line', async () => {
+    const { json, ids } = strokes();
+    await h.evaluate(`window.__load(${JSON.stringify(json)})`);
+    await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.fitView())`);
+    await h.settle();
+    const menuItems = () => h.evaluate(`[...document.querySelectorAll('.component-context-menu button')].map((b) => b.textContent.trim())`);
+    const pick = async (x, y, item) => {
+      const p = await at(x, y);
+      await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
+      await h.tap(p.x, p.y, { button: 'right' });
+      await h.until(`!document.querySelector('.component-context-menu').hidden`);
+      if (!item) return;
+      await h.evaluate(`[...document.querySelectorAll('.component-context-menu button')].find((b) => b.textContent.trim() === ${JSON.stringify(item)}).click()`);
+    };
+    const picked = () => ed('[...e.selLabels].sort()');
+    await pick(300, 0, 'Same arrowheads');
+    assert.deepEqual(await picked(), [ids.one, ids.back].sort());
+    await pick(300, 0, 'Same line style');
+    assert.deepEqual(await picked(), [ids.one, ids.back, ids.both, ids.line].sort(), 'the dashed box, the note, and the part are left out');
+    await pick(0, 0);
+    const items = await menuItems();
+    assert.ok(items.includes('Same color') && !items.includes('Same line style') && !items.includes('Same arrowheads'), 'a part has no line style');
+    await h.key('Escape');
+  });
 
   test('a still click on a selected object picks the next one stacked under it, and a press drags the selected one', async () => {
     // Clicks apart, as a hand makes them: two quick ones are a double-click.

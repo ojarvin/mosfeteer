@@ -5,6 +5,7 @@
  */
 
 import { isReferenceMarker } from '../core/model.js';
+import { arrowheadEnds, defaultArrowhead } from '../core/line-style.js';
 import { supplyBarRow } from '../core/supply-bars.js';
 import { switchGroupKey, switchPhase, switchPhases, switchState, switchesOf } from '../core/beats.js';
 import { canvasEl, componentContextMenuEl, componentsListEl, netsListEl, panelFilterEl } from './elements.js';
@@ -65,11 +66,26 @@ function contextMatches(target, candidate, criterion) {
       !!candidate.value.owner === !!target.value.owner &&
       !!candidate.value.netId === !!target.value.netId;
   }
-  if (criterion === 'color' || criterion === 'lineStyle') {
-    const field = criterion === 'color' ? 'color' : 'lineStyle';
-    return contextStyleValue(candidate, field) === contextStyleValue(target, field);
-  }
+  if (criterion === 'color') return contextStyleValue(candidate, 'color') === contextStyleValue(target, 'color');
+  if (criterion === 'lineStyle') return takesLineStyle(candidate) && contextStyleValue(candidate, 'lineStyle') === contextStyleValue(target, 'lineStyle');
+  if (criterion === 'arrowhead') return takesArrowheads(candidate) && headCount(candidate) === headCount(target);
   return false;
+}
+
+/** Whether a target draws a line with a dash of its own: a wire, or a
+ *  line, arrow, or box. */
+const takesLineStyle = (target) => target.kind === 'wire' || (target.kind === 'label' && ['arrow', 'box', 'line'].includes(target.value.kind));
+
+/** Whether a target can have arrowheads: a wire, a line, or an arrow. */
+const takesArrowheads = (target) => target.kind === 'wire' || (target.kind === 'label' && ['arrow', 'line'].includes(target.value.kind));
+
+/** How many arrowheads a target draws, whichever way it points: 0, 1, or 2. */
+function headCount(target) {
+  const value = target.kind === 'wire'
+    ? wireStyleValue(target.value.net, `${target.value.branch}:${target.value.segment}`, 'arrowhead')
+    : target.value.style?.arrowhead || defaultArrowhead(target.value.kind);
+  const ends = arrowheadEnds(value);
+  return Number(ends.start) + Number(ends.end);
 }
 
 let componentContextTarget = null;
@@ -91,7 +107,7 @@ export function closeComponentContextMenu() {
 }
 
 function contextCandidates(target, criterion) {
-  if (criterion === 'color' || criterion === 'lineStyle') {
+  if (['color', 'lineStyle', 'arrowhead'].includes(criterion)) {
     return [
       ...[...editor.circuit.components.values()].map((value) => ({ kind: 'component', value })),
       ...[...editor.circuit.labels.values()]
@@ -304,7 +320,11 @@ function appendContextSelectionMenu(menu, target) {
         : target.kind === 'net' ? 'Same net name' : 'Same label type';
     const criteria = target.kind === 'net'
       ? [['type', typeLabel]]
-      : [['type', typeLabel], ['color', 'Same color'], ['lineStyle', 'Same line style']];
+      : [
+        ['type', typeLabel], ['color', 'Same color'],
+        ...(takesLineStyle(target) ? [['lineStyle', 'Same line style']] : []),
+        ...(takesArrowheads(target) ? [['arrowhead', 'Same arrowheads']] : []),
+      ];
     for (const [criterion, label] of criteria) {
       if (target.kind === 'net' && !target.value.name) continue;
       appendContextItem(submenu, label, () => selectSameTarget(criterion));
