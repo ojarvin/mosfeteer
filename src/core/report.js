@@ -27,6 +27,8 @@
 
 import { LABEL_FONT_SIZE, pictureName } from './model.js';
 import { listFigures } from './figures.js';
+import { plotSpec } from './plot-spec.js';
+import { plainTexText } from './tex-markup.js';
 import { beatTitle, resolveBeat } from './beats.js';
 import { timingBeatBands } from './timing-diagram.js';
 import { DRAWING_EXPORT_OPTIONS, selectionDrawing } from './selection-drawing.js';
@@ -54,13 +56,32 @@ export function reportTargets(circuit) {
   ];
   (circuit.beats || []).forEach((_, index) => targets.push({ name: `beat ${index + 1}`, kind: 'beat', beat: index, detail: `the circuit at ${beatTitle(circuit, index)}` }));
   for (const figure of listFigures(circuit)) {
-    targets.push({ name: figure.id, kind: 'figure', figure, detail: `${figure.kind}${figure.source ? ` (${figure.source})` : ''}` });
+    targets.push({ name: figure.id, kind: 'figure', figure, detail: figureDescription(figure) });
   }
   // The pictures pasted into the notes (`![caption](picture:N)`).
   for (const id of Object.keys(circuit.pictures || {})) targets.push({ name: pictureTarget(id), kind: 'picture', id, detail: 'a picture pasted into the notes' });
   // The pictures on the drawing given a name.
   for (const label of namedPictures(circuit)) targets.push({ name: label.image.name, kind: 'image', label, detail: 'a picture on the drawing' });
   return targets;
+}
+
+const FIGURE_WORDS = { equations: 'equations', coefficients: 'coefficients', noise: 'noise table', model: 'small-signal model', timing: 'timing diagram', table: 'parts table' };
+
+/** What a figure shows, in a few words, to tell it in a list: `data plot:
+ *  v_out against t (run.csv)`, `magnitude responses plot`, `Bode plot of
+ *  A_v`, `parts table`; the tool that made it after. */
+export function figureDescription(figure) {
+  const from = figure.source ? ` (${figure.source})` : '';
+  const plot = figure.labels.find((label) => label.plot)?.plot;
+  if (!plot) return `${FIGURE_WORDS[figure.kind] || figure.kind}${from}`;
+  if (plot.kind === 'data') {
+    const names = plot.traces.map((trace) => plainTexText(trace.label)).filter(Boolean);
+    const y = plainTexText(plot.y.label) || (names.length > 3 ? `${names.slice(0, 3).join(', ')}, …` : names.join(', '));
+    return `data plot: ${y || 'data'} against ${plainTexText(plot.x.label) || 'row'}${plot.file ? ` (${plot.file})` : ''}`;
+  }
+  const spec = plotSpec(plot);
+  if (spec) return `${spec.title.toLowerCase()} plot${from}`;
+  return `${plot.phase ? 'phase' : 'Bode'} plot of ${plainTexText(plot.quantity)}${from}`;
 }
 
 /** The pictures on the drawing that have a name, which places them. */

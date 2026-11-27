@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Circuit, LABEL_FONT_SIZE } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
-import { newFigureId } from '../src/core/figures.js';
+import { listFigures, newFigureId } from '../src/core/figures.js';
+import { dataPlotFromText, placeDataPlot } from '../src/core/data-plot.js';
 import { addBeat } from '../src/core/beats.js';
 import { normalizePageGuide, parsePageGuide, pageGuideWidth } from '../src/core/page-guide.js';
 import { buildReport, notesOutline, reportFigureSize, reportPage, reportPageTargets, reportTargets, reportWithPages, resolveReportTarget } from '../src/core/report.js';
@@ -251,6 +252,22 @@ test('completion offers what a figure can show after ![[ and [[#', () => {
   const withDesigns = [...figures, { name: 'amp', detail: 'design, as a section', section: true }];
   assert.deepEqual(noteCompletion('![[am', 5, { figures: withDesigns }).items.map((item) => item.insert), ['![[amp]]']);
   assert.equal(noteCompletion('[[#am', 5, { figures: withDesigns }), null, 'a reference is to a figure');
+  // [[ offers the designs, then the figures to refer to; a figure is found
+  // by the words of its detail too.
+  assert.deepEqual(noteCompletion('see [[', 6, { figures: withDesigns, designs: ['amp'] }).items.map((item) => item.insert), ['[[amp]]', '[[#circuit]]', '[[#drawing]]', '[[#F1]]']);
+  assert.deepEqual(noteCompletion('see [[#small', 12, { figures }).items.map((item) => item.insert), ['[[#F1]]']);
+});
+
+test('a figure is told by what it shows: a data plot by its columns and file, a tool\'s by its kind', () => {
+  const circuit = new Circuit();
+  runCommand(circuit, 'add resistor R1 --at 0 0');
+  const { box } = placeDataPlot(circuit, dataPlotFromText('t,v_out,v_in\n0,1,2\n1,2,3\n2,3,4', { file: 'run.csv', y: '2,3' }));
+  runCommand(circuit, 'value R1 1k');
+  runCommand(circuit, 'partstable');
+  const details = Object.fromEntries(reportTargets(circuit).map((target) => [target.name, target.detail]));
+  const plot = listFigures(circuit).find((figure) => figure.labels.includes(box));
+  assert.equal(details[plot.id], 'data plot: vout, vin against t (run.csv)');
+  assert.ok(Object.values(details).includes('parts table (sizing)'));
 });
 
 test('a report ends with the sources its notes cite, each citation linked to its entry', () => {

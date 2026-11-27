@@ -1,8 +1,11 @@
 /**
  * Completion in the notes' source (notes-window.js): after `[[` the
- * workspace's designs, after `@` the design's parts and nets
- * (`noteCompletion`, core/notes.js), listed at the caret. Up/Down choose,
- * Enter or Tab puts the choice in, Esc closes the list; typing on narrows it.
+ * workspace's designs and the figures, after `![[` and `[[#` the figures,
+ * after `@` the design's parts and nets (`noteCompletion`, core/notes.js),
+ * listed at the caret; the list scrolls. Up/Down choose, Enter or Tab puts
+ * the choice in, Esc closes the list; typing on narrows it. While a figure
+ * is being completed, the next click on the drawing puts in the figure it
+ * lands on (`figureAt`).
  */
 
 import { noteCompletion } from '../core/notes.js';
@@ -29,13 +32,17 @@ function caretPoint(field, index) {
  * Complete in `field`; `names()` gives `{ designs, parts, nets }` as they
  * are now. The list goes in the field's parent, which is positioned.
  */
-export function attachNoteCompletion(field, names) {
+export function attachNoteCompletion(field, names, { canvas = null, figureAt = null } = {}) {
   const list = el('ul', { class: 'notes-suggestions', id: 'notes-suggestions', role: 'listbox', 'aria-label': 'Completions', hidden: true });
   field.parentElement.append(list);
   field.setAttribute('aria-autocomplete', 'list');
   field.setAttribute('aria-controls', list.id);
   let found = null;
   let active = 0;
+  // A figure completion the field left for the drawing: the next click
+  // there puts in the figure it lands on.
+  let armed = null;
+  const picksFigure = (kind) => !!(canvas && figureAt) && (kind === 'figure' || kind === 'design');
 
   const close = () => {
     found = null;
@@ -46,7 +53,7 @@ export function attachNoteCompletion(field, names) {
 
   const show = () => {
     list.replaceChildren(...found.items.map((item, index) => {
-      const row = el('li', { role: 'option', id: `notes-suggestion-${index}`, 'aria-selected': String(index === active) }, [
+      const row = el('li', { role: 'option', id: `notes-suggestion-${index}`, 'aria-selected': String(index === active), title: `${item.name}: ${item.detail}` }, [
         el('span', { class: 'notes-suggestion-name', text: item.name }),
         el('span', { class: 'notes-suggestion-detail', text: item.detail }),
       ]);
@@ -54,11 +61,15 @@ export function attachNoteCompletion(field, names) {
       row.addEventListener('pointerdown', (ev) => ev.preventDefault());
       row.addEventListener('click', () => accept(index));
       return row;
-    }));
+    }), ...(picksFigure(found.kind) ? [el('li', { class: 'notes-suggestion-hint', role: 'presentation', text: 'Or click a figure on the drawing' })] : []));
     list.hidden = false;
     const at = caretPoint(field, found.start);
     list.style.left = `${Math.max(0, Math.min(field.offsetLeft + at.x, field.offsetLeft + field.clientWidth - list.offsetWidth))}px`;
-    list.style.top = `${field.offsetTop + Math.min(at.y, field.clientHeight)}px`;
+    const top = field.offsetTop + Math.min(at.y, field.clientHeight);
+    list.style.top = `${top}px`;
+    // As tall as the room under the caret, six rows at the least; it scrolls.
+    list.style.maxHeight = `min(16rem, ${Math.max(120, field.offsetTop + field.clientHeight - top)}px)`;
+    list.children[active]?.scrollIntoView({ block: 'nearest' });
     field.setAttribute('aria-expanded', 'true');
     field.setAttribute('aria-activedescendant', `notes-suggestion-${active}`);
   };
@@ -113,6 +124,26 @@ export function attachNoteCompletion(field, names) {
     if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(ev.key)) update();
   });
   field.addEventListener('scroll', () => { if (found) show(); });
-  field.addEventListener('blur', close);
+  // The completion open now, as a click on the drawing would finish it.
+  const pending = () => (found && picksFigure(found.kind)
+    ? { start: found.start, end: found.end, value: field.value, embed: field.value.startsWith('![[', found.start) }
+    : null);
+  // Whether the press that takes the focus away is on the drawing.
+  let pressOnCanvas = false;
+  window.addEventListener('pointerdown', (ev) => { pressOnCanvas = !!canvas?.contains(ev.target); }, true);
+  field.addEventListener('blur', () => {
+    armed = pressOnCanvas ? pending() : null;
+    close();
+  });
+  field.addEventListener('focus', () => { armed = null; });
+  canvas?.addEventListener('click', (ev) => {
+    const pick = armed || pending();
+    armed = null;
+    if (!pick || field.value !== pick.value || !field.isConnected || field.offsetParent === null) return;
+    const name = figureAt(ev.clientX, ev.clientY);
+    if (!name) return;
+    found = { kind: 'figure', start: pick.start, end: pick.end, items: [{ name, insert: `${pick.embed ? '![[' : '[[#'}${name}]]` }] };
+    accept(0);
+  });
   return { close };
 }

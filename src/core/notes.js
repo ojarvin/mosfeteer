@@ -200,8 +200,8 @@ function codeRanges(text) {
 
 // ----- completion ----------------------------------------------------------------
 
-/** Completions shown at most. */
-const COMPLETIONS = 8;
+/** Completions listed at most; the list scrolls. */
+const COMPLETIONS = 100;
 
 /** Whether `name` matches what was typed, and how well: 0 the start of its
  *  name, 1 anywhere in it, null not at all (compared as mentions are). */
@@ -214,7 +214,9 @@ function matchRank(name, typed) {
 
 /**
  * What to offer while `text` is typed with the caret at `caret`: after
- * `[[`, the designs; after `![[` and `[[#`, what a figure can show; after
+ * `[[`, the designs, then the figures to refer to (put in as `[[#F2]]`);
+ * after `![[` and `[[#`, what a figure can show, also found by the words
+ * of its detail (`data`, `bode`); after
  * `@`, the parts and nets (those a mention of that name would find: a net
  * is left out when a part of its name wins).
  * `names`: `{ designs: [name], parts: [{ name, type }], nets: [name],
@@ -230,7 +232,7 @@ export function noteCompletion(text, caret, { designs = [], parts = [], nets = [
   // A sentinel after the text: code left open runs past the caret.
   if (codeRanges(`${source}\n\u0000`).some(([a, b]) => caret > a && caret < b)) return null;
   const ranked = (candidates, typed) => candidates
-    .map((item) => ({ item, rank: matchRank(item.name, typed) }))
+    .map((item) => ({ item, rank: matchRank(item.name, typed) ?? (item.kind === 'figure' && typed.trim() && searchKey(item.detail).includes(searchKey(typed)) ? 2 : null) }))
     .filter(({ rank }) => rank !== null)
     .sort((a, b) => a.rank - b.rank || a.item.name.localeCompare(b.item.name, undefined, { numeric: true }))
     .slice(0, COMPLETIONS)
@@ -249,7 +251,10 @@ export function noteCompletion(text, caret, { designs = [], parts = [], nets = [
     // A link already closed after the caret is replaced with its close.
     const close = source.slice(caret).match(/^[^[\]\n|]*\]\]/);
     const end = close ? caret + close[0].length : caret;
-    const items = ranked(designs.map((name) => ({ name, kind: 'design', detail: 'design', insert: `[[${name}]]` })), link[1]);
+    const items = [
+      ...ranked(designs.map((name) => ({ name, kind: 'design', detail: 'design', insert: `[[${name}]]` })), link[1]),
+      ...ranked(figures.filter((entry) => !entry.section).map(({ name, detail }) => ({ name, kind: 'figure', detail, insert: `[[#${name}]]` })), link[1]),
+    ];
     return offered({ kind: 'design', start: caret - link[0].length, end, items });
   }
   const mention = before.match(/(^|[^\w@\\])@(\{[^{}\n]*|[A-Za-z0-9_{}^]*)$/);

@@ -132,12 +132,12 @@ describe('design notes', { skip: browserSkip() }, () => {
   test('[[ completes design names and @ parts and nets, at the caret; Esc closes only the list', async () => {
     await h.click('.notes-edit');
     const key = (name) => h.evaluate(`document.querySelector('.notes-source').dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(name)}, bubbles: true, cancelable: true }))`);
-    const options = () => h.evaluate(`[...document.querySelectorAll('#notes-suggestions:not([hidden]) li')].map((li) => li.querySelector('.notes-suggestion-name').textContent + (li.getAttribute('aria-selected') === 'true' ? '*' : ''))`);
+    const options = () => h.evaluate(`[...document.querySelectorAll('#notes-suggestions:not([hidden]) li[role=option]')].map((li) => li.querySelector('.notes-suggestion-name').textContent + (li.getAttribute('aria-selected') === 'true' ? '*' : ''))`);
     const value = () => h.evaluate(`document.querySelector('.notes-source').value`);
 
     await typeNotes('See [[');
     assert.equal(await h.evaluate(`document.querySelector('.notes-copy').disabled`), false, 'Copy follows the typing');
-    assert.deepEqual(await options(), ['child*'], 'the other designs, not this one');
+    assert.deepEqual((await options()).slice(0, 3), ['child*', 'circuit', 'drawing'], 'the other designs, not this one, then the figures');
     await key('Enter');
     assert.equal(await value(), 'See [[child]]');
     assert.deepEqual(await options(), []);
@@ -158,6 +158,33 @@ describe('design notes', { skip: browserSkip() }, () => {
     await key('Escape');
     assert.deepEqual(await options(), []);
     assert.equal(await h.evaluate(`document.querySelector('.notes-source').hidden`), false, 'still editing');
+    await finish();
+  });
+
+  test('a click on a figure on the drawing, while [[# is being completed, puts its name in', async () => {
+    await h.evaluate(`window.__run('partstable')`);
+    await h.click('.notes-edit');
+    await typeNotes('See [[#');
+    await h.until(`!document.getElementById('notes-suggestions').hidden`);
+    assert.equal(await h.evaluate(`document.querySelector('#notes-suggestions .notes-suggestion-hint')?.textContent`), 'Or click a figure on the drawing');
+    const id = await editor(`[...editor.circuit.labels.values()].find((l) => l.table).figure.id`);
+    await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.fitView())`);
+    await h.settle();
+    // A point of the table the notes window does not cover.
+    const p = await h.evaluate(`${h.module('editor-state.js')}.then(async (m) => {
+      const view = await ${h.module('canvas-view.js')};
+      const b = [...m.editor.circuit.labels.values()].find((l) => l.table).bbox();
+      const canvas = document.getElementById('canvas');
+      for (let fy = 0.2; fy < 1; fy += 0.2) for (let fx = 0.2; fx < 1; fx += 0.2) {
+        const c = view.worldToClient(b.x + b.w * fx, b.y + b.h * fy);
+        if (canvas.contains(document.elementFromPoint(c.x, c.y))) return c;
+      }
+      return null;
+    })`);
+    assert.ok(p, 'the table is in sight');
+    await h.tap(p.x, p.y);
+    await h.until(`document.querySelector('.notes-source').value === 'See [[#${id}]]'`);
+    assert.equal(await h.evaluate(`document.activeElement === document.querySelector('.notes-source')`), true, 'back to writing');
     await finish();
   });
 

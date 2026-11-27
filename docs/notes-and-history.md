@@ -15,11 +15,15 @@ leave the window the keyboard (Esc again closes it). Empty
 notes open ready to write. In the source, Tab indents the lines under the
 caret or selection by two spaces and Shift+Tab takes up to two away (the
 field's own Ctrl+Z undoes either). Typing `[[` lists the workspace's other
-designs, and `@` the design's parts and named nets (`noteCompletion`,
+designs, then the figures (put in as `[[#F2]]`); `![[` and `[[#` the
+figures; and `@` the design's parts and named nets (`noteCompletion`,
 `src/web/notes-completion.js`): matches at the start of a name first,
-narrowed as you type; a net is left out when a part of its name would win
-the mention. Up/Down choose, Enter or Tab puts the choice in, Esc closes
-the list only. **Copy** puts the notes on the
+then anywhere, then a figure's description (`figureDescription`: a data
+plot by its columns and file), narrowed as you type; a net is left out
+when a part of its name would win the mention. The list scrolls. Up/Down
+choose, Enter or Tab puts the choice in, Esc closes the list only. While
+a figure is being completed, the next click on the drawing puts in the
+figure (or named picture) it lands on. **Copy** puts the notes on the
 clipboard as plain Markdown (`notesMarkdown`): a mention as its name, in
 `$...$` when it has a subscript or superscript, a design link as the
 design's name; code is left as written.

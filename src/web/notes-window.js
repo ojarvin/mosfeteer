@@ -19,6 +19,8 @@
 import { normalizeNotes, notesMarkdown, notesTable, resolveMention } from '../core/notes.js';
 import { renderNotes } from '../core/notes-markdown.js';
 import { canvasEl } from './elements.js';
+import { clientToWorld } from './canvas-view.js';
+import { figureBounds } from '../core/figures.js';
 import { editor } from './editor-state.js';
 import { floatingWindow, windowToggle } from './floating-window.js';
 import { setHoverTarget } from './hover-preview.js';
@@ -64,6 +66,16 @@ function completionNames() {
       ...workspaceDesigns().map((doc) => doc.name).filter((name) => name.toLowerCase() !== current).map((name) => ({ name, detail: 'design, as a section', section: true })),
     ],
   };
+}
+
+/** The name of the figure, or of the named picture, drawn at a point of
+ *  the page, or null. */
+function figureAt(clientX, clientY) {
+  const p = clientToWorld(clientX, clientY);
+  const inside = (r) => r && p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+  const target = reportTargets(editor.circuit).find((t) => (t.kind === 'figure' && inside(figureBounds(editor.circuit, t.figure)))
+    || (t.kind === 'image' && inside(t.label.bbox())));
+  return target?.name || null;
 }
 
 function mentionTarget(name) {
@@ -372,7 +384,7 @@ function build() {
   source.addEventListener('input', onInput);
   source.addEventListener('paste', onSourcePaste);
   // Before the field's own keys: an open list takes Tab and Esc.
-  attachNoteCompletion(source, completionNames);
+  attachNoteCompletion(source, completionNames, { canvas: canvasEl, figureAt });
   source.addEventListener('keydown', onSourceKey);
   source.addEventListener('blur', finishEditStep);
   view.addEventListener('mouseover', onViewOver);

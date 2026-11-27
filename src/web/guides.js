@@ -230,7 +230,7 @@ export const GUIDES = Object.freeze([
     steps: [
       'Press `Shift+N`, or click **Notes** in the toolbar.',
       'Click **Edit**, or double-click the notes, to write. Press `Esc` to see them rendered.',
-      'Type ``@`` to list the parts and nets, or ``[[`` to list the other designs, and press `Enter` to put one in.',
+      'Type ``@`` to list the parts and nets, or ``[[`` to list the other designs and the figures, and press `Enter` to put one in.',
       'Paste a picture, such as a screenshot, into the notes to keep it with the design.',
       'While writing, click **Table** and pick the columns and rows to put in an empty table.',
       'Click **Copy** to put the notes on the clipboard as plain Markdown.',
@@ -289,7 +289,7 @@ export const GUIDES = Object.freeze([
     intro: 'A report is the notes set as a printable page with numbered figures from the drawing. A design can include other designs\' notes as sections, so a block diagram and its blocks make one document.',
     steps: [
       'In empty notes, click **Outline** to start from a heading, an author line, a contents list, and a figure for each part of the drawing.',
-      'Put a figure on a line of its own, such as ``![[circuit|The amplifier.]]``. Type ``![[`` to list what can be shown.',
+      'Put a figure on a line of its own, such as ``![[circuit|The amplifier.]]``. Type ``![[`` to list what can be shown, or click a figure on the drawing while the list is open.',
       'Put a design\'s name on a line of its own, such as ``![[amp]]``, to include its notes as a section.',
       'Click **Report…** in the notes window, or choose **Report** in the export dialog, to write the PDF and the HTML.',
     ],

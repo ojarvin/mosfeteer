@@ -39868,8 +39868,8 @@ function codeRanges(text) {
 
 // ----- completion ----------------------------------------------------------------
 
-/** Completions shown at most. */
-const COMPLETIONS = 8;
+/** Completions listed at most; the list scrolls. */
+const COMPLETIONS = 100;
 
 /** Whether `name` matches what was typed, and how well: 0 the start of its
  *  name, 1 anywhere in it, null not at all (compared as mentions are). */
@@ -39882,7 +39882,9 @@ function matchRank(name, typed) {
 
 /**
  * What to offer while `text` is typed with the caret at `caret`: after
- * `[[`, the designs; after `![[` and `[[#`, what a figure can show; after
+ * `[[`, the designs, then the figures to refer to (put in as `[[#F2]]`);
+ * after `![[` and `[[#`, what a figure can show, also found by the words
+ * of its detail (`data`, `bode`); after
  * `@`, the parts and nets (those a mention of that name would find: a net
  * is left out when a part of its name wins).
  * `names`: `{ designs: [name], parts: [{ name, type }], nets: [name],
@@ -39898,7 +39900,7 @@ function noteCompletion(text, caret, { designs = [], parts = [], nets = [], figu
   // A sentinel after the text: code left open runs past the caret.
   if (codeRanges(`${source}\n\u0000`).some(([a, b]) => caret > a && caret < b)) return null;
   const ranked = (candidates, typed) => candidates
-    .map((item) => ({ item, rank: matchRank(item.name, typed) }))
+    .map((item) => ({ item, rank: matchRank(item.name, typed) ?? (item.kind === 'figure' && typed.trim() && searchKey(item.detail).includes(searchKey(typed)) ? 2 : null) }))
     .filter(({ rank }) => rank !== null)
     .sort((a, b) => a.rank - b.rank || a.item.name.localeCompare(b.item.name, undefined, { numeric: true }))
     .slice(0, COMPLETIONS)
@@ -39917,7 +39919,10 @@ function noteCompletion(text, caret, { designs = [], parts = [], nets = [], figu
     // A link already closed after the caret is replaced with its close.
     const close = source.slice(caret).match(/^[^[\]\n|]*\]\]/);
     const end = close ? caret + close[0].length : caret;
-    const items = ranked(designs.map((name) => ({ name, kind: 'design', detail: 'design', insert: `[[${name}]]` })), link[1]);
+    const items = [
+      ...ranked(designs.map((name) => ({ name, kind: 'design', detail: 'design', insert: `[[${name}]]` })), link[1]),
+      ...ranked(figures.filter((entry) => !entry.section).map(({ name, detail }) => ({ name, kind: 'figure', detail, insert: `[[#${name}]]` })), link[1]),
+    ];
     return offered({ kind: 'design', start: caret - link[0].length, end, items });
   }
   const mention = before.match(/(^|[^\w@\\])@(\{[^{}\n]*|[A-Za-z0-9_{}^]*)$/);
@@ -44693,6 +44698,7 @@ __exports.RENUMBER_ORDERS = RENUMBER_ORDERS;
 
 __modules["src/core/report.js"] = function (__require, __exports) {
 __exports.reportTargets = reportTargets;
+__exports.figureDescription = figureDescription;
 __exports.namePicture = namePicture;
 __exports.resolveReportTarget = resolveReportTarget;
 __exports.reportPage = reportPage;
@@ -44704,6 +44710,8 @@ __exports.reportWithPages = reportWithPages;
 __exports.notesOutline = notesOutline;
 let LABEL_FONT_SIZE, pictureName; __bind(() => { ({ LABEL_FONT_SIZE, pictureName } = __require("src/core/model.js")); });
 let listFigures; __bind(() => { ({ listFigures } = __require("src/core/figures.js")); });
+let plotSpec; __bind(() => { ({ plotSpec } = __require("src/core/plot-spec.js")); });
+let plainTexText; __bind(() => { ({ plainTexText } = __require("src/core/tex-markup.js")); });
 let beatTitle, resolveBeat; __bind(() => { ({ beatTitle, resolveBeat } = __require("src/core/beats.js")); });
 let timingBeatBands; __bind(() => { ({ timingBeatBands } = __require("src/core/timing-diagram.js")); });
 let DRAWING_EXPORT_OPTIONS, selectionDrawing; __bind(() => { ({ DRAWING_EXPORT_OPTIONS, selectionDrawing } = __require("src/core/selection-drawing.js")); });
@@ -44750,6 +44758,8 @@ let FIGURE_EMBED_LINE, authorNames, figureKey, noteAuthor, pictureTarget, noteCi
 
 
 
+
+
 const MM = 72 / 25.4;
 /** The sheet: A4, 25 mm margins; the side margins give way, down to 12 mm,
  *  for a guide wider than 16 cm. */
@@ -44768,13 +44778,32 @@ function reportTargets(circuit) {
   ];
   (circuit.beats || []).forEach((_, index) => targets.push({ name: `beat ${index + 1}`, kind: 'beat', beat: index, detail: `the circuit at ${beatTitle(circuit, index)}` }));
   for (const figure of listFigures(circuit)) {
-    targets.push({ name: figure.id, kind: 'figure', figure, detail: `${figure.kind}${figure.source ? ` (${figure.source})` : ''}` });
+    targets.push({ name: figure.id, kind: 'figure', figure, detail: figureDescription(figure) });
   }
   // The pictures pasted into the notes (`![caption](picture:N)`).
   for (const id of Object.keys(circuit.pictures || {})) targets.push({ name: pictureTarget(id), kind: 'picture', id, detail: 'a picture pasted into the notes' });
   // The pictures on the drawing given a name.
   for (const label of namedPictures(circuit)) targets.push({ name: label.image.name, kind: 'image', label, detail: 'a picture on the drawing' });
   return targets;
+}
+
+const FIGURE_WORDS = { equations: 'equations', coefficients: 'coefficients', noise: 'noise table', model: 'small-signal model', timing: 'timing diagram', table: 'parts table' };
+
+/** What a figure shows, in a few words, to tell it in a list: `data plot:
+ *  v_out against t (run.csv)`, `magnitude responses plot`, `Bode plot of
+ *  A_v`, `parts table`; the tool that made it after. */
+function figureDescription(figure) {
+  const from = figure.source ? ` (${figure.source})` : '';
+  const plot = figure.labels.find((label) => label.plot)?.plot;
+  if (!plot) return `${FIGURE_WORDS[figure.kind] || figure.kind}${from}`;
+  if (plot.kind === 'data') {
+    const names = plot.traces.map((trace) => plainTexText(trace.label)).filter(Boolean);
+    const y = plainTexText(plot.y.label) || (names.length > 3 ? `${names.slice(0, 3).join(', ')}, …` : names.join(', '));
+    return `data plot: ${y || 'data'} against ${plainTexText(plot.x.label) || 'row'}${plot.file ? ` (${plot.file})` : ''}`;
+  }
+  const spec = plotSpec(plot);
+  if (spec) return `${spec.title.toLowerCase()} plot${from}`;
+  return `${plot.phase ? 'phase' : 'Bode'} plot of ${plainTexText(plot.quantity)}${from}`;
 }
 
 /** The pictures on the drawing that have a name, which places them. */
@@ -77417,7 +77446,7 @@ const GUIDES = Object.freeze([
     steps: [
       'Press `Shift+N`, or click **Notes** in the toolbar.',
       'Click **Edit**, or double-click the notes, to write. Press `Esc` to see them rendered.',
-      'Type ``@`` to list the parts and nets, or ``[[`` to list the other designs, and press `Enter` to put one in.',
+      'Type ``@`` to list the parts and nets, or ``[[`` to list the other designs and the figures, and press `Enter` to put one in.',
       'Paste a picture, such as a screenshot, into the notes to keep it with the design.',
       'While writing, click **Table** and pick the columns and rows to put in an empty table.',
       'Click **Copy** to put the notes on the clipboard as plain Markdown.',
@@ -77476,7 +77505,7 @@ const GUIDES = Object.freeze([
     intro: 'A report is the notes set as a printable page with numbered figures from the drawing. A design can include other designs\' notes as sections, so a block diagram and its blocks make one document.',
     steps: [
       'In empty notes, click **Outline** to start from a heading, an author line, a contents list, and a figure for each part of the drawing.',
-      'Put a figure on a line of its own, such as ``![[circuit|The amplifier.]]``. Type ``![[`` to list what can be shown.',
+      'Put a figure on a line of its own, such as ``![[circuit|The amplifier.]]``. Type ``![[`` to list what can be shown, or click a figure on the drawing while the list is open.',
       'Put a design\'s name on a line of its own, such as ``![[amp]]``, to include its notes as a section.',
       'Click **Report…** in the notes window, or choose **Report** in the export dialog, to write the PDF and the HTML.',
     ],
@@ -91644,9 +91673,12 @@ let noteCompletion; __bind(() => { ({ noteCompletion } = __require("src/core/not
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 /**
  * Completion in the notes' source (notes-window.js): after `[[` the
- * workspace's designs, after `@` the design's parts and nets
- * (`noteCompletion`, core/notes.js), listed at the caret. Up/Down choose,
- * Enter or Tab puts the choice in, Esc closes the list; typing on narrows it.
+ * workspace's designs and the figures, after `![[` and `[[#` the figures,
+ * after `@` the design's parts and nets (`noteCompletion`, core/notes.js),
+ * listed at the caret; the list scrolls. Up/Down choose, Enter or Tab puts
+ * the choice in, Esc closes the list; typing on narrows it. While a figure
+ * is being completed, the next click on the drawing puts in the figure it
+ * lands on (`figureAt`).
  */
 
 
@@ -91673,13 +91705,17 @@ function caretPoint(field, index) {
  * Complete in `field`; `names()` gives `{ designs, parts, nets }` as they
  * are now. The list goes in the field's parent, which is positioned.
  */
-function attachNoteCompletion(field, names) {
+function attachNoteCompletion(field, names, { canvas = null, figureAt = null } = {}) {
   const list = el('ul', { class: 'notes-suggestions', id: 'notes-suggestions', role: 'listbox', 'aria-label': 'Completions', hidden: true });
   field.parentElement.append(list);
   field.setAttribute('aria-autocomplete', 'list');
   field.setAttribute('aria-controls', list.id);
   let found = null;
   let active = 0;
+  // A figure completion the field left for the drawing: the next click
+  // there puts in the figure it lands on.
+  let armed = null;
+  const picksFigure = (kind) => !!(canvas && figureAt) && (kind === 'figure' || kind === 'design');
 
   const close = () => {
     found = null;
@@ -91690,7 +91726,7 @@ function attachNoteCompletion(field, names) {
 
   const show = () => {
     list.replaceChildren(...found.items.map((item, index) => {
-      const row = el('li', { role: 'option', id: `notes-suggestion-${index}`, 'aria-selected': String(index === active) }, [
+      const row = el('li', { role: 'option', id: `notes-suggestion-${index}`, 'aria-selected': String(index === active), title: `${item.name}: ${item.detail}` }, [
         el('span', { class: 'notes-suggestion-name', text: item.name }),
         el('span', { class: 'notes-suggestion-detail', text: item.detail }),
       ]);
@@ -91698,11 +91734,15 @@ function attachNoteCompletion(field, names) {
       row.addEventListener('pointerdown', (ev) => ev.preventDefault());
       row.addEventListener('click', () => accept(index));
       return row;
-    }));
+    }), ...(picksFigure(found.kind) ? [el('li', { class: 'notes-suggestion-hint', role: 'presentation', text: 'Or click a figure on the drawing' })] : []));
     list.hidden = false;
     const at = caretPoint(field, found.start);
     list.style.left = `${Math.max(0, Math.min(field.offsetLeft + at.x, field.offsetLeft + field.clientWidth - list.offsetWidth))}px`;
-    list.style.top = `${field.offsetTop + Math.min(at.y, field.clientHeight)}px`;
+    const top = field.offsetTop + Math.min(at.y, field.clientHeight);
+    list.style.top = `${top}px`;
+    // As tall as the room under the caret, six rows at the least; it scrolls.
+    list.style.maxHeight = `min(16rem, ${Math.max(120, field.offsetTop + field.clientHeight - top)}px)`;
+    list.children[active]?.scrollIntoView({ block: 'nearest' });
     field.setAttribute('aria-expanded', 'true');
     field.setAttribute('aria-activedescendant', `notes-suggestion-${active}`);
   };
@@ -91757,7 +91797,27 @@ function attachNoteCompletion(field, names) {
     if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(ev.key)) update();
   });
   field.addEventListener('scroll', () => { if (found) show(); });
-  field.addEventListener('blur', close);
+  // The completion open now, as a click on the drawing would finish it.
+  const pending = () => (found && picksFigure(found.kind)
+    ? { start: found.start, end: found.end, value: field.value, embed: field.value.startsWith('![[', found.start) }
+    : null);
+  // Whether the press that takes the focus away is on the drawing.
+  let pressOnCanvas = false;
+  window.addEventListener('pointerdown', (ev) => { pressOnCanvas = !!canvas?.contains(ev.target); }, true);
+  field.addEventListener('blur', () => {
+    armed = pressOnCanvas ? pending() : null;
+    close();
+  });
+  field.addEventListener('focus', () => { armed = null; });
+  canvas?.addEventListener('click', (ev) => {
+    const pick = armed || pending();
+    armed = null;
+    if (!pick || field.value !== pick.value || !field.isConnected || field.offsetParent === null) return;
+    const name = figureAt(ev.clientX, ev.clientY);
+    if (!name) return;
+    found = { kind: 'figure', start: pick.start, end: pick.end, items: [{ name, insert: `${pick.embed ? '![[' : '[[#'}${name}]]` }] };
+    accept(0);
+  });
   return { close };
 }
 
@@ -91771,6 +91831,8 @@ __exports.notesDocumentShown = notesDocumentShown;
 let normalizeNotes, notesMarkdown, notesTable, resolveMention; __bind(() => { ({ normalizeNotes, notesMarkdown, notesTable, resolveMention } = __require("src/core/notes.js")); });
 let renderNotes; __bind(() => { ({ renderNotes } = __require("src/core/notes-markdown.js")); });
 let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
+let clientToWorld; __bind(() => { ({ clientToWorld } = __require("src/web/canvas-view.js")); });
+let figureBounds; __bind(() => { ({ figureBounds } = __require("src/core/figures.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let floatingWindow, windowToggle; __bind(() => { ({ floatingWindow, windowToggle } = __require("src/web/floating-window.js")); });
 let setHoverTarget; __bind(() => { ({ setHoverTarget } = __require("src/web/hover-preview.js")); });
@@ -91821,6 +91883,8 @@ let PASTED_IMAGE_TYPES, storedImage; __bind(() => { ({ PASTED_IMAGE_TYPES, store
 
 
 
+
+
 /** A pause this long ends one edit (one undo step). */
 const EDIT_PAUSE_MS = 1000;
 
@@ -91851,6 +91915,16 @@ function completionNames() {
       ...workspaceDesigns().map((doc) => doc.name).filter((name) => name.toLowerCase() !== current).map((name) => ({ name, detail: 'design, as a section', section: true })),
     ],
   };
+}
+
+/** The name of the figure, or of the named picture, drawn at a point of
+ *  the page, or null. */
+function figureAt(clientX, clientY) {
+  const p = clientToWorld(clientX, clientY);
+  const inside = (r) => r && p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+  const target = reportTargets(editor.circuit).find((t) => (t.kind === 'figure' && inside(figureBounds(editor.circuit, t.figure)))
+    || (t.kind === 'image' && inside(t.label.bbox())));
+  return target?.name || null;
 }
 
 function mentionTarget(name) {
@@ -92159,7 +92233,7 @@ function build() {
   source.addEventListener('input', onInput);
   source.addEventListener('paste', onSourcePaste);
   // Before the field's own keys: an open list takes Tab and Esc.
-  attachNoteCompletion(source, completionNames);
+  attachNoteCompletion(source, completionNames, { canvas: canvasEl, figureAt });
   source.addEventListener('keydown', onSourceKey);
   source.addEventListener('blur', finishEditStep);
   view.addEventListener('mouseover', onViewOver);
