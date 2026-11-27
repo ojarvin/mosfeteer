@@ -209,6 +209,12 @@ test('the page keeps a print dialog\'s headers and footers off its margins: its 
   assert.match(page, /@bottom-center \{ content: counter\(page\)/);
 });
 
+test('a table\'s cells stand at their top left, a wrapped cell beside one-line ones', () => {
+  const circuit = divider();
+  circuit.notes = '| A | B |\n| --- | --- |\n| one | two |';
+  assert.match(buildReport(circuit).html, /th, td \{[^}]*text-align: left;[^}]*vertical-align: top;/);
+});
+
 test('the report command lists the figures and warnings, and writes the HTML', () => {
   const circuit = divider();
   circuit.notes = '![[circuit|The divider.]]\n\n![[F9]]';

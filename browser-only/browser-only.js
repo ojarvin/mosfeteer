@@ -45215,7 +45215,7 @@ blockquote { margin-left: 2em; margin-right: 2em; padding: 0; }
 code { font: 0.92em "Latin Modern Mono", ui-monospace, Menlo, Consolas, monospace; }
 pre { padding: 0; white-space: pre-wrap; break-inside: avoid; }
 table { border-collapse: collapse; break-inside: avoid; margin: 10pt auto; border-top: 0.8pt solid #111; border-bottom: 0.8pt solid #111; }
-th, td { padding: 2pt 8pt; text-align: left; }
+th, td { padding: 2pt 8pt; text-align: left; vertical-align: top; }
 thead th { border-bottom: 0.5pt solid #111; }
 hr { border: 0; border-top: 0.5pt solid #111; margin: 12pt 0; }
 math { font-family: "Latin Modern Math", "STIX Two Math", "Cambria Math", serif; }

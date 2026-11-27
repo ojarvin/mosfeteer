@@ -1308,7 +1308,7 @@ button:disabled {
 .notes-view .note-author { margin-top: -4px; color: var(--text-dim); font-style: italic; }
 .notes-view hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
 .notes-view table { border-collapse: collapse; }
-.notes-view :is(th, td) { padding: 3px 8px; border: 1px solid var(--border); text-align: left; }
+.notes-view :is(th, td) { padding: 3px 8px; border: 1px solid var(--border); text-align: left; vertical-align: top; }
 .notes-view .note-display-math { margin: 0 0 8px; overflow-x: auto; }
 .notes-view a { color: var(--accent); }
 
