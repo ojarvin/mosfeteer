@@ -7,7 +7,7 @@ import { dataPlotFromText, placeDataPlot } from '../src/core/data-plot.js';
 import { addBeat } from '../src/core/beats.js';
 import { normalizePageGuide, parsePageGuide, pageGuideWidth } from '../src/core/page-guide.js';
 import { buildReport, notesOutline, reportFigureSize, reportPage, reportPageTargets, reportTargets, reportWithPages, resolveReportTarget } from '../src/core/report.js';
-import { pdfDestinationPages } from '../src/server/pdf-pages.js';
+import { pdfDestinationPages, withoutStrokeAdjustment } from '../src/server/pdf-pages.js';
 import { DESIGN_LINK, noteAuthor, noteCompletion, noteDesignLinks, noteFigures } from '../src/core/notes.js';
 import { renderNotes } from '../src/core/notes-markdown.js';
 
@@ -468,4 +468,12 @@ test('a picture on the drawing given a name is a figure the notes place and refe
   assert.equal(run(circuit, `picture ${picture.id} --unnamed`)[0].text, `${picture.id} has no name`);
   assert.equal(picture.image.name, undefined);
   assert.match(buildReport(circuit).warnings[0], /nothing named "Bench capture"/);
+});
+
+test('a printed PDF has its stroke adjustment off, every byte else where it was', () => {
+  const pdf = '%PDF-1.4\n4 0 obj\n<</CA 1\n/LW 6\n/SA true\n/BM /Normal>>\nendobj\n5 0 obj\n<</Length 9>> stream\n/SA true\nendstream\nendobj\nxref\n';
+  const out = withoutStrokeAdjustment(Buffer.from(pdf, 'latin1')).toString('latin1');
+  assert.equal(out.length, pdf.length, 'offsets hold');
+  assert.ok(out.includes('/LW 6\n        \n/BM'), 'the graphics state has none');
+  assert.ok(out.includes('stream\n/SA true\nendstream'), 'a stream is left as it is');
 });

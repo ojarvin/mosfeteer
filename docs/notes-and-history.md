@@ -93,7 +93,9 @@ key, `searchDesign` matches a word found there).
 
 The notes are also the text of the design's report (`src/core/report.js`,
 `buildReport`): a printable HTML document, and the PDF the server prints
-from it with headless Chromium (`printHtmlToPdf`). The export dialog's
+from it with headless Chromium (`printHtmlToPdf`; every PDF it prints has
+Chromium's `/SA true` stroke adjustment blanked, `withoutStrokeAdjustment`,
+so viewers that honor it draw lines at their true width beside fills). The export dialog's
 **Report** (or the notes window's **Report…**) writes it as PDF and HTML.
 Browser-only mode writes the HTML, and its PDF opens the report in the
 browser's print dialog, where Save as PDF makes it (`src/web/print-pdf.js`);

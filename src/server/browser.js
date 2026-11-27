@@ -11,7 +11,7 @@ import { delimiter, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { printPagesHtml } from '../core/print-pages.js';
 import { reportPageTargets, reportWithPages } from '../core/report.js';
-import { pdfDestinationPages } from './pdf-pages.js';
+import { pdfDestinationPages, withoutStrokeAdjustment } from './pdf-pages.js';
 
 function onPath(names, env) {
   const dirs = String(env.PATH || '').split(delimiter).filter(Boolean);
@@ -85,7 +85,7 @@ export async function printHtmlToPdf(html, { browser = findChromium(), timeoutMs
         else reject(new Error(`PDF printing failed (${code}): ${stderr.trim().split('\n').pop() || 'no output'}`));
       });
     });
-    return await readFile(out);
+    return withoutStrokeAdjustment(await readFile(out));
   } finally {
     await rm(work, { recursive: true, force: true }).catch(() => {});
   }
