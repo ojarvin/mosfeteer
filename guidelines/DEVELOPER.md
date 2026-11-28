@@ -47,6 +47,8 @@ src/
 │   ├── analysis/       The analyses. derive.js runs the small-signal window's
 │   │                   derive; annotation-tables.js builds each analysis's
 │   │                   table for the drawing, for the windows and the commands.
+│   │                   bode-plot.js builds the Bode plots, for the Plots window
+│   │                   and analyze bode.
 │   ├── components/
 │   │   ├── index.js    Symbol registry: getSymbol(type), symbolTypeNames.
 │   │   ├── nmos.js …   One file per symbol. Each exports a factory returning

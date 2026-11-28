@@ -146,6 +146,13 @@ moves translate attached branch endpoints, preserve user-drawn interiors, and
 reroute only the necessary endpoint legs. Multi-object moves apply one delta to
 all selected paths before one connectivity/routing commit.
 
+The run move itself is `src/core/wire-move.js` (`moveManagedWireRun`: a run
+ending on a junction carries the junction and its incident branch ends;
+`managedEndpointMeta` tells a pin from a junction from a free end). The
+editor's drag and `net <id> segment-move X Y TO` both use it; the command
+moves one run, reduces the net, and refuses (restoring the net) a move that
+adds a cross-net overlap or a wire through a body, as a dropped drag is.
+
 ## Solder dots
 
 For each net, branch endpoints and geometric intersections are counted. A dot

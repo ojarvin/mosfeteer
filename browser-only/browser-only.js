@@ -861,6 +861,236 @@ function applyApproximations(input, options = {}) {
 
 };
 
+__modules["src/core/analysis/bode-plot.js"] = function (__require, __exports) {
+__exports.bodeRatios = bodeRatios;
+__exports.numericModelOf = numericModelOf;
+__exports.bodeParameters = bodeParameters;
+__exports.numericAt = numericAt;
+__exports.bodeSketchOf = bodeSketchOf;
+__exports.bodeResponsePlot = bodeResponsePlot;
+__exports.bodeTraceLabel = bodeTraceLabel;
+let DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, baseSymbols, bodeSketch, evaluateExpression, expressionSymbols, extendAsymptote, numericCoefficients, responseAt, sketchParameters, sketchValues, withDerivedValues; __bind(() => { ({ DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, baseSymbols, bodeSketch, evaluateExpression, expressionSymbols, extendAsymptote, numericCoefficients, responseAt, sketchParameters, sketchValues, withDerivedValues } = __require("src/core/analysis/bode.js")); });
+let renderExpression; __bind(() => { ({ renderExpression } = __require("src/core/analysis/present.js")); });
+let negate; __bind(() => { ({ negate } = __require("src/core/analysis/rational.js")); });
+let cornerNames; __bind(() => { ({ cornerNames } = __require("src/core/bode-figure.js")); });
+/**
+ * A small-signal quantity as a Bode plot: its sketch at the Values (the
+ * analysis window's sliders, `Circuit#analysisValues.bode`), and the
+ * response plot the Plots window shows and an annotation draws. The window
+ * (web/bode-ui.js) and `analyze bode` both build their plots here.
+ *
+ * Every g_m starts at one unit g, every r_o and resistor at g_m r_o units,
+ * capacitors at one unit C (loads on the output at ten); a value scales any
+ * of them. A_v, Z_in, and Z_out are drawn from the full model solved in
+ * numbers at those values (a report's `numericModel`, engine.js
+ * `numericSmallSignal`); the loop gain from its derived coefficients.
+ */
+
+
+
+
+
+
+/** The quantities a trace can plot, by report key. */
+const BODE_QUANTITIES = {
+  transfer: { name: 'Voltage gain', tex: 'A_{v}' },
+  transimpedance: { name: 'Transimpedance', tex: 'Z_{m}' },
+  transconductance: { name: 'Transconductance', tex: 'G_{m}' },
+  currentGain: { name: 'Current gain', tex: 'A_{i}' },
+  output: { name: 'Output impedance', tex: 'Z_{out}' },
+  input: { name: 'Input impedance', tex: 'Z_{in}' },
+  loop: { name: 'Loop gain', tex: 'T' },
+};
+
+// Solved in numbers from the exact model; the rest from their equations.
+const NUMERIC_KEYS = new Set(['transfer', 'transimpedance', 'transconductance', 'input', 'output']);
+
+/** The Values a design's plots are drawn at (`analysisValues.bode`). */
+function bodeRatios(circuit) {
+  const saved = circuit?.analysisValues?.bode;
+  return {
+    intrinsicGain: saved?.intrinsicGain || DEFAULT_INTRINSIC_GAIN,
+    parasiticRatio: saved?.parasiticRatio || DEFAULT_PARASITIC_RATIO,
+    multipliers: { ...(saved?.multipliers || {}) },
+  };
+}
+
+/** Whether a design's plots draw their asymptotes (`windows.bode`). */
+const bodeAsymptotesShown = (circuit) => circuit?.windows?.bode?.asymptotes !== false;
+
+function exactOf(report, key) {
+  const exact = report?.reports?.[key]?.exact;
+  return exact?.numeratorCoefficients && exact?.denominatorCoefficients ? exact : null;
+}
+
+/** The numbers model a trace is solved with, if any: the port quantities',
+ *  or a loop gain's too large to keep its symbols. */
+function numericModelOf(report, key) {
+  if (NUMERIC_KEYS.has(key)) return report.numericModel;
+  if (key === 'loop' && report.loopNumericModel?.ok) return report.loopNumericModel;
+  return null;
+}
+
+function outputComponents(circuit, report) {
+  const netId = report?.outputPort?.netId;
+  const net = netId && circuit?.nets.get(netId);
+  return new Set(net ? net.terminals.map((terminal) => terminal.comp) : []);
+}
+
+/** A trace's parameters: every one its model stamps (each needs a value),
+ *  and those the ports reach (the ones worth a slider). */
+function bodeParameters(circuit, { report, key }) {
+  if (NUMERIC_KEYS.has(key) || numericModelOf(report, key)) {
+    const model = numericModelOf(report, key);
+    if (!model?.ok) return null;
+    const all = sketchParameters(new Set(Object.keys(model.provenance)), model.provenance, { outputComponents: model.outputComponents });
+    return { all, reached: all.filter((parameter) => model.reached.has(parameter.name)) };
+  }
+  // A loop gain solved at numbers: the parameters it was solved at.
+  const loop = key === 'loop' ? report.reports?.loop : null;
+  if (loop?.numeric && loop.parameters) {
+    const all = sketchParameters(new Set(loop.parameters), loop.provenance || {}, { outputComponents: new Set(loop.outputComponents || []) });
+    return { all, reached: all };
+  }
+  const exact = exactOf(report, key);
+  if (!exact) return null;
+  // A Miller capacitance (C_{M1,in}) is set by the values it is made of.
+  const symbols = baseSymbols(new Set([...exact.numeratorCoefficients, ...exact.denominatorCoefficients]
+    .flatMap(({ coefficient }) => [...expressionSymbols(coefficient)])), report.derivedSymbols);
+  const all = sketchParameters(symbols, report.symbolProvenance || {}, { outputComponents: outputComponents(circuit, report) });
+  return { all, reached: all };
+}
+
+const solved = new WeakMap(); // numericModel -> { key, result }
+/** A report's numeric quantities at `values`: solved once per set of
+ *  values, however often the plots redraw. */
+function numericAt(model, values) {
+  const key = JSON.stringify(values);
+  const memo = solved.get(model);
+  if (memo?.key === key) return memo.result;
+  const result = model.at(values);
+  solved.set(model, { key, result });
+  return result;
+}
+
+/** A trace ({ report, key }) at the Values `ratios`: { sketch, corners,
+ *  values, response }, or null when it has nothing to plot (zero, or the
+ *  same at every frequency). */
+function bodeSketchOf(circuit, trace, ratios) {
+  const parameters = bodeParameters(circuit, trace);
+  if (!parameters) return null;
+  const values = withDerivedValues(sketchValues(parameters.all, ratios), trace.report.derivedSymbols);
+  let sketch;
+  let response;
+  const model = numericModelOf(trace.report, trace.key);
+  if (NUMERIC_KEYS.has(trace.key) || model) {
+    const result = numericAt(model, values);
+    const quantity = result.ok ? result.quantities[trace.key] : null;
+    if (!quantity || quantity.zero || !(quantity.zeros.length || quantity.poles.length)) return null;
+    sketch = bodeSketch(quantity.numerator, quantity.denominator, { roots: { zeros: quantity.zeros, poles: quantity.poles }, response: quantity.response });
+    response = quantity.response;
+  } else {
+    const exact = exactOf(trace.report, trace.key);
+    if (!exact || !(exact.numeratorDegree > 0 || exact.denominatorDegree > 0)) return null;
+    const num = numericCoefficients(exact.numeratorCoefficients, values);
+    const den = numericCoefficients(exact.denominatorCoefficients, values);
+    sketch = bodeSketch(num, den);
+    response = (omega) => responseAt(num, den, omega);
+  }
+  const corners = cornerNames(sketch.poles, sketch.zeros);
+  // A corner whose factor is first order has its exact expression, when the
+  // equations have it at the same place.
+  const derived = trace.report.reports?.[trace.key] || {};
+  const symbolic = [...(derived.poles || []).map((root) => ({ ...root, kind: 'pole' })),
+    ...(derived.zeros || []).map((root) => ({ ...root, kind: 'zero' }))];
+  for (const corner of corners) {
+    for (const root of symbolic) {
+      if (root.kind !== corner.kind || !root.root || root.order !== 1) continue;
+      let value;
+      try { value = evaluateExpression(root.root, values); } catch { continue; }
+      if (Math.abs(Math.abs(value) - corner.w) <= 1e-6 * corner.w) {
+        corner.tex = renderExpression(value < 0 ? negate(root.root) : root.root);
+        break;
+      }
+    }
+  }
+  return { sketch, corners, values, response };
+}
+
+const POINTS_PER_DECADE = 40;
+
+/** A sketch's straight-line magnitude or phase over `low`..`high` (decades
+ *  of ω), as a response trace keeps it; the phase by as many turns as start
+ *  it on the curve's `points`. */
+function asymptoteOf(sketch, quantity, points, low, high) {
+  const phase = quantity === 'phase';
+  const line = extendAsymptote(phase
+    ? (sketch.phaseAsymptote || []).map((p) => ({ w: p.w, value: p.phase }))
+    : sketch.asymptote.map((p) => ({ w: p.w, value: p.db })), low, high);
+  if (line.length < 2) return {};
+  const turns = phase && Number.isFinite(points[0]?.db) ? Math.round((points[0].db - line[0].value) / 360) * 360 : 0;
+  return { asymptote: line.map((p) => ({ f: p.w, db: p.value + turns })) };
+}
+
+/** The graph as a response plot (signal-flow.js `responsePlot`'s shape):
+ *  what the Plots window and an annotation draw. Every sketch ({ trace:
+ *  { label, color }, sketch, corners, response }) over the range they span
+ *  together, each from its own exact response, and with `asymptotes` its
+ *  straight-line asymptote run on over that range. */
+function bodeResponsePlot(sketches, quantity = 'magnitude', { asymptotes = true } = {}) {
+  if (!sketches.length) return null;
+  const low = Math.min(...sketches.map(({ sketch }) => sketch.range.low));
+  const high = Math.max(low + 1, ...sketches.map(({ sketch }) => sketch.range.high));
+  const grid = Array.from({ length: (high - low) * POINTS_PER_DECADE + 1 }, (_, i) => 10 ** (low + i / POINTS_PER_DECADE));
+  // One trace: its corners marked, named as the window names them (four at
+  // most, as a plot keeps); several traces' corners would be anyone's.
+  const markers = sketches.length === 1
+    ? sketches[0].corners.filter((corner) => corner.w >= 10 ** low && corner.w <= 10 ** high).slice(0, 4).map((corner) => ({ f: corner.w, label: corner.text }))
+    : [];
+  return {
+    kind: 'response',
+    axis: 'omega',
+    range: { low, high },
+    ...(markers.length ? { markers } : {}),
+    ...(quantity === 'phase' ? { quantity: 'phase' } : {}),
+    traces: sketches.map(({ trace, response, sketch }) => {
+      let previous = null;
+      const points = grid.map((f) => {
+        const h = response(f);
+        if (quantity !== 'phase') return { f, db: 20 * Math.log10(Math.hypot(h.re, h.im)) };
+        // Unwrapped, as the sketch's own phase is.
+        let phase = (Math.atan2(h.im, h.re) * 180) / Math.PI;
+        if (previous !== null) {
+          while (phase - previous > 180) phase -= 360;
+          while (phase - previous < -180) phase += 360;
+        }
+        previous = phase;
+        return { f, db: phase };
+      });
+      return { label: trace.label, color: trace.color, points, ...(asymptotes ? asymptoteOf(sketch, quantity, points, low, high) : {}) };
+    }),
+  };
+}
+
+/** A trace's label as the graph names it: A_v as V_out over V_in, an
+ *  impedance by its port, the loop gain by where it is broken. */
+function bodeTraceLabel(report, key) {
+  const nameOf = (port) => String(port?.name || port?.netId || '?');
+  const input = nameOf(report.inputPort);
+  const output = nameOf(report.outputPort);
+  const element = report.reports?.loop?.element || '';
+  return key === 'transfer' ? `\\frac{${output}}{${input}}`
+    : key === 'output' ? `Z_{out}(${output})`
+      : key === 'input' ? `Z_{in}(${input})`
+        : key === 'loop' ? (report.reports?.loop?.infinite ? `\\beta_{${element}}` : element ? `T_{${element}}` : 'T')
+          : BODE_QUANTITIES[key].tex;
+}
+
+__exports.BODE_QUANTITIES = BODE_QUANTITIES;
+__exports.NUMERIC_KEYS = NUMERIC_KEYS;
+__exports.bodeAsymptotesShown = bodeAsymptotesShown;
+};
+
 __modules["src/core/analysis/bode.js"] = function (__require, __exports) {
 __exports.sketchParameters = sketchParameters;
 __exports.sketchValues = sketchValues;
@@ -24098,14 +24328,18 @@ __exports.evaluate = evaluate;
 __exports.commandHelp = commandHelp;
 __exports.runCommand = runCommand;
 let plotCsv, plotSeries; __bind(() => { ({ plotCsv, plotSeries } = __require("src/core/plot-export.js")); });
-let appendPlotTraces, dataPlotFromText, fileUnits, inPlotUnits, takesFileTraces, movePlotTrace, placeDataPlot, removePlotTrace, setDataPlotAxis, setPlotTrace, setDataPlotView; __bind(() => { ({ appendPlotTraces, dataPlotFromText, fileUnits, inPlotUnits, takesFileTraces, movePlotTrace, placeDataPlot, removePlotTrace, setDataPlotAxis, setPlotTrace, setDataPlotView } = __require("src/core/data-plot.js")); });
-let analyzeSignalFlow, complexText, transferTex; __bind(() => { ({ analyzeSignalFlow, complexText, transferTex } = __require("src/core/analysis/signal-flow.js")); });
+let appendPlotTraces, dataPlotFromText, fileUnits, inPlotUnits, takesFileTraces, movePlotTrace, placeDataPlot, removePlotTrace, setDataPlotAxis, setPlotTrace, setDataPlotView, writeAnalysisPlot; __bind(() => { ({ appendPlotTraces, dataPlotFromText, fileUnits, inPlotUnits, takesFileTraces, movePlotTrace, placeDataPlot, removePlotTrace, setDataPlotAxis, setPlotTrace, setDataPlotView, writeAnalysisPlot } = __require("src/core/data-plot.js")); });
+let TRACE_COLORS, analyzeSignalFlow, complexText, transferTex; __bind(() => { ({ TRACE_COLORS, analyzeSignalFlow, complexText, transferTex } = __require("src/core/analysis/signal-flow.js")); });
 let analyzeLogic; __bind(() => { ({ analyzeLogic } = __require("src/core/analysis/logic.js")); });
 let analyzeSwitchedCap; __bind(() => { ({ analyzeSwitchedCap } = __require("src/core/analysis/switched-cap.js")); });
-let deriveSmallSignal; __bind(() => { ({ deriveSmallSignal } = __require("src/core/analysis/derive.js")); });
+let deriveSmallSignal, smallSignalRequest; __bind(() => { ({ deriveSmallSignal, smallSignalRequest } = __require("src/core/analysis/derive.js")); });
+let sketchValues; __bind(() => { ({ sketchValues } = __require("src/core/analysis/bode.js")); });
+let numericLoopGain, numericSmallSignal; __bind(() => { ({ numericLoopGain, numericSmallSignal } = __require("src/core/analysis/engine.js")); });
+let BODE_QUANTITIES, NUMERIC_KEYS, bodeAsymptotesShown, bodeParameters, bodeRatios, bodeResponsePlot, bodeSketchOf, bodeTraceLabel; __bind(() => { ({ BODE_QUANTITIES, NUMERIC_KEYS, bodeAsymptotesShown, bodeParameters, bodeRatios, bodeResponsePlot, bodeSketchOf, bodeTraceLabel } = __require("src/core/analysis/bode-plot.js")); });
 let ANALYSIS_OPTION_DEFAULTS; __bind(() => { ({ ANALYSIS_OPTION_DEFAULTS } = __require("src/core/analysis/options.js")); });
 let logicEquations, logicTable, signalFlowTable, smallSignalTable, switchedCapTable, synthesisEquations, synthesisTable; __bind(() => { ({ logicEquations, logicTable, signalFlowTable, smallSignalTable, switchedCapTable, synthesisEquations, synthesisTable } = __require("src/core/analysis/annotation-tables.js")); });
 let writeMathFigure; __bind(() => { ({ writeMathFigure } = __require("src/core/math-figure.js")); });
+let moveWireSegment; __bind(() => { ({ moveWireSegment } = __require("src/core/wire-move.js")); });
 let Circuit, canonicalNetName, componentNameIdentity, muxInputCount, normalizeTags, parseTermRef, transformComponentWorld; __bind(() => { ({ Circuit, canonicalNetName, componentNameIdentity, muxInputCount, normalizeTags, parseTermRef, transformComponentWorld } = __require("src/core/model.js")); });
 let captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets, setPartValue; __bind(() => { ({ captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets, setPartValue } = __require("src/core/part-moves.js")); });
 let TRANSFER_FUNCTION_ROLE, isTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_ROLE, isTransferFunction } = __require("src/core/transfer-function.js")); });
@@ -24135,12 +24369,16 @@ let PIN_RAIL_TYPES, addPinRail; __bind(() => { ({ PIN_RAIL_TYPES, addPinRail } =
 let fixAllIssues, tidySelection; __bind(() => { ({ fixAllIssues, tidySelection } = __require("src/core/tidy.js")); });
 let applyArrangement, arrangementCandidates; __bind(() => { ({ applyArrangement, arrangementCandidates } = __require("src/core/arrange.js")); });
 let builtInDrawings, cellPatterns; __bind(() => { ({ builtInDrawings, cellPatterns } = __require("src/core/arrange-builtins.js")); });
-let arrangeFigures, figureBounds, listFigures; __bind(() => { ({ arrangeFigures, figureBounds, listFigures } = __require("src/core/figures.js")); });
+let arrangeFigures, figureBounds, listFigures, plotKey; __bind(() => { ({ arrangeFigures, figureBounds, listFigures, plotKey } = __require("src/core/figures.js")); });
 let buildReport, namePicture, notesOutline; __bind(() => { ({ buildReport, namePicture, notesOutline } = __require("src/core/report.js")); });
 let parsePageGuide; __bind(() => { ({ parsePageGuide } = __require("src/core/page-guide.js")); });
 let findInLabels, replaceInLabels; __bind(() => { ({ findInLabels, replaceInLabels } = __require("src/core/label-search.js")); });
 let normalizeNotes, notesMarkdown; __bind(() => { ({ normalizeNotes, notesMarkdown } = __require("src/core/notes.js")); });
 let checkpointHistory, historyEntries, historyEntryState, historyText, pinHistoryEntry, removeHistoryEntry, settledHistory, unpinHistoryEntry; __bind(() => { ({ checkpointHistory, historyEntries, historyEntryState, historyText, pinHistoryEntry, removeHistoryEntry, settledHistory, unpinHistoryEntry } = __require("src/core/save-history.js")); });
+
+
+
+
 
 
 
@@ -24303,6 +24541,12 @@ const FLAG_ARITY = {
   readout: 1,
   sampling: 1,
   side: 1,
+  via: 1,
+  quantity: 1,
+  phase: 0,
+  magnitude: 0,
+  loop: 1,
+  values: 1,
 };
 
 const SYNTHESIZE_USAGE = 'usage: synthesize logic IN ... OUT=VALUES ... [--style and-or|nand|or-and|nor] [--gates inverter,and,nand,or,nor] [--max-inputs 2|3] [--at X Y] [--print]';
@@ -24688,6 +24932,7 @@ function commandHelp() {
     '  supplybar on|off <refdes> ...  - join supply bars with aligned same-rail neighbors (visual only)',
     '  supplybar name <NAME|-> <refdes> ... - name all supplies of a bar at once (- clears)',
     '  connect REF.TERM REF.TERM ... [--name N] [--explain]  (alias wire)',
+    '  connect REF.TERM --at X Y [--via X,Y;X,Y...] - draw a wire from the pin through the --via points to X Y (a pin, or a point on a wire: joins its net there)',
     '  cross A1 A2 B1 B2             - two protected diagonal cross-coupled routes',
     '  disconnect REF.TERM            - detach one terminal from its net',
     '  swap <refdes> [type]           - change a part\'s type in place, keeping its wiring (no type: list the choices)',
@@ -24723,6 +24968,7 @@ function commandHelp() {
     '  replace FIND WITH [--case] [--regex] - replace FIND in all of them, through each one\'s own rename; all or nothing ("" for WITH deletes; $1 with --regex)',
     '  nets                           - list nets with terminals and length',
     '  net <id> add|drop|name|label|bitcount|fan|rm|segment-rm ... - manage a net',
+    '  net <id> segment-move X Y TO   - slide the straight run through X Y sideways to the line TO (y of a horizontal run, x of a vertical one), its ends kept joined',
     '  net <id> fan BOX on|off        - the net fans into stacked box BOX: a diagonal a cell out, a short wire into each copy',
     '  net <id> bitcount on|off       - show a bus net\'s bit count beside its slashes',
     '  net <id> busslash on|off       - show or hide a bus net\'s slashes',
@@ -24763,6 +25009,11 @@ function commandHelp() {
     '                                   title, and keeps the form with the design so the analysis window opens on it',
     '  analyze loop-gain AT [options] - the loop gain broken at AT: an opamp (U1), a terminal (M2.g), the net that closes',
     '                                   the loop (V_{out}), or "V_{fb} to V_{inn}" when the loop is not drawn closed',
+    '  analyze bode OUT --input NET [--quantity transfer|output|input|loop] [--loop AT] [--magnitude] [--phase] [--annotate]',
+    '                                 - a quantity\'s Bode plot as the Plots window draws it, at the design\'s Values (the analysis',
+    '                                   window\'s sliders; ω in g/C): its corners printed; --annotate puts the magnitude and phase plots',
+    '                                   (or the one asked for) on the drawing, again in place; takes analyze equations\' option flags;',
+    '                                   --values gm6=10,CC=1,RZ=0.075 sets parameters in the plot\'s units (g, C, 1/g), saved as the sliders are',
     '  analyze logic [--clock NET] [--annotate] - the truth table of the gates, muxes, tri-states, flip-flops, and latches (a state table',
     '                                   with them), and each output (and next state) as a minimized sum of products;',
     '                                   --clock picks the clock input where the drawing leaves it open (a gated clock);',
@@ -25005,6 +25256,9 @@ function dispatch(circuit, cmd, pos, flags, io) {
   }
   if ((cmd === 'analyze' || cmd === 'analysis') && ['switched-cap', 'switchedcap', 'sc'].includes(pos[0])) {
     return switchedCapCommand(circuit, pos.slice(1), flags, result);
+  }
+  if ((cmd === 'analyze' || cmd === 'analysis') && pos[0] === 'bode') {
+    return bodeCommand(circuit, pos.slice(1), flags, result);
   }
   if ((cmd === 'analyze' || cmd === 'analysis') && ['equations', 'all'].includes(pos[0])) {
     return smallSignalEquationsCommand(circuit, pos.slice(1), flags, result);
@@ -25311,8 +25565,28 @@ function dispatch(circuit, cmd, pos, flags, io) {
   }
 
   // ---------- connectivity ----------
+  if ((cmd === 'connect' || cmd === 'wire') && flags.at) {
+    // A drawn wire, as the editor's wire tool draws one: from the pin,
+    // through the --via points in order, to X Y (a pin, or a point on a
+    // wire, which joins that net there).
+    const usage = 'usage: connect REF.TERM --at X Y [--via X,Y;X,Y...] [--name N]';
+    if (pos.length !== 1) throw new Error(usage);
+    const at = { x: Number(flags.at[0]), y: Number(flags.at[1]) };
+    const via = flags.via ? flags.via[0].split(/[;\s]+/).filter(Boolean).map((pair) => {
+      const parts = pair.split(',').map(Number);
+      const [x, y] = parts;
+      if (parts.length !== 2 || !Number.isFinite(x) || !Number.isFinite(y)) throw new Error(`--via takes X,Y points separated by ';': "${pair}"\n${usage}`);
+      return { x: snap(x), y: snap(y) };
+    }) : [];
+    if (!Number.isFinite(at.x) || !Number.isFinite(at.y)) throw new Error(usage);
+    const net = circuit.wireTo(pos[0], at, via);
+    if (!net) throw new Error(`could not draw a wire from ${pos[0]} to (${snap(at.x)},${snap(at.y)}): nothing to join there, or no legal route`);
+    if (flags.name && flags.name[0]) circuit.renameNet(net, flags.name[0]);
+    const terms = net.terminals.map((t) => termInfo(circuit, t.comp, t.term));
+    return result(`net ${net.id}${net.name ? ` "${net.name}"` : ''}: ${terms.join('  ')}; len=${net.length()}`, { netId: net.id, name: net.name, terminals: net.terminals.map((t) => ({ ...t })), length: net.length() }, true);
+  }
   if (cmd === 'connect' || cmd === 'wire') {
-    if (pos.length < 2) throw new Error('usage: connect REF.TERM REF.TERM [...]');
+    if (pos.length < 2) throw new Error('usage: connect REF.TERM REF.TERM [...] | connect REF.TERM --at X Y [--via X,Y;...]');
     const explanation = flags.explain ? routeExplanation(circuit, pos.slice(0, 2)) : null;
     const net = circuit.connect(...pos);
     if (flags.name && flags.name[0]) circuit.renameNet(net, flags.name[0]);
@@ -25746,10 +26020,12 @@ const SET_OPTIONS = Object.fromEntries(Object.keys(ANALYSIS_OPTION_DEFAULTS)
  * on the drawing and keeps the form with the design, so the window opens
  * on the same analysis.
  */
-function smallSignalEquationsCommand(circuit, pos, flags, result) {
+/** The analysis window's form from a command's OUTPUT and flags: the
+ *  window's defaults, changed by the flags. */
+function smallSignalForm(pos, flags, usage) {
   const output = pos[0];
   const input = flags.input?.[0];
-  if (!output || pos.length > 1 || !input) throw new Error(EQUATIONS_USAGE);
+  if (!output || pos.length > 1 || !input) throw new Error(usage);
   const options = { ...ANALYSIS_OPTION_DEFAULTS, transferFunctions: [...ANALYSIS_OPTION_DEFAULTS.transferFunctions] };
   if (flags['ignore-channel-length-modulation']) options.neglectChannelLengthModulation = true;
   if (flags['ignore-body-effect']) options.neglectBodyEffect = true;
@@ -25780,7 +26056,11 @@ function smallSignalEquationsCommand(circuit, pos, flags, result) {
     deviceRegions[match[1]] = { region: 'triode' };
   }
   options.deviceRegions = deviceRegions;
-  const acGrounds = list(flags['ac-ground']);
+  return { input, output, acGrounds: list(flags['ac-ground']), options };
+}
+
+function smallSignalEquationsCommand(circuit, pos, flags, result) {
+  const { input, output, acGrounds, options } = smallSignalForm(pos, flags, EQUATIONS_USAGE);
   const report = deriveSmallSignal(circuit, { input, output, acGrounds, options });
   if (!report.ok) throw new Error(report.diagnostics?.errors?.[0]?.detail || report.error || 'the small-signal analysis failed');
   const rows = (report.equationEntries || []).filter((entry) => entry.result?.ok && (entry.result.equation || entry.result.lines));
@@ -25809,6 +26089,90 @@ function smallSignalEquationsCommand(circuit, pos, flags, result) {
     mutated = true;
   }
   return result(lines.join('\n'), { input: report.input, output: report.output, rows: rows.map(({ group, title, result: row }) => ({ group, title, equation: row.equation, lines: row.lines })) }, mutated);
+}
+
+const BODE_USAGE = 'usage: analyze bode OUTPUT --input NET [--quantity transfer|output|input|loop] [--loop AT] [--values NAME=V,...] [--magnitude] [--phase] [--ac-ground NET,...] [--set OPTION=on|off,...] [--annotate]';
+
+/**
+ * `analyze bode OUTPUT --input NET`: a quantity's Bode plot as the Plots
+ * window draws it (analysis/bode-plot.js), at the design's Values (the
+ * analysis window's sliders): magnitude and phase, or the one asked for.
+ * The port quantities are solved in numbers, so they plot even when their
+ * equations are too large to derive. --annotate puts each plot on the
+ * drawing, rewriting the one there.
+ */
+function bodeCommand(circuit, pos, flags, result) {
+  const form = smallSignalForm(pos, flags, BODE_USAGE);
+  if (flags.loop) form.loopElement = flags.loop[0];
+  form.sketchRatios = circuit.analysisValues?.bode || {};
+  const key = flags.quantity?.[0] || (flags.loop ? 'loop' : 'transfer');
+  if (!BODE_QUANTITIES[key]) throw new Error(`--quantity is one of ${Object.keys(BODE_QUANTITIES).join(', ')}\n${BODE_USAGE}`);
+  if (key === 'loop' && !flags.loop) throw new Error(`a loop gain needs --loop AT (an opamp, a terminal, or the net that closes the loop)\n${BODE_USAGE}`);
+  const { request } = smallSignalRequest(circuit, form);
+  let report;
+  try {
+    report = deriveSmallSignal(circuit, form);
+  } catch (error) {
+    report = { ok: false, error: error.message, reports: {} };
+  }
+  // The numbers model is solved from a copy, as the window does: its
+  // closures keep the circuit they were built from.
+  const copy = () => Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
+  try {
+    report.numericModel = numericSmallSignal(copy(), request);
+  } catch (error) {
+    report.numericModel = { ok: false, error: error.message };
+  }
+  if (report.reports?.loop?.numeric && request.loopGain?.at) {
+    try { report.loopNumericModel = numericLoopGain(copy(), request); } catch (error) { report.loopNumericModel = { ok: false, error: error.message }; }
+  }
+  report.inputPort ||= { name: form.input };
+  report.outputPort ||= { name: form.output };
+  const valuesSet = flags.values ? setBodeValues(circuit, bodeParameters(circuit, { report, key }), flags.values[0]) : 0;
+  const sketch = bodeSketchOf(circuit, { report, key }, bodeRatios(circuit));
+  if (!sketch) {
+    const why = (NUMERIC_KEYS.has(key) ? report.numericModel?.error : report.reports?.[key]?.error) || report.error;
+    throw new Error(why ? `no Bode plot of ${BODE_QUANTITIES[key].name.toLowerCase()}: ${why}` : `${BODE_QUANTITIES[key].name} has nothing to plot: zero, or the same at every frequency`);
+  }
+  const trace = { label: bodeTraceLabel(report, key), color: TRACE_COLORS[0] };
+  const quantities = flags.magnitude && !flags.phase ? ['magnitude'] : flags.phase && !flags.magnitude ? ['phase'] : ['magnitude', 'phase'];
+  const lines = [
+    ...(valuesSet ? [`set ${valuesSet} value${valuesSet === 1 ? '' : 's'} (saved with the design, as the window's sliders)`] : []),
+    `${BODE_QUANTITIES[key].name}: ${trace.label}, at the Values (ω in g/C)`,
+    ...sketch.corners.map((corner) => `  ${corner.kind} at ω = ${Number(corner.w.toPrecision(3))}${corner.tex ? `: ${corner.tex}` : ''}`),
+  ];
+  let mutated = valuesSet > 0;
+  for (const quantity of quantities) {
+    const plot = bodeResponsePlot([{ trace, ...sketch }], quantity, { asymptotes: bodeAsymptotesShown(circuit) });
+    if (!flags.annotate) continue;
+    const { box, updated } = writeAnalysisPlot(circuit, plot, [trace], { kind: 'plot', source: 'small-signal', key: plotKey(plot) });
+    lines.push(`${updated ? 'updated' : 'annotated'} the ${quantity} plot (${box.figure?.id || box.id})`);
+    mutated = true;
+  }
+  return result(lines.join('\n'), { quantity: key, label: trace.label, corners: sketch.corners.map(({ kind, w, tex }) => ({ kind, w, tex: tex || null })) }, mutated);
+}
+
+/**
+ * The Values from `NAME=V,...`: each parameter's value in the plot's units
+ * (g for a transconductance, C for a capacitance, 1/g for a resistance),
+ * kept as the window keeps a slider's, a multiplier of its starting value
+ * (`Circuit#analysisValues.bode`). Returns how many were set.
+ */
+function setBodeValues(circuit, parameters, text) {
+  if (!parameters) throw new Error('no values to set: the quantity has no model to solve');
+  const ratios = bodeRatios(circuit);
+  const bases = sketchValues(parameters.all, { ...ratios, multipliers: {} });
+  let count = 0;
+  for (const entry of list([text])) {
+    const match = entry.match(/^([^=\s]+)\s*=\s*([^=\s]+)$/);
+    const value = match ? Number(match[2]) : NaN;
+    if (!match || !(value > 0)) throw new Error(`--values takes NAME=VALUE pairs, each value positive: "${entry}"`);
+    if (!(match[1] in bases)) throw new Error(`--values: no parameter "${match[1]}"; the parameters are ${Object.keys(bases).join(', ')}`);
+    ratios.multipliers[match[1]] = value / bases[match[1]];
+    count += 1;
+  }
+  circuit.analysisValues.bode = { intrinsicGain: ratios.intrinsicGain, parasiticRatio: ratios.parasiticRatio, multipliers: ratios.multipliers };
+  return count;
 }
 
 const SWITCHED_CAP_USAGE = 'usage: analyze switched-cap --input NET --output NET [--readout PHASE] [--sampling period|slot] [--noise ktc] [--annotate]';
@@ -26345,6 +26709,15 @@ function netCommand(circuit, pos, result, flags = {}) {
     return result(`net ${net.id} ${pos[3] === 'on' ? 'fans into' : 'does not fan into'} ${box.id}`, net.toJSON(), changed);
   }
   if (op === 'label') return netLabelCommand(circuit, [pos[2], net.id, ...pos.slice(3)], result, flags);
+  if (op === 'segment-move') {
+    // The straight run through X Y, slid sideways to TO (a y for a
+    // horizontal run, an x for a vertical one), as a segment drag does.
+    const [x, y, to] = pos.slice(2).map(Number);
+    if (pos.length !== 5 || ![x, y, to].every(Number.isFinite)) throw new Error('usage: net <id> segment-move X Y TO (the run through X Y, moved to the line TO)');
+    const moved = moveWireSegment(circuit, net, { x, y }, to, { evaluate });
+    const short = moved.to !== snap(to) ? ` (as far as it goes toward ${snap(to)}: a neighboring run or pin stops it)` : '';
+    return result(`moved the ${moved.orient === 'h' ? 'horizontal' : 'vertical'} run of ${net.id} from ${moved.orient === 'h' ? 'y' : 'x'}=${moved.from} to ${moved.to}${short}`, { net: net.id, ...moved }, true);
+  }
   if (op === 'segment-rm') {
     const branch = Number(pos[2]);
     const segment = Number(pos[3]);
@@ -28761,6 +29134,7 @@ __exports.dataPlot = dataPlot;
 __exports.columnIndex = columnIndex;
 __exports.dataPlotFromText = dataPlotFromText;
 __exports.placeDataPlot = placeDataPlot;
+__exports.writePlot = writePlot;
 __exports.setDataPlotAxis = setDataPlotAxis;
 __exports.setDataPlotView = setDataPlotView;
 __exports.fileUnits = fileUnits;
@@ -28774,8 +29148,9 @@ __exports.removePlotTrace = removePlotTrace;
 __exports.setPlotCursors = setPlotCursors;
 __exports.appendPlotTraces = appendPlotTraces;
 __exports.replaceDataPlotTraces = replaceDataPlotTraces;
+__exports.writeAnalysisPlot = writeAnalysisPlot;
 let TRACE_COLORS; __bind(() => { ({ TRACE_COLORS } = __require("src/core/analysis/signal-flow.js")); });
-let newFigureId, placeFigure, settlePlaced; __bind(() => { ({ newFigureId, placeFigure, settlePlaced } = __require("src/core/figures.js")); });
+let chooseFigure, newFigureId, placeFigure, settlePlaced; __bind(() => { ({ chooseFigure, newFigureId, placeFigure, settlePlaced } = __require("src/core/figures.js")); });
 let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
 let MAX_DATA_POINTS, MAX_PLOT_EXTRA, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, plotLegendCurves; __bind(() => { ({ MAX_DATA_POINTS, MAX_PLOT_EXTRA, PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, plotLegendCurves } = __require("src/core/model.js")); });
 let COLOR_PALETTE, colorToken; __bind(() => { ({ COLOR_PALETTE, colorToken } = __require("src/core/style.js")); });
@@ -28864,6 +29239,76 @@ function placeDataPlot(circuit, plot, { at = null, math = false } = {}) {
   if (!at) settlePlaced(circuit, figure.id);
   const legend = writeLegend(circuit, box, box.plot.traces, null, { math });
   return { box, legend };
+}
+
+/**
+ * Write a plot into `target` (its data and legend swapped, its place, size,
+ * and style kept) or a new box under the drawing; inside a commit. Returns
+ * `{ box, ids, left, top }` for the legend's column.
+ */
+function writePlot(circuit, target, plot, shown, { identity = null } = {}) {
+  let box = target;
+  let left;
+  let top;
+  if (target) {
+    // The column is where its curves' entries are (notes may sit apart).
+    const entries = circuit.plotLegend(target);
+    const named = entries.slice(0, circuit.plotLegendCurves(target).length);
+    const old = (named.length ? named : entries).map((label) => label.bbox());
+    const frame = target.bbox();
+    left = old.length ? Math.min(...old.map((r) => r.x)) : frame.x + frame.w;
+    top = old.length ? Math.min(...old.map((r) => r.y)) : frame.y;
+    // A column beside the plot never starts inside it, nor in black over
+    // its line samples' room: one that slid there goes back beside it.
+    const room = target.style.blackTraces ? PLOT_LEGEND_SAMPLE_ROOM : 0;
+    if (top < frame.y + frame.h && left > frame.x && left < frame.x + frame.w + room) left = frame.x + frame.w + room;
+  } else {
+    // Packed clear of what is there (figures.js): the box, and its legend
+    // beside it about as wide as a third of the box.
+    const spot = placeFigure(circuit, 'plot', { size: { w: (PLOT_BOX.w + 6) * GRID, h: PLOT_BOX.h * GRID } });
+    // The legend beside the box, past the room its line samples take (a
+    // new plot draws in black): its labels keep their own inset.
+    left = spot.x + PLOT_BOX.w * GRID + PLOT_LEGEND_SAMPLE_ROOM;
+    top = spot.y;
+  }
+  const ids = [];
+  const figure = identity && { ...identity, id: target?.figure?.id || newFigureId(circuit) };
+  if (target) {
+    // A trace hidden in the plot's settings stays hidden through an update
+    // (a held one by its key, the others by name).
+    const before = target.plot?.traces || [];
+    // A name past its comma is its numbers then, which may have moved since.
+    const base = (label) => String(label).split(',\\ ')[0];
+    const wasHidden = (trace) => before.some((old) => old.hidden && (old.hold ? old.hold === trace.hold : !trace.hold && base(old.label) === base(trace.label) && !!old.background === !!trace.background));
+    if (Array.isArray(plot.traces) && before.some((old) => old.hidden)) plot = { ...plot, traces: plot.traces.map((trace) => (wasHidden(trace) ? { ...trace, hidden: true } : trace)) };
+    // Traces added from files, and the markers, stay through an update.
+    const { extra, cursors } = target.plot || {};
+    target.plot = normalizePlot({ ...plot, ...(extra ? { extra } : {}), ...(cursors ? { cursors } : {}) });
+    // A plot from before figures is this tool's from now on.
+    if (figure && !target.figure) target.figure = figure;
+    for (const label of circuit.plotLegend(target)) circuit.removeLabel(label.id);
+  } else {
+    const x = left - PLOT_BOX.w * GRID - PLOT_LEGEND_SAMPLE_ROOM;
+    box = circuit.addAnnotation('box', { x, y: top, end: { x: x + PLOT_BOX.w * GRID, y: top + PLOT_BOX.h * GRID }, plot, style: { lineStyle: 'solid', blackTraces: true }, ...(figure ? { figure } : {}) });
+    if (figure) settlePlaced(circuit, figure.id);
+  }
+  let y = top;
+  const add = (text, style, math = true) => {
+    const label = circuit.addLabel({ text, math, parent: box.id, role: PLOT_LEGEND_ROLE, align: 'left', x: 0, y: 0, ...(style ? { style } : {}) });
+    const size = label.bbox();
+    label.moveTo(snap(left + size.w / 2), snap(y + size.h / 2));
+    y = label.bbox().y + label.bbox().h;
+    ids.push(label.id);
+  };
+  // The analysis's curves, then a simulated spectrum behind them, then the
+  // traces added from files.
+  // A hidden trace has no entry: `shown` names the front traces in order.
+  const front = (box.plot.traces || []).filter((trace) => !trace.background);
+  const behind = (box.plot.traces || []).filter((trace) => trace.background && !trace.hidden);
+  shown.forEach((trace, i) => { if (!front[i]?.hidden) add(`$${trace.label}$`, { color: trace.color }); });
+  behind.forEach((trace) => add(`$${trace.label}$`, { color: trace.color }));
+  for (const trace of box.plot.extra || []) add(trace.label || ' ', { color: trace.color }, false);
+  return { box, ids, left, top };
 }
 
 /** A legend for `traces` beside `box`, one label under another, past the
@@ -29158,6 +29603,19 @@ function replaceDataPlotTraces(circuit, box, plot, { math = false } = {}) {
   for (const label of legend) circuit.removeLabel(label.id);
   box.plot = normalizePlot({ ...old, file: plot.file || old.file, every: plot.every, ...(plot.y ? { y: plot.y } : {}), traces: plot.traces });
   return writeLegend(circuit, box, box.plot.traces, at, { math });
+}
+
+/**
+ * An analysis's plot on the drawing as its figure `identity` ({ kind:
+ * 'plot', source, key }): the one there rewritten in place (its place,
+ * size, and style kept), else a new box packed clear of what is there.
+ * `shown` names the traces ({ label, color }) for the legend. Returns
+ * { box, updated }.
+ */
+function writeAnalysisPlot(circuit, plot, shown, identity) {
+  const target = chooseFigure(circuit, identity)?.labels.find((label) => label.plot) || null;
+  const { box } = writePlot(circuit, target, plot, shown, { identity });
+  return { box, updated: !!target };
 }
 
 __exports.PLOT_BOX = PLOT_BOX;
@@ -52925,6 +53383,153 @@ __exports.MAX_WINDOW_PICTURE = MAX_WINDOW_PICTURE;
 __exports.SIZING_SORT_KEYS = SIZING_SORT_KEYS;
 };
 
+__modules["src/core/wire-move.js"] = function (__require, __exports) {
+__exports.managedEndpointMeta = managedEndpointMeta;
+__exports.managedWireBreaks = managedWireBreaks;
+__exports.moveManagedJunction = moveManagedJunction;
+__exports.moveManagedWireRun = moveManagedWireRun;
+__exports.moveWireSegment = moveWireSegment;
+let moveJunctionEndpoint, moveWireRun, wireRunAt; __bind(() => { ({ moveJunctionEndpoint, moveWireRun, wireRunAt } = __require("src/core/wireedit.js")); });
+let crossNetOverlaps; __bind(() => { ({ crossNetOverlaps } = __require("src/core/wiring.js")); });
+let snap; __bind(() => { ({ snap } = __require("src/core/grid.js")); });
+/**
+ * Moving a run of a managed wire sideways, keeping its ends joined: what a
+ * segment drag in the editor does (web/main.js) and what `net <id>
+ * segment-move` does from the command language. A run ending on a junction
+ * carries the junction with it, so the branches meeting there follow; a run
+ * ending on a pin keeps the pin and adds a connector leg.
+ */
+
+
+
+
+
+/** What a managed path's end at `point` is: a terminal (with its pin
+ *  direction), a junction, or free. A terminal wins when both share the
+ *  point: that end must stay on its pin. */
+function managedEndpointMeta(circuit, net, point) {
+  const terminal = net.terminals.find((t) => {
+    const p = circuit.components.get(t.comp)?.terminalWorld(t.term);
+    return p && p.x === point.x && p.y === point.y;
+  });
+  if (terminal) {
+    const c = circuit.components.get(terminal.comp);
+    const def = c?.terminalDefs.find((t) => t.name === terminal.term);
+    return {
+      type: 'terminal', comp: terminal.comp, term: terminal.term, point: { ...point },
+      dir: c && def ? circuit._pinDir(c, def, point.x, point.y) : null,
+    };
+  }
+  if (net.junctions.some((p) => p.x === point.x && p.y === point.y)) return { type: 'junction', point: { ...point } };
+  return { type: 'free', point: { ...point } };
+}
+
+/** The points a run never slides past: the net's terminals and junctions. */
+function managedWireBreaks(net) {
+  return new Set((net?.anchorWorlds?.() || []).map((p) => `${p.x},${p.y}`));
+}
+
+/** Move one junction of `net`, its incident branch ends with it. */
+function moveManagedJunction(circuit, net, oldPoint, newPoint) {
+  if (oldPoint.x === newPoint.x && oldPoint.y === newPoint.y) return;
+  const paths = net.branches?.length ? net.branches : net.route ? [net.route] : [];
+  net.junctions = moveJunctionEndpoint(paths, net.junctions, oldPoint, newPoint, (path, index) => managedEndpointMeta(circuit, net, path[index]));
+}
+
+/** Move `run` ({ net, pts, orient, line, endpointMeta }) to `target`,
+ *  keeping junction ends joined. Returns the line it ended on. */
+function moveManagedWireRun(circuit, run, target) {
+  const endpoints = [run.endpointMeta?.start?.point, run.endpointMeta?.end?.point].map((p) => p && { ...p });
+  run.line = moveWireRun(run.pts, run.orient, run.line, target, run.endpointMeta);
+  for (const i of [0, 1]) {
+    const meta = run.endpointMeta?.[i === 0 ? 'start' : 'end'];
+    const oldPoint = endpoints[i];
+    if (meta?.type !== 'junction' || !oldPoint) continue;
+    const actual = i === 0 ? run.pts[0] : run.pts[run.pts.length - 1];
+    // Topology-bounded runs keep junction ends fixed and add connector legs;
+    // unbounded moves carry the junction.
+    if (actual?.x === oldPoint.x && actual?.y === oldPoint.y) continue;
+    const newPoint = run.orient === 'h' ? { x: oldPoint.x, y: run.line } : { x: run.line, y: oldPoint.y };
+    moveManagedJunction(circuit, run.net, oldPoint, newPoint);
+  }
+  return run.line;
+}
+
+/** The branch and segment of `net` whose straight segment holds `point`. */
+function segmentAt(net, point) {
+  const paths = net.branches?.length ? net.branches : net.route?.length >= 2 ? [net.route] : [];
+  for (let branch = 0; branch < paths.length; branch++) {
+    const pts = paths[branch];
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      const within = (v, p, q) => v >= Math.min(p, q) && v <= Math.max(p, q);
+      const onH = a.y === b.y && point.y === a.y && within(point.x, a.x, b.x);
+      const onV = a.x === b.x && point.x === a.x && within(point.y, a.y, b.y);
+      if ((onH || onV) && !(a.x === b.x && a.y === b.y)) return { branch, segment: i, pts };
+    }
+  }
+  return null;
+}
+
+const wireBodyIssues = (evaluate, circuit, netId) => evaluate(circuit).issues
+  .filter((issue) => issue.kind === 'wire-through-body' && issue.netId === netId)
+  .map((issue) => JSON.stringify([issue.netId, issue.refs || [], issue.points || []]));
+
+/**
+ * Move the straight run of `net` through `point` sideways to the line `to`
+ * (a y for a horizontal run, an x for a vertical one), its ends kept joined.
+ * Refuses, changing nothing, a move that would overlap another net or run
+ * through a body it did not before. `evaluate` is commands.js's Design Check.
+ * Returns { orient, from, to }.
+ */
+function moveWireSegment(circuit, net, point, to, { evaluate }) {
+  const p = { x: snap(point.x), y: snap(point.y) };
+  const hit = segmentAt(net, p);
+  if (!hit) throw new Error(`no straight segment of ${net.id} passes through (${p.x},${p.y})`);
+  const breaks = managedWireBreaks(net);
+  const run = wireRunAt(hit.pts, hit.segment, breaks);
+  const before = JSON.stringify({ route: net.route, branches: net.branches, junctions: net.junctions });
+  const overlapsBefore = new Set(crossNetOverlaps([...circuit.nets.values()].map((n) => ({ id: n.id, paths: n.paths() })))
+    .map((o) => [o.key.split(':')[0], o.otherKey.split(':')[0]].sort().join('|')));
+  const bodyBefore = new Set(wireBodyIssues(evaluate, circuit, net.id));
+  const endpointMeta = {
+    start: managedEndpointMeta(circuit, net, hit.pts[run.lo]),
+    end: managedEndpointMeta(circuit, net, hit.pts[run.hi]),
+    segment: hit.segment,
+    breaks,
+    runBounds: { lo: run.lo, hi: run.hi },
+  };
+  const live = { net, pts: hit.pts, orient: run.orient, line: run.val, endpointMeta };
+  const restore = () => {
+    const saved = JSON.parse(before);
+    net.route = saved.route;
+    net.branches = saved.branches;
+    net.junctions = saved.junctions;
+    circuit.syncJunctionSolders();
+  };
+  const reached = moveManagedWireRun(circuit, live, snap(to));
+  if (reached === run.val) throw new Error(`the ${run.orient === 'h' ? 'horizontal' : 'vertical'} run at ${run.val} cannot move to ${snap(to)}: a neighboring run or a pin is in the way`);
+  if (net.branches?.length) net.route = net.branches[0].map((q) => ({ ...q }));
+  circuit._reduceNet(net);
+  circuit.syncJunctionSolders();
+  const collision = crossNetOverlaps([...circuit.nets.values()].map((n) => ({ id: n.id, paths: n.paths() })))
+    .map((o) => [o.key.split(':')[0], o.otherKey.split(':')[0]])
+    .find((pair) => pair.includes(net.id) && !overlapsBefore.has([...pair].sort().join('|')));
+  if (collision) {
+    restore();
+    throw new Error(`the wire would overlap net ${collision.find((id) => id !== net.id) || net.id}`);
+  }
+  const body = wireBodyIssues(evaluate, circuit, net.id).find((key) => !bodyBefore.has(key));
+  if (body) {
+    restore();
+    throw new Error(`the wire would run through a part: ${JSON.parse(body)[1].join(', ')}`);
+  }
+  return { orient: run.orient, from: run.val, to: reached };
+}
+
+};
+
 __modules["src/core/wireedit.js"] = function (__require, __exports) {
 __exports.wireRunAt = wireRunAt;
 __exports.collapseCollinear = collapseCollinear;
@@ -66480,10 +67085,8 @@ __exports.bodeSettingsRestored = bodeSettingsRestored;
 __exports.installBodeUi = installBodeUi;
 __exports.bodeSnapshot = bodeSnapshot;
 let PER_DECADE; __bind(() => { ({ PER_DECADE } = __require("src/web/e-series.js")); });
-let DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, baseSymbols, bodeSketch, evaluateExpression, expressionSymbols, extendAsymptote, numericCoefficients, responseAt, sketchParameters, sketchValues, withDerivedValues; __bind(() => { ({ DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, baseSymbols, bodeSketch, evaluateExpression, expressionSymbols, extendAsymptote, numericCoefficients, responseAt, sketchParameters, sketchValues, withDerivedValues } = __require("src/core/analysis/bode.js")); });
-let renderExpression; __bind(() => { ({ renderExpression } = __require("src/core/analysis/present.js")); });
-let negate; __bind(() => { ({ negate } = __require("src/core/analysis/rational.js")); });
-let cornerNames; __bind(() => { ({ cornerNames } = __require("src/core/bode-figure.js")); });
+let DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, sketchValues, withDerivedValues; __bind(() => { ({ DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, sketchValues, withDerivedValues } = __require("src/core/analysis/bode.js")); });
+let BODE_QUANTITIES, bodeAsymptotesShown, bodeTraceLabel, bodeParameters, bodeResponsePlot, bodeSketchOf, numericAt, numericModelOf; __bind(() => { ({ BODE_QUANTITIES, bodeAsymptotesShown, bodeTraceLabel, bodeParameters, bodeResponsePlot, bodeSketchOf, numericAt, numericModelOf } = __require("src/core/analysis/bode-plot.js")); });
 let axisName, bodeSpecs, responseSpec; __bind(() => { ({ axisName, bodeSpecs, responseSpec } = __require("src/core/plot-spec.js")); });
 let sharedValueRow; __bind(() => { ({ valueRow: sharedValueRow } = __require("src/web/value-row.js")); });
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
@@ -66527,20 +67130,8 @@ let differing, differingNames, freeTraceColor, heldName, heldTraces, holdKey, li
 
 
 
-
-
 const EMPTY_TEXT = 'Derive in the analysis window (Shift+S) to plot its gain here.';
-const QUANTITIES = {
-  transfer: { name: 'Voltage gain', tex: 'A_{v}' },
-  transimpedance: { name: 'Transimpedance', tex: 'Z_{m}' },
-  transconductance: { name: 'Transconductance', tex: 'G_{m}' },
-  currentGain: { name: 'Current gain', tex: 'A_{i}' },
-  output: { name: 'Output impedance', tex: 'Z_{out}' },
-  input: { name: 'Input impedance', tex: 'Z_{in}' },
-  loop: { name: 'Loop gain', tex: 'T' },
-};
-// Solved in numbers from the exact model; the rest from their equations.
-const NUMERIC_KEYS = new Set(['transfer', 'transimpedance', 'transconductance', 'input', 'output']);
+const QUANTITIES = BODE_QUANTITIES;
 // The form's transfer functions (A_v, Z_m, G_m, A_i) as the graph's quantities.
 const TRANSFER_KEYS = { Av: 'transfer', Zm: 'transimpedance', Gm: 'transconductance', Ai: 'currentGain' };
 
@@ -66615,100 +67206,12 @@ function exactOf(report, key) {
   return exact?.numeratorCoefficients && exact?.denominatorCoefficients ? exact : null;
 }
 
-/** A trace's parameters: every one its model stamps (each needs a value),
- *  and those the ports reach (the ones worth a slider). */
-/** The numbers model a trace is solved with, if any: the port quantities',
- *  or a loop gain's too large to keep its symbols. */
-function numericModelOf(report, key) {
-  if (NUMERIC_KEYS.has(key)) return report.numericModel;
-  if (key === 'loop' && report.loopNumericModel?.ok) return report.loopNumericModel;
-  return null;
-}
+/** A trace's parameters (core/analysis/bode-plot.js). */
+const parametersOf = (trace) => bodeParameters(editor.circuit, trace);
 
-function parametersOf(trace) {
-  const { report, key } = trace;
-  if (NUMERIC_KEYS.has(key) || numericModelOf(report, key)) {
-    const model = numericModelOf(report, key);
-    if (!model?.ok) return null;
-    const all = sketchParameters(new Set(Object.keys(model.provenance)), model.provenance, { outputComponents: model.outputComponents });
-    return { all, reached: all.filter((parameter) => model.reached.has(parameter.name)) };
-  }
-  // A loop gain solved at numbers: the parameters it was solved at.
-  const loop = key === 'loop' ? report.reports?.loop : null;
-  if (loop?.numeric && loop.parameters) {
-    const all = sketchParameters(new Set(loop.parameters), loop.provenance || {}, { outputComponents: new Set(loop.outputComponents || []) });
-    return { all, reached: all };
-  }
-  const exact = exactOf(report, key);
-  if (!exact) return null;
-  // A Miller capacitance (C_{M1,in}) is set by the values it is made of.
-  const symbols = baseSymbols(new Set([...exact.numeratorCoefficients, ...exact.denominatorCoefficients]
-    .flatMap(({ coefficient }) => [...expressionSymbols(coefficient)])), report.derivedSymbols);
-  const all = sketchParameters(symbols, report.symbolProvenance || {}, { outputComponents: outputComponents(report) });
-  return { all, reached: all };
-}
-
-function outputComponents(report) {
-  const netId = report?.outputPort?.netId;
-  const net = netId && editor.circuit.nets.get(netId);
-  return new Set(net ? net.terminals.map((terminal) => terminal.comp) : []);
-}
-
-const solved = new WeakMap(); // numericModel -> { key, result }
-/** A report's numeric quantities at `values`: solved once per set of
- *  values, however often the plots redraw. */
-function numericAt(model, values) {
-  const key = JSON.stringify(values);
-  const memo = solved.get(model);
-  if (memo?.key === key) return memo.result;
-  const result = model.at(values);
-  solved.set(model, { key, result });
-  return result;
-}
-
-/** A trace at the current values: { sketch, corners, values } or null when
- *  it has nothing to plot (zero, or the same at every frequency). */
-function sketchOf(trace) {
-  const parameters = parametersOf(trace);
-  if (!parameters) return null;
-  // A held trace at the values it was held at.
-  const values = withDerivedValues(sketchValues(parameters.all, trace.held?.ratios || ratios), trace.report.derivedSymbols);
-  let sketch;
-  let response;
-  const model = numericModelOf(trace.report, trace.key);
-  if (NUMERIC_KEYS.has(trace.key) || model) {
-    const result = numericAt(model, values);
-    const quantity = result.ok ? result.quantities[trace.key] : null;
-    if (!quantity || quantity.zero || !(quantity.zeros.length || quantity.poles.length)) return null;
-    sketch = bodeSketch(quantity.numerator, quantity.denominator, { roots: { zeros: quantity.zeros, poles: quantity.poles }, response: quantity.response });
-    response = quantity.response;
-  } else {
-    const exact = exactOf(trace.report, trace.key);
-    if (!exact || !(exact.numeratorDegree > 0 || exact.denominatorDegree > 0)) return null;
-    const num = numericCoefficients(exact.numeratorCoefficients, values);
-    const den = numericCoefficients(exact.denominatorCoefficients, values);
-    sketch = bodeSketch(num, den);
-    response = (omega) => responseAt(num, den, omega);
-  }
-  const corners = cornerNames(sketch.poles, sketch.zeros);
-  // A corner whose factor is first order has its exact expression, when the
-  // equations have it at the same place.
-  const derived = trace.report.reports?.[trace.key] || {};
-  const symbolic = [...(derived.poles || []).map((root) => ({ ...root, kind: 'pole' })),
-    ...(derived.zeros || []).map((root) => ({ ...root, kind: 'zero' }))];
-  for (const corner of corners) {
-    for (const root of symbolic) {
-      if (root.kind !== corner.kind || !root.root || root.order !== 1) continue;
-      let value;
-      try { value = evaluateExpression(root.root, values); } catch { continue; }
-      if (Math.abs(Math.abs(value) - corner.w) <= 1e-6 * corner.w) {
-        corner.tex = renderExpression(value < 0 ? negate(root.root) : root.root);
-        break;
-      }
-    }
-  }
-  return { sketch, corners, values, response };
-}
+/** A trace at the current values (a held one at the values it was held
+ *  at): { sketch, corners, values, response } or null. */
+const sketchOf = (trace) => bodeSketchOf(editor.circuit, trace, trace.held?.ratios || ratios);
 
 /** Whether `key` of a report has anything to plot. */
 function plottable(report, key) {
@@ -66745,11 +67248,7 @@ function traceOf(report, key) {
   // An opamp names its T and beta; a loop broken where the drawing says is T.
   const element = report.reports?.loop?.element || '';
   const at = report.reports?.loop?.at || element || report.analysisOptions?.loopElement || '';
-  const label = key === 'transfer' ? `\\frac{${output}}{${input}}`
-    : key === 'output' ? `Z_{out}(${output})`
-      : key === 'input' ? `Z_{in}(${input})`
-        : key === 'loop' ? (report.reports?.loop?.infinite ? `\\beta_{${element}}` : element ? `T_{${element}}` : 'T')
-          : QUANTITIES[key].tex;
+  const label = bodeTraceLabel(report, key);
   // One trace per quantity between the same nets: a newer derive replaces it.
   return { id: `${key}\n${input}\n${output}\n${key === 'loop' ? at : ''}`, key, label, report, on: true };
 }
@@ -66837,63 +67336,14 @@ function shownSketches() {
   return shownTraces().map((trace) => ({ trace, ...(sketchOf(trace) || {}) })).filter((entry) => entry.sketch);
 }
 
-const POINTS_PER_DECADE = 40;
-
-/** The graph as a response plot (signal-flow.js `responsePlot`'s shape):
- *  what the Plots window and an annotation draw. Every trace over the range
- *  they span together, each from its own exact response, and with
- *  `asymptotes` its straight-line asymptote run on over that range. */
+/** The graph as a response plot (core/analysis/bode-plot.js). */
 function responsePlotOf(sketches, quantity = 'magnitude', { asymptotes = asymptotesShown() } = {}) {
-  if (!sketches.length) return null;
-  const low = Math.min(...sketches.map(({ sketch }) => sketch.range.low));
-  const high = Math.max(low + 1, ...sketches.map(({ sketch }) => sketch.range.high));
-  const grid = Array.from({ length: (high - low) * POINTS_PER_DECADE + 1 }, (_, i) => 10 ** (low + i / POINTS_PER_DECADE));
-  // One trace: its corners marked, named as the window names them (four at
-  // most, as a plot keeps); several traces' corners would be anyone's.
-  const markers = sketches.length === 1
-    ? sketches[0].corners.filter((corner) => corner.w >= 10 ** low && corner.w <= 10 ** high).slice(0, 4).map((corner) => ({ f: corner.w, label: corner.text }))
-    : [];
-  return {
-    kind: 'response',
-    axis: 'omega',
-    range: { low, high },
-    ...(markers.length ? { markers } : {}),
-    ...(quantity === 'phase' ? { quantity: 'phase' } : {}),
-    traces: sketches.map(({ trace, response, sketch }) => {
-      let previous = null;
-      const points = grid.map((f) => {
-        const h = response(f);
-        if (quantity !== 'phase') return { f, db: 20 * Math.log10(Math.hypot(h.re, h.im)) };
-        // Unwrapped, as the sketch's own phase is.
-        let phase = (Math.atan2(h.im, h.re) * 180) / Math.PI;
-        if (previous !== null) {
-          while (phase - previous > 180) phase -= 360;
-          while (phase - previous < -180) phase += 360;
-        }
-        previous = phase;
-        return { f, db: phase };
-      });
-      return { label: trace.label, color: trace.color, points, ...(asymptotes ? asymptoteOf(sketch, quantity, points, low, high) : {}) };
-    }),
-  };
-}
-
-/** A sketch's straight-line magnitude or phase over `low`..`high` (decades
- *  of ω), as a response trace keeps it; the phase by as many turns as start
- *  it on the curve's `points`. */
-function asymptoteOf(sketch, quantity, points, low, high) {
-  const phase = quantity === 'phase';
-  const line = extendAsymptote(phase
-    ? (sketch.phaseAsymptote || []).map((p) => ({ w: p.w, value: p.phase }))
-    : sketch.asymptote.map((p) => ({ w: p.w, value: p.db })), low, high);
-  if (line.length < 2) return {};
-  const turns = phase && Number.isFinite(points[0]?.db) ? Math.round((points[0].db - line[0].value) / 360) * 360 : 0;
-  return { asymptote: line.map((p) => ({ f: p.w, db: p.value + turns })) };
+  return bodeResponsePlot(sketches, quantity, { asymptotes });
 }
 
 /** The asymptotes are drawn: the Plots window's Asymptotes, saved with the
  *  design (`Circuit#windows.bode`), on unless turned off. */
-const asymptotesShown = () => editor.circuit?.windows?.bode?.asymptotes !== false;
+const asymptotesShown = () => bodeAsymptotesShown(editor.circuit);
 
 function showAsymptotes(on) {
   if (on) delete editor.circuit.windows.bode;
@@ -83224,7 +83674,8 @@ let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js"));
 let applyTransform, distanceToSegment, fmt; __bind(() => { ({ applyTransform, distanceToSegment, fmt } = __require("src/core/geometry.js")); });
 let TRANSFER_FUNCTION_TYPES; __bind(() => { ({ TRANSFER_FUNCTION_TYPES } = __require("src/core/transfer-function.js")); });
 let smartRoute; __bind(() => { ({ smartRoute } = __require("src/core/router.js")); });
-let moveJunctionEndpoint, wireRunAt, moveWireRun; __bind(() => { ({ moveJunctionEndpoint, wireRunAt, moveWireRun } = __require("src/core/wireedit.js")); });
+let wireRunAt; __bind(() => { ({ wireRunAt } = __require("src/core/wireedit.js")); });
+let coreManagedEndpointMeta, managedWireBreaks, coreMoveManagedJunction, coreMoveManagedWireRun; __bind(() => { ({ managedEndpointMeta: coreManagedEndpointMeta, managedWireBreaks, moveManagedJunction: coreMoveManagedJunction, moveManagedWireRun: coreMoveManagedWireRun } = __require("src/core/wire-move.js")); });
 let crossNetOverlaps, pointOnPath; __bind(() => { ({ crossNetOverlaps, pointOnPath } = __require("src/core/wiring.js")); });
 let StrokeWiring, applyStrokePlan; __bind(() => { ({ StrokeWiring, applyStrokePlan } = __require("src/core/stroke-wiring.js")); });
 let selectedSetMoveSource, selectedCompleteNetIds, chooseWireHitCandidate, labelsUnderPoint, nextStackedSelection, componentPressSelection; __bind(() => { ({ selectedSetMoveSource, completeSelectedNetIds: selectedCompleteNetIds, chooseWireHitCandidate, labelsUnderPoint, nextStackedSelection, componentPressSelection } = __require("src/web/selection.js")); });
@@ -83305,6 +83756,7 @@ let setHidden; __bind(() => { ({ setHidden } = __require("src/web/dom.js")); });
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -87054,25 +87506,9 @@ function netsTouching(refs) {
   return netsTouchingIn(circuit, refs);
 }
 
-/** Identify the kind of endpoint at a managed path boundary.  Terminal
- * membership wins when a terminal and a junction intentionally share a grid
- * point: that endpoint must remain attached to the component pin. */
+/** What a managed path's end at `point` is (core/wire-move.js). */
 function managedEndpointMeta(net, point) {
-  const terminal = net.terminals.find((t) => {
-    const c = circuit.components.get(t.comp);
-    const p = c?.terminalWorld(t.term);
-    return p && p.x === point.x && p.y === point.y;
-  });
-  if (terminal) {
-    const c = circuit.components.get(terminal.comp);
-    const def = c?.terminalDefs.find((t) => t.name === terminal.term);
-    return {
-      type: 'terminal', comp: terminal.comp, term: terminal.term, point: { ...point },
-      dir: c && def ? circuit._pinDir(c, def, point.x, point.y) : null,
-    };
-  }
-  if (net.junctions.some((p) => p.x === point.x && p.y === point.y)) return { type: 'junction', point: { ...point } };
-  return { type: 'free', point: { ...point } };
+  return coreManagedEndpointMeta(circuit, net, point);
 }
 /** Restore a collapsed interior run from transient editor state. */
 function editableManagedPath(net, branch, path) {
@@ -87092,45 +87528,14 @@ function editableManagedPath(net, branch, path) {
   else if (branch === 0) net.route = restored;
   return { path: restored, interiorRun: true };
 }
-function managedWireBreaks(net) {
-  return new Set((net?.anchorWorlds?.() || []).map((p) => `${p.x},${p.y}`));
-}
-
-/** Propagate a moved managed junction endpoint to incident branches. */
+/** Move one junction of `net`, its incident branch ends with it. */
 function moveManagedJunction(net, oldPoint, newPoint) {
-  if (oldPoint.x === newPoint.x && oldPoint.y === newPoint.y) return;
-  const paths = net.branches?.length ? net.branches : net.route ? [net.route] : [];
-  net.junctions = moveJunctionEndpoint(
-    paths,
-    net.junctions,
-    oldPoint,
-    newPoint,
-    (path, index) => managedEndpointMeta(net, path[index]),
-  );
+  coreMoveManagedJunction(circuit, net, oldPoint, newPoint);
 }
 
-/** Apply a wire-run edit while keeping junction endpoints and their incident
- * branches topologically joined. */
+/** Apply a wire-run edit, keeping junction ends joined (core/wire-move.js). */
 function moveManagedWireRun(run, target) {
-  const endpoints = [
-    run.endpointMeta?.start?.point && { ...run.endpointMeta.start.point },
-    run.endpointMeta?.end?.point && { ...run.endpointMeta.end.point },
-  ];
-  run.line = moveWireRun(run.pts, run.orient, run.line, target, run.endpointMeta);
-  for (const i of [0, 1]) {
-    const meta = run.endpointMeta?.[i === 0 ? 'start' : 'end'];
-    const oldPoint = endpoints[i];
-    if (meta?.type !== 'junction' || !oldPoint) continue;
-    const actualPoint = i === 0 ? run.pts[0] : run.pts[run.pts.length - 1];
-    // Topology-bounded runs keep junction endpoints fixed and add connector
-    // legs; unbounded bridge moves propagate the junction.
-    if (actualPoint?.x === oldPoint.x && actualPoint?.y === oldPoint.y) continue;
-    const newPoint = run.orient === 'h'
-      ? { x: oldPoint.x, y: run.line }
-      : { x: run.line, y: oldPoint.y };
-    moveManagedJunction(run.net, oldPoint, newPoint);
-  }
-  return run.line;
+  return coreMoveManagedWireRun(circuit, run, target);
 }
 
 /** Restore every managed net touched by a wire drag, including branches and
@@ -98773,11 +99178,10 @@ let stepPlot; __bind(() => { ({ stepPlot } = __require("src/core/analysis/step.j
 let locusPlot, locusSteps, rootLocus; __bind(() => { ({ locusPlot, locusSteps, rootLocus } = __require("src/core/analysis/locus.js")); });
 let dbfsOffset, dbfsSpectrum, inBand, plotSpectrum; __bind(() => { ({ dbfsOffset, dbfsSpectrum, inBand, plotSpectrum } = __require("src/core/analysis/spectrum.js")); });
 let prepareSimulation, sweepAmplitudes; __bind(() => { ({ prepareSimulation, sweepAmplitudes } = __require("src/core/analysis/simulate.js")); });
-let PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, parseLabelRuns; __bind(() => { ({ PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, parseLabelRuns } = __require("src/core/model.js")); });
-let PLOT_BOX, replaceDataPlotTraces; __bind(() => { ({ PLOT_BOX, replaceDataPlotTraces } = __require("src/core/data-plot.js")); });
+let parseLabelRuns; __bind(() => { ({ parseLabelRuns } = __require("src/core/model.js")); });
+let replaceDataPlotTraces, writeCorePlot; __bind(() => { ({ replaceDataPlotTraces, writePlot: writeCorePlot } = __require("src/core/data-plot.js")); });
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
-let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
-let chooseFigure, newFigureId, placeFigure, plotKey, settlePlaced; __bind(() => { ({ chooseFigure, newFigureId, placeFigure, plotKey, settlePlaced } = __require("src/core/figures.js")); });
+let chooseFigure, plotKey; __bind(() => { ({ chooseFigure, plotKey } = __require("src/core/figures.js")); });
 let signalFlowTable; __bind(() => { ({ signalFlowTable } = __require("src/core/analysis/annotation-tables.js")); });
 let annotateMathFigure, writeMathFigure; __bind(() => { ({ annotateMathFigure, writeMathFigure } = __require("src/web/figure-annotate.js")); });
 let registerAnnotations, setAnnotationMode; __bind(() => { ({ registerAnnotations, setAnnotationMode } = __require("src/web/annotate-menu.js")); });
@@ -98816,7 +99220,6 @@ let simulatedSpectrum; __bind(() => { ({ simulatedSpectrum } = __require("src/co
  * drawing with its legend, Annotate equations the equations, and Annotate
  * coefficients the coefficients' numbers as a table.
  */
-
 
 
 
@@ -100274,76 +100677,8 @@ function placePlot(plot, shown, { source = 'signal-flow', view = null } = {}) {
 /** A plot box's legend labels: ours by role (older plots' math children too). */
 const legendOf = (box) => editor.circuit.plotLegend(box);
 
-/**
- * Write a plot into `target` (its data and legend swapped, its place, size,
- * and style kept) or a new box under the drawing; inside a commit. Returns
- * `{ box, ids, left, top }` for the legend's column.
- */
-function writePlot(target, plot, shown, { identity = null } = {}) {
-  const circuit = editor.circuit;
-  let box = target;
-  let left;
-  let top;
-  if (target) {
-    // The column is where its curves' entries are (notes may sit apart).
-    const entries = legendOf(target);
-    const named = entries.slice(0, circuit.plotLegendCurves(target).length);
-    const old = (named.length ? named : entries).map((label) => label.bbox());
-    const frame = target.bbox();
-    left = old.length ? Math.min(...old.map((r) => r.x)) : frame.x + frame.w;
-    top = old.length ? Math.min(...old.map((r) => r.y)) : frame.y;
-    // A column beside the plot never starts inside it, nor in black over
-    // its line samples' room: one that slid there goes back beside it.
-    const room = target.style.blackTraces ? PLOT_LEGEND_SAMPLE_ROOM : 0;
-    if (top < frame.y + frame.h && left > frame.x && left < frame.x + frame.w + room) left = frame.x + frame.w + room;
-  } else {
-    // Packed clear of what is there (figures.js): the box, and its legend
-    // beside it about as wide as a third of the box.
-    const spot = placeFigure(circuit, 'plot', { size: { w: (PLOT_BOX.w + 6) * GRID, h: PLOT_BOX.h * GRID } });
-    // The legend beside the box, past the room its line samples take (a
-    // new plot draws in black): its labels keep their own inset.
-    left = spot.x + PLOT_BOX.w * GRID + PLOT_LEGEND_SAMPLE_ROOM;
-    top = spot.y;
-  }
-  const ids = [];
-  const figure = identity && { ...identity, id: target?.figure?.id || newFigureId(circuit) };
-  if (target) {
-    // A trace hidden in the plot's settings stays hidden through an update
-    // (a held one by its key, the others by name).
-    const before = target.plot?.traces || [];
-    // A name past its comma is its numbers then, which may have moved since.
-    const base = (label) => String(label).split(',\\ ')[0];
-    const wasHidden = (trace) => before.some((old) => old.hidden && (old.hold ? old.hold === trace.hold : !trace.hold && base(old.label) === base(trace.label) && !!old.background === !!trace.background));
-    if (Array.isArray(plot.traces) && before.some((old) => old.hidden)) plot = { ...plot, traces: plot.traces.map((trace) => (wasHidden(trace) ? { ...trace, hidden: true } : trace)) };
-    // Traces added from files, and the markers, stay through an update.
-    const { extra, cursors } = target.plot || {};
-    target.plot = normalizePlot({ ...plot, ...(extra ? { extra } : {}), ...(cursors ? { cursors } : {}) });
-    // A plot from before figures is this tool's from now on.
-    if (figure && !target.figure) target.figure = figure;
-    for (const label of legendOf(target)) circuit.removeLabel(label.id);
-  } else {
-    const x = left - PLOT_BOX.w * GRID - PLOT_LEGEND_SAMPLE_ROOM;
-    box = circuit.addAnnotation('box', { x, y: top, end: { x: x + PLOT_BOX.w * GRID, y: top + PLOT_BOX.h * GRID }, plot, style: { lineStyle: 'solid', blackTraces: true }, ...(figure ? { figure } : {}) });
-    if (figure) settlePlaced(circuit, figure.id);
-  }
-  let y = top;
-  const add = (text, style, math = true) => {
-    const label = circuit.addLabel({ text, math, parent: box.id, role: PLOT_LEGEND_ROLE, align: 'left', x: 0, y: 0, ...(style ? { style } : {}) });
-    const size = label.bbox();
-    label.moveTo(snap(left + size.w / 2), snap(y + size.h / 2));
-    y = label.bbox().y + label.bbox().h;
-    ids.push(label.id);
-  };
-  // The analysis's curves, then a simulated spectrum behind them, then the
-  // traces added from files.
-  // A hidden trace has no entry: `shown` names the front traces in order.
-  const front = (box.plot.traces || []).filter((trace) => !trace.background);
-  const behind = (box.plot.traces || []).filter((trace) => trace.background && !trace.hidden);
-  shown.forEach((trace, i) => { if (!front[i]?.hidden) add(`$${trace.label}$`, { color: trace.color }); });
-  behind.forEach((trace) => add(`$${trace.label}$`, { color: trace.color }));
-  for (const trace of box.plot.extra || []) add(trace.label || ' ', { color: trace.color }, false);
-  return { box, ids, left, top };
-}
+/** Write a plot into `target`, or a new box (core/data-plot.js); inside a commit. */
+const writePlot = (target, plot, shown, options = {}) => writeCorePlot(editor.circuit, target, plot, shown, options);
 
 /** Every coefficient a plot or simulation is drawn at, sorted by name
  *  (a_1, a_2, b_1, ...): the diagram's, its results', and the dither's

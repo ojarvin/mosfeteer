@@ -95,10 +95,14 @@ A table's rows come from a builder in `src/core/analysis/annotation-tables.js`
 commands' `--annotate` (`analyze equations`, `analyze logic`, `analyze
 switched-cap`, `analyze signal-flow`, `synthesize logic`) both go through
 them, so either gives the same figure and rewrites the other's in place. A
+Bode plots go the same way: `bodeSketchOf` and `bodeResponsePlot`
+(`src/core/analysis/bode-plot.js`) build the plot the Plots window shows,
+and `writePlot` (`src/core/data-plot.js`) writes it, so the window's
+Annotate and `analyze bode --annotate` give the same figure. A
 table written by a command is placed at its estimated size (the window's
 packs it again once the browser has measured it); `figures --arrange` packs
-every figure again. Plots and the
-kT/C noise table read numbers the windows hold, so they come from the
+every figure again. The signal-flow and switched-capacitor plots and the
+kT/C noise table read numbers their windows hold, so they come from those
 windows only.
 
 ## Tables

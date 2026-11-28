@@ -498,6 +498,14 @@ analysis; an open window takes up a form a command wrote. The per-quantity
 subjects (`analyze transfer-function`, ...) print one quantity and save
 nothing.
 
+`analyze bode OUT --input NET` draws a quantity's Bode plot from the
+command language as the Plots window does (`src/core/analysis/bode-plot.js`,
+shared with `web/bode-ui.js`): the same form, the numbers model solved
+from a copy of the drawing, the design's Values
+(`Circuit#analysisValues.bode`), the asymptotes as the window shows them.
+`--annotate` writes the magnitude and phase plots as figures, rewriting
+the ones there.
+
 The window marks its equations stale when the drawing changes what the
 analysis reads: `analysisSignature(circuit)` (`src/core/model.js`), the
 analyzed parts and nets without their geometry, is compared once per

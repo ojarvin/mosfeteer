@@ -1,12 +1,16 @@
 import { plotCsv, plotSeries } from './plot-export.js';
-import { appendPlotTraces, dataPlotFromText, fileUnits, inPlotUnits, takesFileTraces, movePlotTrace, placeDataPlot, removePlotTrace, setDataPlotAxis, setPlotTrace, setDataPlotView } from './data-plot.js';
-import { analyzeSignalFlow, complexText, transferTex } from './analysis/signal-flow.js';
+import { appendPlotTraces, dataPlotFromText, fileUnits, inPlotUnits, takesFileTraces, movePlotTrace, placeDataPlot, removePlotTrace, setDataPlotAxis, setPlotTrace, setDataPlotView, writeAnalysisPlot } from './data-plot.js';
+import { TRACE_COLORS, analyzeSignalFlow, complexText, transferTex } from './analysis/signal-flow.js';
 import { analyzeLogic } from './analysis/logic.js';
 import { analyzeSwitchedCap } from './analysis/switched-cap.js';
-import { deriveSmallSignal } from './analysis/derive.js';
+import { deriveSmallSignal, smallSignalRequest } from './analysis/derive.js';
+import { sketchValues } from './analysis/bode.js';
+import { numericLoopGain, numericSmallSignal } from './analysis/engine.js';
+import { BODE_QUANTITIES, NUMERIC_KEYS, bodeAsymptotesShown, bodeParameters, bodeRatios, bodeResponsePlot, bodeSketchOf, bodeTraceLabel } from './analysis/bode-plot.js';
 import { ANALYSIS_OPTION_DEFAULTS } from './analysis/options.js';
 import { logicEquations, logicTable, signalFlowTable, smallSignalTable, switchedCapTable, synthesisEquations, synthesisTable } from './analysis/annotation-tables.js';
 import { writeMathFigure } from './math-figure.js';
+import { moveWireSegment } from './wire-move.js';
 import { Circuit, canonicalNetName, componentNameIdentity, muxInputCount, normalizeTags, parseTermRef, transformComponentWorld } from './model.js';
 import { captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets, setPartValue } from './part-moves.js';
 import { TRANSFER_FUNCTION_ROLE, isTransferFunction } from './transfer-function.js';
@@ -36,7 +40,7 @@ import { PIN_RAIL_TYPES, addPinRail } from './pin-rails.js';
 import { fixAllIssues, tidySelection } from './tidy.js';
 import { applyArrangement, arrangementCandidates } from './arrange.js';
 import { builtInDrawings, cellPatterns } from './arrange-builtins.js';
-import { arrangeFigures, figureBounds, listFigures } from './figures.js';
+import { arrangeFigures, figureBounds, listFigures, plotKey } from './figures.js';
 import { buildReport, namePicture, notesOutline } from './report.js';
 import { parsePageGuide } from './page-guide.js';
 import { findInLabels, replaceInLabels } from './label-search.js';
@@ -160,6 +164,12 @@ const FLAG_ARITY = {
   readout: 1,
   sampling: 1,
   side: 1,
+  via: 1,
+  quantity: 1,
+  phase: 0,
+  magnitude: 0,
+  loop: 1,
+  values: 1,
 };
 
 const SYNTHESIZE_USAGE = 'usage: synthesize logic IN ... OUT=VALUES ... [--style and-or|nand|or-and|nor] [--gates inverter,and,nand,or,nor] [--max-inputs 2|3] [--at X Y] [--print]';
@@ -545,6 +555,7 @@ export function commandHelp() {
     '  supplybar on|off <refdes> ...  - join supply bars with aligned same-rail neighbors (visual only)',
     '  supplybar name <NAME|-> <refdes> ... - name all supplies of a bar at once (- clears)',
     '  connect REF.TERM REF.TERM ... [--name N] [--explain]  (alias wire)',
+    '  connect REF.TERM --at X Y [--via X,Y;X,Y...] - draw a wire from the pin through the --via points to X Y (a pin, or a point on a wire: joins its net there)',
     '  cross A1 A2 B1 B2             - two protected diagonal cross-coupled routes',
     '  disconnect REF.TERM            - detach one terminal from its net',
     '  swap <refdes> [type]           - change a part\'s type in place, keeping its wiring (no type: list the choices)',
@@ -580,6 +591,7 @@ export function commandHelp() {
     '  replace FIND WITH [--case] [--regex] - replace FIND in all of them, through each one\'s own rename; all or nothing ("" for WITH deletes; $1 with --regex)',
     '  nets                           - list nets with terminals and length',
     '  net <id> add|drop|name|label|bitcount|fan|rm|segment-rm ... - manage a net',
+    '  net <id> segment-move X Y TO   - slide the straight run through X Y sideways to the line TO (y of a horizontal run, x of a vertical one), its ends kept joined',
     '  net <id> fan BOX on|off        - the net fans into stacked box BOX: a diagonal a cell out, a short wire into each copy',
     '  net <id> bitcount on|off       - show a bus net\'s bit count beside its slashes',
     '  net <id> busslash on|off       - show or hide a bus net\'s slashes',
@@ -620,6 +632,11 @@ export function commandHelp() {
     '                                   title, and keeps the form with the design so the analysis window opens on it',
     '  analyze loop-gain AT [options] - the loop gain broken at AT: an opamp (U1), a terminal (M2.g), the net that closes',
     '                                   the loop (V_{out}), or "V_{fb} to V_{inn}" when the loop is not drawn closed',
+    '  analyze bode OUT --input NET [--quantity transfer|output|input|loop] [--loop AT] [--magnitude] [--phase] [--annotate]',
+    '                                 - a quantity\'s Bode plot as the Plots window draws it, at the design\'s Values (the analysis',
+    '                                   window\'s sliders; ω in g/C): its corners printed; --annotate puts the magnitude and phase plots',
+    '                                   (or the one asked for) on the drawing, again in place; takes analyze equations\' option flags;',
+    '                                   --values gm6=10,CC=1,RZ=0.075 sets parameters in the plot\'s units (g, C, 1/g), saved as the sliders are',
     '  analyze logic [--clock NET] [--annotate] - the truth table of the gates, muxes, tri-states, flip-flops, and latches (a state table',
     '                                   with them), and each output (and next state) as a minimized sum of products;',
     '                                   --clock picks the clock input where the drawing leaves it open (a gated clock);',
@@ -862,6 +879,9 @@ function dispatch(circuit, cmd, pos, flags, io) {
   }
   if ((cmd === 'analyze' || cmd === 'analysis') && ['switched-cap', 'switchedcap', 'sc'].includes(pos[0])) {
     return switchedCapCommand(circuit, pos.slice(1), flags, result);
+  }
+  if ((cmd === 'analyze' || cmd === 'analysis') && pos[0] === 'bode') {
+    return bodeCommand(circuit, pos.slice(1), flags, result);
   }
   if ((cmd === 'analyze' || cmd === 'analysis') && ['equations', 'all'].includes(pos[0])) {
     return smallSignalEquationsCommand(circuit, pos.slice(1), flags, result);
@@ -1168,8 +1188,28 @@ function dispatch(circuit, cmd, pos, flags, io) {
   }
 
   // ---------- connectivity ----------
+  if ((cmd === 'connect' || cmd === 'wire') && flags.at) {
+    // A drawn wire, as the editor's wire tool draws one: from the pin,
+    // through the --via points in order, to X Y (a pin, or a point on a
+    // wire, which joins that net there).
+    const usage = 'usage: connect REF.TERM --at X Y [--via X,Y;X,Y...] [--name N]';
+    if (pos.length !== 1) throw new Error(usage);
+    const at = { x: Number(flags.at[0]), y: Number(flags.at[1]) };
+    const via = flags.via ? flags.via[0].split(/[;\s]+/).filter(Boolean).map((pair) => {
+      const parts = pair.split(',').map(Number);
+      const [x, y] = parts;
+      if (parts.length !== 2 || !Number.isFinite(x) || !Number.isFinite(y)) throw new Error(`--via takes X,Y points separated by ';': "${pair}"\n${usage}`);
+      return { x: snap(x), y: snap(y) };
+    }) : [];
+    if (!Number.isFinite(at.x) || !Number.isFinite(at.y)) throw new Error(usage);
+    const net = circuit.wireTo(pos[0], at, via);
+    if (!net) throw new Error(`could not draw a wire from ${pos[0]} to (${snap(at.x)},${snap(at.y)}): nothing to join there, or no legal route`);
+    if (flags.name && flags.name[0]) circuit.renameNet(net, flags.name[0]);
+    const terms = net.terminals.map((t) => termInfo(circuit, t.comp, t.term));
+    return result(`net ${net.id}${net.name ? ` "${net.name}"` : ''}: ${terms.join('  ')}; len=${net.length()}`, { netId: net.id, name: net.name, terminals: net.terminals.map((t) => ({ ...t })), length: net.length() }, true);
+  }
   if (cmd === 'connect' || cmd === 'wire') {
-    if (pos.length < 2) throw new Error('usage: connect REF.TERM REF.TERM [...]');
+    if (pos.length < 2) throw new Error('usage: connect REF.TERM REF.TERM [...] | connect REF.TERM --at X Y [--via X,Y;...]');
     const explanation = flags.explain ? routeExplanation(circuit, pos.slice(0, 2)) : null;
     const net = circuit.connect(...pos);
     if (flags.name && flags.name[0]) circuit.renameNet(net, flags.name[0]);
@@ -1603,10 +1643,12 @@ const SET_OPTIONS = Object.fromEntries(Object.keys(ANALYSIS_OPTION_DEFAULTS)
  * on the drawing and keeps the form with the design, so the window opens
  * on the same analysis.
  */
-function smallSignalEquationsCommand(circuit, pos, flags, result) {
+/** The analysis window's form from a command's OUTPUT and flags: the
+ *  window's defaults, changed by the flags. */
+function smallSignalForm(pos, flags, usage) {
   const output = pos[0];
   const input = flags.input?.[0];
-  if (!output || pos.length > 1 || !input) throw new Error(EQUATIONS_USAGE);
+  if (!output || pos.length > 1 || !input) throw new Error(usage);
   const options = { ...ANALYSIS_OPTION_DEFAULTS, transferFunctions: [...ANALYSIS_OPTION_DEFAULTS.transferFunctions] };
   if (flags['ignore-channel-length-modulation']) options.neglectChannelLengthModulation = true;
   if (flags['ignore-body-effect']) options.neglectBodyEffect = true;
@@ -1637,7 +1679,11 @@ function smallSignalEquationsCommand(circuit, pos, flags, result) {
     deviceRegions[match[1]] = { region: 'triode' };
   }
   options.deviceRegions = deviceRegions;
-  const acGrounds = list(flags['ac-ground']);
+  return { input, output, acGrounds: list(flags['ac-ground']), options };
+}
+
+function smallSignalEquationsCommand(circuit, pos, flags, result) {
+  const { input, output, acGrounds, options } = smallSignalForm(pos, flags, EQUATIONS_USAGE);
   const report = deriveSmallSignal(circuit, { input, output, acGrounds, options });
   if (!report.ok) throw new Error(report.diagnostics?.errors?.[0]?.detail || report.error || 'the small-signal analysis failed');
   const rows = (report.equationEntries || []).filter((entry) => entry.result?.ok && (entry.result.equation || entry.result.lines));
@@ -1666,6 +1712,90 @@ function smallSignalEquationsCommand(circuit, pos, flags, result) {
     mutated = true;
   }
   return result(lines.join('\n'), { input: report.input, output: report.output, rows: rows.map(({ group, title, result: row }) => ({ group, title, equation: row.equation, lines: row.lines })) }, mutated);
+}
+
+const BODE_USAGE = 'usage: analyze bode OUTPUT --input NET [--quantity transfer|output|input|loop] [--loop AT] [--values NAME=V,...] [--magnitude] [--phase] [--ac-ground NET,...] [--set OPTION=on|off,...] [--annotate]';
+
+/**
+ * `analyze bode OUTPUT --input NET`: a quantity's Bode plot as the Plots
+ * window draws it (analysis/bode-plot.js), at the design's Values (the
+ * analysis window's sliders): magnitude and phase, or the one asked for.
+ * The port quantities are solved in numbers, so they plot even when their
+ * equations are too large to derive. --annotate puts each plot on the
+ * drawing, rewriting the one there.
+ */
+function bodeCommand(circuit, pos, flags, result) {
+  const form = smallSignalForm(pos, flags, BODE_USAGE);
+  if (flags.loop) form.loopElement = flags.loop[0];
+  form.sketchRatios = circuit.analysisValues?.bode || {};
+  const key = flags.quantity?.[0] || (flags.loop ? 'loop' : 'transfer');
+  if (!BODE_QUANTITIES[key]) throw new Error(`--quantity is one of ${Object.keys(BODE_QUANTITIES).join(', ')}\n${BODE_USAGE}`);
+  if (key === 'loop' && !flags.loop) throw new Error(`a loop gain needs --loop AT (an opamp, a terminal, or the net that closes the loop)\n${BODE_USAGE}`);
+  const { request } = smallSignalRequest(circuit, form);
+  let report;
+  try {
+    report = deriveSmallSignal(circuit, form);
+  } catch (error) {
+    report = { ok: false, error: error.message, reports: {} };
+  }
+  // The numbers model is solved from a copy, as the window does: its
+  // closures keep the circuit they were built from.
+  const copy = () => Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
+  try {
+    report.numericModel = numericSmallSignal(copy(), request);
+  } catch (error) {
+    report.numericModel = { ok: false, error: error.message };
+  }
+  if (report.reports?.loop?.numeric && request.loopGain?.at) {
+    try { report.loopNumericModel = numericLoopGain(copy(), request); } catch (error) { report.loopNumericModel = { ok: false, error: error.message }; }
+  }
+  report.inputPort ||= { name: form.input };
+  report.outputPort ||= { name: form.output };
+  const valuesSet = flags.values ? setBodeValues(circuit, bodeParameters(circuit, { report, key }), flags.values[0]) : 0;
+  const sketch = bodeSketchOf(circuit, { report, key }, bodeRatios(circuit));
+  if (!sketch) {
+    const why = (NUMERIC_KEYS.has(key) ? report.numericModel?.error : report.reports?.[key]?.error) || report.error;
+    throw new Error(why ? `no Bode plot of ${BODE_QUANTITIES[key].name.toLowerCase()}: ${why}` : `${BODE_QUANTITIES[key].name} has nothing to plot: zero, or the same at every frequency`);
+  }
+  const trace = { label: bodeTraceLabel(report, key), color: TRACE_COLORS[0] };
+  const quantities = flags.magnitude && !flags.phase ? ['magnitude'] : flags.phase && !flags.magnitude ? ['phase'] : ['magnitude', 'phase'];
+  const lines = [
+    ...(valuesSet ? [`set ${valuesSet} value${valuesSet === 1 ? '' : 's'} (saved with the design, as the window's sliders)`] : []),
+    `${BODE_QUANTITIES[key].name}: ${trace.label}, at the Values (ω in g/C)`,
+    ...sketch.corners.map((corner) => `  ${corner.kind} at ω = ${Number(corner.w.toPrecision(3))}${corner.tex ? `: ${corner.tex}` : ''}`),
+  ];
+  let mutated = valuesSet > 0;
+  for (const quantity of quantities) {
+    const plot = bodeResponsePlot([{ trace, ...sketch }], quantity, { asymptotes: bodeAsymptotesShown(circuit) });
+    if (!flags.annotate) continue;
+    const { box, updated } = writeAnalysisPlot(circuit, plot, [trace], { kind: 'plot', source: 'small-signal', key: plotKey(plot) });
+    lines.push(`${updated ? 'updated' : 'annotated'} the ${quantity} plot (${box.figure?.id || box.id})`);
+    mutated = true;
+  }
+  return result(lines.join('\n'), { quantity: key, label: trace.label, corners: sketch.corners.map(({ kind, w, tex }) => ({ kind, w, tex: tex || null })) }, mutated);
+}
+
+/**
+ * The Values from `NAME=V,...`: each parameter's value in the plot's units
+ * (g for a transconductance, C for a capacitance, 1/g for a resistance),
+ * kept as the window keeps a slider's, a multiplier of its starting value
+ * (`Circuit#analysisValues.bode`). Returns how many were set.
+ */
+function setBodeValues(circuit, parameters, text) {
+  if (!parameters) throw new Error('no values to set: the quantity has no model to solve');
+  const ratios = bodeRatios(circuit);
+  const bases = sketchValues(parameters.all, { ...ratios, multipliers: {} });
+  let count = 0;
+  for (const entry of list([text])) {
+    const match = entry.match(/^([^=\s]+)\s*=\s*([^=\s]+)$/);
+    const value = match ? Number(match[2]) : NaN;
+    if (!match || !(value > 0)) throw new Error(`--values takes NAME=VALUE pairs, each value positive: "${entry}"`);
+    if (!(match[1] in bases)) throw new Error(`--values: no parameter "${match[1]}"; the parameters are ${Object.keys(bases).join(', ')}`);
+    ratios.multipliers[match[1]] = value / bases[match[1]];
+    count += 1;
+  }
+  circuit.analysisValues.bode = { intrinsicGain: ratios.intrinsicGain, parasiticRatio: ratios.parasiticRatio, multipliers: ratios.multipliers };
+  return count;
 }
 
 const SWITCHED_CAP_USAGE = 'usage: analyze switched-cap --input NET --output NET [--readout PHASE] [--sampling period|slot] [--noise ktc] [--annotate]';
@@ -2202,6 +2332,15 @@ function netCommand(circuit, pos, result, flags = {}) {
     return result(`net ${net.id} ${pos[3] === 'on' ? 'fans into' : 'does not fan into'} ${box.id}`, net.toJSON(), changed);
   }
   if (op === 'label') return netLabelCommand(circuit, [pos[2], net.id, ...pos.slice(3)], result, flags);
+  if (op === 'segment-move') {
+    // The straight run through X Y, slid sideways to TO (a y for a
+    // horizontal run, an x for a vertical one), as a segment drag does.
+    const [x, y, to] = pos.slice(2).map(Number);
+    if (pos.length !== 5 || ![x, y, to].every(Number.isFinite)) throw new Error('usage: net <id> segment-move X Y TO (the run through X Y, moved to the line TO)');
+    const moved = moveWireSegment(circuit, net, { x, y }, to, { evaluate });
+    const short = moved.to !== snap(to) ? ` (as far as it goes toward ${snap(to)}: a neighboring run or pin stops it)` : '';
+    return result(`moved the ${moved.orient === 'h' ? 'horizontal' : 'vertical'} run of ${net.id} from ${moved.orient === 'h' ? 'y' : 'x'}=${moved.from} to ${moved.to}${short}`, { net: net.id, ...moved }, true);
+  }
   if (op === 'segment-rm') {
     const branch = Number(pos[2]);
     const segment = Number(pos[3]);

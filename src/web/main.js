@@ -36,7 +36,8 @@ import { snap, GRID } from '../core/grid.js';
 import { applyTransform, distanceToSegment, fmt } from '../core/geometry.js';
 import { TRANSFER_FUNCTION_TYPES } from '../core/transfer-function.js';
 import { smartRoute } from '../core/router.js';
-import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.js';
+import { wireRunAt } from '../core/wireedit.js';
+import { managedEndpointMeta as coreManagedEndpointMeta, managedWireBreaks, moveManagedJunction as coreMoveManagedJunction, moveManagedWireRun as coreMoveManagedWireRun } from '../core/wire-move.js';
 import { crossNetOverlaps, pointOnPath } from '../core/wiring.js';
 import { StrokeWiring, applyStrokePlan } from '../core/stroke-wiring.js';
 import { selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate, labelsUnderPoint, nextStackedSelection, componentPressSelection } from './selection.js';
@@ -3766,25 +3767,9 @@ function netsTouching(refs) {
   return netsTouchingIn(circuit, refs);
 }
 
-/** Identify the kind of endpoint at a managed path boundary.  Terminal
- * membership wins when a terminal and a junction intentionally share a grid
- * point: that endpoint must remain attached to the component pin. */
+/** What a managed path's end at `point` is (core/wire-move.js). */
 function managedEndpointMeta(net, point) {
-  const terminal = net.terminals.find((t) => {
-    const c = circuit.components.get(t.comp);
-    const p = c?.terminalWorld(t.term);
-    return p && p.x === point.x && p.y === point.y;
-  });
-  if (terminal) {
-    const c = circuit.components.get(terminal.comp);
-    const def = c?.terminalDefs.find((t) => t.name === terminal.term);
-    return {
-      type: 'terminal', comp: terminal.comp, term: terminal.term, point: { ...point },
-      dir: c && def ? circuit._pinDir(c, def, point.x, point.y) : null,
-    };
-  }
-  if (net.junctions.some((p) => p.x === point.x && p.y === point.y)) return { type: 'junction', point: { ...point } };
-  return { type: 'free', point: { ...point } };
+  return coreManagedEndpointMeta(circuit, net, point);
 }
 /** Restore a collapsed interior run from transient editor state. */
 function editableManagedPath(net, branch, path) {
@@ -3804,45 +3789,14 @@ function editableManagedPath(net, branch, path) {
   else if (branch === 0) net.route = restored;
   return { path: restored, interiorRun: true };
 }
-function managedWireBreaks(net) {
-  return new Set((net?.anchorWorlds?.() || []).map((p) => `${p.x},${p.y}`));
-}
-
-/** Propagate a moved managed junction endpoint to incident branches. */
+/** Move one junction of `net`, its incident branch ends with it. */
 function moveManagedJunction(net, oldPoint, newPoint) {
-  if (oldPoint.x === newPoint.x && oldPoint.y === newPoint.y) return;
-  const paths = net.branches?.length ? net.branches : net.route ? [net.route] : [];
-  net.junctions = moveJunctionEndpoint(
-    paths,
-    net.junctions,
-    oldPoint,
-    newPoint,
-    (path, index) => managedEndpointMeta(net, path[index]),
-  );
+  coreMoveManagedJunction(circuit, net, oldPoint, newPoint);
 }
 
-/** Apply a wire-run edit while keeping junction endpoints and their incident
- * branches topologically joined. */
+/** Apply a wire-run edit, keeping junction ends joined (core/wire-move.js). */
 function moveManagedWireRun(run, target) {
-  const endpoints = [
-    run.endpointMeta?.start?.point && { ...run.endpointMeta.start.point },
-    run.endpointMeta?.end?.point && { ...run.endpointMeta.end.point },
-  ];
-  run.line = moveWireRun(run.pts, run.orient, run.line, target, run.endpointMeta);
-  for (const i of [0, 1]) {
-    const meta = run.endpointMeta?.[i === 0 ? 'start' : 'end'];
-    const oldPoint = endpoints[i];
-    if (meta?.type !== 'junction' || !oldPoint) continue;
-    const actualPoint = i === 0 ? run.pts[0] : run.pts[run.pts.length - 1];
-    // Topology-bounded runs keep junction endpoints fixed and add connector
-    // legs; unbounded bridge moves propagate the junction.
-    if (actualPoint?.x === oldPoint.x && actualPoint?.y === oldPoint.y) continue;
-    const newPoint = run.orient === 'h'
-      ? { x: oldPoint.x, y: run.line }
-      : { x: run.line, y: oldPoint.y };
-    moveManagedJunction(run.net, oldPoint, newPoint);
-  }
-  return run.line;
+  return coreMoveManagedWireRun(circuit, run, target);
 }
 
 /** Restore every managed net touched by a wire drag, including branches and

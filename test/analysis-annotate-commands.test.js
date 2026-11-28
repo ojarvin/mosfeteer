@@ -133,3 +133,32 @@ test('notes append keeps an empty line and the indentation; notes load takes a f
   assert.throws(() => runCommand(circuit, 'notes load notes.md'), /notes load reads a file/);
   assert.throws(() => runCommand(circuit, 'notes load'), /usage: notes load FILE/);
 });
+
+test('analyze bode: the gain\'s corners at the Values; --annotate puts magnitude and phase on the drawing, in place again', () => {
+  const circuit = commonSource();
+  runCommand(circuit, 'add capacitor CL --at 240 80 --rot 90');
+  runCommand(circuit, 'connect CL.a VOUT.p');
+  runCommand(circuit, 'connect CL.b GND.gnd');
+  const printed = runCommand(circuit, 'analyze bode VOUT --input VIN');
+  assert.equal(printed.mutated, false);
+  assert.match(printed.text, /^Voltage gain: \\frac\{VOUT\}\{VIN\}/);
+  assert.match(printed.text, /pole at ω = /);
+  assert.deepEqual(figures(circuit), []);
+  const annotated = runCommand(circuit, 'analyze bode VOUT --input VIN --annotate');
+  assert.match(annotated.text, /annotated the magnitude plot[\s\S]*annotated the phase plot/);
+  assert.deepEqual(figures(circuit), ['plot:small-signal', 'plot:small-signal']);
+  const plots = [...circuit.labels.values()].filter((label) => label.plot);
+  assert.deepEqual(plots.map((label) => label.plot.quantity || 'magnitude').sort(), ['magnitude', 'phase']);
+  // Again: the same two plots rewritten, none added; one quantity alone.
+  assert.match(runCommand(circuit, 'analyze bode VOUT --input VIN --magnitude --annotate').text, /updated the magnitude plot/);
+  assert.equal(figures(circuit).length, 2);
+  assert.throws(() => runCommand(circuit, 'analyze bode VOUT --input VIN --quantity gain'), /--quantity is one of/);
+  assert.throws(() => runCommand(circuit, 'analyze bode VOUT --input VIN --quantity loop'), /needs --loop AT/);
+  // Values in the plot's units, kept as the sliders keep them.
+  const valued = runCommand(circuit, 'analyze bode VOUT --input VIN --values gm1=2,CL=4');
+  assert.match(valued.text, /^set 2 values/);
+  assert.equal(valued.mutated, true);
+  assert.equal(circuit.analysisValues.bode.multipliers.gm1, 2);
+  assert.throws(() => runCommand(circuit, 'analyze bode VOUT --input VIN --values gm9=1'), /no parameter "gm9"; the parameters are/);
+  assert.throws(() => runCommand(circuit, 'analyze bode VOUT --input VIN --values gm1=-1'), /each value positive/);
+});

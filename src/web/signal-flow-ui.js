@@ -31,11 +31,10 @@ import { stepPlot } from '../core/analysis/step.js';
 import { locusPlot, locusSteps, rootLocus } from '../core/analysis/locus.js';
 import { dbfsOffset, dbfsSpectrum, inBand, plotSpectrum } from '../core/analysis/spectrum.js';
 import { prepareSimulation, sweepAmplitudes } from '../core/analysis/simulate.js';
-import { PLOT_LEGEND_ROLE, PLOT_LEGEND_SAMPLE_ROOM, normalizePlot, parseLabelRuns } from '../core/model.js';
-import { PLOT_BOX, replaceDataPlotTraces } from '../core/data-plot.js';
+import { parseLabelRuns } from '../core/model.js';
+import { replaceDataPlotTraces, writePlot as writeCorePlot } from '../core/data-plot.js';
 import { texToMathML } from '../core/render.js';
-import { GRID, snap } from '../core/grid.js';
-import { chooseFigure, newFigureId, placeFigure, plotKey, settlePlaced } from '../core/figures.js';
+import { chooseFigure, plotKey } from '../core/figures.js';
 import { signalFlowTable } from '../core/analysis/annotation-tables.js';
 import { annotateMathFigure, writeMathFigure } from './figure-annotate.js';
 import { registerAnnotations, setAnnotationMode } from './annotate-menu.js';
@@ -1474,76 +1473,8 @@ function placePlot(plot, shown, { source = 'signal-flow', view = null } = {}) {
 /** A plot box's legend labels: ours by role (older plots' math children too). */
 const legendOf = (box) => editor.circuit.plotLegend(box);
 
-/**
- * Write a plot into `target` (its data and legend swapped, its place, size,
- * and style kept) or a new box under the drawing; inside a commit. Returns
- * `{ box, ids, left, top }` for the legend's column.
- */
-function writePlot(target, plot, shown, { identity = null } = {}) {
-  const circuit = editor.circuit;
-  let box = target;
-  let left;
-  let top;
-  if (target) {
-    // The column is where its curves' entries are (notes may sit apart).
-    const entries = legendOf(target);
-    const named = entries.slice(0, circuit.plotLegendCurves(target).length);
-    const old = (named.length ? named : entries).map((label) => label.bbox());
-    const frame = target.bbox();
-    left = old.length ? Math.min(...old.map((r) => r.x)) : frame.x + frame.w;
-    top = old.length ? Math.min(...old.map((r) => r.y)) : frame.y;
-    // A column beside the plot never starts inside it, nor in black over
-    // its line samples' room: one that slid there goes back beside it.
-    const room = target.style.blackTraces ? PLOT_LEGEND_SAMPLE_ROOM : 0;
-    if (top < frame.y + frame.h && left > frame.x && left < frame.x + frame.w + room) left = frame.x + frame.w + room;
-  } else {
-    // Packed clear of what is there (figures.js): the box, and its legend
-    // beside it about as wide as a third of the box.
-    const spot = placeFigure(circuit, 'plot', { size: { w: (PLOT_BOX.w + 6) * GRID, h: PLOT_BOX.h * GRID } });
-    // The legend beside the box, past the room its line samples take (a
-    // new plot draws in black): its labels keep their own inset.
-    left = spot.x + PLOT_BOX.w * GRID + PLOT_LEGEND_SAMPLE_ROOM;
-    top = spot.y;
-  }
-  const ids = [];
-  const figure = identity && { ...identity, id: target?.figure?.id || newFigureId(circuit) };
-  if (target) {
-    // A trace hidden in the plot's settings stays hidden through an update
-    // (a held one by its key, the others by name).
-    const before = target.plot?.traces || [];
-    // A name past its comma is its numbers then, which may have moved since.
-    const base = (label) => String(label).split(',\\ ')[0];
-    const wasHidden = (trace) => before.some((old) => old.hidden && (old.hold ? old.hold === trace.hold : !trace.hold && base(old.label) === base(trace.label) && !!old.background === !!trace.background));
-    if (Array.isArray(plot.traces) && before.some((old) => old.hidden)) plot = { ...plot, traces: plot.traces.map((trace) => (wasHidden(trace) ? { ...trace, hidden: true } : trace)) };
-    // Traces added from files, and the markers, stay through an update.
-    const { extra, cursors } = target.plot || {};
-    target.plot = normalizePlot({ ...plot, ...(extra ? { extra } : {}), ...(cursors ? { cursors } : {}) });
-    // A plot from before figures is this tool's from now on.
-    if (figure && !target.figure) target.figure = figure;
-    for (const label of legendOf(target)) circuit.removeLabel(label.id);
-  } else {
-    const x = left - PLOT_BOX.w * GRID - PLOT_LEGEND_SAMPLE_ROOM;
-    box = circuit.addAnnotation('box', { x, y: top, end: { x: x + PLOT_BOX.w * GRID, y: top + PLOT_BOX.h * GRID }, plot, style: { lineStyle: 'solid', blackTraces: true }, ...(figure ? { figure } : {}) });
-    if (figure) settlePlaced(circuit, figure.id);
-  }
-  let y = top;
-  const add = (text, style, math = true) => {
-    const label = circuit.addLabel({ text, math, parent: box.id, role: PLOT_LEGEND_ROLE, align: 'left', x: 0, y: 0, ...(style ? { style } : {}) });
-    const size = label.bbox();
-    label.moveTo(snap(left + size.w / 2), snap(y + size.h / 2));
-    y = label.bbox().y + label.bbox().h;
-    ids.push(label.id);
-  };
-  // The analysis's curves, then a simulated spectrum behind them, then the
-  // traces added from files.
-  // A hidden trace has no entry: `shown` names the front traces in order.
-  const front = (box.plot.traces || []).filter((trace) => !trace.background);
-  const behind = (box.plot.traces || []).filter((trace) => trace.background && !trace.hidden);
-  shown.forEach((trace, i) => { if (!front[i]?.hidden) add(`$${trace.label}$`, { color: trace.color }); });
-  behind.forEach((trace) => add(`$${trace.label}$`, { color: trace.color }));
-  for (const trace of box.plot.extra || []) add(trace.label || ' ', { color: trace.color }, false);
-  return { box, ids, left, top };
-}
+/** Write a plot into `target`, or a new box (core/data-plot.js); inside a commit. */
+const writePlot = (target, plot, shown, options = {}) => writeCorePlot(editor.circuit, target, plot, shown, options);
 
 /** Every coefficient a plot or simulation is drawn at, sorted by name
  *  (a_1, a_2, b_1, ...): the diagram's, its results', and the dither's

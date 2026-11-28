@@ -144,9 +144,19 @@ or view the editor itself.
    choice now, before routing.
 4. **Routing.** One logical net at a time with `connect`. A net of three or
    more terminals in one `connect` gets a real junction from the router;
-   `explain connect A.t B.t` dry-runs a two-terminal route. The router picks
-   the corridor; no command moves a committed route, so move parts instead
-   of accepting a tangle, and report a route you could not place.
+   `explain connect A.t B.t` dry-runs a two-terminal route. Then review each
+   route against `style-guide.md` §5.1 and correct it with `net <id>
+   segment-move X Y TO`: the straight run through X Y slides sideways to
+   the line TO (a y for a horizontal run, an x for a vertical one), a
+   junction at its end moving with it. A move that would overlap another
+   net or cross a body is refused; one stopped by a neighbor says where it
+   stopped. When a whole route is wrong (a feedback wire taken across the
+   stages), draw it yourself: `connect REF.TERM --at X Y --via X,Y;X,Y`
+   runs a wire from the pin through the --via points to X Y, a pin or a
+   point on a wire, joining that net there. To take a wire away first,
+   `net <id> segment-rm BRANCH SEG` (segments count from 1 along a branch,
+   as `state` lists them); `disconnect REF.TERM` takes the pin off its net
+   but leaves the wire.
 5. **Names and labels.** Name nets for what they do: `connect ... --name
    V_{TAIL}`, `net N7 name V_{INP}`. A port's label follows its net's name,
    so `net <id> name V_{INP}` is how a port reads `V_{INP}`. Equal names on
@@ -181,9 +191,23 @@ Sizes and analysis when the request asks for them; notes and tags always.
   small-signal model as drawing-only parts (no analysis reads them).
 - **Other analyses**: `analyze logic --annotate`, `synthesize logic ...
   --annotate`, `analyze signal-flow ... --annotate`, `analyze switched-cap
-  --input IN --output OUT [--noise ktc] --annotate`. Bode and other plots,
-  and the kT/C noise table, read numbers the windows hold: make those from
-  the editor's windows.
+  --input IN --output OUT [--noise ktc] --annotate`. The kT/C noise table
+  and the signal-flow and switched-capacitor plots read numbers their
+  windows hold: make those from the editor's windows.
+- **Bode plots**: `analyze bode OUT --input IN [--ac-ground ...]
+  [--quantity transfer|output|input|loop] [--loop AT] --annotate` puts the
+  magnitude and phase plots on the drawing, as the Plots window draws them
+  at the design's Values (normalized: g_m in units of g, capacitors in
+  units of C, ω in g/C). The port quantities are solved in numbers, so
+  they plot even when the equations exceed the solver's budget. For an op
+  amp, plot the loop gain (`--loop` at the input transistor's gate) for
+  the phase margin, and the closed-loop gain.
+- **When the equations exceed the solver's budget**: ground what is AC
+  ground in the intended picture (`--ac-ground` the tail of a pair driven
+  differentially), use `--dominant-pole`, or leave rows out with
+  `--exclude "TITLE,TITLE"` (quote titles with spaces). DC rows and noise
+  densities do not depend on capacitors: `drawing-only CC,CL on` for that
+  solve, then `off` again, and say so in the notes.
 - **Tags**: every design gets tags, without being asked: `AI-generated`,
   always, and three to six descriptive ones a search would use: what the
   circuit is and its distinguishing features (`tag add AI-generated ota
@@ -243,7 +267,9 @@ Before presenting the design:
 - every gate-sharing pair faces itself; ports sit one cell from their pins,
   same-side ports in one column; net labels follow `style-guide.md` §8.1;
 - the notes exist, start with the title and the `Author:` line, state every
-  choice made without asking, and match the drawing as it is now;
+  choice made without asking, and match the drawing as it is now; read
+  them back from the saved file (`notes`, `tag list`) as the last step,
+  since an editor window saving an older copy overwrites them;
 - `tag list` shows `#AI-generated` and a few descriptive tags.
 
 ## Report what the tools lacked
@@ -260,12 +286,14 @@ what changes.
 ```text
 add TYPE [REF] --at X Y [--rot D] [--mirrorX] [--mirrorY] [--value V]
 move REF X Y | rotate REF [D] | mirror REF x|y | rename REF NEW | rm REF | swap REF TYPE
-connect REF.T REF.T ... [--name N] | disconnect REF.T | cross A1 A2 B1 B2
+connect REF.T REF.T ... [--name N] | connect REF.T --at X Y --via X,Y;... | disconnect REF.T | cross A1 A2 B1 B2
 rail REF.T ground|supply|vcm | stubs REF ... | net ID name|label|add|drop|rm ...
+net ID segment-move X Y TO
 netlabel add NET [ID] TEXT X Y [--side S] | netlabel move LABEL X Y [--side S]
 annotation add [ID] TEXT X Y | box ID... [--text T]
 size REF[,REF] W/L [xM] [hide|beside|replace] | value REF V | partstable
 analyze equations OUT --input IN [--ac-ground ...] [--noise ...] [--annotate]
+analyze bode OUT --input IN [--quantity Q] [--loop AT] [--annotate]
 analyze model OUT --input IN | analyze transfer-function|output-impedance|... NET
 analyze logic|signal-flow|switched-cap ... [--annotate] | synthesize logic ...
 figures [--arrange] | notes [set|append|load|clear|markdown|outline] | report | tag add|rm|list ...

@@ -1130,3 +1130,38 @@ test('netlabel add --side and netlabel move place a net label along its wire and
   assert.throws(() => runCommand(c, 'netlabel move L1 240 0 --side under'), /--side is above, below, left, right/);
   assert.deepEqual([label.anchorWorld().x, label.anchorWorld().y, label.netSide], [240, 0, 'above']);
 });
+
+test('net segment-move slides a run sideways, carrying its junction; refuses an overlap; says where it stopped', () => {
+  const c = fresh();
+  for (const line of ['add pmos M3 --at 0 -480', 'add nmos M1 --at 0 -160', 'add nmos M4 --at 0 160', 'add nmos M2 --at 360 160',
+    'connect M3.d M1.d M2.g --name X', 'connect M1.s M4.d M2.d --name OUT']) runCommand(c, line);
+  const x = c.netOfTerminal('M2.g');
+  // The tap moves to the middle of the M3-M1 trunk, the trunk's branches with it.
+  assert.match(runCommand(c, `net ${x.id} segment-move 40 -280 -320`).text, /horizontal run of N\d+ from y=-280 to -320$/);
+  assert.deepEqual(c.nets.get(x.id).junctions, [{ x: 0, y: -320 }]);
+  assert.match(runCommand(c, `net ${x.id} segment-move 120 0 160`).text, /vertical run of N\d+ from x=120 to 160$/);
+  const moved = JSON.stringify(c.nets.get(x.id).branches);
+  assert.equal(moved, JSON.stringify([[{ x: 0, y: -400 }, { x: 0, y: -320 }], [{ x: 0, y: -320 }, { x: 0, y: -240 }], [{ x: 240, y: 160 }, { x: 160, y: 160 }, { x: 160, y: -320 }, { x: 0, y: -320 }]]));
+  // Onto the other net: refused, nothing changed.
+  assert.throws(() => runCommand(c, `net ${x.id} segment-move 160 0 -40`), /would overlap net/);
+  assert.equal(JSON.stringify(c.nets.get(x.id).branches), moved);
+  assert.match(runCommand(c, `net ${x.id} segment-move 160 0 400`).text, /to 240 \(as far as it goes toward 400/);
+  assert.throws(() => runCommand(c, `net ${x.id} segment-move 1000 1000 0`), /no straight segment/);
+  assert.throws(() => runCommand(c, `net ${x.id} segment-move 1 2`), /usage: net <id> segment-move/);
+});
+
+test('connect REF.TERM --at X Y --via draws a wire through the given points, joining a wire it ends on', () => {
+  const c = fresh();
+  runCommand(c, 'add resistor R1 --at 0 0');
+  runCommand(c, 'add resistor R2 --at 400 0');
+  runCommand(c, 'add resistor R3 --at 0 400');
+  runCommand(c, 'connect R1.b R2.a --name N_{A}');
+  // From R3.b, over the top and into the R1-R2 wire at (160,0).
+  const done = runCommand(c, 'connect R3.b --at 160 0 --via 160,400');
+  assert.equal(done.mutated, true);
+  const net = c.netOfTerminal('R3.b');
+  assert.equal(net, c.netOfTerminal('R1.b'));
+  assert.ok(net.paths().some((path) => path.some((p) => p.x === 160 && p.y === 400)), JSON.stringify(net.paths()));
+  assert.throws(() => runCommand(c, 'connect R3.a --at 160 0 --via 1,2,3'), /--via takes X,Y points/);
+  assert.throws(() => runCommand(c, 'connect R3.a R1.a --at 0 0'), /usage: connect REF.TERM --at X Y/);
+});

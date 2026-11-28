@@ -457,6 +457,27 @@ corresponding net branch.
   join the wire at a point between junctions, well clear of the port
   terminal.
 
+### 5.1 Where a route runs
+
+The router finds a legal route; these place it where a person would draw it.
+Check each route against them and correct it with `net <id> segment-move`.
+
+- **A tap joins a straight run at its middle.** A branch leaving a straight
+  wire between two pins (a drain-to-drain run in a stack) joins it at the
+  grid point midway between the pins, not next to either; the junction then
+  reads as the node between the two devices.
+- **A run between two parts sits midway between their bodies.** A wire
+  passing between two parts runs on the grid line nearest the middle of the
+  gap between their bodies: the drawn symbol, not its pin leads (a MOS
+  gate's lead is part of the gap, its gate plate is not). Rounding to the
+  grid, prefer the side away from the wire's own pin.
+- **Feedback goes around.** A wire from a later stage back to an earlier
+  one (an op amp's output to its inverting input) runs around the outside
+  of the drawing, above the supply bars or below the ground symbols,
+  rather than across the stages; it then crosses nothing.
+- **Correct by sliding.** Slide the run to its line rather than rerouting;
+  the router keeps what was moved by hand.
+
 ---
 
 Clipboard images use the same print-ready appearance as file exports: white
