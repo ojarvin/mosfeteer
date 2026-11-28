@@ -3,7 +3,9 @@
  * Thin HTTP client for Mosfeteer.
  *
  *   node src/cli/index.js <circuit> "add nmos M1 --at 120 120"
- *   node src/cli/index.js <circuit> "connect M1.s M2.s --name TAIL\neval"
+ *   node src/cli/index.js <circuit> "connect M1.s M2.s --name TAIL" "eval"
+ *   node src/cli/index.js <circuit> -f script.txt   # a command a line, one batch
+ *   node src/cli/index.js <circuit> - < script.txt  # the same from stdin
  *   node src/cli/index.js <circuit>      # interactive REPL bound to <circuit>
  *
  * The CLI sends commands to POST /api/circuits/<name>/cmd. Command mutations
@@ -15,7 +17,7 @@
  * guidelines/CIRCUIT-AUTHOR.md for the reference.
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 
 const SERVER = process.env.SP_SERVER || 'http://127.0.0.1:47280';
@@ -26,6 +28,8 @@ function usage() {
     '',
     'Usage:',
     `  node src/cli/index.js <circuit> "<command>" [<command> ...]`,
+    `  node src/cli/index.js <circuit> -f <script>   # one command a line, sent as one batch`,
+    `  node src/cli/index.js <circuit> -             # the same, the script on stdin`,
     `  node src/cli/index.js <circuit>               # REPL bound to <circuit>`,
     '',
     'Environment:',
@@ -34,6 +38,14 @@ function usage() {
     'Examples:',
     `  node src/cli/index.js 5t-ota "add nmos M1 --at 120 120"`,
     `  node src/cli/index.js 5t-ota "connect M1.s M2.s --name TAIL" "eval"`,
+    `  node src/cli/index.js 5t-ota "svg review.svg"   # writes review.svg here`,
+    '',
+    'Each argument is one command, sent on its own; a script is one batch: the server',
+    'runs its lines in order and writes the file once; it stops at the first error, the',
+    'lines before it kept, and the CLI exits 1. Blank',
+    'lines and lines starting with # are skipped (an empty notes line: "notes append").',
+    'Files a command reads (annotation dataplot FILE, notes load FILE) are read here and',
+    'sent with it; svg FILE is written here.',
     '',
     'Commands hit POST /api/circuits/<circuit>/cmd. The browser auto-loads changes.'
   ].join('\n');
@@ -43,12 +55,12 @@ function isValidName(name) {
   return typeof name === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(name);
 }
 
-/** The files a command reads (`annotation dataplot FILE`), read here and
- *  sent with it: { FILE: text }. */
+/** The files a command reads (`annotation dataplot FILE`, `notes load
+ *  FILE`), read here and sent with it: { FILE: text }. */
 function commandFiles(cmd) {
   const files = {};
   for (const line of String(cmd).split('\n')) {
-    const match = line.match(/^\s*(?:annotation|label|annotate)\s+dataplot\s+("[^"]+"|\S+)/i);
+    const match = line.match(/^\s*(?:(?:annotation|label|annotate)\s+dataplot|notes?\s+load)\s+("[^"]+"|\S+)/i);
     if (!match) continue;
     const file = match[1].replace(/^"|"$/g, '');
     try {
@@ -105,9 +117,34 @@ function printHelpAndExit(code = 0) {
   process.exit(code);
 }
 
+/** The SVG file `svg FILE` (or `export FILE`) names, else null. */
+function svgFile(line) {
+  const match = line.match(/^\s*(?:svg|export)\s+("[^"]+"|[^\s-]\S*)/i);
+  return match ? match[1].replace(/^"|"$/g, '') : null;
+}
+
+/** Write each `svg FILE` result's drawing to FILE, here. */
+function writeSvgFiles(lines, data) {
+  (data.results || []).forEach((result, index) => {
+    const file = result.ok && result.json?.svg ? svgFile(lines[index] || '') : null;
+    if (!file) return;
+    writeFileSync(file, result.json.svg);
+    result.text = `wrote ${file} (${result.json.svg.length} bytes)`;
+    result.json = null;
+  });
+}
+
+/** A script's commands: one a line; blank lines and # comments skipped. */
+function scriptLines(text) {
+  return String(text).split(/\r?\n/).filter((line) => line.trim() && !/^\s*#/.test(line));
+}
+
 async function runOnce(circuit, line) {
   const data = await postCommand(circuit, line);
+  // The server runs the lines it is sent trimmed, blank ones left out.
+  writeSvgFiles(String(line).split('\n').map((l) => l.trim()).filter(Boolean), data);
   printResponse(data);
+  if ((data.results || []).some((result) => !result.ok)) process.exitCode = 1;
   return data.mutated;
 }
 
@@ -153,6 +190,14 @@ async function main() {
   const rest = argv.slice(1);
   if (rest.length === 0) return repl(circuit);
   try {
+    if (rest[0] === '-' || rest[0] === '-f' || rest[0] === '--file') {
+      const file = rest[0] === '-' ? 0 : rest[1];
+      if (file === undefined || rest.length > (rest[0] === '-' ? 1 : 2)) throw new Error('usage: <circuit> -f <script> | <circuit> -');
+      const lines = scriptLines(readFileSync(file, 'utf8'));
+      if (!lines.length) throw new Error('the script has no commands');
+      await runOnce(circuit, lines.join('\n'));
+      return;
+    }
     await runOnceBatch(circuit, rest);
   } catch (err) {
     process.stderr.write(`error: ${err.message}\n`);

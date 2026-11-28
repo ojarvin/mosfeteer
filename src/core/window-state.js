@@ -161,7 +161,7 @@ export function normalizeWindows(value) {
       };
     }
   }
-  // The small-signal form: analysis-options.js reads it.
+  // The small-signal form: analysis/options.js reads it.
   const analysis = object(source.analysis);
   if (analysis && JSON.stringify(analysis).length <= 100_000) windows.analysis = JSON.parse(JSON.stringify(analysis));
   return windows;

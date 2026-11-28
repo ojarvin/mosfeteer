@@ -1094,3 +1094,39 @@ test('a bent arrow left with other than three points, a vertex removed, draws st
   assert.equal(arrow.canBend(), true);
   assert.equal('bent' in arrow.toJSON(), false);
 });
+
+test('a part named with markup keeps it as its label, its plain form the refdes, and answers to either', () => {
+  const c = fresh();
+  assert.match(runCommand(c, 'add current_source I_{BIAS} --at 0 0').text, /^added IBIAS /);
+  assert.equal(c.labelOf('IBIAS').text, 'I_{BIAS}');
+  // Rename: the markup goes on the label, also when the refdes stays the same.
+  runCommand(c, 'add resistor R1 --at 400 0');
+  assert.match(runCommand(c, 'rename R1 R_{LOAD}').text, /renamed R1 -> RLOAD \(label R_\{LOAD\}\)/);
+  assert.equal(c.labelOf('RLOAD').text, 'R_{LOAD}');
+  runCommand(c, 'add resistor RD --at 800 0');
+  runCommand(c, 'rename RD R_{D}');
+  assert.equal(c.labelOf('RD').text, 'R_{D}');
+  // The markup form addresses the part in other commands.
+  runCommand(c, 'connect I_{BIAS}.a R_{LOAD}.a');
+  assert.deepEqual(c.netOfTerminal('IBIAS.a').terminals.map((t) => `${t.comp}.${t.term}`).sort(), ['IBIAS.a', 'RLOAD.a']);
+  assert.throws(() => runCommand(c, 'rename RD'), /usage: rename/);
+  assert.throws(() => runCommand(c, 'rename RD R_{LOAD}'), /already in use/);
+});
+
+test('netlabel add --side and netlabel move place a net label along its wire and on either side', () => {
+  const c = fresh();
+  runCommand(c, 'add resistor R1 --at 0 0');
+  runCommand(c, 'add resistor R2 --at 480 0');
+  runCommand(c, 'connect R1.b R2.a --name V_{MID}');
+  const net = c.netOfTerminal('R1.b');
+  const added = runCommand(c, `netlabel add ${net.id} L1 V_{MID} 160 0 --side below`);
+  assert.equal(added.json.netSide, 'below');
+  const moved = runCommand(c, 'netlabel move L1 240 0 --side above');
+  assert.match(moved.text, /moved net label L1 \(V_\{MID\}\) to \(240,0\), above its wire/);
+  const label = c.labels.get('L1');
+  assert.deepEqual([label.anchorWorld().x, label.anchorWorld().y, label.netSide], [240, 0, 'above']);
+  // Off its wire, or a side that is no side, is refused and changes nothing.
+  assert.throws(() => runCommand(c, 'netlabel move L1 240 400'), /must touch its net's wire/);
+  assert.throws(() => runCommand(c, 'netlabel move L1 240 0 --side under'), /--side is above, below, left, right/);
+  assert.deepEqual([label.anchorWorld().x, label.anchorWorld().y, label.netSide], [240, 0, 'above']);
+});

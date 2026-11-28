@@ -558,3 +558,17 @@ serverTest('a data plot\'s file comes with the command, and the server reads no 
   assert.equal(missing.results[0].ok, false);
   assert.match(missing.results[0].error, /did not come with the command/);
 });
+
+serverTest('an analysis over HTTP comes back as JSON, its exact numbers as digits', async (t) => {
+  const app = await startServer();
+  t.after(() => app.stop());
+  const done = await command(app, 'cs', [
+    'add nmos M1 --at 0 0', 'add resistor RD --at 0 -200 --rot 90', 'add supply VDD --at 0 -320', 'add ground GND --at 0 160',
+    'add input VIN --at -280 0', 'add output VOUT --at 240 -80',
+    'connect VIN.p M1.g', 'connect M1.s GND.gnd', 'connect RD.a VDD.p', 'connect RD.b M1.d VOUT.p',
+    'analyze transfer-function VOUT --input VIN',
+  ].join('\n'));
+  const last = done.results.at(-1);
+  assert.equal(last.ok, true, last.error);
+  assert.match(last.text, /A_v = -g_\{m1\}/);
+});

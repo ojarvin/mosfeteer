@@ -7496,7 +7496,7 @@ installHelp();
 
 // ----- command console ---------------------------------------------------
 
-/** Run one document command line; returns the error message when it fails. */
+/** Run one document command line; returns what it printed, or its error message. */
 export function runLine(line) {
   const trimmed = line.trim();
   if (!trimmed) return;
@@ -7542,6 +7542,7 @@ export function runLine(line) {
     if (!circuit.components.has(selected)) selected = multi.size ? [...multi][0] : null;
   }
   render();
+  return output;
 }
 
 // ----- status -------------------------------------------------------------
@@ -8215,7 +8216,8 @@ installMarkupShortcuts();
 
 // ----- boot ------------------------------------------------------------
 
-window.__run = (line) => { runLine(line); };
+// What the command printed (its text, then its JSON), as the log shows it.
+window.__run = (line) => runLine(line);
 window.__load = (json) => { applyJson(typeof json === 'string' ? json : JSON.stringify(json), { document: true }); fitView(); };
 window.__circuit = () => ({
   kind: 'circuit',

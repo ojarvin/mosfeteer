@@ -187,8 +187,8 @@ mirror flag to override that default.
 | resistor / capacitor / inductor / impedance / switch_open / switch_closed | `a` (left) `b` (right) | x:-80..80, y:-40..40; impedance is an 80×40 box labeled `Z_1` |
 | diode | `a` (left) `b` (right) | x:-80..80, y:-40..40 |
 | transformer | primary `a1` (top) `b1` (bottom) at x:-80, secondary `a2` `b2` at x:80 | x:-120..120, y:-80..80; the inductor's coil turned clockwise on the left and its mirror image on the right, two core lines between them, a polarity dot beside each a-end; drawing only |
-| nmos / pmos | `g` (left) `d` (top) `s` (bottom) | bbox `{-120,-80,120,160}`; drain and source leads end at their terminals and share the wire-cap overlap |
-| nmosb / pmosb | `g` (left) `d` (top) `s` (bottom) `b` (channel center) | bbox `{-120,-80,120,160}`; bulk pin points right with a visible internal path ending at the terminal and sharing the wire-cap overlap |
+| nmos / pmos | `g` (left) `d` (top) `s` (bottom) | bbox x −120..0, y −80..80 (`{x, y, w, h}` = `{-120,-80,120,160}`); drain and source leads end at their terminals and share the wire-cap overlap |
+| nmosb / pmosb | `g` (left) `d` (top) `s` (bottom) `b` (channel center) | bbox as nmos/pmos; bulk pin points right with a visible internal path ending at the terminal and sharing the wire-cap overlap |
 | npn / pnp | `b` (left) `c` (top) `e` (bottom) | x:-160..0, y:-120..120 |
 | current_source / voltage_source | `a` (top) `b` (bottom) | body x:-40..40, y:-80..80; default label center offset x:-80 (bbox edge x:-40) |
 | vccs / vcvs | `a` (top) `b` (bottom) | same footprint and label offset as the sources; 80×80 diamond, VCCS with an arrow toward `b`, VCVS with `+` toward `a` and `−` toward `b` inside; gain and control go in the label (`g_m v_{gs}`, `A v_{in}`) |
@@ -337,22 +337,23 @@ load, and complementary differential structures. Change the polarity and
 terminal names as needed, but retain equal spacing, matched mirroring,
 aligned rows, and centered shared circuitry.
 
-### 4.5b Current mirrors and active loads
+### 4.5b Current mirrors, cascode pairs, and active loads
 
-Use the topology—not a named amplifier—as the source of truth for mirror
-orientation:
+Use the topology—not a named amplifier—as the source of truth for orientation:
 
-- Align matched control terminals on a common row or column. Orient the pair
-  so the control bus is short, clear, and does not pass through unrelated
-  bodies; matched output terminals should align with the stages they feed.
-- Make the diode-connected reference unmistakable: its gate/drain tie should
-  enter open space, use a short direct route, and avoid the body and source
-  terminal. Do not rely on a body-hugging autoroute when a small placement move
-  makes the reference leg obvious.
+- **A gate-sharing pair faces itself.** Every current mirror, and every pair
+  of cascode or bias devices sharing a gate net, is drawn side by side with
+  the gates facing each other and joined by one short bus between them.
+  This holds for every such pair in the drawing, NMOS and PMOS alike: a
+  telescopic stage's PMOS cascodes, NMOS cascodes, and mirror all use it.
+- Make the diode-connected reference unmistakable: its gate/drain tie enters
+  open space, uses a short direct route, and avoids the body and source
+  terminal. A mirror whose diode node is a cascode node (a low-voltage
+  cascode mirror) ties that node to the bus; where that tie must cross
+  another pair's bus, it crosses once, without a dot.
 - Keep the bias reference separate from the main signal path but close to the
   mirror it controls. Preserve equal spacing and label clearance for matched
-  devices, adapting the facing convention to NMOS, PMOS, BJT, or active-load
-  polarity.
+  devices.
 
 ### 4.5c Cross-coupled, fully differential structures
 
@@ -396,6 +397,22 @@ After manual label edits, verify that the output symbols still have connected
 electrical terminals. A visible `Q` or `QB` annotation does not itself connect
 to a net; inspect `eval` and confirm the output terminal appears in the
 corresponding net branch.
+
+### 4.5e Bias generators
+
+- Draw the bias generator left of the signal path, on the same PMOS and
+  NMOS rows and the same supply and ground rails.
+- The reference branch (the `I_{BIAS}` current source and the device it
+  feeds) is the leftmost column; each following column derives from the
+  one before it, so every mirror pair sits side by side, facing (§4.5b).
+- A branch is one column: its PMOS on the top row, its NMOS or current
+  source on the bottom row, the long drain wire between them carrying the
+  bias node, labeled on its vertical run.
+- Bias outputs reach the amplifier by net name: the same label on the bias
+  wire and on the amplifier's gate stub or bus, rather than long wires
+  across the signal path.
+- Size each copy as the device it biases scaled by a multiplier at the same
+  unit W/L (`size M9 11.5u/1u x4`, `size M10 11.5u/1u x1`).
 
 ---
 
@@ -572,9 +589,10 @@ around the same center. The dimensions and markup metrics are shared with the
 inline preview.
 
 **Keep related input/output ports adjacent to their signal endpoints.** Put
-inputs on the input side and outputs on the output side; when several ports
-share an edge, align and space them consistently rather than scattering them
-around the drawing.
+inputs on the input side and outputs on the output side. A port sits one
+grid cell of wire from the pin it drives, no more. When several ports share
+an edge, they share one column: an output tapped from a node lines up with
+the input port on its side, its wire as long as that takes.
 
 **Port labels sit one grid square from the port symbol, aligned toward
 it.** Left-of-port labels are `align: right`; right-of-port labels are
@@ -596,19 +614,39 @@ there is room; move or mirror the component only when the surrounding
 drawing requires a clearer side.
 
 Do not add extra descriptive text or component values by default. Unless
-the user asks for values or annotations, the only component text should
-be the inherent instance label. For mirror-symmetric parts such as
+the user asks for values, sizes, analysis figures, or notes, the only
+component text should be the inherent instance label; what the user asks
+for goes on through its command (`value`, `size`, `partstable`, `analyze
+... --annotate`), never as free text. For mirror-symmetric parts such as
 resistors, capacitors, inductors, diodes, and switches, choose the
 available mirror / orientation that places the instance label in the
 clearest open space. For example, a horizontal resistor with room above
 should be mirrored vertically so its label is above the body rather than
 below it.
 
-### 8.1 Analysis annotations
+### 8.1 Net label placement
+
+Place a net label where a person reading the circuit looks for it:
+
+- **On a bus between a facing pair** (§4.5b): at the bus's center, above it.
+- **One centerline.** The labels of a stack's buses and shared nodes sit on
+  its symmetry axis, one under another (`V_{TAIL}`, `V_{CP}`, `V_{CN}`,
+  `V_{MIR}` all at the center column). A node with a wire of its own on that
+  axis is labeled there, rather than on a side tie.
+- **Clear of a branch.** On a horizontal wire with a branch leaving its
+  center (a tail node fed from above), the label goes on the other side
+  (`--side below`).
+- **On a long vertical run** (a bias distribution wire), beside it at mid
+  height, on the side away from its devices.
+- Keep labels off bodies, other labels, and other wires; `eval` reports
+  overlaps, the image shows the rest.
+
+### 8.2 Analysis annotations
 
 Keep symbolic-analysis annotations compact and subordinate to the schematic.
-Place them below the figure, align them with its left edge, and leave two grid
-cells of clearance. Use the order `Z_{in}(s)`, `Z_{in}(0)`, `Z_{out}(s)`,
+The tools place each figure ([`docs/figures.md`](../docs/figures.md)): tables
+right of the circuit, the small-signal model and plots below it, clear of the
+circuit and of each other; `figures --arrange` packs them again. Use the order `Z_{in}(s)`, `Z_{in}(0)`, `Z_{out}(s)`,
 `Z_{out}(0)`, `A_v(s)`, `A_v(0)`, poles, zeros, assumptions; omit rows that add
 no information. AC rows, poles, and zeros appear only when reactive terms
 remain after cancellation.

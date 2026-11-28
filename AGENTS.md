@@ -8,7 +8,7 @@ connectivity model and renders it as SVG. The repository is `ojarvin/mosfeteer`;
 
 - **Developer:** improve the application, tests, APIs, or documentation. Read
   [`guidelines/DEVELOPER.md`](guidelines/DEVELOPER.md).
-- **Circuit author:** create or revise a drawing in the running editor. Read
+- **Circuit author:** create, revise, analyze, or document a drawing in the running editor. Read
   [`guidelines/CIRCUIT-AUTHOR.md`](guidelines/CIRCUIT-AUTHOR.md). Do not inspect or modify
   application source, tests, or configuration in this role.
 
@@ -99,8 +99,12 @@ analysis refuse rather than guess too. Every analysis reads
 (`ComponentInstance#drawingOnly`, such as a placed small-signal model) is
 drawn and checked but never analyzed. A window never draws on its own: a
 plot, an equation table, the model, or the timing diagram goes on the
-drawing only by its Annotate (a timing diagram, once drawn, then follows
-its editor). What a tool draws is one figure (`figure` identity,
+drawing only by its Annotate, or by the command's `--annotate` (`analyze
+model`, `timing`), which writes the same table through the same builder
+(`src/core/analysis/annotation-tables.js`, `src/core/math-figure.js`); a
+timing diagram, once drawn, then follows its editor. An edit that leaves
+`analysisSignature(circuit)` unchanged (a table, a label, a move, a
+drawing-only part) leaves derived equations current. What a tool draws is one figure (`figure` identity,
 `src/core/figures.js`): annotating again updates it in place, never adds a
 second. The timing is document data
 (`Circuit#timing`) that the analyses and beats read. Analysis settings and slider values are document data

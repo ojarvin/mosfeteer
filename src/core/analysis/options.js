@@ -1,6 +1,6 @@
 /** Canonical small-signal form options and the form as saved with a design. */
 
-import { nameList } from '../core/bus.js';
+import { nameList } from '../bus.js';
 
 export const ANALYSIS_OPTION_DEFAULTS = Object.freeze({
   // Model simplifications: they change the small-signal model itself.
@@ -188,4 +188,23 @@ export function annotationAssumptions(report) {
     if (assumption.startsWith('Miller approximation')) lines.push(`\\text{${assumption}}`);
   }
   return lines;
+}
+
+const ANALYZED_TRANSISTORS = new Set(['nmos', 'pmos', 'nmosb', 'pmosb']);
+
+/** Per-transistor overrides of the form's approximations, from each part's
+ *  own `analysis` settings (its context menu): `{ refdes: options }`. */
+export function analysisDeviceOptions(circuit) {
+  const devices = {};
+  for (const component of circuit.components.values()) {
+    if (!ANALYZED_TRANSISTORS.has(component.type)) continue;
+    const source = component.analysis || {};
+    const options = {};
+    if (typeof source.ignoreBodyEffect === 'boolean') options.neglectBodyEffect = source.ignoreBodyEffect;
+    if (typeof source.gmroLarge === 'boolean') options.highIntrinsicGain = source.gmroLarge;
+    if (source.channelLengthModulation === 'ignore') options.neglectChannelLengthModulation = true;
+    if (source.channelLengthModulation === 'finite') options.neglectChannelLengthModulation = false;
+    if (Object.keys(options).length) devices[component.refdes] = options;
+  }
+  return devices;
 }

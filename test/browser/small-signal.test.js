@@ -45,7 +45,7 @@ function twoInputs() {
 
 describe('small-signal analysis', { skip: browserSkip() }, () => {
   let h;
-  before(async () => { h = await start({ docs: { amp: amplifier(), other: amplifier(), miller: millerBuffer(), loaded: loadedAmplifier(), cg: commonGate(), pair: twoInputs().data }, width: 1500, height: 950 }); });
+  before(async () => { h = await start({ docs: { amp: amplifier(), other: amplifier(), scripted: amplifier(), miller: millerBuffer(), loaded: loadedAmplifier(), cg: commonGate(), pair: twoInputs().data }, width: 1500, height: 950 }); });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
   // The analysis window's Annotate menu: open it, choose `label`.
   const annotate = async (label) => {
@@ -105,6 +105,8 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     assert.ok(table.x >= right, `right of the circuit: ${table.x} >= ${right}`);
     assert.match(table.text, /\\text\{[^}]+\} & /);
     assert.match(table.text, /\\hline\n\\text\{Assumptions\} & g_\{m\}r_\{o\}/);
+    // A table on the drawing changes no equation: they stay current.
+    assert.equal(await h.evaluate(`document.getElementById('analysis-stale').hidden`), true);
     // Drawn as a table: its cells in a grid.
     await h.until(`document.querySelectorAll('#canvas .schematic-math-table').length === 1`);
     // Settled where it was put, then annotated again: the one table, where it stands.
@@ -118,6 +120,22 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     assert.deepEqual([again[0].x, again[0].y], [placed.x, placed.y]);
     await h.key('u');
     await h.until(`${h.module('editor-state.js')}.then((m) => ![...m.editor.circuit.labels.values()].some((l) => l.figure?.kind === 'equations'))`);
+  });
+
+  test('window.__run gives back what the command printed; analyze equations --annotate leaves the form for the window', async () => {
+    await h.open('scripted');
+    const printed = await h.evaluate(`window.__run('analyze equations VOUT --input VIN --noise thermal --annotate')`);
+    assert.match(printed, /DC voltage gain: /);
+    assert.match(printed, /annotated the small-signal equations table/);
+    if (await h.evaluate(`document.getElementById('analysis-dialog').hidden`)) await h.click('#btn-analysis');
+    await h.until(`!document.getElementById('analysis-dialog').hidden && document.getElementById('analysis-noise-thermal').checked`);
+    assert.match(await h.evaluate(`document.getElementById('analysis-input').selectedOptions[0].textContent`), /^VIN/);
+    assert.match(await h.evaluate(`document.getElementById('analysis-target').selectedOptions[0].textContent`), /^VOUT/);
+    await h.key('u');
+    await h.until(`${h.module('editor-state.js')}.then((m) => ![...m.editor.circuit.labels.values()].some((l) => l.figure?.kind === 'equations'))`);
+    await h.open('amp');
+    if (await h.evaluate(`document.getElementById('analysis-dialog').hidden`)) await h.click('#btn-analysis');
+    await h.until(`!document.getElementById('analysis-dialog').hidden`);
   });
 
   test('the form is the design\'s own: another design shows its own, this one comes back as left, and neither is unsaved by it', async () => {

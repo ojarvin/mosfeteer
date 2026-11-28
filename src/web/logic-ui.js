@@ -16,13 +16,9 @@ import { markSettingsChanged, onDocumentShown } from './main.js';
 import { logLine } from './status-bar-ui.js';
 import { element as el, mathSpan } from './dom.js';
 import { annotateMathFigure } from './figure-annotate.js';
+import { logicEquations, logicTable, logicTableFits } from '../core/analysis/annotation-tables.js';
 import { registerAnnotations } from './annotate-menu.js';
 import { deriving } from './analysis-busy.js';
-
-/** A table this many rows long, or shorter, goes on the drawing. */
-const ANNOTATED_ROWS = 64;
-/** Columns an annotated table holds (render.js), one of them the gap. */
-const ANNOTATED_COLUMNS = 16;
 
 const LOGIC_TYPES = /^(inverter|buffer|tristate_inverter|tristate_buffer|mux|(and|nand|or|nor|xor|xnor)[23]_gate|dff.*|latch.*)$/;
 const ANALOG_TYPES = /^(nmos|pmos|nmosb|pmosb|npn|pnp|resistor|capacitor|inductor|transformer|current_source|voltage_source|vccs|vcvs|opamp.*|gm.*|diode|switch_.*|tf_.*|gain|signal_.*)$/;
@@ -134,35 +130,21 @@ function renderResult() {
 }
 
 /** Whether the table fits a table on the drawing. */
-function tableFits(result) {
-  const { left, right } = columnsOf(result);
-  return result.rows.length <= ANNOTATED_ROWS && left.length + right.length + 1 <= ANNOTATED_COLUMNS;
-}
-
 /** The table on the drawing: names over a rule, a row per combination,
  *  a gap between what goes in and what comes out. */
 function annotateTable() {
   const result = latest?.result;
-  if (!result?.ok || !tableFits(result)) return;
-  const { left, right } = columnsOf(result);
-  const rows = [
-    [...left, '', ...right].join(' & '),
-    '\\hline',
-    ...result.rows.map((row) => [...row.states, ...row.inputs, '', ...row.next, ...row.outputs].map(String).join(' & ')),
-  ];
-  const columns = 'c'.repeat(left.length + 1 + right.length);
-  const { updated } = annotateMathFigure({ kind: 'table', source: 'logic', text: rows.join('\n'), columns });
+  const table = logicTable(result);
+  if (!table) return;
+  const { updated } = annotateMathFigure(table);
   logLine(updated ? `updated the ${result.sequential ? 'state' : 'truth'} table` : `annotated the ${result.sequential ? 'state' : 'truth'} table`);
 }
 
 /** The equations on the drawing, each name then its sum of products. */
 function annotateEquations() {
-  const result = latest?.result;
-  if (!result?.ok) return;
-  const rows = result.expressions.filter((expression) => expression.tex).map((expression) => `${expression.name} = ${expression.tex}`);
-  if (!rows.length) return;
-  // Each equation whole, as the other tools' equations are drawn.
-  const { updated } = annotateMathFigure({ kind: 'equations', source: 'logic', text: rows.join('\n'), columns: 'l' });
+  const table = logicEquations(latest?.result);
+  if (!table) return;
+  const { updated } = annotateMathFigure(table);
   logLine(updated ? 'updated the logic equations' : 'annotated the logic equations');
 }
 
@@ -174,7 +156,7 @@ export function installLogicUi() {
     el('div', { class: 'logic-results', 'aria-live': 'polite' }),
   ]);
   registerAnnotations('logic', () => [
-    { label: 'Table', identity: { kind: 'table', source: 'logic' }, available: !!latest?.result.ok && tableFits(latest.result), run: annotateTable },
+    { label: 'Table', identity: { kind: 'table', source: 'logic' }, available: !!latest?.result.ok && logicTableFits(latest.result), run: annotateTable },
     { label: 'Equations', identity: { kind: 'equations', source: 'logic' }, available: !!latest?.result.ok && latest.result.expressions.some((expression) => expression.tex), run: annotateEquations },
   ]);
   // The drawing may have changed while the window was open.

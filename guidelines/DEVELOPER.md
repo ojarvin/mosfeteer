@@ -42,6 +42,11 @@ src/
 │   ├── part-moves.js   Nets a set of parts touches; rerouting them after a
 │   │                   move or transform (shared by commands and the editor).
 │   ├── render.js       SVG renderer (svgString, editorOverlay).
+│   ├── figures.js      What the tools drew: one figure each, packed beside the circuit.
+│   ├── math-figure.js  A tool's table on the drawing (the windows' Annotate and --annotate).
+│   ├── analysis/       The analyses. derive.js runs the small-signal window's
+│   │                   derive; annotation-tables.js builds each analysis's
+│   │                   table for the drawing, for the windows and the commands.
 │   ├── components/
 │   │   ├── index.js    Symbol registry: getSymbol(type), symbolTypeNames.
 │   │   ├── nmos.js …   One file per symbol. Each exports a factory returning
@@ -117,7 +122,10 @@ annotation.
 `readTextFile` are used by `svg`, `save`, and `load`; nothing in the app
 supplies them (the server saves mutated results itself and the CLI is an
 HTTP client), so that seam exists only for an embedder that wants local file
-I/O. `designs` (`{ circuit, name, path, time }`, newest first) is the
+I/O. The CLI does the file work on its side: it reads the file a command
+names (`annotation dataplot FILE`, `notes load FILE`) and sends it with the
+command, which reads it through `io.readDataFile`; it writes `svg FILE`'s
+drawing itself. The server never reads a path it is given. `designs` (`{ circuit, name, path, time }`, newest first) is the
 workspace's other designs for `arrange`; the server reads them only for a
 batch that runs `arrange`. PNG export lives in the
 browser and `/api/export`, not here.
@@ -327,7 +335,8 @@ page (a layout, a table edit) belongs in a unit test.
 
 - `node --inspect-brk src/server/serve.js` for the server.
 - The editor exposes `window.__circuit()` (returns `{ comps, nets, labels }`)
-  and `window.__run(cmd)` from the dev console.
+  and `window.__run(cmd)` (returns what the command printed) from the dev
+  console.
 - `window.__load(state)` overwrites the visible circuit — useful for
   reproducing a bug from a saved `.json` document.
 - The browser's revision-aware live sync polls every 500 ms while visible and

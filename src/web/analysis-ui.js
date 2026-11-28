@@ -2,12 +2,12 @@
  * The small-signal analysis dock: its form and remembered settings, running
  * the analysis, the equations, log, netlist, and model tabs, picking a
  * target on the canvas, and annotating results into the drawing. The form's
- * option rules are in analysis-options.js and analysis-state.js.
+ * option rules are in core/analysis/options.js and analysis-state.js.
  */
 
-import { Circuit, INTERFACE_PIN_TYPES, canonicalNetName, parseLabelRuns } from '../core/model.js';
+import { Circuit, INTERFACE_PIN_TYPES, analysisSignature, canonicalNetName, parseLabelRuns } from '../core/model.js';
 import { nameList } from '../core/bus.js';
-import { analyzeSmallSignalV2, numericLoopGain, numericSmallSignal } from '../core/analysis/engine.js';
+import { numericLoopGain, numericSmallSignal } from '../core/analysis/engine.js';
 import { LOOP_ELEMENT_TYPES } from '../core/analysis/loop-gain.js';
 import { EQUATION_GROUPS, adaptCombinedReport } from '../core/analysis/report-adapter.js';
 import { placeSmallSignalModel, smallSignalSchematic } from '../core/analysis/model-schematic.js';
@@ -15,7 +15,9 @@ import { svgString, texToMathML } from '../core/render.js';
 import { componentsOfSymbols } from '../core/analysis/provenance.js';
 import { noiseCandidates } from '../core/analysis/noise.js';
 import { installBodeUi, renderBode } from './bode-ui.js';
-import { analysisNoiseRequest, analysisOptionDefaults, annotationAssumptions, normalizeAnalysisOptions, readAnalysisFormState } from './analysis-options.js';
+import { analysisOptionDefaults, normalizeAnalysisOptions, readAnalysisFormState } from '../core/analysis/options.js';
+import { smallSignalAnnotationEntries, smallSignalTable } from '../core/analysis/annotation-tables.js';
+import { deriveSmallSignal, smallSignalRequest } from '../core/analysis/derive.js';
 import { analysisFormDefaults, analysisFormStorageKey, restoredAnalysisInput, analysisNetOptionText, sharedNetNames, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
 import { installHintFolding } from './hints.js';
 import { canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisTimeConstants, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisCancel, analysisAnnotate } from './elements.js';
@@ -164,6 +166,7 @@ function analysisGuide() {
 
 export function clearLatestAnalysisResult() {
   latestAnalysisReport = null;
+  analysisReportSignature = null;
   if (analysisResult) {
     analysisResult.hidden = true;
     if (analysisEquation) analysisEquation.replaceChildren();
@@ -211,21 +214,6 @@ function analysisFormValues() {
 let annotationExcluded = new Set();
 let collapsedGroups = new Set();
 
-function analysisDeviceOptions() {
-  const devices = {};
-  for (const component of sortedComps()) {
-    if (!['nmos', 'pmos', 'nmosb', 'pmosb'].includes(component.type)) continue;
-    const source = component.analysis || {};
-    const options = {};
-    if (typeof source.ignoreBodyEffect === 'boolean') options.neglectBodyEffect = source.ignoreBodyEffect;
-    if (typeof source.gmroLarge === 'boolean') options.highIntrinsicGain = source.gmroLarge;
-    if (source.channelLengthModulation === 'ignore') options.neglectChannelLengthModulation = true;
-    if (source.channelLengthModulation === 'finite') options.neglectChannelLengthModulation = false;
-    if (Object.keys(options).length) devices[component.refdes] = options;
-  }
-  return devices;
-}
-
 export function migrateAnalysisFormStorage(previousName, nextName) {
   if (previousName === nextName) return;
   try {
@@ -249,8 +237,14 @@ function persistAnalysisForm() {
   const state = editor.circuit.windows;
   if (JSON.stringify(values) === JSON.stringify(state.analysis || null)) return;
   state.analysis = values;
+  formShown = savedFormKey();
   markSettingsChanged();
 }
+
+// The saved form the window last showed or wrote: one written since by a
+// command (analyze equations --annotate) is shown when the window syncs.
+let formShown = null;
+const savedFormKey = () => JSON.stringify(editor.circuit.windows.analysis || null);
 
 /** The design's saved form. A design saved before the form was kept in it
  *  has it in this browser, by its file: taken from there once. */
@@ -266,6 +260,7 @@ function savedAnalysisForm() {
 
 function restoreAnalysisForm(defaults = {}) {
   const saved = savedAnalysisForm();
+  formShown = savedFormKey();
   if (!saved) {
     const options = analysisOptionDefaults();
     if (analysisAcGrounds) analysisAcGrounds.value = '';
@@ -419,39 +414,6 @@ function analysisEquationEntries(report) {
 }
 
 /**
- * The rows the drawing gets: every checked row, and after them the
- * definitions those rows use (and the ones those use), whatever their own
- * rows say -- a named symbol must never reach the drawing undefined.
- */
-function analysisAnnotationEntries(report) {
-  const entries = analysisEquationEntries(report).filter(({ result }) => result?.ok && result.equation);
-  const chosen = entries.filter(({ group, title }) => group !== 'definitions' && !annotationExcluded.has(title));
-  const where = entries.find(({ group }) => group === 'definitions');
-  const lines = where ? neededDefinitionLines(where.result.lines, chosen.map(({ result }) => result.equation)) : [];
-  return [
-    ...chosen.map(({ title, result }) => ({ title, equation: result.equation })),
-    ...(lines.length ? [{ title: where.title, lines }] : []),
-  ];
-}
-
-function neededDefinitionLines(lines, equations) {
-  const nameOf = (line) => line.slice(0, line.indexOf(' = '));
-  const uses = (text, name) => text.includes(name);
-  const needed = new Set();
-  let texts = equations;
-  for (let grown = true; grown;) {
-    grown = false;
-    for (const line of lines) {
-      if (needed.has(line) || !texts.some((text) => uses(text, nameOf(line)))) continue;
-      needed.add(line);
-      grown = true;
-    }
-    texts = [...equations, ...needed];
-  }
-  return lines.filter((line) => needed.has(line));
-}
-
-/**
  * Tag each rendered sub-expression with the components it was derived from.
  *
  * `texToMathML` has already turned `present.js`'s provenance markers into
@@ -532,8 +494,6 @@ function placeModelInDrawing() {
     return;
   }
   const before = snapshot();
-  // Drawing-only parts change no equation: equations current before stay so.
-  const current = revisionCurrent(analysisReportRevision);
   let added = null;
   let failure = null;
   commit(() => {
@@ -548,7 +508,6 @@ function placeModelInDrawing() {
     render();
     return;
   }
-  if (current) analysisReportRevision = editor.modelRevision;
   setSelection(added.components, undefined, true);
   setLabelSelection(added.labels, undefined, true);
   if (!added.updated) fitView({ animate: true });
@@ -949,6 +908,22 @@ function closeAnalysisDock() {
 let analysisDockRevision = null;
 
 let analysisReportRevision = null;
+// What the analysis read when it was derived (model.js analysisSignature),
+// and whether the drawing still reads the same, checked once a revision.
+let analysisReportSignature = null;
+let signatureChecked = { revision: null, current: false };
+
+/** Whether the equations shown still describe the drawing: no edit since
+ *  but settings changes, or none an analysis reads (a table or the model
+ *  annotated, a label or a part moved). */
+function analysisCurrent() {
+  if (revisionCurrent(analysisReportRevision)) return true;
+  if (analysisReportSignature === null) return false;
+  if (signatureChecked.revision !== editor.modelRevision) {
+    signatureChecked = { revision: editor.modelRevision, current: analysisSignature(editor.circuit) === analysisReportSignature };
+  }
+  return signatureChecked.current;
+}
 
 /** Keep dock selects in step with model edits while it stays open. */
 export function syncAnalysisDock() {
@@ -963,9 +938,13 @@ export function syncAnalysisDock() {
   [analysisInput, analysisTarget].forEach((el, index) => {
     if (el && [...el.options].some((option) => option.value === kept[index])) el.value = kept[index];
   });
+  if (savedFormKey() !== formShown) {
+    restoreAnalysisForm();
+    optionsSummarySync();
+  }
   followGroundMarks();
   const stale = document.getElementById('analysis-stale');
-  if (stale) stale.hidden = !latestAnalysisReport || revisionCurrent(analysisReportRevision);
+  if (stale) stale.hidden = !latestAnalysisReport || analysisCurrent();
 }
 
 export function setAnalysisPick(selectId) {
@@ -1026,24 +1005,6 @@ function equationForDiagram(equation) {
     .trim();
 }
 
-function equationForLabel(equation) {
-  const normalized = String(equation || '')
-    .replace(/\\parallel/g, '\\Vert')
-    .replace(/\\Big\\\|\\\|/g, '\\Big\\Vert')
-    .replace(/\\\|\\\|/g, '\\Vert')
-    // Keep labels editable as valid TeX even if a legacy report or manually
-    // entered equation still contains the plain `||` spelling.
-    .replace(/(?<!\\)\|\|/g, '\\Vert')
-    .replace(/\b([AGZ])_([imv])\b/g, '$1_{$2}')
-    .replace(/\s+/g, ' ')
-    .trim();
-  // A parallel operator sharing a line with a fraction needs the larger
-  // delimiter form to reach the fraction's numerator/denominator height.
-  return /\\frac\b/.test(normalized)
-    ? normalized.replace(/(?<!\\Big)\\Vert/g, '\\Big\\Vert')
-    : normalized;
-}
-
 /**
  * The chosen equations on the drawing as the small-signal analysis's table
  * (figure-annotate.js): a row each, its name then its equation; the
@@ -1051,23 +1012,10 @@ function equationForLabel(equation) {
  * rule. Annotating again rewrites the table there, where it stands.
  */
 function annotateAnalysisResult() {
-  const report = latestAnalysisReport;
-  if (!report?.ok) return;
-  const entries = analysisAnnotationEntries(report);
-  if (!entries.length) return;
-  const rows = [];
-  const title = (text) => `\\text{${text}}`;
-  for (const entry of entries) {
-    if (entry.lines) entry.lines.forEach((line, index) => rows.push(`${index ? '' : title(entry.title)} & ${equationForLabel(line)}`));
-    else rows.push(`${title(entry.title)} & ${equationForLabel(entry.equation)}`);
-  }
-  const assumptions = annotationAssumptions(report);
-  if (assumptions.length) {
-    rows.push('\\hline');
-    assumptions.forEach((line, index) => rows.push(`${index ? '' : title('Assumptions')} & ${line}`));
-  }
-  const { updated } = annotateMathFigure({ kind: 'equations', source: 'small-signal', text: rows.join('\n'), columns: 'll' });
-  logLine(`${updated ? 'updated the equation table with' : 'annotated a table of'} ${entries.length} equation${entries.length === 1 ? '' : 's'}${assumptions.length ? ' and the assumptions' : ''}`, 'status');
+  const table = smallSignalTable(latestAnalysisReport, { excluded: annotationExcluded });
+  if (!table) return;
+  const { updated } = annotateMathFigure(table);
+  logLine(`${updated ? 'updated the equation table with' : 'annotated a table of'} ${table.count} equation${table.count === 1 ? '' : 's'}${table.assumptions ? ' and the assumptions' : ''}`, 'status');
 }
 
 /** An explicit selection hints the output; otherwise the form defaults decide. */
@@ -1273,28 +1221,19 @@ export function installAnalysisUi() {
     persistAnalysisForm();
     // The dots beside the title, then the solve.
     deriving(() => {
-      const formOptions = analysisFormOptions();
-      const devices = analysisDeviceOptions();
-      const noise = analysisNoiseRequest(formOptions);
-      const loopElement = analysisLoopElement?.value.trim();
-      const request = {
-        ...formOptions,
-        ...(noise ? { noise } : {}),
-        ...(loopElement ? { loopGain: { at: loopElement }, sketchRatios: editor.circuit.analysisValues?.bode || {} } : {}),
-        ...(Object.keys(devices).length ? { devices } : {}),
+      const form = {
         input,
         output,
         acGrounds: parseAnalysisList(analysisAcGrounds?.value),
+        loopElement: analysisLoopElement?.value.trim(),
+        options: analysisFormOptions(),
+        sketchRatios: editor.circuit.analysisValues?.bode || {},
       };
+      // The same request runs the numeric model below.
+      const { request } = smallSignalRequest(editor.circuit, form);
       let report;
       try {
-        report = adaptCombinedReport(analyzeSmallSignalV2(editor.circuit, request), { nameSubexpressions: formOptions.nameSubexpressions });
-        report.analysisOptions = {
-          ...formOptions,
-          devices,
-          dominantPoleApplied: formOptions.dominantPole
-            && report.assumptions?.includes('dominant-pole approximation'),
-        };
+        report = deriveSmallSignal(editor.circuit, form);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         report = adaptCombinedReport({ ok: false, error: `analysis failed: ${message}` });
@@ -1319,6 +1258,8 @@ export function installAnalysisUi() {
       }
       latestAnalysisReport = report;
       analysisReportRevision = editor.modelRevision;
+      analysisReportSignature = analysisSignature(editor.circuit);
+      signatureChecked = { revision: null, current: false };
       const stale = document.getElementById('analysis-stale');
       if (stale) stale.hidden = true;
       renderAnalysisResult(report);
@@ -1347,7 +1288,7 @@ export function installAnalysisUi() {
   analysisAnnotate?.addEventListener('click', () => openAnnotateMenu(analysisAnnotate));
   // What the small-signal analysis puts on the drawing (annotate-menu.js).
   registerAnnotations('circuit', () => [
-    { label: 'Equations', identity: { kind: 'equations', source: 'small-signal' }, available: !!latestAnalysisReport?.ok && analysisAnnotationEntries(latestAnalysisReport).length > 0, run: annotateAnalysisResult },
+    { label: 'Equations', identity: { kind: 'equations', source: 'small-signal' }, available: !!latestAnalysisReport?.ok && smallSignalAnnotationEntries(latestAnalysisReport, annotationExcluded).length > 0, run: annotateAnalysisResult },
     { label: 'Small-signal model', identity: { kind: 'model', source: 'small-signal' }, available: !!latestModelReport?.ok, run: placeModelInDrawing },
   ]);
   // Plots is every mode's: the window shows the current mode's view.

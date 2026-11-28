@@ -7,7 +7,7 @@ import {
   annotationAssumptions,
   normalizeAnalysisOptions,
   readAnalysisFormState,
-} from '../src/web/analysis-options.js';
+} from '../src/core/analysis/options.js';
 
 test('defaults select the concise textbook presentation', () => {
   assert.deepEqual(analysisOptionDefaults(), {

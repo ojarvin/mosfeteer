@@ -321,7 +321,7 @@ history window writes to the file as it changes. Opening a design, measuring its
 changes nothing on disk (`drawingText`, `windowsChanged` in
 `src/web/document-session.js`).
 
-The browser exposes `window.__circuit()`, `window.__run(command)`, and
+The browser exposes `window.__circuit()`, `window.__run(command)` (it returns what the command printed, as the log shows it), and
 `window.__load(state)` for isolated verification. Headless browser tests must
 use one persistent CDP connection, temporary ports/directories, real mouse
 events for double-click (`clickCount: 2`), and only terminate processes they

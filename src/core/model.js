@@ -3212,8 +3212,10 @@ export class Circuit {
     return true;
   }
 
+  /** The part `refdes` names, as its id or as its markup (`I_{BIAS}`,
+   *  `M_{2}`: the same id flattened). */
   getComponent(refdes) {
-    const c = this.components.get(refdes);
+    const c = this.components.get(refdes) ?? this.components.get(componentNameIdentity(refdes));
     if (!c) throw new Error(`unknown component "${refdes}"`);
     return c;
   }
@@ -5650,7 +5652,7 @@ export class Circuit {
     const { comp, term } = typeof ref === 'string' ? parseTermRef(ref) : ref;
     const c = this.getComponent(comp);
     c.localTerminal(term);
-    return { comp, term };
+    return { comp: c.refdes, term };
   }
 
   /** Net whose terminal list contains the given terminal, if any. */
@@ -7969,6 +7971,28 @@ export class Circuit {
     circuit._loading = false;
     return circuit;
   }
+}
+
+// What of a part or a net no analysis reads: where and how it is drawn.
+const DRAWN_COMPONENT_KEYS = new Set(['transform', 'style', 'drawOrder', 'behindWires', 'link', 'figure']);
+const DRAWN_NET_KEYS = new Set(['style', 'drawOrder', 'wireStyles', 'preserveEmpty', 'allowDiagonal', 'route', 'junctions', 'branches', 'bitcount', 'busslash', 'fan']);
+
+/**
+ * What the analyses read of the circuit, as one string: its parts (not the
+ * drawing-only ones) and nets without their geometry. Two drawings with the
+ * same signature give the same equations, so an edit that leaves it (a
+ * label, a table, a move, a drawing-only part) leaves an analysis current.
+ */
+export function analysisSignature(circuit) {
+  const data = analyzedCircuit(circuit).toJSON();
+  const without = (object, keys) => Object.fromEntries(Object.entries(object).filter(([key]) => !keys.has(key)));
+  const components = data.components.map((component) => without(component, DRAWN_COMPONENT_KEYS))
+    .sort((a, b) => (a.refdes < b.refdes ? -1 : a.refdes > b.refdes ? 1 : 0));
+  const nets = data.nets.map((net) => ({
+    ...without(net, DRAWN_NET_KEYS),
+    terminals: net.terminals.map((terminal) => `${terminal.comp}.${terminal.term}`).sort(),
+  })).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return JSON.stringify({ components, nets });
 }
 
 /**

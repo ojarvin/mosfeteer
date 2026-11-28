@@ -29,6 +29,7 @@ import { commit, markSettingsChanged, onDocumentShown, render } from './main.js'
 import { logLine } from './status-bar-ui.js';
 import { element as el, mathSpan, onFieldCommit } from './dom.js';
 import { annotateMathFigure } from './figure-annotate.js';
+import { switchedCapTable } from '../core/analysis/annotation-tables.js';
 import { registerAnnotations } from './annotate-menu.js';
 import { bodeGraphFooter, bodeGraphPair, showBodeGraphs } from './bode-actions.js';
 import { deriving } from './analysis-busy.js';
@@ -626,16 +627,9 @@ function scPlotUpdate(plot) {
  *  at, and with the noise worked out, the input-referred kT/C noise.
  *  Annotating again rewrites the table there. */
 function annotate() {
-  const result = latest?.result;
-  if (!result?.ok) return;
-  const tex = (name) => (/^\$.*\$$/.test(name) ? name.replace(/^\$+|\$+$/g, '') : `\\text{${name}}`);
-  const rows = [
-    `\\text{Transfer function} & ${result.equation}`,
-    `\\text{Read at the end of} & ${tex(result.states[result.readout].name)}`,
-    result.sampling === 'slot' ? `\\text{Input sampled} & \\text{every slot, } w = z^{1/${result.slots}}` : `\\text{Input sampled} & \\text{once a period}`,
-  ];
-  if (result.noise?.ok) rows.push(`\\text{kT/C noise} & \\frac{\\overline{v^2_{n,in}}}{kT} = ${transferTex(result.noise.total.input, 'z', { symbolicLead: true })}`);
-  const { updated } = annotateMathFigure({ kind: 'equations', source: 'switched-cap', text: rows.join('\n'), columns: 'll' });
+  const table = switchedCapTable(latest?.result);
+  if (!table) return;
+  const { updated } = annotateMathFigure(table);
   logLine(updated ? 'updated the equation table' : 'annotated the equation table');
 }
 

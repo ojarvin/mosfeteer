@@ -579,7 +579,10 @@ display with no brackets, scale lines and column headers -- and sets
 `a_1`, `a_2`, ...; name the diagram's gains to match.
 
 Scripted: `analyze signal-flow --output NET --input PORT,... [--zero PORT,...]
-[--const PORT=VALUE,...]`.
+[--const PORT=VALUE,...] [--annotate]`; `--annotate` writes the equation
+table as Annotate does (`signalFlowTable`,
+`src/core/analysis/annotation-tables.js`), and refuses a sampled result,
+whose equation is written at the coefficients' numbers the window holds.
 
 ## Optimize coefficients
 

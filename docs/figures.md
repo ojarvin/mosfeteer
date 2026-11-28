@@ -89,6 +89,18 @@ there. Each mode registers its items (`registerAnnotations`). The Plots
 window's and the noise calculator's own Annotate buttons do the same for
 what they show.
 
+A table's rows come from a builder in `src/core/analysis/annotation-tables.js`
+(small-signal, logic, synthesis, switched-cap, signal-flow), written by
+`writeMathFigure` (`src/core/math-figure.js`): the window's Annotate and the
+commands' `--annotate` (`analyze equations`, `analyze logic`, `analyze
+switched-cap`, `analyze signal-flow`, `synthesize logic`) both go through
+them, so either gives the same figure and rewrites the other's in place. A
+table written by a command is placed at its estimated size (the window's
+packs it again once the browser has measured it); `figures --arrange` packs
+every figure again. Plots and the
+kT/C noise table read numbers the windows hold, so they come from the
+windows only.
+
 ## Tables
 
 A table is one math label whose lines are TeX rows: `&` between columns,

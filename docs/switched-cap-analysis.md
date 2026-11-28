@@ -164,7 +164,11 @@ circuit: the transfer function, the phase it is read at, and the kT/C noise
 when worked out. **Annotate… → kT/C noise table** puts the calculator's numbers there
 as the noise table -- a row per contributor, the total under a rule, and the
 values they were worked out at. Each is rewritten in place when annotated
-again ([`figures.md`](figures.md)). The choices and
+again ([`figures.md`](figures.md)). Scripted: `analyze switched-cap --input
+NET --output NET [--readout PHASE] [--sampling period|slot] [--noise ktc]
+[--annotate]` derives as Derive does and writes the equation table
+(`switchedCapTable`, `src/core/analysis/annotation-tables.js`); the kT/C
+noise table needs the calculator's numbers and comes from the window. The choices and
 numbers -- the noise switch and the calculator's fields too, as typed -- are
 the design's (`Circuit#analysisValues.sc`): saved with it, one undo step a
 finished adjustment, never making it unsaved.

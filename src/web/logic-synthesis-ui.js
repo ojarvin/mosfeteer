@@ -18,6 +18,7 @@ import { commit, markSettingsChanged, onDocumentShown, render, setSelection } fr
 import { logLine } from './status-bar-ui.js';
 import { element as el, mathSpan, onFieldCommit } from './dom.js';
 import { annotateMathFigure } from './figure-annotate.js';
+import { synthesisEquations, synthesisTable, synthesisTableFits } from '../core/analysis/annotation-tables.js';
 import { registerAnnotations } from './annotate-menu.js';
 import { fitView } from './canvas-view.js';
 
@@ -252,42 +253,19 @@ function draw() {
 
 /** A table this many rows long, or shorter, goes on the drawing (as the
  *  logic mode's: render.js holds 16 columns, one of them the gap). */
-const ANNOTATED_ROWS = 64;
-const ANNOTATED_COLUMNS = 16;
-
-function tableFits(current) {
-  return rowCount(current.inputs) <= ANNOTATED_ROWS && current.inputs.length + current.outputs.length + 1 <= ANNOTATED_COLUMNS;
-}
-
-/** The truth table on the drawing, as the logic mode draws one: names over
- *  a rule, a row per combination, a gap between inputs and outputs; Z as
- *  Z, – as a dash. */
+/** The truth table on the drawing, as the logic mode draws one. */
 function annotateTable() {
-  const current = settings();
-  if (!current.inputs.length || !current.outputs.length || !tableFits(current)) return;
-  const rows = rowCount(current.inputs);
-  const cell = (value) => (value === '-' ? '\\text{–}' : value);
-  const lines = [
-    [...current.inputs.map(logicNameTex), '', ...current.outputs.map((output) => logicNameTex(output.name))].join(' & '),
-    '\\hline',
-  ];
-  for (let row = 0; row < rows; row++) {
-    const bits = current.inputs.map((_, k) => String((row >> (current.inputs.length - 1 - k)) & 1));
-    lines.push([...bits, '', ...current.outputs.map((output) => cell(valuesOf(output, rows)[row]))].join(' & '));
-  }
-  const columns = 'c'.repeat(current.inputs.length + 1 + current.outputs.length);
-  const { updated } = annotateMathFigure({ kind: 'table', source: 'synthesis', text: lines.join('\n'), columns });
+  const table = synthesisTable(settings());
+  if (!table) return;
+  const { updated } = annotateMathFigure(table);
   logLine(updated ? 'updated the truth table' : 'annotated the truth table');
 }
 
 /** The equations on the drawing, each name then its expression. */
 function annotateEquations() {
-  const result = synthesized(drawn());
-  if (!result.ok) return;
-  const rows = result.outputs.filter((output) => output.tex !== null).map((output) => `${logicNameTex(output.name)} = ${output.tex}`);
-  if (!rows.length) return;
-  // Each equation whole, as the other tools' equations are drawn.
-  const { updated } = annotateMathFigure({ kind: 'equations', source: 'synthesis', text: rows.join('\n'), columns: 'l' });
+  const table = synthesisEquations(synthesized(drawn()));
+  if (!table) return;
+  const { updated } = annotateMathFigure(table);
   logLine(updated ? 'updated the synthesized equations' : 'annotated the synthesized equations');
 }
 
@@ -356,7 +334,7 @@ export function installLogicSynthesisUi() {
     const result = synthesized(drawn());
     const current = settings();
     return [
-      { label: 'Table', identity: { kind: 'table', source: 'synthesis' }, available: current.inputs.length > 0 && current.outputs.length > 0 && tableFits(current), run: annotateTable },
+      { label: 'Table', identity: { kind: 'table', source: 'synthesis' }, available: current.inputs.length > 0 && current.outputs.length > 0 && synthesisTableFits(current), run: annotateTable },
       { label: 'Equations', identity: { kind: 'equations', source: 'synthesis' }, available: !!result.ok && result.outputs.some((output) => output.tex !== null), run: annotateEquations },
     ];
   });

@@ -90,7 +90,10 @@ upright, `U1.a` as text, a bus bit `\mathrm{D}[3]`). **Annotate… → Table** p
 (names over a rule, a blank column between what goes in and what comes out;
 up to 64 rows and 16 columns), **Annotate… → Equations** the equations, each whole
 in one column, each one figure (`figure` kind `table` and `equations`, source `logic`) updated in
-place when annotated again.
+place when annotated again. `analyze logic --annotate` writes both from the
+command language through the same builders
+(`src/core/analysis/annotation-tables.js`); the table is left out, and
+said so, when it does not fit.
 
 ## Synthesis
 
@@ -172,4 +175,5 @@ table, as minimized gates drawn with their ports.
   mode does (Z as Z, – as a dash; up to 64 rows and 16 columns), **Annotate…
   → Equations** the checked equations, each whole in one column as the
   other tools' equations are (`figure` kind `table` and `equations`, source
-  `synthesis`).
+  `synthesis`); `synthesize logic ... --annotate` writes both with the
+  gates.

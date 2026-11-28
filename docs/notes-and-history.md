@@ -56,7 +56,10 @@ change), each finished edit -- a one-second pause or leaving the field --
 is one undo step, and an undo of anything restores the notes of its
 snapshot. Scripted: `notes`, `notes set TEXT`, `notes append TEXT` (a new
 line; the rest of the command line is taken as written, so TeX keeps its
-backslashes), `notes clear`, `notes markdown` (what Copy copies).
+backslashes and an indented list item its indentation; `notes append`
+alone, or `notes append ""`, an empty line), `notes load FILE` (the notes
+from a Markdown file the CLI reads and sends, as `annotation dataplot`'s
+file comes), `notes clear`, `notes markdown` (what Copy copies).
 
 Rendering (`src/core/notes-markdown.js`, pure): `#` headings, paragraphs,
 `-`/`*`/`1.` lists and `- [ ]` task lists (an item indented two spaces

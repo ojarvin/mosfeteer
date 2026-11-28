@@ -8,7 +8,7 @@ here. Read only the doc that matches your role.
 
 | You are… | Goal | Read |
 | **Developer** agent | Improving the application itself: code quality, cohesion, features, tests, API, instructions. | [DEVELOPER.md](./DEVELOPER.md) |
-| **Circuit author** agent | Drawing a circuit in the running editor for the user. | [CIRCUIT-AUTHOR.md](./CIRCUIT-AUTHOR.md) |
+| **Circuit author** agent | Drawing, analyzing, and documenting a circuit in the running editor for the user. | [CIRCUIT-AUTHOR.md](./CIRCUIT-AUTHOR.md) |
 
 If the request is to draw or revise a circuit, use the circuit-author lane even
 if implementation work would be possible. Read `CIRCUIT-AUTHOR.md` before

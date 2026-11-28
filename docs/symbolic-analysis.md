@@ -479,10 +479,30 @@ is still drawn.
 **Annotate… → Equations** puts the displayed equations on the drawing as the
 analysis's table ([`figures.md`](figures.md)), right of the circuit: a row
 each, its name then its equation, the definitions under their heading, and
-the assumptions under a rule. Annotating again rewrites that table where it
-stands. Each row, and
+the assumptions under a rule (`smallSignalTable`,
+`src/core/analysis/annotation-tables.js`). Annotating again rewrites that
+table where it stands. Each row, and
 each group, has a checkbox that keeps it out of the annotation; the choice is
-remembered with the form. The definitions the annotated rows use, directly
+remembered with the form.
+
+`analyze equations OUT --input NET` is the window from the command
+language: it derives through the window's own path
+(`deriveSmallSignal`, `src/core/analysis/derive.js`: the form's options,
+each transistor's overrides, the noise request) from the window's defaults,
+changed by flags (`--noise thermal,flicker,output`, `--transfer`,
+`--set OPTION=on|off` for any form option, the approximation flags), and
+prints every row the window shows. `--annotate` writes the same table
+(`--exclude TITLE,...` leaves rows out) and saves the form with the design
+(`Circuit#windows.analysis`, by net id), so the window opens on that
+analysis; an open window takes up a form a command wrote. The per-quantity
+subjects (`analyze transfer-function`, ...) print one quantity and save
+nothing.
+
+The window marks its equations stale when the drawing changes what the
+analysis reads: `analysisSignature(circuit)` (`src/core/model.js`), the
+analyzed parts and nets without their geometry, is compared once per
+revision, so annotating a table or the model, moving a part, or editing a
+label leaves them current. The definitions the annotated rows use, directly
 or through another definition, are always added after them. AC equations,
 poles, and zeros are added only when reactive terms remain in the final forms.
 The assumptions block is omitted when no selected approximation changes the
@@ -565,7 +585,7 @@ selected generator to that same solve. The main implementation is in
 - Model simplifications affect conversion/solving: body effect, channel-length
   modulation, Miller reduction, and MOS parasitics. Equation approximations
   affect presentation only: high intrinsic gain and dominant pole. The
-  normalized option defaults and labels are in `src/web/analysis-options.js`.
+  normalized option defaults and labels are in `src/core/analysis/options.js`.
 - `reduceNetwork` pre-reduces parallel branches only. It records equivalence
   proofs used by presentation; do not add series pre-reduction to the solver.
   `report-adapter.js` re-renders every displayed AC/DC row, so pass its

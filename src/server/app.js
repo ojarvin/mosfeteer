@@ -67,9 +67,15 @@ function httpError(message, status = 400, code) {
   return Object.assign(new Error(message), { status, ...(code ? { code } : {}) });
 }
 
+/** Exact analysis results carry BigInt numerators: written as digits. */
+const bigintDigits = (key, value) => (typeof value === 'bigint' ? String(value) : value);
+
 function json(res, status, value, headers = {}) {
+  // Serialized before the head goes out, so a value that cannot be written
+  // fails the request instead of leaving an empty 200.
+  const body = JSON.stringify(value, bigintDigits);
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store, max-age=0', ...headers });
-  res.end(JSON.stringify(value));
+  res.end(body);
 }
 
 function revisionHeaders(revision) {

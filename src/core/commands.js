@@ -1,8 +1,13 @@
 import { plotCsv, plotSeries } from './plot-export.js';
 import { appendPlotTraces, dataPlotFromText, fileUnits, inPlotUnits, takesFileTraces, movePlotTrace, placeDataPlot, removePlotTrace, setDataPlotAxis, setPlotTrace, setDataPlotView } from './data-plot.js';
-import { analyzeSignalFlow, complexText } from './analysis/signal-flow.js';
+import { analyzeSignalFlow, complexText, transferTex } from './analysis/signal-flow.js';
 import { analyzeLogic } from './analysis/logic.js';
-import { Circuit, canonicalNetName, muxInputCount, normalizeTags, parseTermRef, transformComponentWorld } from './model.js';
+import { analyzeSwitchedCap } from './analysis/switched-cap.js';
+import { deriveSmallSignal } from './analysis/derive.js';
+import { ANALYSIS_OPTION_DEFAULTS } from './analysis/options.js';
+import { logicEquations, logicTable, signalFlowTable, smallSignalTable, switchedCapTable, synthesisEquations, synthesisTable } from './analysis/annotation-tables.js';
+import { writeMathFigure } from './math-figure.js';
+import { Circuit, canonicalNetName, componentNameIdentity, muxInputCount, normalizeTags, parseTermRef, transformComponentWorld } from './model.js';
 import { captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets, setPartValue } from './part-moves.js';
 import { TRANSFER_FUNCTION_ROLE, isTransferFunction } from './transfer-function.js';
 import { getSymbol, symbolTypeNames } from './components/index.js';
@@ -146,6 +151,15 @@ const FLAG_ARITY = {
   position: 1,
   hz: 0,
   ratio: 0,
+  noise: 1,
+  'noise-sources': 1,
+  transfer: 1,
+  set: 1,
+  exclude: 1,
+  annotate: 0,
+  readout: 1,
+  sampling: 1,
+  side: 1,
 };
 
 const SYNTHESIZE_USAGE = 'usage: synthesize logic IN ... OUT=VALUES ... [--style and-or|nand|or-and|nor] [--gates inverter,and,nand,or,nor] [--max-inputs 2|3] [--at X Y] [--print]';
@@ -525,7 +539,7 @@ export function commandHelp() {
     '                                   size <refdes> off removes the size; no size prints it; a comma list sets several parts at once',
     '  partstable [refdes ...] [--at X Y] - put a parts table on the drawing: W, L, m of the transistors, values of passives and sources,',
     '                                   drawn from the parts (it follows their sizes); no names lists all sized or valued parts; right of the drawing by default',
-    '  rename <refdes> <new>          - rename a component',
+    '  rename <refdes> <new>          - rename a component; a name with markup (I_{BIAS}) is its label, its plain form (IBIAS) the refdes',
     '  renumber [--order ALONG-THEN] [refdes ...] - renumber automatically named parts (M1, R2): along each row/column, then row by row; ALONG and THEN are right|left|up|down, crosswise (default right-down, reading order; up-right: each column bottom up, columns left to right); listed parts trade only their own numbers',
     '  rm <refdes>                    - remove a component',
     '  supplybar on|off <refdes> ...  - join supply bars with aligned same-rail neighbors (visual only)',
@@ -535,9 +549,10 @@ export function commandHelp() {
     '  disconnect REF.TERM            - detach one terminal from its net',
     '  swap <refdes> [type]           - change a part\'s type in place, keeping its wiring (no type: list the choices)',
     '  tag [list] | tag add|rm|set NAME ... - the document\'s tags, for finding it in the Atlas (#NAME searches them)',
-    '  notes | notes set TEXT | notes append TEXT | notes clear - the design\'s notes (Markdown, $math$, @M1 or @V_{out} mention',
+    '  notes | notes set TEXT | notes append [TEXT] | notes clear - the design\'s notes (Markdown, $math$, @M1 or @V_{out} mention',
     '                                   a part or net, [[design]] links another design, ![[circuit]] places a figure of the report,',
-    '                                   [^https://...|title] cites a source); append adds TEXT as a new line',
+    '                                   [^https://...|title] cites a source); append adds TEXT as a new line, alone an empty line',
+    '  notes load FILE                - the notes from a Markdown file, replacing them (the CLI reads the file and sends it)',
     '  notes markdown                 - the notes as plain Markdown: mentions and design links as their names',
     '  notes outline [--name TITLE]   - empty notes started as a report: the circuit, the beats and timing, and every',
     '                                   annotated figure, each placed with a caption and a line to replace with text',
@@ -570,7 +585,8 @@ export function commandHelp() {
     '  net <id> busslash on|off       - show or hide a bus net\'s slashes',
     '                                   net N1 add R1.a ; net N1 drop R2.b ;',
     '                                   net N1 name OUT ; net N1 rm',
-    '  netlabel add NET [ID] NAME X Y  - place a label on a physical net',
+    '  netlabel add NET [ID] NAME X Y [--side above|below|left|right] - place a label on a physical net (default side: the wire\'s)',
+    '  netlabel move LABEL X Y [--side S] - move a net label along its wire, or to its other side',
     '  netlabel rename|retarget|rm ... - edit/remove a net label',
     '  netlabel convert LABEL NET    - convert an annotation to a net label',
     '  netlabel detach LABEL [TEXT]  - convert a net label to an annotation',
@@ -595,21 +611,34 @@ export function commandHelp() {
     '  eval                           - quality report (connectivity, overlaps, routing, labels, grid)',
     '  analyze <input-impedance|output-impedance|transfer-function|transimpedance|transconductance|current-gain> NET [options]',
     '  analyze model NET [options]    - place the small-signal model, its output at NET, below the drawing as drawing-only parts',
+    '  analyze equations OUT --input NET [--ac-ground NET,...] [--transfer Av,Zm,Gm,Ai] [--noise thermal,flicker,output]',
+    '                    [--noise-sources REF,...] [--set OPTION=on|off,...] [--exclude TITLE,...] [--annotate]',
+    '                                 - every row the analysis window derives, from its defaults (Miller on, g_m r_o >> 1, g_mb = 0,',
+    '                                   named subexpressions): impedances, transfer functions, poles and zeros, noise; --set any',
+    '                                   window option (millerApproximation, parasitics, timeConstants, nameSubexpressions, ...);',
+    '                                   --annotate writes the equation table on the drawing (again: in place), --exclude rows by',
+    '                                   title, and keeps the form with the design so the analysis window opens on it',
     '  analyze loop-gain AT [options] - the loop gain broken at AT: an opamp (U1), a terminal (M2.g), the net that closes',
     '                                   the loop (V_{out}), or "V_{fb} to V_{inn}" when the loop is not drawn closed',
-    '  analyze logic [--clock NET]    - the truth table of the gates, muxes, tri-states, flip-flops, and latches (a state table',
+    '  analyze logic [--clock NET] [--annotate] - the truth table of the gates, muxes, tri-states, flip-flops, and latches (a state table',
     '                                   with them), and each output (and next state) as a minimized sum of products;',
-    '                                   --clock picks the clock input where the drawing leaves it open (a gated clock)',
-    '  synthesize logic IN ... OUT=VALUES ... [--style S] [--gates G,...] [--max-inputs 2|3] [--at X Y] [--print]',
+    '                                   --clock picks the clock input where the drawing leaves it open (a gated clock);',
+    '                                   --annotate writes the table and the equations on the drawing',
+    '  analyze switched-cap --input NET --output NET [--readout PHASE] [--sampling period|slot] [--noise ktc] [--annotate]',
+    '                                 - H(z) of the timing diagram\'s phases, read at the end of PHASE; --noise ktc adds the',
+    '                                   kT/C noise; --annotate writes the equation table on the drawing',
+    '  synthesize logic IN ... OUT=VALUES ... [--style S] [--gates G,...] [--max-inputs 2|3] [--at X Y] [--print] [--annotate]',
     '                                 - gates for a truth table: the inputs by name (A B, or a bus D[3:0], a port per bit); VALUES is',
     '                                   one of 0, 1, Z (not driven), - (either) per row, the rows counting up in binary, the first',
     '                                   input the most significant (A B Y=0110 is A XOR B); a bus output Q[1:0]=V1,V0; each output',
     '                                   minimized, drawn with input and output ports right of the drawing (inputs as wired rails, past',
     '                                   four joined by name); --style and-or (default), nand, or-and, nor; --gates the allowed gates;',
-    '                                   --max-inputs the most inputs a gate has (default 3); --print gives the equations, drawing nothing',
-    '  analyze signal-flow --output NET --input PORT,... [--zero PORT,...] [--const PORT=VALUE,...]',
+    '                                   --max-inputs the most inputs a gate has (default 3); --print gives the equations, drawing nothing;',
+    '                                   --annotate also writes the truth table and the equations on the drawing',
+    '  analyze signal-flow --output NET --input PORT,... [--zero PORT,...] [--const PORT=VALUE,...] [--annotate]',
     '                                 - transfer functions of a block diagram (tf_s/tf_z blocks, sum and multiply junctions):',
-    '                                   one per input port to the output; the other sources are zero or constant',
+    '                                   one per input port to the output; the other sources are zero or constant; --annotate',
+    '                                   writes the equation table on the drawing (a sampled result: from the analysis window)',
     '    --input NET --output NET --reference NET --ac-ground NET,...',
     '    --device-region REF=triode,... --ignore-body-effect --gmro-large',
     '    --ignore-channel-length-modulation --dominant-pole',
@@ -654,7 +683,7 @@ export function commandHelp() {
     '                                   waves, TEXT under it. --break N,... leaves time out of slot N: two S curves through',
     '                                   all rows (N:rows, through each row). --clear arrows,marks,spans,breaks (or all) takes them away first.',
     '                                   They follow their edges as the waves change; one whose edge has gone waits for it',
-    '  svg [file] [--grid] [--beat N] - export SVG (default data/preview.svg), optionally one beat',
+    '  svg [file] [--grid] [--beat N] - the drawing as SVG, or one beat of it: the CLI writes it to file; else --json carries it',
     '  save <file> | load <file>      - JSON snapshot I/O',
     'Flags: --json prints machine-readable result. All coordinates are 40-grid.',
   ].join('\n');
@@ -671,17 +700,24 @@ export function runCommand(circuit, line, io) {
 }
 
 /** `notes set TEXT` replaces the design's notes; `notes append TEXT` adds
- *  TEXT as a line after them (an empty one for a paragraph break). One pair
- *  of quotes around the whole of TEXT is taken off. */
+ *  TEXT as a line after them (`notes append` alone, or `notes append ""`,
+ *  an empty one: a paragraph break, kept when the next line comes), its
+ *  indentation kept. One pair of quotes around the whole of TEXT is taken
+ *  off. */
 function notesCommand(circuit, action, raw) {
   const quoted = raw.trim().match(/^"([\s\S]*)"$/);
-  const text = quoted ? quoted[1] : raw.trim();
+  // Indentation is kept: a nested list item is indented under its parent.
+  const text = quoted ? quoted[1] : raw.replace(/\s+$/, '');
   const before = circuit.notes;
-  const next = action === 'set' ? text : before ? `${before.replace(/\n+$/, '')}\n${text}` : text;
+  const next = action === 'set' ? text : before ? `${before}\n${text}` : text;
   circuit.notes = normalizeNotes(next);
   const lines = circuit.notes ? circuit.notes.split('\n').length : 0;
   return { text: circuit.notes ? `notes: ${lines} line${lines === 1 ? '' : 's'}` : '(no notes)', json: { notes: circuit.notes }, mutated: circuit.notes !== before };
 }
+
+/** Whether a part name carries markup (I_{BIAS}, R_{D}): its refdes is
+ *  then its plain form and the markup its label. */
+const hasNameMarkup = (name) => componentNameIdentity(name) !== String(name);
 
 /** `add --inputs`: only a multiplexer takes it. */
 function addInputs(type, value) {
@@ -740,7 +776,6 @@ function dispatch(circuit, cmd, pos, flags, io) {
     return result(lines.join('\n'), rep, false);
   }
   if ((cmd === 'analyze' || cmd === 'analysis') && ['signal-flow', 'signalflow', 'sfg'].includes(pos[0])) {
-    const list = (values) => (values || []).flatMap((value) => value.split(',')).map((value) => value.trim()).filter(Boolean);
     const output = flags.output?.[0] || pos[1];
     const sources = {};
     for (const ref of list(flags.input)) sources[ref] = 'input';
@@ -755,17 +790,22 @@ function dispatch(circuit, cmd, pos, flags, io) {
     }
     const report = analyzeSignalFlow(circuit, { output, sources });
     if (!report.ok) throw new Error(report.error);
+    if (flags.annotate && report.entries.some((entry) => entry.sampled)) {
+      throw new Error('a sampled result is written at the coefficients\' numbers: annotate it from the analysis window');
+    }
+    const annotated = flags.annotate ? annotateTables(circuit, [signalFlowTable(report)]) : [];
     const lines = report.entries.flatMap((entry) => [
       entry.equation,
       ...(entry.zeros?.length ? [`  zeros: ${entry.zeros.map(complexText).join(', ')}`] : []),
       ...(entry.poles?.length ? [`  poles: ${entry.poles.map(complexText).join(', ')}`] : []),
     ]);
-    return result(lines.join('\n'), { variable: report.variable, output: report.output, entries: report.entries.map(({ value, ...entry }) => entry) });
+    return result([...lines, ...annotated].join('\n'), { variable: report.variable, output: report.output, entries: report.entries.map(({ value, ...entry }) => entry) }, annotated.length > 0);
   }
   if ((cmd === 'analyze' || cmd === 'analysis') && pos[0] === 'logic') {
-    if (pos.length > 1) throw new Error('usage: analyze logic [--clock NET]');
+    if (pos.length > 1) throw new Error('usage: analyze logic [--clock NET] [--annotate]');
     const report = analyzeLogic(circuit, { clock: flags.clock?.[0] });
     if (!report.ok) throw new Error(report.error);
+    const annotated = flags.annotate ? annotateTables(circuit, [logicTable(report), logicEquations(report)], ['the table does not fit on the drawing (64 rows, 16 columns at most)', 'no output has an expression']) : [];
     // The table as text: inputs (state first) | next state, outputs.
     const left = [...report.states.map((st) => st.name), ...report.inputs.map((input) => input.name)];
     const right = [...report.states.map((st) => `${st.name}+`), ...report.outputs.map((output) => output.name)];
@@ -776,8 +816,9 @@ function dispatch(circuit, cmd, pos, flags, io) {
       ...report.rows.map((row) => `${cells([...row.states, ...row.inputs], 0)} | ${cells([...row.next, ...row.outputs], left.length)}`),
       ...(report.clock ? [`${report.clock.text}${report.clock.gated ? '; clocks taken as glitch-free' : ''}`] : []),
       ...report.expressions.map((expression) => `${expression.name} = ${expression.tex ?? '(Z or X in places)'}`),
+      ...annotated,
     ];
-    return result(lines.join('\n'), { sequential: report.sequential, inputs: report.inputs, outputs: report.outputs, states: report.states, clock: report.clock, rows: report.rows, expressions: report.expressions });
+    return result(lines.join('\n'), { sequential: report.sequential, inputs: report.inputs, outputs: report.outputs, states: report.states, clock: report.clock, rows: report.rows, expressions: report.expressions }, annotated.some((line) => !line.startsWith('not annotated')));
   }
   if (cmd === 'synthesize' || cmd === 'synthesise' || cmd === 'synth') {
     if (pos[0] !== 'logic' || pos.length < 3) throw new Error(SYNTHESIZE_USAGE);
@@ -811,11 +852,19 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const lines = synthesized.outputs.map((output) => `${output.name} = ${output.tex ? plain(output.tex) : 'Z'}${output.enableTex ? `, driven when ${plain(output.enableTex)}` : ''}`);
     const summary = gateSummary(synthesized);
     const listing = { outputs: synthesized.outputs.map(({ name, tex, enableTex }) => ({ name, tex, enableTex })), gates: synthesized.gateCount };
+    if (flags.print && flags.annotate) throw new Error('--print draws nothing: leave out --annotate, or --print');
     if (flags.print) return result([...lines, summary].join('\n'), listing);
+    const annotated = flags.annotate ? annotateTables(circuit, [synthesisTable(spec), synthesisEquations(synthesized)], ['the table does not fit on the drawing (64 rows, 16 columns at most)', 'no output has an expression']) : [];
     const at = flags.at ? { x: Number(flags.at[0]), y: Number(flags.at[1]) } : null;
     if (at && !(Number.isFinite(at.x) && Number.isFinite(at.y))) throw new Error('--at takes X Y');
     const { refs } = drawSynthesis(circuit, synthesized, { at });
-    return result([...lines, `drew ${summary}`].join('\n'), { ...listing, refs }, true);
+    return result([...lines, `drew ${summary}`, ...annotated].join('\n'), { ...listing, refs }, true);
+  }
+  if ((cmd === 'analyze' || cmd === 'analysis') && ['switched-cap', 'switchedcap', 'sc'].includes(pos[0])) {
+    return switchedCapCommand(circuit, pos.slice(1), flags, result);
+  }
+  if ((cmd === 'analyze' || cmd === 'analysis') && ['equations', 'all'].includes(pos[0])) {
+    return smallSignalEquationsCommand(circuit, pos.slice(1), flags, result);
   }
   if (cmd === 'analyze' || cmd === 'analysis') {
     const subject = pos.shift();
@@ -834,7 +883,6 @@ function dispatch(circuit, cmd, pos, flags, io) {
     if (!quantity) throw new Error(usage);
     const target = pos.shift();
     if (!target || pos.length) throw new Error(usage);
-    const list = (values) => (values || []).flatMap((value) => value.split(',')).map((value) => value.trim()).filter(Boolean);
     const deviceRegions = {};
     for (const entry of list(flags['device-region'])) {
       const match = entry.match(/^([^:=\s]+)\s*[:=]\s*([^:=\s]+)$/);
@@ -935,6 +983,8 @@ function dispatch(circuit, cmd, pos, flags, io) {
       value: flags.value ? flags.value[0] : undefined,
       inputs: flags.inputs ? addInputs(type, flags.inputs[0]) : undefined,
     });
+    // A name with markup (I_{BIAS}) is the label; its plain form the refdes.
+    if (refdes && hasNameMarkup(refdes)) circuit.renameComponent(c.refdes, c.refdes, { displayLabel: refdes });
     const terms = c.worldTerminals().map((t) => `${t.name}=${pp(t.x, t.y)}`);
     const m = `${c.transform.mirrorX ? 'X' : ''}${c.transform.mirrorY ? 'Y' : ''}`;
     const text = `added ${c.refdes} (${type}) at ${pp(c.transform.x, c.transform.y)} rot=${c.transform.rotation}${m ? ` mir(${m})` : ''}; terminals ${terms.join(' ')}`;
@@ -1105,8 +1155,11 @@ function dispatch(circuit, cmd, pos, flags, io) {
   if (cmd === 'rename') {
     const c = circuit.getComponent(pos[0]);
     const newName = pos[1];
-    circuit.renameComponent(c.refdes, newName);
-    return result(`renamed ${pos[0]} -> ${newName}`, { from: pos[0], to: newName }, true);
+    if (!newName || pos.length > 2) throw new Error('usage: rename REFDES NEW (NEW may carry markup: I_{BIAS})');
+    // A name with markup is the label; its plain form the refdes.
+    const renamed = circuit.renameComponent(c.refdes, newName, hasNameMarkup(newName) ? { displayLabel: newName } : {});
+    const label = circuit.labelOf(renamed.refdes)?.text;
+    return result(`renamed ${pos[0]} -> ${renamed.refdes}${label && label !== renamed.refdes ? ` (label ${label})` : ''}`, { from: pos[0], to: renamed.refdes, label: label ?? null }, true);
   }
   if (cmd === 'rm' || cmd === 'remove') {
     const c = circuit.getComponent(pos[0]);
@@ -1170,12 +1223,12 @@ function dispatch(circuit, cmd, pos, flags, io) {
     return result(`disconnected ${pos[0]} (net ${net.id})`, { terminal: pos[0], netId: net.id }, true);
   }
   if (cmd === 'netlabel' || cmd === 'net-label' || cmd === 'net_label' || cmd === 'nlabel' || cmd === 'wirelabel' || cmd === 'wire-label') {
-    return netLabelCommand(circuit, pos, result);
+    return netLabelCommand(circuit, pos, result, flags);
   }
   if (cmd === 'annotation' || cmd === 'annotate' || cmd === 'label') {
     return annotationCommand(circuit, pos, result, flags, io);
   }
-  if (cmd === 'net') return netCommand(circuit, pos, result);
+  if (cmd === 'net') return netCommand(circuit, pos, result, flags);
   if (cmd === 'swap') {
     if (pos.length !== 2) {
       const c = pos[0] && circuit.components.get(pos[0]);
@@ -1197,12 +1250,21 @@ function dispatch(circuit, cmd, pos, flags, io) {
       const markdown = notesMarkdown(circuit.notes, circuit.pictures);
       return result(markdown || '(no notes)', { markdown });
     }
+    if (pos[0] === 'load') {
+      const file = pos[1];
+      if (!file || pos.length !== 2) throw new Error('usage: notes load FILE');
+      if (!io?.readDataFile) throw new Error('notes load reads a file: use the CLI, or paste it into the notes window');
+      const before = circuit.notes;
+      circuit.notes = normalizeNotes(io.readDataFile(file));
+      const lines = circuit.notes ? circuit.notes.split('\n').length : 0;
+      return result(`notes: ${lines} line${lines === 1 ? '' : 's'} from ${file}`, { notes: circuit.notes }, circuit.notes !== before);
+    }
     if (pos.length === 1 && pos[0] === 'outline') {
       if (circuit.notes) throw new Error('the design has notes already: an outline starts empty notes (notes clear first)');
       circuit.notes = normalizeNotes(notesOutline(circuit, { name: flags.name ? flags.name[0] : 'Design' }));
       return result(circuit.notes, { notes: circuit.notes }, true);
     }
-    throw new Error('usage: notes | notes set TEXT | notes append TEXT | notes clear | notes markdown | notes outline [--name TITLE]');
+    throw new Error('usage: notes | notes set TEXT | notes append [TEXT] | notes load FILE | notes clear | notes markdown | notes outline [--name TITLE]');
   }
   if (cmd === 'history') return historyCommand(circuit, pos, flags, result);
   if (cmd === 'tag' || cmd === 'tags') {
@@ -1507,6 +1569,130 @@ function dispatch(circuit, cmd, pos, flags, io) {
   throw new Error(`unknown command "${cmd}" (try: help)`);
 }
 
+/**
+ * Write each table (annotation-tables.js) on the drawing as its figure
+ * (math-figure.js): a line each saying what was written. A null table is
+ * one the result has none of; `missing[i]` says why, else it is skipped.
+ */
+function annotateTables(circuit, tables, missing = []) {
+  const lines = [];
+  tables.forEach((table, index) => {
+    if (!table) {
+      if (missing[index]) lines.push(`not annotated: ${missing[index]}`);
+      return;
+    }
+    const { label, updated } = writeMathFigure(circuit, table);
+    lines.push(`${updated ? 'updated' : 'annotated'} the ${table.source} ${table.kind} table (${label.figure.id})`);
+  });
+  return lines;
+}
+
+const list = (values) => (values || []).flatMap((value) => value.split(',')).map((value) => value.trim()).filter(Boolean);
+
+const EQUATIONS_USAGE = 'usage: analyze equations OUTPUT --input NET [--ac-ground NET,...] [--device-region REF=triode,...] [--transfer Av,Zm,Gm,Ai] [--noise thermal,flicker,output] [--noise-sources REF,...] [--set OPTION=on|off,...] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] [--dominant-pole] [--exclude TITLE,...] [--annotate]';
+
+/** The window's boolean options by their --set names. */
+const SET_OPTIONS = Object.fromEntries(Object.keys(ANALYSIS_OPTION_DEFAULTS)
+  .filter((name) => typeof ANALYSIS_OPTION_DEFAULTS[name] === 'boolean')
+  .map((name) => [name.toLowerCase(), name]));
+
+/**
+ * `analyze equations OUTPUT --input NET`: the small-signal analysis as the
+ * analysis window derives it (analysis/derive.js), from the window's
+ * defaults and these flags; every row it shows. --annotate writes its table
+ * on the drawing and keeps the form with the design, so the window opens
+ * on the same analysis.
+ */
+function smallSignalEquationsCommand(circuit, pos, flags, result) {
+  const output = pos[0];
+  const input = flags.input?.[0];
+  if (!output || pos.length > 1 || !input) throw new Error(EQUATIONS_USAGE);
+  const options = { ...ANALYSIS_OPTION_DEFAULTS, transferFunctions: [...ANALYSIS_OPTION_DEFAULTS.transferFunctions] };
+  if (flags['ignore-channel-length-modulation']) options.neglectChannelLengthModulation = true;
+  if (flags['ignore-body-effect']) options.neglectBodyEffect = true;
+  if (flags['gmro-large']) options.highIntrinsicGain = true;
+  if (flags['dominant-pole']) options.dominantPole = true;
+  for (const entry of list(flags.set)) {
+    const match = entry.match(/^([A-Za-z]+)\s*=\s*(on|off|true|false|yes|no|1|0)$/i);
+    const name = match && SET_OPTIONS[match[1].toLowerCase()];
+    if (!name) throw new Error(`--set takes OPTION=on|off, OPTION one of ${Object.values(SET_OPTIONS).join(', ')}`);
+    options[name] = /^(on|true|yes|1)$/i.test(match[2]);
+  }
+  for (const kind of list(flags.noise)) {
+    const name = { thermal: 'noiseThermal', flicker: 'noiseFlicker', output: 'noiseOutput' }[kind.toLowerCase()];
+    if (!name) throw new Error('--noise takes thermal, flicker, output (comma-separated)');
+    options[name] = true;
+  }
+  if (flags['noise-sources']) options.noiseSources = list(flags['noise-sources']);
+  if (flags.transfer) {
+    const names = list(flags.transfer);
+    const unknown = names.find((name) => !['Av', 'Zm', 'Gm', 'Ai'].includes(name));
+    if (unknown) throw new Error(`--transfer: "${unknown}" is not one of Av, Zm, Gm, Ai`);
+    options.transferFunctions = names;
+  }
+  const deviceRegions = {};
+  for (const entry of list(flags['device-region'])) {
+    const match = entry.match(/^([^:=\s]+)\s*[:=]\s*([^:=\s]+)$/);
+    if (!match || match[2].toLowerCase() !== 'triode') throw new Error('--device-region expects REF=triode');
+    deviceRegions[match[1]] = { region: 'triode' };
+  }
+  options.deviceRegions = deviceRegions;
+  const acGrounds = list(flags['ac-ground']);
+  const report = deriveSmallSignal(circuit, { input, output, acGrounds, options });
+  if (!report.ok) throw new Error(report.diagnostics?.errors?.[0]?.detail || report.error || 'the small-signal analysis failed');
+  const rows = (report.equationEntries || []).filter((entry) => entry.result?.ok && (entry.result.equation || entry.result.lines));
+  const lines = rows.map(({ title, result: row }) => (row.lines ? `${title}:\n${row.lines.map((line) => `  ${line}`).join('\n')}` : `${title}: ${row.equation}`));
+  let mutated = false;
+  if (flags.annotate) {
+    const excluded = new Set(list(flags.exclude));
+    const table = smallSignalTable(report, { excluded });
+    if (!table) throw new Error('nothing to annotate: every row is excluded');
+    lines.push(...annotateTables(circuit, [table]));
+    // The form as the window keeps it, by net id, so the window opens on
+    // this analysis and annotating from it again rewrites the same table.
+    const { deviceRegions: regions = {}, ...formOptions } = report.analysisOptions;
+    delete formOptions.devices;
+    delete formOptions.dominantPoleApplied;
+    circuit.windows.analysis = {
+      input: report.input?.netId || input,
+      output: report.output?.netId || output,
+      acGrounds: acGrounds.join(' '),
+      loopElement: '',
+      deviceRegions: regions,
+      options: formOptions,
+      annotationExcluded: [...excluded],
+      collapsedGroups: circuit.windows.analysis?.collapsedGroups || [],
+    };
+    mutated = true;
+  }
+  return result(lines.join('\n'), { input: report.input, output: report.output, rows: rows.map(({ group, title, result: row }) => ({ group, title, equation: row.equation, lines: row.lines })) }, mutated);
+}
+
+const SWITCHED_CAP_USAGE = 'usage: analyze switched-cap --input NET --output NET [--readout PHASE] [--sampling period|slot] [--noise ktc] [--annotate]';
+
+/** `analyze switched-cap`: H(z) of the timing diagram's phases
+ *  (docs/switched-cap-analysis.md), with the kT/C noise on request. */
+function switchedCapCommand(circuit, pos, flags, result) {
+  if (pos.length) throw new Error(SWITCHED_CAP_USAGE);
+  const sampling = flags.sampling?.[0];
+  if (sampling && !['period', 'slot'].includes(sampling)) throw new Error(`--sampling is period or slot\n${SWITCHED_CAP_USAGE}`);
+  const noise = flags.noise?.[0];
+  if (noise && !/^(ktc|on)$/i.test(noise)) throw new Error(`--noise takes ktc\n${SWITCHED_CAP_USAGE}`);
+  const report = analyzeSwitchedCap(circuit, {
+    input: flags.input?.[0],
+    output: flags.output?.[0],
+    readout: flags.readout?.[0],
+    sampling: sampling === 'slot' ? 'slot' : undefined,
+    noise: !!noise,
+  });
+  if (!report.ok) throw new Error(report.error);
+  const lines = [report.equation, `read at the end of ${plainTexText(report.states[report.readout].name.replace(/^\$+|\$+$/g, ''))}`];
+  if (report.noise?.ok) lines.push(`kT/C noise: v_{n,in}^2/kT = ${transferTex(report.noise.total.input, 'z', { symbolicLead: true })}`);
+  else if (report.noise && !report.noise.ok) lines.push(`kT/C noise: ${report.noise.error}`);
+  const annotated = flags.annotate ? annotateTables(circuit, [switchedCapTable(report)]) : [];
+  return result([...lines, ...annotated].join('\n'), { equation: report.equation, readout: report.readout, sampling: report.sampling }, annotated.length > 0);
+}
+
 const HISTORY_USAGE = 'usage: history [list] | history checkpoint [NAME] [--comment TEXT] | history pin ENTRY [NAME] [--comment TEXT] | history unpin ENTRY | history remove ENTRY | history restore ENTRY';
 
 /**
@@ -1580,7 +1766,17 @@ function netList(circuit, result) {
   return result(rows.join('\n') || '(no nets)', null);
 }
 
-function netLabelCommand(circuit, pos, result) {
+const NET_LABEL_SIDES = ['above', 'below', 'left', 'right'];
+
+/** The --side a net label asks for, or undefined (the wire decides). */
+function netLabelSide(flags) {
+  const side = flags?.side?.[0];
+  if (side === undefined) return undefined;
+  if (!NET_LABEL_SIDES.includes(side)) throw new Error(`--side is ${NET_LABEL_SIDES.join(', ')}`);
+  return side;
+}
+
+function netLabelCommand(circuit, pos, result, flags = {}) {
   const op = pos[0];
   if (op === 'list') {
     const labels = pos[1] ? circuit.netLabels(pos[1]) : [...circuit.labels.values()].filter((label) => label.isNetLabel());
@@ -1604,8 +1800,24 @@ function netLabelCommand(circuit, pos, result) {
     if (tail.length === 0) throw new Error('usage: netlabel add NET [ID] NAME X Y');
     const id = tail.length > 1 ? tail.shift() : undefined;
     const name = tail.join(' ');
-    const label = circuit.addNetLabel(netId, { id, text: name, x, y });
+    const side = netLabelSide(flags);
+    const label = circuit.addNetLabel(netId, { id, text: name, x, y, ...(side ? { netSide: side } : {}) });
     return result(`added net label ${label.id} to ${label.netId} (${label.text})`, label.toJSON(), true);
+  }
+  if (op === 'move') {
+    // Its anchor to X Y (on the grid), on --side or the side it has; its box
+    // must still touch its wire.
+    const x = Number(pos[2]);
+    const y = Number(pos[3]);
+    if (!pos[1] || pos.length !== 4 || !Number.isFinite(x) || !Number.isFinite(y)) throw new Error('usage: netlabel move LABEL X Y [--side above|below|left|right]');
+    const label = circuit._resolveNetLabel(pos[1]);
+    const side = netLabelSide(flags) ?? label.netSide;
+    const anchor = { x: snap(x), y: snap(y) };
+    if (!circuit.netLabelFits(label, anchor, side)) throw new Error(`${label.id} at ${pp(anchor.x, anchor.y)} ${side}: a net label must touch its net's wire`);
+    label.anchor = anchor;
+    label.netSide = side;
+    label.clearRenderedTextBounds();
+    return result(`moved net label ${label.id} (${label.text}) to ${pp(anchor.x, anchor.y)}, ${side} its wire`, label.toJSON(), true);
   }
   if (op === 'rename') {
     const label = circuit._resolveNetLabel(pos[1]);
@@ -1634,7 +1846,7 @@ function netLabelCommand(circuit, pos, result) {
     circuit.removeLabel(label);
     return result(`removed net label ${label.id}`, null, true);
   }
-  throw new Error('usage: netlabel add|rename|retarget|convert|detach|rm|list ...');
+  throw new Error('usage: netlabel add|move|rename|retarget|convert|detach|rm|list ...');
 }
 
 function annotationCommand(circuit, pos, result, flags = {}, io) {
@@ -1943,7 +2155,7 @@ function beatCommand(circuit, pos, flags, result) {
   throw new Error(`unknown beat command "${sub}"; try: beat list|add|rm|rename|move|merge|show|dim|hide|switch|phases|frame`);
 }
 
-function netCommand(circuit, pos, result) {
+function netCommand(circuit, pos, result, flags = {}) {
   const sub = pos[0];
   if (!sub) return netList(circuit, result);
   if (sub === 'list') return netList(circuit, result);
@@ -1989,7 +2201,7 @@ function netCommand(circuit, pos, result) {
     const changed = circuit.setNetFan(net, box, pos[3] === 'on');
     return result(`net ${net.id} ${pos[3] === 'on' ? 'fans into' : 'does not fan into'} ${box.id}`, net.toJSON(), changed);
   }
-  if (op === 'label') return netLabelCommand(circuit, [pos[2], net.id, ...pos.slice(3)], result);
+  if (op === 'label') return netLabelCommand(circuit, [pos[2], net.id, ...pos.slice(3)], result, flags);
   if (op === 'segment-rm') {
     const branch = Number(pos[2]);
     const segment = Number(pos[3]);

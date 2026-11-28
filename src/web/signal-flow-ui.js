@@ -36,6 +36,7 @@ import { PLOT_BOX, replaceDataPlotTraces } from '../core/data-plot.js';
 import { texToMathML } from '../core/render.js';
 import { GRID, snap } from '../core/grid.js';
 import { chooseFigure, newFigureId, placeFigure, plotKey, settlePlaced } from '../core/figures.js';
+import { signalFlowTable } from '../core/analysis/annotation-tables.js';
 import { annotateMathFigure, writeMathFigure } from './figure-annotate.js';
 import { registerAnnotations, setAnnotationMode } from './annotate-menu.js';
 import { editor } from './editor-state.js';
@@ -1924,10 +1925,10 @@ function deriveNow() {
  *  (figure-annotate.js): a row per input, its transfer function, whose
  *  ratio names the input. Annotating again rewrites the table there. */
 function annotate() {
-  if (!latest?.ok) return;
   // A sampled result is written at the numbers it is shown with.
-  const rows = latest.entries.map((entry) => (entry.sampled ? sampledEquation(entry, valuesFor(entry.value, latest.variable)).equation : entry.equation));
-  const { updated } = annotateMathFigure({ kind: 'equations', source: 'signal-flow', text: rows.join('\n'), columns: 'l' });
+  const table = signalFlowTable(latest, (entry) => (entry.sampled ? sampledEquation(entry, valuesFor(entry.value, latest.variable)).equation : entry.equation));
+  if (!table) return;
+  const { updated } = annotateMathFigure(table);
   logLine(updated ? 'updated the equation table' : 'annotated the equation table');
 }
 
