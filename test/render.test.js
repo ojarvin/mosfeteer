@@ -328,6 +328,13 @@ test('svgString renders math labels as live MathML instead of literal TeX', () =
   assert.doesNotMatch(svg, /<mrow>[^<]*\$\$Z/);
 });
 
+test('a math label whose text runs wider than its saved box is drawn whole, not clipped', () => {
+  const c = new Circuit();
+  // An unmeasured box from a file: a font wider than the estimate overflows it.
+  c.addLabel({ text: 'r_{o11}', x: 400, y: 120, math: true, mathBox: { w: 80, h: 80 }, align: 'right' });
+  assert.match(svgString(c), /<foreignObject\b[^>]*\boverflow="visible"/);
+});
+
 test('math labels use scalable textbook parallel bars and fraction space', () => {
   const c = new Circuit();
   c.addLabel({ text: '$$\\left(R_{1} \\|\\| R_{2}\\right)$$', x: 400, y: 120, math: true });

@@ -695,7 +695,7 @@ function mathLabelSvg(label, opacity = '', ink = null) {
   // A table: lines with cells or a rule, or any lines given `columns`.
   const lines = !hasInlineMath(label.text) && (label.columns || isMathTable(rows)) ? mathTableHtml(rows, label.columns, justify)
     : rows.map((line) => `<div class="schematic-math-line" style="${lineStyle}">${texToMathML(line)}</div>`).join('');
-  return `<foreignObject x="${fmt(box.x)}" y="${fmt(box.y)}" width="${fmt(box.w)}" height="${fmt(box.h)}" pointer-events="none"${opacity}><div xmlns="http://www.w3.org/1999/xhtml" class="schematic-math-label" style="${style}" aria-label="${aria}">${lines}</div></foreignObject>`;
+  return `<foreignObject x="${fmt(box.x)}" y="${fmt(box.y)}" width="${fmt(box.w)}" height="${fmt(box.h)}" overflow="visible" pointer-events="none"${opacity}><div xmlns="http://www.w3.org/1999/xhtml" class="schematic-math-label" style="${style}" aria-label="${aria}">${lines}</div></foreignObject>`;
 }
 
 function polylineD(points) {
