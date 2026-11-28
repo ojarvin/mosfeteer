@@ -32,7 +32,7 @@ describe('documents and sessions', { skip: browserSkip() }, () => {
   /** The editor's live sync, run to its end: one already under way, then a
    *  fresh one. Whatever it does with a change on disk, it has done. */
   const synced = () => h.evaluate(`${h.module('document-session.js')}.then(async (m) => { await m.syncActiveCircuit(); await m.syncActiveCircuit(); return true; })`);
-  before(async () => { h = await start({ docs: { amp: amplifier(), other: amplifier(), beats: withBeats() }, width: 1400, height: 900 }); });
+  before(async () => { h = await start({ docs: { amp: amplifier(), other: amplifier(), beats: withBeats(), stale: amplifier(), measured: amplifier(), offered: amplifier() }, width: 1400, height: 900 }); });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
   /** Export through the dialog with `set` applied to its form; the requests it sent. */
@@ -133,6 +133,77 @@ describe('documents and sessions', { skip: browserSkip() }, () => {
     // A drawing changed on disk still reloads.
     writeFileSync(path, JSON.stringify({ ...data, components: [...data.components, { ...data.components[0], refdes: 'M99', transform: { ...data.components[0].transform, x: data.components[0].transform.x + 2000 } }] }));
     await h.until(`[...document.querySelectorAll('#log > *')].filter((n) => /Reloaded amp/.test(n.textContent)).length > ${settled}`, 15000);
+  });
+
+  /** The open choice dialog, its title matching `title`: the button
+   *  matching `button` pressed, the dialog gone. */
+  const answer = async (title, button) => {
+    await h.until(`!!document.querySelector('dialog.confirm-dialog[open]')`);
+    assert.match(await h.evaluate(`document.querySelector('dialog.confirm-dialog[open] h2').textContent`), title);
+    await h.evaluate(`[...document.querySelectorAll('dialog.confirm-dialog[open] button')].find((b) => ${button}.test(b.textContent)).click()`);
+    await h.until(`!document.querySelector('dialog.confirm-dialog[open]')`);
+  };
+
+  test('a file a command changed under unsaved changes is offered: Reload from disk takes it, Overwrite keeps this window\'s', async () => {
+    const run = (cmd) => fetch(`http://127.0.0.1:${h.port}/api/circuits/offered/cmd`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ cmd }) });
+    const path = join(h.workspace, 'offered.json');
+    await h.open('offered');
+    await synced();
+    await h.evaluate(`window.__run('add resistor R51 --at 2400 0')`);
+    assert.equal((await run('notes set # From disk')).status, 200);
+    await synced();
+    await answer(/The file changed on disk/, /Reload from disk/);
+    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.notes === '# From disk')`);
+    assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.has('R51'))`), false, 'this window\'s change dropped');
+    assert.equal(await h.evaluate(`${h.module('document-session.js')}.then((m) => m.hasUnsavedChanges())`), false);
+    // Again, this time keeping this window's version over the file's.
+    await h.evaluate(`window.__run('add resistor R52 --at 2400 400')`);
+    assert.equal((await run('notes set # From disk again')).status, 200);
+    await synced();
+    await answer(/The file changed on disk/, /Overwrite the file/);
+    await h.until(`${h.module('document-session.js')}.then((m) => !m.hasUnsavedChanges())`);
+    const written = JSON.parse(readFileSync(path, 'utf8'));
+    assert.ok(written.components.some((c) => c.refdes === 'R52'));
+    assert.equal(written.notes, '# From disk');
+  });
+
+  test('Save over a file a command changed since asks first: Cancel keeps the file, Overwrite replaces it', async () => {
+    await h.open('stale');
+    await synced();
+    // An unsaved edit here, then a command writes the file's notes.
+    await h.evaluate(`window.__run('add resistor R42 --at 2400 0')`);
+    await h.until(`${h.module('document-session.js')}.then((m) => m.hasUnsavedChanges())`);
+    const response = await fetch(`http://127.0.0.1:${h.port}/api/circuits/stale/cmd`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ cmd: 'notes set # Written by a command' }) });
+    assert.equal(response.status, 200);
+    await synced();
+    // The window offers the newer file at once; decided later, Save asks.
+    await answer(/The file changed on disk/, /Decide later/);
+    const path = join(h.workspace, 'stale.json');
+    // Save as the editor's Save does (the key goes wherever focus is; an
+    // earlier test may leave the Atlas focused): not awaited, it asks.
+    const save = () => h.evaluate(`${h.module('document-session.js')}.then((m) => { m.saveCircuit(); return true; })`);
+    await save();
+    await answer(/Overwrite the newer file/, /Cancel/);
+    assert.equal(JSON.parse(readFileSync(path, 'utf8')).notes, '# Written by a command', 'the command\'s notes kept');
+    // Asked again and told to, it overwrites.
+    await save();
+    await answer(/Overwrite the newer file/, /Overwrite/);
+    await h.until(`${h.module('document-session.js')}.then((m) => !m.hasUnsavedChanges())`);
+    const written = JSON.parse(readFileSync(path, 'utf8'));
+    assert.ok(written.components.some((c) => c.refdes === 'R42'));
+  });
+
+  test('a table a command wrote, measured as the design opens, leaves it clean: the next command\'s change reloads', async () => {
+    const run = (cmd) => fetch(`http://127.0.0.1:${h.port}/api/circuits/measured/cmd`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ cmd }) });
+    // Placed at its estimated size; the browser measures it on opening.
+    assert.equal((await run('analyze equations VOUT --input VIN --annotate')).status, 200);
+    await h.open('measured');
+    await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some((l) => l.figure?.kind === 'equations' && l.textMeasured()))`);
+    await h.settle();
+    assert.equal(await h.evaluate(`${h.module('document-session.js')}.then((m) => m.hasUnsavedChanges())`), false, 'measuring is no edit');
+    assert.equal((await run('notes set # Measured')).status, 200);
+    await synced();
+    assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.notes)`), '# Measured');
   });
 
   test('a new document is not replaced when another window makes a different one active', async () => {

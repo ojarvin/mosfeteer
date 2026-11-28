@@ -42,7 +42,7 @@ function ownSeries(plot) {
     return plot.traces.map((trace, i) => ({ name: named(trace, i), columns: [x, named(trace, i)], rows: trace.points.map(([px, py]) => [px, py]) }));
   }
   if (plot.kind === 'response') {
-    const x = plot.axis === 'normalized' ? 'f/fs' : 'ω (rad/s)';
+    const x = plot.axis === 'normalized' ? 'f/fs' : plot.axis === 'hz' ? 'f (Hz)' : 'ω (rad/s)';
     const y = plot.quantity === 'phase' ? 'phase (°)' : plot.units === 'dBFS' ? 'dBFS' : 'dB';
     return plot.traces.map((trace, i) => {
       const name = trace.background ? (plainName(trace.label) || 'Spectrum') : named(trace, i);

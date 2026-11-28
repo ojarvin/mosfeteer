@@ -161,4 +161,11 @@ test('analyze bode: the gain\'s corners at the Values; --annotate puts magnitude
   assert.equal(circuit.analysisValues.bode.multipliers.gm1, 2);
   assert.throws(() => runCommand(circuit, 'analyze bode VOUT --input VIN --values gm9=1'), /no parameter "gm9"; the parameters are/);
   assert.throws(() => runCommand(circuit, 'analyze bode VOUT --input VIN --values gm1=-1'), /each value positive/);
+  // What a unit stands for: the corners and the plot in hertz.
+  const hz = runCommand(circuit, 'analyze bode VOUT --input VIN --unit-g 100u --unit-c 1p --magnitude --annotate');
+  assert.match(hz.text, /g = 100uS, C = 1pF/);
+  assert.match(hz.text, /pole at f = [\d.]+[kMG]?Hz/);
+  const magnitude = [...circuit.labels.values()].find((label) => label.plot && !label.plot.quantity);
+  assert.equal(magnitude.plot.axis, 'hz');
+  assert.throws(() => runCommand(circuit, 'analyze bode VOUT --input VIN --unit-g 100u'), /--unit-g and --unit-c go together/);
 });

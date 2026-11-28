@@ -869,6 +869,7 @@ __exports.numericAt = numericAt;
 __exports.bodeSketchOf = bodeSketchOf;
 __exports.bodeResponsePlot = bodeResponsePlot;
 __exports.bodeTraceLabel = bodeTraceLabel;
+__exports.bodePlotInHz = bodePlotInHz;
 let DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, baseSymbols, bodeSketch, evaluateExpression, expressionSymbols, extendAsymptote, numericCoefficients, responseAt, sketchParameters, sketchValues, withDerivedValues; __bind(() => { ({ DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, baseSymbols, bodeSketch, evaluateExpression, expressionSymbols, extendAsymptote, numericCoefficients, responseAt, sketchParameters, sketchValues, withDerivedValues } = __require("src/core/analysis/bode.js")); });
 let renderExpression; __bind(() => { ({ renderExpression } = __require("src/core/analysis/present.js")); });
 let negate; __bind(() => { ({ negate } = __require("src/core/analysis/rational.js")); });
@@ -1084,6 +1085,26 @@ function bodeTraceLabel(report, key) {
       : key === 'input' ? `Z_{in}(${input})`
         : key === 'loop' ? (report.reports?.loop?.infinite ? `\\beta_{${element}}` : element ? `T_{${element}}` : 'T')
           : BODE_QUANTITIES[key].tex;
+}
+
+/**
+ * A plot in the Values' units (ω in g/C) as physical frequency: `gOverC`
+ * is one unit of g over one unit of C in rad/s, so ω g/C is ω·gOverC/2π
+ * hertz. The x axis then reads in hertz.
+ */
+function bodePlotInHz(plot, gOverC) {
+  const hz = (w) => (w * gOverC) / (2 * Math.PI);
+  const shift = Math.log10(gOverC / (2 * Math.PI));
+  const low = Math.floor(plot.range.low + shift);
+  const high = Math.ceil(plot.range.high + shift);
+  const scaled = (points) => points.map((p) => ({ ...p, f: hz(p.f) }));
+  return {
+    ...plot,
+    axis: 'hz',
+    range: { low, high },
+    ...(plot.markers ? { markers: plot.markers.map((m) => ({ ...m, f: hz(m.f) })) } : {}),
+    traces: plot.traces.map((trace) => ({ ...trace, points: scaled(trace.points), ...(trace.asymptote ? { asymptote: scaled(trace.asymptote) } : {}) })),
+  };
 }
 
 __exports.BODE_QUANTITIES = BODE_QUANTITIES;
@@ -8420,6 +8441,8 @@ const GROUND_DROP = 40;
 const PORT_GAP = 160;
 // The free cells between a symbol and the label of the branch after it.
 const ELEMENT_GAP = 80;
+/** Parallel branches lying along a row stack this far apart, a label's room between. */
+const FLAT_PITCH = 160;
 
 /** Elements whose branch is drawn with each symbol. */
 const ELEMENT_TYPES = new Map([
@@ -8786,17 +8809,21 @@ function smallSignalSchematic(report, options = {}) {
 
   // A device's branches between the same two nodes -- g_m, g_mb, and r_o of
   // one transistor -- stand side by side, sources first: one parallel unit.
-  // A branch whose ends share a row lies along it, a unit of its own.
+  // Branches whose ends share a row lie along it; those between the same two
+  // nodes (a floating pair's g_m and r_o) are one unit, a ladder of parallel
+  // rungs stacked over the row.
   const units = new Map();
   for (const element of branches) {
     const [upper, lower] = level.get(element.a) >= level.get(element.b) ? [element.a, element.b] : [element.b, element.a];
     const flat = level.get(upper) === level.get(lower);
-    const key = flat ? element.id : `${upper}|${lower}|${element.metadata?.component || element.id}`;
+    const key = flat ? `flat|${[element.a, element.b].sort().join('|')}` : `${upper}|${lower}|${element.metadata?.component || element.id}`;
     if (!units.has(key)) units.set(key, { upper, lower, flat, elements: [], order: units.size, component: element.metadata?.component || null });
     units.get(key).elements.push(element);
   }
   for (const unit of units.values()) {
-    unit.elements.sort((left, right) => Number(SOURCE_KINDS.has(right.kind)) - Number(SOURCE_KINDS.has(left.kind)));
+    // A ladder's rungs device by device (g_m9 over r_o9 over g_m10 ...).
+    if (unit.flat) unit.elements.sort((left, right) => String(left.metadata?.component || '').localeCompare(String(right.metadata?.component || ''), undefined, { numeric: true }));
+    unit.elements.sort((left, right) => (unit.flat ? 0 : Number(SOURCE_KINDS.has(right.kind)) - Number(SOURCE_KINDS.has(left.kind))));
     unit.hi = level.get(unit.upper);
     unit.lo = level.get(unit.lower);
   }
@@ -8868,8 +8895,9 @@ function smallSignalSchematic(report, options = {}) {
       const lineUp = !unit.flat && !sourced(unit) && passiveAt !== null && passiveAt >= rows[index][0];
       const shift = (lineUp ? passiveAt : anchor) - rows[index][0];
       unit.elements.forEach((element, at) => {
-        const x = rows[index][at] + shift;
-        placed.set(element, { x, y: unit.flat ? rowY(unit.hi) : snapTo((rowY(unit.hi) + rowY(unit.lo)) / 2) });
+        // A ladder's rungs share one x, stacked up from the row.
+        const x = (unit.flat ? rows[index][0] : rows[index][at]) + shift;
+        placed.set(element, { x, y: unit.flat ? rowY(unit.hi) - at * FLAT_PITCH : snapTo((rowY(unit.hi) + rowY(unit.lo)) / 2) });
         right = Math.max(right, x + (unit.flat ? 80 : 40) + ELEMENT_GAP);
       });
     });
@@ -8920,16 +8948,20 @@ function smallSignalSchematic(report, options = {}) {
   // `a` is turned around rather than redrawn.
   for (const unit of units.values()) {
     if (unit.flat) {
-      // Lying along its row: `a` toward the node drawn further left.
-      const [element] = unit.elements;
-      const at = placed.get(element);
-      const xs = (node) => branches.filter((other) => other !== element && placed.has(other) && (other.a === node || other.b === node)).map((other) => placed.get(other).x);
+      // Lying along its row, every rung the same way round: the node drawn
+      // further left (by the other branches on it) on the left.
+      const [first] = unit.elements;
+      const at = placed.get(first);
+      const xs = (node) => branches.filter((other) => !unit.elements.includes(other) && placed.has(other) && (other.a === node || other.b === node)).map((other) => placed.get(other).x);
       const mean = (values) => (values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : at.x);
-      const aLeft = mean(xs(element.a)) <= mean(xs(element.b));
-      const rotation = SOURCE_KINDS.has(element.kind) ? (aLeft ? 270 : 90) : (aLeft ? 0 : 180);
-      const component = addElement(element, { ...at, rotation }, false);
-      attach(element.a, `${component.refdes}.a`);
-      attach(element.b, `${component.refdes}.b`);
+      const left = mean(xs(first.a)) <= mean(xs(first.b)) ? first.a : first.b;
+      for (const element of unit.elements) {
+        const aLeft = element.a === left;
+        const rotation = SOURCE_KINDS.has(element.kind) ? (aLeft ? 270 : 90) : (aLeft ? 0 : 180);
+        const component = addElement(element, { ...placed.get(element), rotation }, false);
+        attach(element.a, `${component.refdes}.a`);
+        attach(element.b, `${component.refdes}.b`);
+      }
       continue;
     }
     for (const element of unit.elements) {
@@ -24335,10 +24367,11 @@ let analyzeSwitchedCap; __bind(() => { ({ analyzeSwitchedCap } = __require("src/
 let deriveSmallSignal, smallSignalRequest; __bind(() => { ({ deriveSmallSignal, smallSignalRequest } = __require("src/core/analysis/derive.js")); });
 let sketchValues; __bind(() => { ({ sketchValues } = __require("src/core/analysis/bode.js")); });
 let numericLoopGain, numericSmallSignal; __bind(() => { ({ numericLoopGain, numericSmallSignal } = __require("src/core/analysis/engine.js")); });
-let BODE_QUANTITIES, NUMERIC_KEYS, bodeAsymptotesShown, bodeParameters, bodeRatios, bodeResponsePlot, bodeSketchOf, bodeTraceLabel; __bind(() => { ({ BODE_QUANTITIES, NUMERIC_KEYS, bodeAsymptotesShown, bodeParameters, bodeRatios, bodeResponsePlot, bodeSketchOf, bodeTraceLabel } = __require("src/core/analysis/bode-plot.js")); });
+let BODE_QUANTITIES, NUMERIC_KEYS, bodeAsymptotesShown, bodeParameters, bodePlotInHz, bodeRatios, bodeResponsePlot, bodeSketchOf, bodeTraceLabel; __bind(() => { ({ BODE_QUANTITIES, NUMERIC_KEYS, bodeAsymptotesShown, bodeParameters, bodePlotInHz, bodeRatios, bodeResponsePlot, bodeSketchOf, bodeTraceLabel } = __require("src/core/analysis/bode-plot.js")); });
 let ANALYSIS_OPTION_DEFAULTS; __bind(() => { ({ ANALYSIS_OPTION_DEFAULTS } = __require("src/core/analysis/options.js")); });
 let logicEquations, logicTable, signalFlowTable, smallSignalTable, switchedCapTable, synthesisEquations, synthesisTable; __bind(() => { ({ logicEquations, logicTable, signalFlowTable, smallSignalTable, switchedCapTable, synthesisEquations, synthesisTable } = __require("src/core/analysis/annotation-tables.js")); });
 let writeMathFigure; __bind(() => { ({ writeMathFigure } = __require("src/core/math-figure.js")); });
+let siResult; __bind(() => { ({ siResult } = __require("src/core/calculator.js")); });
 let moveWireSegment; __bind(() => { ({ moveWireSegment } = __require("src/core/wire-move.js")); });
 let Circuit, canonicalNetName, componentNameIdentity, muxInputCount, normalizeTags, parseTermRef, transformComponentWorld; __bind(() => { ({ Circuit, canonicalNetName, componentNameIdentity, muxInputCount, normalizeTags, parseTermRef, transformComponentWorld } = __require("src/core/model.js")); });
 let captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets, setPartValue; __bind(() => { ({ captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets, setPartValue } = __require("src/core/part-moves.js")); });
@@ -24351,7 +24384,7 @@ let crossNetOverlaps; __bind(() => { ({ crossNetOverlaps } = __require("src/core
 let plainTexText, svgString; __bind(() => { ({ plainTexText, svgString } = __require("src/core/render.js")); });
 let hiddenSupplyBarLabels; __bind(() => { ({ hiddenSupplyBarLabels } = __require("src/core/supply-bars.js")); });
 let MOS_SIZE_TYPES, formatMosSize, parseMosSize; __bind(() => { ({ MOS_SIZE_TYPES, formatMosSize, parseMosSize } = __require("src/core/mos-size.js")); });
-let VALUE_TYPES, replacedNameLabels; __bind(() => { ({ VALUE_TYPES, replacedNameLabels } = __require("src/core/part-value.js")); });
+let VALUE_TYPES, replacedNameLabels, valueNumber; __bind(() => { ({ VALUE_TYPES, replacedNameLabels, valueNumber } = __require("src/core/part-value.js")); });
 let analyzeSmallSignal; __bind(() => { ({ analyzeSmallSignal } = __require("src/core/analysis/index.js")); });
 let placeSmallSignalModel, smallSignalSchematic; __bind(() => { ({ placeSmallSignalModel, smallSignalSchematic } = __require("src/core/analysis/model-schematic.js")); });
 let joinLineAnnotations; __bind(() => { ({ joinLineAnnotations } = __require("src/core/line-join.js")); });
@@ -24375,6 +24408,7 @@ let parsePageGuide; __bind(() => { ({ parsePageGuide } = __require("src/core/pag
 let findInLabels, replaceInLabels; __bind(() => { ({ findInLabels, replaceInLabels } = __require("src/core/label-search.js")); });
 let normalizeNotes, notesMarkdown; __bind(() => { ({ normalizeNotes, notesMarkdown } = __require("src/core/notes.js")); });
 let checkpointHistory, historyEntries, historyEntryState, historyText, pinHistoryEntry, removeHistoryEntry, settledHistory, unpinHistoryEntry; __bind(() => { ({ checkpointHistory, historyEntries, historyEntryState, historyText, pinHistoryEntry, removeHistoryEntry, settledHistory, unpinHistoryEntry } = __require("src/core/save-history.js")); });
+
 
 
 
@@ -24547,6 +24581,8 @@ const FLAG_ARITY = {
   magnitude: 0,
   loop: 1,
   values: 1,
+  'unit-g': 1,
+  'unit-c': 1,
 };
 
 const SYNTHESIZE_USAGE = 'usage: synthesize logic IN ... OUT=VALUES ... [--style and-or|nand|or-and|nor] [--gates inverter,and,nand,or,nor] [--max-inputs 2|3] [--at X Y] [--print]';
@@ -25013,7 +25049,8 @@ function commandHelp() {
     '                                 - a quantity\'s Bode plot as the Plots window draws it, at the design\'s Values (the analysis',
     '                                   window\'s sliders; ω in g/C): its corners printed; --annotate puts the magnitude and phase plots',
     '                                   (or the one asked for) on the drawing, again in place; takes analyze equations\' option flags;',
-    '                                   --values gm6=10,CC=1,RZ=0.075 sets parameters in the plot\'s units (g, C, 1/g), saved as the sliders are',
+    '                                   --values gm6=10,CC=1,RZ=0.075 sets parameters in the plot\'s units (g, C, 1/g), saved as the sliders are;',
+    '                                   --unit-g 100u --unit-c 1p say what a unit stands for: the plot and corners in hertz',
     '  analyze logic [--clock NET] [--annotate] - the truth table of the gates, muxes, tri-states, flip-flops, and latches (a state table',
     '                                   with them), and each output (and next state) as a minimized sum of products;',
     '                                   --clock picks the clock input where the drawing leaves it open (a gated clock);',
@@ -26091,7 +26128,7 @@ function smallSignalEquationsCommand(circuit, pos, flags, result) {
   return result(lines.join('\n'), { input: report.input, output: report.output, rows: rows.map(({ group, title, result: row }) => ({ group, title, equation: row.equation, lines: row.lines })) }, mutated);
 }
 
-const BODE_USAGE = 'usage: analyze bode OUTPUT --input NET [--quantity transfer|output|input|loop] [--loop AT] [--values NAME=V,...] [--magnitude] [--phase] [--ac-ground NET,...] [--set OPTION=on|off,...] [--annotate]';
+const BODE_USAGE = 'usage: analyze bode OUTPUT --input NET [--quantity transfer|output|input|loop] [--loop AT] [--values NAME=V,...] [--unit-g G --unit-c C] [--magnitude] [--phase] [--ac-ground NET,...] [--set OPTION=on|off,...] [--annotate]';
 
 /**
  * `analyze bode OUTPUT --input NET`: a quantity's Bode plot as the Plots
@@ -26135,15 +26172,28 @@ function bodeCommand(circuit, pos, flags, result) {
     throw new Error(why ? `no Bode plot of ${BODE_QUANTITIES[key].name.toLowerCase()}: ${why}` : `${BODE_QUANTITIES[key].name} has nothing to plot: zero, or the same at every frequency`);
   }
   const trace = { label: bodeTraceLabel(report, key), color: TRACE_COLORS[0] };
+  // What one unit of g and of C stand for: the plot then reads in hertz.
+  const unitOf = (flag) => {
+    if (!flags[flag]) return null;
+    const value = valueNumber(flags[flag][0]);
+    if (!(value > 0)) throw new Error(`--${flag} takes a positive value (100u, 1p): "${flags[flag][0]}"`);
+    return value;
+  };
+  const unitG = unitOf('unit-g');
+  const unitC = unitOf('unit-c');
+  if (!unitG !== !unitC) throw new Error(`--unit-g and --unit-c go together\n${BODE_USAGE}`);
+  const gOverC = unitG ? unitG / unitC : null;
+  const frequency = (w) => (gOverC ? `f = ${siResult(Number(((w * gOverC) / (2 * Math.PI)).toPrecision(3))) || Number(((w * gOverC) / (2 * Math.PI)).toPrecision(3))}Hz` : `ω = ${Number(w.toPrecision(3))}`);
   const quantities = flags.magnitude && !flags.phase ? ['magnitude'] : flags.phase && !flags.magnitude ? ['phase'] : ['magnitude', 'phase'];
   const lines = [
     ...(valuesSet ? [`set ${valuesSet} value${valuesSet === 1 ? '' : 's'} (saved with the design, as the window's sliders)`] : []),
-    `${BODE_QUANTITIES[key].name}: ${trace.label}, at the Values (ω in g/C)`,
-    ...sketch.corners.map((corner) => `  ${corner.kind} at ω = ${Number(corner.w.toPrecision(3))}${corner.tex ? `: ${corner.tex}` : ''}`),
+    `${BODE_QUANTITIES[key].name}: ${trace.label}, at the Values (${gOverC ? `g = ${flags['unit-g'][0]}S, C = ${flags['unit-c'][0]}F` : 'ω in g/C'})`,
+    ...sketch.corners.map((corner) => `  ${corner.kind} at ${frequency(corner.w)}${corner.tex ? `: ${corner.tex}` : ''}`),
   ];
   let mutated = valuesSet > 0;
   for (const quantity of quantities) {
-    const plot = bodeResponsePlot([{ trace, ...sketch }], quantity, { asymptotes: bodeAsymptotesShown(circuit) });
+    const inUnits = bodeResponsePlot([{ trace, ...sketch }], quantity, { asymptotes: bodeAsymptotesShown(circuit) });
+    const plot = gOverC ? bodePlotInHz(inUnits, gOverC) : inUnits;
     if (!flags.annotate) continue;
     const { box, updated } = writeAnalysisPlot(circuit, plot, [trace], { kind: 'plot', source: 'small-signal', key: plotKey(plot) });
     lines.push(`${updated ? 'updated' : 'annotated'} the ${quantity} plot (${box.figure?.id || box.id})`);
@@ -33708,7 +33758,7 @@ function normalizeResponsePlot(plot) {
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   const band = (Array.isArray(plot.band) ? plot.band : []).filter((f) => finite(f) && f > 0).slice(0, 2).map((f) => round(f, 6));
-  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces, ...(band.length ? { band } : {}), ...(plot.quantity === 'phase' ? { quantity: 'phase' } : {}), ...(plot.units === 'dBFS' ? { units: 'dBFS' } : {}), ...markersOf(plot), ...(plot.role === 'loop' ? { role: 'loop' } : {}), ...sourceOf(plot), ...viewOf(plot, { positiveX: true }), ...extraOf(plot, { positiveX: true }), ...cursorsOf(plot) };
+  return { kind: 'response', axis: plot.axis === 'normalized' || plot.axis === 'hz' ? plot.axis : 'relative', range: { low, high }, traces, ...(band.length ? { band } : {}), ...(plot.quantity === 'phase' ? { quantity: 'phase' } : {}), ...(plot.units === 'dBFS' ? { units: 'dBFS' } : {}), ...markersOf(plot), ...(plot.role === 'loop' ? { role: 'loop' } : {}), ...sourceOf(plot), ...viewOf(plot, { positiveX: true }), ...extraOf(plot, { positiveX: true }), ...cursorsOf(plot) };
 }
 
 /** What a plot was drawn from, so it can be drawn again at new numbers:
@@ -42849,7 +42899,7 @@ function ownSeries(plot) {
     return plot.traces.map((trace, i) => ({ name: named(trace, i), columns: [x, named(trace, i)], rows: trace.points.map(([px, py]) => [px, py]) }));
   }
   if (plot.kind === 'response') {
-    const x = plot.axis === 'normalized' ? 'f/fs' : 'ω (rad/s)';
+    const x = plot.axis === 'normalized' ? 'f/fs' : plot.axis === 'hz' ? 'f (Hz)' : 'ω (rad/s)';
     const y = plot.quantity === 'phase' ? 'phase (°)' : plot.units === 'dBFS' ? 'dBFS' : 'dB';
     return plot.traces.map((trace, i) => {
       const name = trace.background ? (plainName(trace.label) || 'Spectrum') : named(trace, i);
@@ -43436,7 +43486,12 @@ function responseSpec(plot) {
   return {
     key: `response:${plot.role || ''}:${phase ? 'phase' : plot.units || 'db'}:${plot.axis}`,
     title: phase ? 'Phase responses' : 'Magnitude responses',
-    x: { scale: 'log', label: plot.axis === 'normalized' ? 'f/f_{s}' : 'ω', title: plot.axis === 'normalized' ? 'Frequency (f/f_{s})' : 'Angular frequency (rad/s)', range: [pow10(plot.range.low), pow10(plot.range.high)] },
+    x: {
+      scale: 'log',
+      label: plot.axis === 'normalized' ? 'f/f_{s}' : plot.axis === 'hz' ? 'f' : 'ω',
+      title: plot.axis === 'normalized' ? 'Frequency (f/f_{s})' : plot.axis === 'hz' ? 'Frequency (Hz)' : 'Angular frequency (rad/s)',
+      range: [pow10(plot.range.low), pow10(plot.range.high)],
+    },
     y: {
       scale: 'linear',
       label: phase ? `∠${name} (°)` : plot.units === 'dBFS' ? 'dBFS' : `|${name}| (dB)`,
@@ -72981,6 +73036,7 @@ __exports.saveCircuit = saveCircuit;
 __exports.openStateAsNewDesign = openStateAsNewDesign;
 __exports.saveWindowState = saveWindowState;
 __exports.writeDrawingAsSaved = writeDrawingAsSaved;
+__exports.adoptMeasuredBaseline = adoptMeasuredBaseline;
 __exports.hasUnsavedChanges = hasUnsavedChanges;
 __exports.requestDocumentAction = requestDocumentAction;
 __exports.openDocumentPath = openDocumentPath;
@@ -72999,7 +73055,7 @@ let createDocument, loadDocument, relinkDocumentState; __bind(() => { ({ createD
 let historyText, textHash; __bind(() => { ({ historyText, textHash } = __require("src/core/save-history.js")); });
 let createPersistenceAdapter, validDocumentName; __bind(() => { ({ createPersistenceAdapter, validDocumentName } = __require("src/web/persistence.js")); });
 let createWindowSession; __bind(() => { ({ createWindowSession } = __require("src/web/window-session.js")); });
-let confirmChoice, showFileDialog; __bind(() => { ({ confirmChoice, showFileDialog } = __require("src/web/file-dialog.js")); });
+let chooseAction, confirmChoice, showFileDialog; __bind(() => { ({ chooseAction, confirmChoice, showFileDialog } = __require("src/web/file-dialog.js")); });
 let analysisFormStorageKey; __bind(() => { ({ analysisFormStorageKey } = __require("src/web/analysis-state.js")); });
 let opensOnAtlas; __bind(() => { ({ opensOnAtlas } = __require("src/web/startup.js")); });
 let circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportForm; __bind(() => { ({ circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportForm } = __require("src/web/elements.js")); });
@@ -73349,6 +73405,9 @@ function askForName() {
 // so a design saved under a new name, or first saved from a dropped file,
 // keeps its history. Null when unknown: the writer reads the file instead.
 let historyBase = null;
+// A newer file the live sync left alone because this window has unsaved
+// changes: not fetched again while it stays the newest.
+let skippedRevision = null;
 
 /** The history a write stored, and the drawing it is now read against. */
 function adoptWrittenHistory(sent, data) {
@@ -73358,7 +73417,9 @@ function adoptWrittenHistory(sent, data) {
   historyBase = !history || history.base === textHash(text) ? text : null;
 }
 
-async function saveCircuit({ saveAs = false } = {}) {
+/** Save the open design. `overwriteNewer`: over a file changed on disk
+ *  since, without asking again (the user chose to). */
+async function saveCircuit({ saveAs = false, overwriteNewer = false } = {}) {
   let name = circuitNameEl.value.trim();
   let target;
   if (saveAs) {
@@ -73403,10 +73464,13 @@ async function saveCircuit({ saveAs = false } = {}) {
   const previousScope = analysisFormScope();
   try {
     const state = editor.circuit.toJSON();
-    const saveWith = (options) => withFileAccess(() => persistence.save(target, state, { ...options, savePoint: true, historyBase }));
+    // Saving over the open file sends the revision this window last saw: a
+    // file changed since is refused (code `changed`) and asked about below.
+    const baseRevision = !overwriteNewer && target.path && target.path === editor.currentDocumentPath ? editor.lastSeenRevision : null;
+    const saveWith = (options) => withFileAccess(() => persistence.save(target, state, { ...options, savePoint: true, historyBase, baseRevision }));
     let data;
     try {
-      data = await saveWith({ overwrite: !!target.path });
+      data = await saveWith({ overwrite: !!target.path, ...(overwriteNewer ? { force: true } : {}) });
     } catch (err) {
       if (err.code !== 'exists' && err.code !== 'changed') throw err;
       const replace = await confirmChoice(err.code === 'exists' ? {
@@ -73591,7 +73655,9 @@ async function saveWindowState() {
   try {
     editor.syncGeneration += 1;
     const sent = JSON.parse(text);
-    const data = await persistence.save({ path }, sent, { overwrite: true, historyBase });
+    // Never over a file changed since: the windows' state waits for the
+    // reload or the next save (a refusal lands in the catch below).
+    const data = await persistence.save({ path }, sent, { overwrite: true, historyBase, baseRevision: editor.lastSeenRevision });
     if (path !== editor.currentDocumentPath) return;
     adoptWrittenHistory(sent, data);
     editor.lastSavedSnapshot = snapshot();
@@ -73623,8 +73689,8 @@ async function keepWindowStateOnDiscard() {
   }
   try {
     editor.syncGeneration += 1;
-    await persistence.save({ path }, saved, { overwrite: true, historyBase });
-  } catch { /* the windows' state is lost with the edits */ } finally {
+    await persistence.save({ path }, saved, { overwrite: true, historyBase, baseRevision: editor.lastSeenRevision });
+  } catch { /* the windows' state is lost with the edits, or the file changed since */ } finally {
     editor.syncGeneration += 1;
   }
 }
@@ -73643,7 +73709,7 @@ async function writeDrawingAsSaved({ history = null, base = historyBase } = {}) 
   editor.saveInFlight += 1;
   try {
     const sent = { ...JSON.parse(text), ...(history ? { history } : {}) };
-    const data = await persistence.save({ path }, sent, { overwrite: true, historyBase: base });
+    const data = await persistence.save({ path }, sent, { overwrite: true, historyBase: base, baseRevision: editor.lastSeenRevision });
     if (path !== editor.currentDocumentPath) return false;
     adoptWrittenHistory(sent, data);
     editor.lastSavedSnapshot = text;
@@ -73669,6 +73735,17 @@ let changedCache = null;
 /** Whether the document differs from what was last saved. `cached` reuses
  *  the answer while nothing it depends on changed: for the per-frame dirty
  *  dot, not for deciding whether work would be lost. */
+/** Whether the open design matches its file (nothing unsaved). */
+const documentIsClean = () => !!editor.lastSavedSnapshot && !documentChanged({ cached: true });
+
+/** The design as it is now is the saved version: a measurement of its
+ *  labels in this browser settled their boxes, which is no edit. */
+function adoptMeasuredBaseline() {
+  editor.lastSavedSnapshot = snapshot();
+  changedCache = null;
+  renderSaveState();
+}
+
 function documentChanged({ cached = false } = {}) {
   const key = { revision: editor.modelRevision, preview: editor.previewRevision, circuit: editor.circuit, saved: editor.lastSavedSnapshot };
   if (cached && changedCache && Object.keys(key).every((field) => changedCache.key[field] === key[field])) return changedCache.changed;
@@ -74224,7 +74301,7 @@ async function syncActiveCircuitOnce() {
   }
   if (!editor.currentDocumentPath) return;
   // Avoid a document GET and model parse when the active revision is unchanged.
-  if (active === editor.currentDocumentPath && activeRevision && activeRevision === editor.lastSeenRevision) return;
+  if (active === editor.currentDocumentPath && activeRevision && (activeRevision === editor.lastSeenRevision || activeRevision === skippedRevision)) return;
   try {
     // The answer is for the design asked about: dropped when another was
     // opened while it came (applying it would put that drawing under the
@@ -74245,6 +74322,10 @@ async function syncActiveCircuitOnce() {
     const remoteRevision = data.revision || activeRevision;
     const remoteTag = data.etag || editor.lastCircuitTag;
     const currentSnapshot = snapshot();
+    // The version this window's design is based on, kept when the newer one
+    // is not taken: a save then sends it, and the server asks before
+    // overwriting what changed since (Save's 'changed').
+    const basedOn = editor.lastSeenRevision;
     editor.lastSeenRevision = remoteRevision || null;
     editor.lastCircuitTag = remoteTag || null;
     if (remoteSnapshot === currentSnapshot) return;
@@ -74258,11 +74339,24 @@ async function syncActiveCircuitOnce() {
       historyBase = historyText(data.state);
       return;
     }
-    if (drawingText(currentSnapshot) !== drawingText(editor.lastSavedSnapshot)) {
+    const dirty = drawingText(currentSnapshot) !== drawingText(editor.lastSavedSnapshot);
+    // The file's drawing is still the one this window's edits are based on
+    // (its own window-state write coming back): nothing new on disk.
+    if (dirty && drawingText(remoteSnapshot) === drawingText(editor.lastSavedSnapshot)) {
+      editor.circuit.history = JSON.parse(remoteSnapshot).history ?? null;
+      historyBase = historyText(data.state);
+      return;
+    }
+    if (dirty) {
+      editor.lastSeenRevision = basedOn;
+      const fresh = skippedRevision !== remoteRevision;
+      skippedRevision = remoteRevision || null;
       if (!editor.remoteConflictLogged) {
-        logLine(`${editor.currentCircuitName} changed on disk, but this window has unsaved changes. Saving will overwrite the other version.`, 'error');
+        logLine(`${editor.currentCircuitName} changed on disk, but this window has unsaved changes.`, 'error');
         editor.remoteConflictLogged = true;
       }
+      // Each newer version is offered once: take it, or keep this one.
+      if (fresh) void offerDiskVersion(asked, remoteSnapshot, data, remoteRevision, remoteTag);
       return;
     }
     applyJson(remoteSnapshot, { document: true });
@@ -74345,6 +74439,49 @@ async function openDroppedDocuments(dropped) {
   if (await documentListChanged()) return;
   if (result.paths.length > 1) logLine(`Added ${result.paths.length} documents to the document list; Shift+Backspace shows them all in the Atlas.`);
   requestCircuitLoad(result.paths[0]);
+}
+
+let diskOfferOpen = false;
+
+/**
+ * The open design changed on disk while this window has unsaved changes:
+ * offer to reload the file (dropping this window's changes) or to
+ * overwrite it with this window's version. Deciding later leaves both as
+ * they are; Save then asks again.
+ */
+async function offerDiskVersion(path, remoteSnapshot, data, remoteRevision, remoteTag) {
+  if (diskOfferOpen) return;
+  diskOfferOpen = true;
+  try {
+    const choice = await chooseAction({
+      title: 'The file changed on disk',
+      message: `"${editor.currentCircuitName}" was changed outside this window (by a command or another window), and this window has unsaved changes. Reload the file, dropping them, or overwrite the file with this window's version?`,
+      cancelLabel: 'Decide later',
+      choices: [
+        { value: 'overwrite', label: 'Overwrite the file', danger: true },
+        { value: 'reload', label: 'Reload from disk' },
+      ],
+    });
+    if (path !== editor.currentDocumentPath) return;
+    if (choice === 'reload') {
+      applyJson(remoteSnapshot, { document: true });
+      historyBase = historyText(data.state);
+      editor.lastSavedSnapshot = snapshot();
+      editor.lastSeenRevision = remoteRevision || null;
+      editor.lastCircuitTag = remoteTag || null;
+      editor.remoteConflictLogged = false;
+      fitView();
+      render();
+      renderSaveState();
+      logLine(`Reloaded ${editor.currentCircuitName} from disk; this window's changes were dropped.`);
+    } else if (choice === 'overwrite') {
+      await saveCircuit({ overwriteNewer: true });
+    } else {
+      logLine('Kept this window\'s changes; saving will ask before overwriting the file.');
+    }
+  } finally {
+    diskOfferOpen = false;
+  }
 }
 
 /**
@@ -74546,6 +74683,7 @@ function installDocumentSession() {
 }
 
 __exports.persistence = persistence;
+__exports.documentIsClean = documentIsClean;
 };
 
 __modules["src/web/dom.js"] = function (__require, __exports) {
@@ -83703,7 +83841,7 @@ let boxState, restoreBoxState, openComponentChildLabelEditor, inlineEditLabel; _
 let installSketchUi, runSketchLine, setSketchVisible, sketchDown, sketchMove, sketchRevision, sketchShown, sketchUp, undoSketch; __bind(() => { ({ installSketchUi, runSketchLine, setSketchVisible, sketchDown, sketchMove, sketchRevision, sketchShown, sketchUp, undoSketch } = __require("src/web/sketch-ui.js")); });
 let activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, closeBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, toggleTimingDialog, onPresenterKey, installBeatsUi, syncTimingEditor; __bind(() => { ({ activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, closeBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, toggleTimingDialog, onPresenterKey, installBeatsUi, syncTimingEditor } = __require("src/web/beats-ui.js")); });
 let formatModifiedTime, revisionTime; __bind(() => { ({ formatModifiedTime, revisionTime } = __require("src/web/modified-time.js")); });
-let persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, openDocumentPath, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession; __bind(() => { ({ persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, openDocumentPath, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } = __require("src/web/document-session.js")); });
+let adoptMeasuredBaseline, documentIsClean, persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, openDocumentPath, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession; __bind(() => { ({ adoptMeasuredBaseline, documentIsClean, persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, openDocumentPath, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } = __require("src/web/document-session.js")); });
 let copyAsImage, exportCircuit, installExportUi; __bind(() => { ({ copyAsImage, exportCircuit, installExportUi } = __require("src/web/export-ui.js")); });
 let queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback; __bind(() => { ({ queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback } = __require("src/web/commit-flash.js")); });
 let renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, installMarkupShortcuts; __bind(() => { ({ renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, installMarkupShortcuts } = __require("src/web/side-panel.js")); });
@@ -86695,8 +86833,12 @@ function syncMathLayer(parts) {
   patchChildren(mathLayerEl, template.content.firstChild);
 }
 
-function syncRenderedLabelMetrics() {
+/** Measure the labels whose text this browser has not measured yet, each
+ *  label's box set to its glyphs once. `beforeChange()` runs once, before the
+ *  first label's geometry changes. */
+function syncRenderedLabelMetrics({ beforeChange = null } = {}) {
   if (!canvasSvgEl) return false;
+  let first = true;
   const groups = new Map([...canvasEl.querySelectorAll('[data-label-id]')]
     .map((group) => [group.getAttribute('data-label-id'), group]));
   let changed = false;
@@ -86724,6 +86866,8 @@ function syncRenderedLabelMetrics() {
     const before = ((label.parent || label._restyled) && label._boxBeforeEdit) || label.bbox();
     label._boxBeforeEdit = null;
     label._restyled = false;
+    if (first && beforeChange) beforeChange();
+    first = false;
     if (!label.setRenderedTextBounds(bounds.w, bounds.h)) continue;
     keepAlignedEdge(label, before);
     changed = true;
@@ -86823,7 +86967,14 @@ function renderCanvas(modelKey) {
     }
     placeLayer(canvasSvgEl);
     syncMathLayer(mathParts);
-    if (syncRenderedLabelMetrics()) scheduleMeasuredLabelRender();
+    // Measuring settles a label's box in this browser: no edit. A design
+    // clean before it stays clean, so a command's next write reloads it
+    // rather than meeting unsaved changes (document-session.js).
+    let clean = false;
+    if (syncRenderedLabelMetrics({ beforeChange: () => { clean = documentIsClean(); } })) {
+      if (clean) adoptMeasuredBaseline();
+      scheduleMeasuredLabelRender();
+    }
   }
   if (canvasRebuilt && canvasSvgEl && !overlayEl?.isConnected) {
     overlayEl = document.createElementNS('http://www.w3.org/2000/svg', 'g');
@@ -95734,9 +95885,12 @@ function createPersistenceAdapter({ fetchImpl = globalThis.fetch, retry } = {}) 
     }),
     /** Target is `{ path }` or `{ dir?, name }` (dir defaults to the workspace). */
     /** `savePoint`: the editor's Save, kept in the save history; `historyBase`:
-     *  the text the state's history was read against (core/save-history.js). */
-    save: (target, state, { overwrite = false, savePoint = false, historyBase = null } = {}) => httpJson(fetchImpl, '/api/document', jsonBody('PUT', {
+     *  the text the state's history was read against (core/save-history.js);
+     *  `baseRevision`: the file's revision this window last saw -- a file
+     *  changed since is refused (code `changed`) unless `force`. */
+    save: (target, state, { overwrite = false, savePoint = false, historyBase = null, baseRevision = null, force = false } = {}) => httpJson(fetchImpl, '/api/document', jsonBody('PUT', {
       ...target, state, overwrite, ...(savePoint ? { savePoint: true } : {}), ...(typeof historyBase === 'string' ? { historyBase } : {}),
+      ...(typeof baseRevision === 'string' ? { baseRevision } : {}), ...(force ? { force: true } : {}),
     })),
     delete: (path) => httpJson(fetchImpl, `/api/document?${query({ path })}`, { method: 'DELETE' }),
     active: () => httpJson(fetchImpl, '/api/active'),

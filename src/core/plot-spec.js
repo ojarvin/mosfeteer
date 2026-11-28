@@ -39,7 +39,12 @@ export function responseSpec(plot) {
   return {
     key: `response:${plot.role || ''}:${phase ? 'phase' : plot.units || 'db'}:${plot.axis}`,
     title: phase ? 'Phase responses' : 'Magnitude responses',
-    x: { scale: 'log', label: plot.axis === 'normalized' ? 'f/f_{s}' : 'ω', title: plot.axis === 'normalized' ? 'Frequency (f/f_{s})' : 'Angular frequency (rad/s)', range: [pow10(plot.range.low), pow10(plot.range.high)] },
+    x: {
+      scale: 'log',
+      label: plot.axis === 'normalized' ? 'f/f_{s}' : plot.axis === 'hz' ? 'f' : 'ω',
+      title: plot.axis === 'normalized' ? 'Frequency (f/f_{s})' : plot.axis === 'hz' ? 'Frequency (Hz)' : 'Angular frequency (rad/s)',
+      range: [pow10(plot.range.low), pow10(plot.range.high)],
+    },
     y: {
       scale: 'linear',
       label: phase ? `∠${name} (°)` : plot.units === 'dBFS' ? 'dBFS' : `|${name}| (dB)`,

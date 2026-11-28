@@ -73,7 +73,7 @@ import { boxState, restoreBoxState, openComponentChildLabelEditor, inlineEditLab
 import { installSketchUi, runSketchLine, setSketchVisible, sketchDown, sketchMove, sketchRevision, sketchShown, sketchUp, undoSketch } from './sketch-ui.js';
 import { activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, closeBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, toggleTimingDialog, onPresenterKey, installBeatsUi, syncTimingEditor } from './beats-ui.js';
 import { formatModifiedTime, revisionTime } from './modified-time.js';
-import { persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, openDocumentPath, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } from './document-session.js';
+import { adoptMeasuredBaseline, documentIsClean, persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, openDocumentPath, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } from './document-session.js';
 import { copyAsImage, exportCircuit, installExportUi } from './export-ui.js';
 import { queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback } from './commit-flash.js';
 import { renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, installMarkupShortcuts } from './side-panel.js';
@@ -2956,8 +2956,12 @@ function syncMathLayer(parts) {
   patchChildren(mathLayerEl, template.content.firstChild);
 }
 
-export function syncRenderedLabelMetrics() {
+/** Measure the labels whose text this browser has not measured yet, each
+ *  label's box set to its glyphs once. `beforeChange()` runs once, before the
+ *  first label's geometry changes. */
+export function syncRenderedLabelMetrics({ beforeChange = null } = {}) {
   if (!canvasSvgEl) return false;
+  let first = true;
   const groups = new Map([...canvasEl.querySelectorAll('[data-label-id]')]
     .map((group) => [group.getAttribute('data-label-id'), group]));
   let changed = false;
@@ -2985,6 +2989,8 @@ export function syncRenderedLabelMetrics() {
     const before = ((label.parent || label._restyled) && label._boxBeforeEdit) || label.bbox();
     label._boxBeforeEdit = null;
     label._restyled = false;
+    if (first && beforeChange) beforeChange();
+    first = false;
     if (!label.setRenderedTextBounds(bounds.w, bounds.h)) continue;
     keepAlignedEdge(label, before);
     changed = true;
@@ -3084,7 +3090,14 @@ export function renderCanvas(modelKey) {
     }
     placeLayer(canvasSvgEl);
     syncMathLayer(mathParts);
-    if (syncRenderedLabelMetrics()) scheduleMeasuredLabelRender();
+    // Measuring settles a label's box in this browser: no edit. A design
+    // clean before it stays clean, so a command's next write reloads it
+    // rather than meeting unsaved changes (document-session.js).
+    let clean = false;
+    if (syncRenderedLabelMetrics({ beforeChange: () => { clean = documentIsClean(); } })) {
+      if (clean) adoptMeasuredBaseline();
+      scheduleMeasuredLabelRender();
+    }
   }
   if (canvasRebuilt && canvasSvgEl && !overlayEl?.isConnected) {
     overlayEl = document.createElementNS('http://www.w3.org/2000/svg', 'g');

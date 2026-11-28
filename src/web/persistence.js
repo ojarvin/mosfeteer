@@ -903,9 +903,12 @@ export function createPersistenceAdapter({ fetchImpl = globalThis.fetch, retry }
     }),
     /** Target is `{ path }` or `{ dir?, name }` (dir defaults to the workspace). */
     /** `savePoint`: the editor's Save, kept in the save history; `historyBase`:
-     *  the text the state's history was read against (core/save-history.js). */
-    save: (target, state, { overwrite = false, savePoint = false, historyBase = null } = {}) => httpJson(fetchImpl, '/api/document', jsonBody('PUT', {
+     *  the text the state's history was read against (core/save-history.js);
+     *  `baseRevision`: the file's revision this window last saw -- a file
+     *  changed since is refused (code `changed`) unless `force`. */
+    save: (target, state, { overwrite = false, savePoint = false, historyBase = null, baseRevision = null, force = false } = {}) => httpJson(fetchImpl, '/api/document', jsonBody('PUT', {
       ...target, state, overwrite, ...(savePoint ? { savePoint: true } : {}), ...(typeof historyBase === 'string' ? { historyBase } : {}),
+      ...(typeof baseRevision === 'string' ? { baseRevision } : {}), ...(force ? { force: true } : {}),
     })),
     delete: (path) => httpJson(fetchImpl, `/api/document?${query({ path })}`, { method: 'DELETE' }),
     active: () => httpJson(fetchImpl, '/api/active'),

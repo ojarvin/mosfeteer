@@ -125,7 +125,9 @@ modules reach editor state through `editor` (`editor-state.js`) and import
 
 **Persistence.** The server serializes load/run/save per document and writes
 atomically; `src/server/documents.js` and `src/web/persistence.js` are the
-boundary. Only `.json` files that load as a design join a workspace. Every
+boundary. A window never overwrites a file changed since the version it is
+based on (a command, another window) without asking: its writes send that
+revision, and the server refuses a stale one. Only `.json` files that load as a design join a workspace. Every
 writer of a document file passes it through `settledHistory`
 (`src/core/save-history.js`) with the file's previous contents, so its save
 history follows the drawing; only the editor's Save adds a save point.

@@ -29,6 +29,8 @@ const GROUND_DROP = 40;
 const PORT_GAP = 160;
 // The free cells between a symbol and the label of the branch after it.
 const ELEMENT_GAP = 80;
+/** Parallel branches lying along a row stack this far apart, a label's room between. */
+const FLAT_PITCH = 160;
 
 /** Elements whose branch is drawn with each symbol. */
 const ELEMENT_TYPES = new Map([
@@ -395,17 +397,21 @@ export function smallSignalSchematic(report, options = {}) {
 
   // A device's branches between the same two nodes -- g_m, g_mb, and r_o of
   // one transistor -- stand side by side, sources first: one parallel unit.
-  // A branch whose ends share a row lies along it, a unit of its own.
+  // Branches whose ends share a row lie along it; those between the same two
+  // nodes (a floating pair's g_m and r_o) are one unit, a ladder of parallel
+  // rungs stacked over the row.
   const units = new Map();
   for (const element of branches) {
     const [upper, lower] = level.get(element.a) >= level.get(element.b) ? [element.a, element.b] : [element.b, element.a];
     const flat = level.get(upper) === level.get(lower);
-    const key = flat ? element.id : `${upper}|${lower}|${element.metadata?.component || element.id}`;
+    const key = flat ? `flat|${[element.a, element.b].sort().join('|')}` : `${upper}|${lower}|${element.metadata?.component || element.id}`;
     if (!units.has(key)) units.set(key, { upper, lower, flat, elements: [], order: units.size, component: element.metadata?.component || null });
     units.get(key).elements.push(element);
   }
   for (const unit of units.values()) {
-    unit.elements.sort((left, right) => Number(SOURCE_KINDS.has(right.kind)) - Number(SOURCE_KINDS.has(left.kind)));
+    // A ladder's rungs device by device (g_m9 over r_o9 over g_m10 ...).
+    if (unit.flat) unit.elements.sort((left, right) => String(left.metadata?.component || '').localeCompare(String(right.metadata?.component || ''), undefined, { numeric: true }));
+    unit.elements.sort((left, right) => (unit.flat ? 0 : Number(SOURCE_KINDS.has(right.kind)) - Number(SOURCE_KINDS.has(left.kind))));
     unit.hi = level.get(unit.upper);
     unit.lo = level.get(unit.lower);
   }
@@ -477,8 +483,9 @@ export function smallSignalSchematic(report, options = {}) {
       const lineUp = !unit.flat && !sourced(unit) && passiveAt !== null && passiveAt >= rows[index][0];
       const shift = (lineUp ? passiveAt : anchor) - rows[index][0];
       unit.elements.forEach((element, at) => {
-        const x = rows[index][at] + shift;
-        placed.set(element, { x, y: unit.flat ? rowY(unit.hi) : snapTo((rowY(unit.hi) + rowY(unit.lo)) / 2) });
+        // A ladder's rungs share one x, stacked up from the row.
+        const x = (unit.flat ? rows[index][0] : rows[index][at]) + shift;
+        placed.set(element, { x, y: unit.flat ? rowY(unit.hi) - at * FLAT_PITCH : snapTo((rowY(unit.hi) + rowY(unit.lo)) / 2) });
         right = Math.max(right, x + (unit.flat ? 80 : 40) + ELEMENT_GAP);
       });
     });
@@ -529,16 +536,20 @@ export function smallSignalSchematic(report, options = {}) {
   // `a` is turned around rather than redrawn.
   for (const unit of units.values()) {
     if (unit.flat) {
-      // Lying along its row: `a` toward the node drawn further left.
-      const [element] = unit.elements;
-      const at = placed.get(element);
-      const xs = (node) => branches.filter((other) => other !== element && placed.has(other) && (other.a === node || other.b === node)).map((other) => placed.get(other).x);
+      // Lying along its row, every rung the same way round: the node drawn
+      // further left (by the other branches on it) on the left.
+      const [first] = unit.elements;
+      const at = placed.get(first);
+      const xs = (node) => branches.filter((other) => !unit.elements.includes(other) && placed.has(other) && (other.a === node || other.b === node)).map((other) => placed.get(other).x);
       const mean = (values) => (values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : at.x);
-      const aLeft = mean(xs(element.a)) <= mean(xs(element.b));
-      const rotation = SOURCE_KINDS.has(element.kind) ? (aLeft ? 270 : 90) : (aLeft ? 0 : 180);
-      const component = addElement(element, { ...at, rotation }, false);
-      attach(element.a, `${component.refdes}.a`);
-      attach(element.b, `${component.refdes}.b`);
+      const left = mean(xs(first.a)) <= mean(xs(first.b)) ? first.a : first.b;
+      for (const element of unit.elements) {
+        const aLeft = element.a === left;
+        const rotation = SOURCE_KINDS.has(element.kind) ? (aLeft ? 270 : 90) : (aLeft ? 0 : 180);
+        const component = addElement(element, { ...placed.get(element), rotation }, false);
+        attach(element.a, `${component.refdes}.a`);
+        attach(element.b, `${component.refdes}.b`);
+      }
       continue;
     }
     for (const element of unit.elements) {

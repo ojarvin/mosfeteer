@@ -572,3 +572,23 @@ serverTest('an analysis over HTTP comes back as JSON, its exact numbers as digit
   assert.equal(last.ok, true, last.error);
   assert.match(last.text, /A_v = -g_\{m1\}/);
 });
+
+serverTest('a save over a file changed since the window last saw it is refused, unless forced', async (t) => {
+  const app = await startServer();
+  t.after(() => app.stop());
+  const empty = new Circuit().toJSON();
+  const first = await app.request('/api/document', { method: 'PUT', body: { name: 'amp', state: empty } });
+  const seen = first.headers.get('x-circuit-revision');
+  // A command changes the file: the notes, as an agent writes them.
+  await command(app, 'amp', 'notes set # Amp');
+  const path = app.file('amp');
+  const stale = await app.request('/api/document', { method: 'PUT', body: { path, state: empty, overwrite: true, baseRevision: seen } });
+  assert.equal(stale.status, 409);
+  assert.equal((await stale.json()).code, 'changed');
+  assert.equal(JSON.parse(await readFile(path, 'utf8')).notes, '# Amp');
+  // Saved over the version it last saw, or forced after asking, it writes.
+  const current = (await (await app.request(`/api/document?path=${encodeURIComponent(path)}`)).headers.get('x-circuit-revision'));
+  assert.equal((await app.request('/api/document', { method: 'PUT', body: { path, state: { ...empty, notes: '# Amp\nmore' }, overwrite: true, baseRevision: current } })).status, 200);
+  assert.equal((await app.request('/api/document', { method: 'PUT', body: { path, state: empty, overwrite: true, baseRevision: seen, force: true } })).status, 200);
+  assert.equal(JSON.parse(await readFile(path, 'utf8')).notes, undefined);
+});

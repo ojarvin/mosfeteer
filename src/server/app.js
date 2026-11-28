@@ -330,6 +330,15 @@ export async function startApp({
           throw httpError(`could not save document: ${error.message}${hint}`);
         }
         const revision = await withLock(path, async () => {
+          // A window saves over the version it last saw. A file changed since
+          // (by a command, another window, a program) is not overwritten
+          // unasked: the editor asks, then saves again with `force`.
+          if (typeof body.baseRevision === 'string' && body.force !== true) {
+            const current = await fileRevision(path);
+            if (current && current !== body.baseRevision) {
+              throw httpError(`"${documentNameFromPath(path)}" changed on disk since this window last loaded it`, 409, 'changed');
+            }
+          }
           // The save history follows the drawing (core/save-history.js):
           // read against the file as it was, the editor's Save a save point.
           document.history = settledHistory(document.toJSON(), {

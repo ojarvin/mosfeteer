@@ -422,3 +422,34 @@ test('a branch lying along a row wears its label on its top edge, as a part\'s o
   const drawn = circuit.labelOf('R1');
   if (drawn) assert.equal(drawn.bbox().y + drawn.bbox().h, circuit.components.get('R1').bboxWorld().y);
 });
+
+test('branches lying along a row between the same two nodes stack as a ladder of parallel rungs', () => {
+  // A floating PMOS-NMOS pair between nodes A and B (the Monticelli
+  // class-AB control): its g_m and r_o branches all run from A to B.
+  const circuit = new Circuit();
+  for (const [type, refdes, x, y] of [['input', 'VIN', -400, 0], ['output', 'VOUT', 1600, 0], ['resistor', 'RA', 0, 200], ['resistor', 'RB', 1200, 200],
+    ['pmos', 'MP', 400, 0], ['nmos', 'MN', 800, 0], ['ground', 'G1', 0, 400], ['port', 'VG1', 200, -400], ['port', 'VG2', 1000, -400]]) {
+    circuit.addComponent(type, { refdes, x, y });
+  }
+  const connect = (name, ...refs) => {
+    const net = circuit._createNet(name);
+    net.terminals = refs.map((ref) => circuit.resolveTerm(ref));
+  };
+  connect('A', 'VIN.p', 'RA.a', 'MP.s', 'MN.d');
+  connect('B', 'MP.d', 'MN.s', 'RB.a', 'VOUT.p');
+  connect('VSS', 'RA.b', 'RB.b', 'G1.gnd');
+  connect('VG1', 'VG1.p', 'MP.g');
+  connect('VG2', 'VG2.p', 'MN.g');
+  const report = adaptCombinedReport(analyzeSmallSignalV2(circuit, { input: 'A', output: 'B', acGrounds: ['VG1', 'VG2'] }));
+  assert.equal(report.ok, true, report.error);
+  const model = smallSignalSchematic(report, { circuit, ports: false });
+  assert.equal(model.ok, true, model.error);
+  const rungs = [...model.circuit.components.values()].filter((c) => /^(gm|ro)[PN]$/.test(c.refdes));
+  assert.equal(rungs.length, 4, [...model.circuit.components.keys()].join(' '));
+  // One column, one rung a level, each lying along its row.
+  assert.equal(new Set(rungs.map((c) => c.transform.x)).size, 1);
+  assert.equal(new Set(rungs.map((c) => c.transform.y)).size, 4);
+  assert.ok(rungs.every((c) => c.transform.rotation % 180 === (c.type === 'resistor' ? 0 : 90)));
+  assert.deepEqual(model.failures, []);
+  assert.deepEqual(evaluate(model.circuit).crossNetOverlaps, []);
+});

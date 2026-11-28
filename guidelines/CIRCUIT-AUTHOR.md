@@ -198,7 +198,9 @@ Sizes and analysis when the request asks for them; notes and tags always.
   [--quantity transfer|output|input|loop] [--loop AT] --annotate` puts the
   magnitude and phase plots on the drawing, as the Plots window draws them
   at the design's Values (normalized: g_m in units of g, capacitors in
-  units of C, ω in g/C). The port quantities are solved in numbers, so
+  units of C, ω in g/C). Give `--unit-g 100u --unit-c 1p` (the unit
+  values the sizing assumes) for a hertz axis and corners in Hz; write the
+  units in the notes. The port quantities are solved in numbers, so
   they plot even when the equations exceed the solver's budget. For an op
   amp, plot the loop gain (`--loop` at the input transistor's gate) for
   the phase margin, and the closed-loop gain.
@@ -293,7 +295,7 @@ netlabel add NET [ID] TEXT X Y [--side S] | netlabel move LABEL X Y [--side S]
 annotation add [ID] TEXT X Y | box ID... [--text T]
 size REF[,REF] W/L [xM] [hide|beside|replace] | value REF V | partstable
 analyze equations OUT --input IN [--ac-ground ...] [--noise ...] [--annotate]
-analyze bode OUT --input IN [--quantity Q] [--loop AT] [--annotate]
+analyze bode OUT --input IN [--quantity Q] [--loop AT] [--unit-g G --unit-c C] [--annotate]
 analyze model OUT --input IN | analyze transfer-function|output-impedance|... NET
 analyze logic|signal-flow|switched-cap ... [--annotate] | synthesize logic ...
 figures [--arrange] | notes [set|append|load|clear|markdown|outline] | report | tag add|rm|list ...

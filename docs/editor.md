@@ -11,7 +11,16 @@ language used by the prompt, `window.__run`, the CLI, and
 
 The server serializes load/run/save per document and writes atomically. The
 browser synchronizes the active document by revision/ETag and pauses polling
-while hidden. Save invalidates stale sync responses. `src/server/documents.js`
+while hidden. Save invalidates stale sync responses. A window saves over the
+version it is based on: every write of the open file sends that revision
+(`baseRevision`, the HTTP adapter), and the server refuses one over a file
+changed since with code `changed` (the browser-only adapter compares the
+file's time). Save then asks before overwriting; the window-state writes
+skip. The live sync leaves a newer file alone while the window has unsaved
+changes, and keeps its base revision, so that Save asks; it offers each
+newer version once (`offerDiskVersion`): Reload from disk, Overwrite the
+file, or Decide later. A newer revision whose drawing is the window's base
+(its own window-state write) is taken quietly. `src/server/documents.js`
 and `src/web/persistence.js` are the persistence boundary; `data/` is not a
 fixture directory. Each browser window keeps its own local draft
 (`src/web/window-session.js`). A closed window's draft is dropped once a

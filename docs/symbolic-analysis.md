@@ -503,6 +503,9 @@ command language as the Plots window does (`src/core/analysis/bode-plot.js`,
 shared with `web/bode-ui.js`): the same form, the numbers model solved
 from a copy of the drawing, the design's Values
 (`Circuit#analysisValues.bode`), the asymptotes as the window shows them.
+`--unit-g G --unit-c C` (both, SI suffixes) give one unit's physical value,
+so the x axis reads in hertz (`bodePlotInHz`, plot `axis: 'hz'`) and the
+corners print in Hz too; without them ω is in g/C.
 `--annotate` writes the magnitude and phase plots as figures, rewriting
 the ones there.
 
@@ -538,7 +541,9 @@ schematic; every other node stands on the first row. A device's branches
 between the same two nodes (`g_m`, `g_mb`, `r_o`) stand side by side, sources
 first. Columns follow the schematic's left-to-right order, and a unit that
 hangs from the node a column's stack ends at continues that stack (M1 over
-its source resistor). A branch whose ends share a row lies along it. One AC
+its source resistor). A branch whose ends share a row lies along it; the branches between the
+same two such nodes (a floating pair's `g_m` and `r_o`, several devices)
+form one ladder, rungs a row apart, each oriented the same way. One AC
 ground sits a cell under the first branch that reaches it, and the input and
 output ports sit on their node's row, outside the drawing; a node without a
 port is named with a net label. Branch labels are math, in the equations'

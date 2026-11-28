@@ -10,7 +10,7 @@ import { createDocument, loadDocument, relinkDocumentState } from '../core/docum
 import { historyText, textHash } from '../core/save-history.js';
 import { createPersistenceAdapter, validDocumentName } from './persistence.js';
 import { createWindowSession } from './window-session.js';
-import { confirmChoice, showFileDialog } from './file-dialog.js';
+import { chooseAction, confirmChoice, showFileDialog } from './file-dialog.js';
 import { analysisFormStorageKey } from './analysis-state.js';
 import { opensOnAtlas } from './startup.js';
 import { circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportForm } from './elements.js';
@@ -332,6 +332,9 @@ function askForName() {
 // so a design saved under a new name, or first saved from a dropped file,
 // keeps its history. Null when unknown: the writer reads the file instead.
 let historyBase = null;
+// A newer file the live sync left alone because this window has unsaved
+// changes: not fetched again while it stays the newest.
+let skippedRevision = null;
 
 /** The history a write stored, and the drawing it is now read against. */
 function adoptWrittenHistory(sent, data) {
@@ -341,7 +344,9 @@ function adoptWrittenHistory(sent, data) {
   historyBase = !history || history.base === textHash(text) ? text : null;
 }
 
-export async function saveCircuit({ saveAs = false } = {}) {
+/** Save the open design. `overwriteNewer`: over a file changed on disk
+ *  since, without asking again (the user chose to). */
+export async function saveCircuit({ saveAs = false, overwriteNewer = false } = {}) {
   let name = circuitNameEl.value.trim();
   let target;
   if (saveAs) {
@@ -386,10 +391,13 @@ export async function saveCircuit({ saveAs = false } = {}) {
   const previousScope = analysisFormScope();
   try {
     const state = editor.circuit.toJSON();
-    const saveWith = (options) => withFileAccess(() => persistence.save(target, state, { ...options, savePoint: true, historyBase }));
+    // Saving over the open file sends the revision this window last saw: a
+    // file changed since is refused (code `changed`) and asked about below.
+    const baseRevision = !overwriteNewer && target.path && target.path === editor.currentDocumentPath ? editor.lastSeenRevision : null;
+    const saveWith = (options) => withFileAccess(() => persistence.save(target, state, { ...options, savePoint: true, historyBase, baseRevision }));
     let data;
     try {
-      data = await saveWith({ overwrite: !!target.path });
+      data = await saveWith({ overwrite: !!target.path, ...(overwriteNewer ? { force: true } : {}) });
     } catch (err) {
       if (err.code !== 'exists' && err.code !== 'changed') throw err;
       const replace = await confirmChoice(err.code === 'exists' ? {
@@ -574,7 +582,9 @@ export async function saveWindowState() {
   try {
     editor.syncGeneration += 1;
     const sent = JSON.parse(text);
-    const data = await persistence.save({ path }, sent, { overwrite: true, historyBase });
+    // Never over a file changed since: the windows' state waits for the
+    // reload or the next save (a refusal lands in the catch below).
+    const data = await persistence.save({ path }, sent, { overwrite: true, historyBase, baseRevision: editor.lastSeenRevision });
     if (path !== editor.currentDocumentPath) return;
     adoptWrittenHistory(sent, data);
     editor.lastSavedSnapshot = snapshot();
@@ -606,8 +616,8 @@ async function keepWindowStateOnDiscard() {
   }
   try {
     editor.syncGeneration += 1;
-    await persistence.save({ path }, saved, { overwrite: true, historyBase });
-  } catch { /* the windows' state is lost with the edits */ } finally {
+    await persistence.save({ path }, saved, { overwrite: true, historyBase, baseRevision: editor.lastSeenRevision });
+  } catch { /* the windows' state is lost with the edits, or the file changed since */ } finally {
     editor.syncGeneration += 1;
   }
 }
@@ -626,7 +636,7 @@ export async function writeDrawingAsSaved({ history = null, base = historyBase }
   editor.saveInFlight += 1;
   try {
     const sent = { ...JSON.parse(text), ...(history ? { history } : {}) };
-    const data = await persistence.save({ path }, sent, { overwrite: true, historyBase: base });
+    const data = await persistence.save({ path }, sent, { overwrite: true, historyBase: base, baseRevision: editor.lastSeenRevision });
     if (path !== editor.currentDocumentPath) return false;
     adoptWrittenHistory(sent, data);
     editor.lastSavedSnapshot = text;
@@ -652,6 +662,17 @@ let changedCache = null;
 /** Whether the document differs from what was last saved. `cached` reuses
  *  the answer while nothing it depends on changed: for the per-frame dirty
  *  dot, not for deciding whether work would be lost. */
+/** Whether the open design matches its file (nothing unsaved). */
+export const documentIsClean = () => !!editor.lastSavedSnapshot && !documentChanged({ cached: true });
+
+/** The design as it is now is the saved version: a measurement of its
+ *  labels in this browser settled their boxes, which is no edit. */
+export function adoptMeasuredBaseline() {
+  editor.lastSavedSnapshot = snapshot();
+  changedCache = null;
+  renderSaveState();
+}
+
 function documentChanged({ cached = false } = {}) {
   const key = { revision: editor.modelRevision, preview: editor.previewRevision, circuit: editor.circuit, saved: editor.lastSavedSnapshot };
   if (cached && changedCache && Object.keys(key).every((field) => changedCache.key[field] === key[field])) return changedCache.changed;
@@ -1207,7 +1228,7 @@ async function syncActiveCircuitOnce() {
   }
   if (!editor.currentDocumentPath) return;
   // Avoid a document GET and model parse when the active revision is unchanged.
-  if (active === editor.currentDocumentPath && activeRevision && activeRevision === editor.lastSeenRevision) return;
+  if (active === editor.currentDocumentPath && activeRevision && (activeRevision === editor.lastSeenRevision || activeRevision === skippedRevision)) return;
   try {
     // The answer is for the design asked about: dropped when another was
     // opened while it came (applying it would put that drawing under the
@@ -1228,6 +1249,10 @@ async function syncActiveCircuitOnce() {
     const remoteRevision = data.revision || activeRevision;
     const remoteTag = data.etag || editor.lastCircuitTag;
     const currentSnapshot = snapshot();
+    // The version this window's design is based on, kept when the newer one
+    // is not taken: a save then sends it, and the server asks before
+    // overwriting what changed since (Save's 'changed').
+    const basedOn = editor.lastSeenRevision;
     editor.lastSeenRevision = remoteRevision || null;
     editor.lastCircuitTag = remoteTag || null;
     if (remoteSnapshot === currentSnapshot) return;
@@ -1241,11 +1266,24 @@ async function syncActiveCircuitOnce() {
       historyBase = historyText(data.state);
       return;
     }
-    if (drawingText(currentSnapshot) !== drawingText(editor.lastSavedSnapshot)) {
+    const dirty = drawingText(currentSnapshot) !== drawingText(editor.lastSavedSnapshot);
+    // The file's drawing is still the one this window's edits are based on
+    // (its own window-state write coming back): nothing new on disk.
+    if (dirty && drawingText(remoteSnapshot) === drawingText(editor.lastSavedSnapshot)) {
+      editor.circuit.history = JSON.parse(remoteSnapshot).history ?? null;
+      historyBase = historyText(data.state);
+      return;
+    }
+    if (dirty) {
+      editor.lastSeenRevision = basedOn;
+      const fresh = skippedRevision !== remoteRevision;
+      skippedRevision = remoteRevision || null;
       if (!editor.remoteConflictLogged) {
-        logLine(`${editor.currentCircuitName} changed on disk, but this window has unsaved changes. Saving will overwrite the other version.`, 'error');
+        logLine(`${editor.currentCircuitName} changed on disk, but this window has unsaved changes.`, 'error');
         editor.remoteConflictLogged = true;
       }
+      // Each newer version is offered once: take it, or keep this one.
+      if (fresh) void offerDiskVersion(asked, remoteSnapshot, data, remoteRevision, remoteTag);
       return;
     }
     applyJson(remoteSnapshot, { document: true });
@@ -1328,6 +1366,49 @@ async function openDroppedDocuments(dropped) {
   if (await documentListChanged()) return;
   if (result.paths.length > 1) logLine(`Added ${result.paths.length} documents to the document list; Shift+Backspace shows them all in the Atlas.`);
   requestCircuitLoad(result.paths[0]);
+}
+
+let diskOfferOpen = false;
+
+/**
+ * The open design changed on disk while this window has unsaved changes:
+ * offer to reload the file (dropping this window's changes) or to
+ * overwrite it with this window's version. Deciding later leaves both as
+ * they are; Save then asks again.
+ */
+async function offerDiskVersion(path, remoteSnapshot, data, remoteRevision, remoteTag) {
+  if (diskOfferOpen) return;
+  diskOfferOpen = true;
+  try {
+    const choice = await chooseAction({
+      title: 'The file changed on disk',
+      message: `"${editor.currentCircuitName}" was changed outside this window (by a command or another window), and this window has unsaved changes. Reload the file, dropping them, or overwrite the file with this window's version?`,
+      cancelLabel: 'Decide later',
+      choices: [
+        { value: 'overwrite', label: 'Overwrite the file', danger: true },
+        { value: 'reload', label: 'Reload from disk' },
+      ],
+    });
+    if (path !== editor.currentDocumentPath) return;
+    if (choice === 'reload') {
+      applyJson(remoteSnapshot, { document: true });
+      historyBase = historyText(data.state);
+      editor.lastSavedSnapshot = snapshot();
+      editor.lastSeenRevision = remoteRevision || null;
+      editor.lastCircuitTag = remoteTag || null;
+      editor.remoteConflictLogged = false;
+      fitView();
+      render();
+      renderSaveState();
+      logLine(`Reloaded ${editor.currentCircuitName} from disk; this window's changes were dropped.`);
+    } else if (choice === 'overwrite') {
+      await saveCircuit({ overwriteNewer: true });
+    } else {
+      logLine('Kept this window\'s changes; saving will ask before overwriting the file.');
+    }
+  } finally {
+    diskOfferOpen = false;
+  }
 }
 
 /**

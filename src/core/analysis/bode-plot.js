@@ -213,3 +213,23 @@ export function bodeTraceLabel(report, key) {
         : key === 'loop' ? (report.reports?.loop?.infinite ? `\\beta_{${element}}` : element ? `T_{${element}}` : 'T')
           : BODE_QUANTITIES[key].tex;
 }
+
+/**
+ * A plot in the Values' units (ω in g/C) as physical frequency: `gOverC`
+ * is one unit of g over one unit of C in rad/s, so ω g/C is ω·gOverC/2π
+ * hertz. The x axis then reads in hertz.
+ */
+export function bodePlotInHz(plot, gOverC) {
+  const hz = (w) => (w * gOverC) / (2 * Math.PI);
+  const shift = Math.log10(gOverC / (2 * Math.PI));
+  const low = Math.floor(plot.range.low + shift);
+  const high = Math.ceil(plot.range.high + shift);
+  const scaled = (points) => points.map((p) => ({ ...p, f: hz(p.f) }));
+  return {
+    ...plot,
+    axis: 'hz',
+    range: { low, high },
+    ...(plot.markers ? { markers: plot.markers.map((m) => ({ ...m, f: hz(m.f) })) } : {}),
+    traces: plot.traces.map((trace) => ({ ...trace, points: scaled(trace.points), ...(trace.asymptote ? { asymptote: scaled(trace.asymptote) } : {}) })),
+  };
+}

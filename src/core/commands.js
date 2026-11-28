@@ -6,10 +6,11 @@ import { analyzeSwitchedCap } from './analysis/switched-cap.js';
 import { deriveSmallSignal, smallSignalRequest } from './analysis/derive.js';
 import { sketchValues } from './analysis/bode.js';
 import { numericLoopGain, numericSmallSignal } from './analysis/engine.js';
-import { BODE_QUANTITIES, NUMERIC_KEYS, bodeAsymptotesShown, bodeParameters, bodeRatios, bodeResponsePlot, bodeSketchOf, bodeTraceLabel } from './analysis/bode-plot.js';
+import { BODE_QUANTITIES, NUMERIC_KEYS, bodeAsymptotesShown, bodeParameters, bodePlotInHz, bodeRatios, bodeResponsePlot, bodeSketchOf, bodeTraceLabel } from './analysis/bode-plot.js';
 import { ANALYSIS_OPTION_DEFAULTS } from './analysis/options.js';
 import { logicEquations, logicTable, signalFlowTable, smallSignalTable, switchedCapTable, synthesisEquations, synthesisTable } from './analysis/annotation-tables.js';
 import { writeMathFigure } from './math-figure.js';
+import { siResult } from './calculator.js';
 import { moveWireSegment } from './wire-move.js';
 import { Circuit, canonicalNetName, componentNameIdentity, muxInputCount, normalizeTags, parseTermRef, transformComponentWorld } from './model.js';
 import { captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets, setPartValue } from './part-moves.js';
@@ -22,7 +23,7 @@ import { crossNetOverlaps } from './wiring.js';
 import { plainTexText, svgString } from './render.js';
 import { hiddenSupplyBarLabels } from './supply-bars.js';
 import { MOS_SIZE_TYPES, formatMosSize, parseMosSize } from './mos-size.js';
-import { VALUE_TYPES, replacedNameLabels } from './part-value.js';
+import { VALUE_TYPES, replacedNameLabels, valueNumber } from './part-value.js';
 import { analyzeSmallSignal } from './analysis/index.js';
 import { placeSmallSignalModel, smallSignalSchematic } from './analysis/model-schematic.js';
 import { joinLineAnnotations } from './line-join.js';
@@ -170,6 +171,8 @@ const FLAG_ARITY = {
   magnitude: 0,
   loop: 1,
   values: 1,
+  'unit-g': 1,
+  'unit-c': 1,
 };
 
 const SYNTHESIZE_USAGE = 'usage: synthesize logic IN ... OUT=VALUES ... [--style and-or|nand|or-and|nor] [--gates inverter,and,nand,or,nor] [--max-inputs 2|3] [--at X Y] [--print]';
@@ -636,7 +639,8 @@ export function commandHelp() {
     '                                 - a quantity\'s Bode plot as the Plots window draws it, at the design\'s Values (the analysis',
     '                                   window\'s sliders; ω in g/C): its corners printed; --annotate puts the magnitude and phase plots',
     '                                   (or the one asked for) on the drawing, again in place; takes analyze equations\' option flags;',
-    '                                   --values gm6=10,CC=1,RZ=0.075 sets parameters in the plot\'s units (g, C, 1/g), saved as the sliders are',
+    '                                   --values gm6=10,CC=1,RZ=0.075 sets parameters in the plot\'s units (g, C, 1/g), saved as the sliders are;',
+    '                                   --unit-g 100u --unit-c 1p say what a unit stands for: the plot and corners in hertz',
     '  analyze logic [--clock NET] [--annotate] - the truth table of the gates, muxes, tri-states, flip-flops, and latches (a state table',
     '                                   with them), and each output (and next state) as a minimized sum of products;',
     '                                   --clock picks the clock input where the drawing leaves it open (a gated clock);',
@@ -1714,7 +1718,7 @@ function smallSignalEquationsCommand(circuit, pos, flags, result) {
   return result(lines.join('\n'), { input: report.input, output: report.output, rows: rows.map(({ group, title, result: row }) => ({ group, title, equation: row.equation, lines: row.lines })) }, mutated);
 }
 
-const BODE_USAGE = 'usage: analyze bode OUTPUT --input NET [--quantity transfer|output|input|loop] [--loop AT] [--values NAME=V,...] [--magnitude] [--phase] [--ac-ground NET,...] [--set OPTION=on|off,...] [--annotate]';
+const BODE_USAGE = 'usage: analyze bode OUTPUT --input NET [--quantity transfer|output|input|loop] [--loop AT] [--values NAME=V,...] [--unit-g G --unit-c C] [--magnitude] [--phase] [--ac-ground NET,...] [--set OPTION=on|off,...] [--annotate]';
 
 /**
  * `analyze bode OUTPUT --input NET`: a quantity's Bode plot as the Plots
@@ -1758,15 +1762,28 @@ function bodeCommand(circuit, pos, flags, result) {
     throw new Error(why ? `no Bode plot of ${BODE_QUANTITIES[key].name.toLowerCase()}: ${why}` : `${BODE_QUANTITIES[key].name} has nothing to plot: zero, or the same at every frequency`);
   }
   const trace = { label: bodeTraceLabel(report, key), color: TRACE_COLORS[0] };
+  // What one unit of g and of C stand for: the plot then reads in hertz.
+  const unitOf = (flag) => {
+    if (!flags[flag]) return null;
+    const value = valueNumber(flags[flag][0]);
+    if (!(value > 0)) throw new Error(`--${flag} takes a positive value (100u, 1p): "${flags[flag][0]}"`);
+    return value;
+  };
+  const unitG = unitOf('unit-g');
+  const unitC = unitOf('unit-c');
+  if (!unitG !== !unitC) throw new Error(`--unit-g and --unit-c go together\n${BODE_USAGE}`);
+  const gOverC = unitG ? unitG / unitC : null;
+  const frequency = (w) => (gOverC ? `f = ${siResult(Number(((w * gOverC) / (2 * Math.PI)).toPrecision(3))) || Number(((w * gOverC) / (2 * Math.PI)).toPrecision(3))}Hz` : `ω = ${Number(w.toPrecision(3))}`);
   const quantities = flags.magnitude && !flags.phase ? ['magnitude'] : flags.phase && !flags.magnitude ? ['phase'] : ['magnitude', 'phase'];
   const lines = [
     ...(valuesSet ? [`set ${valuesSet} value${valuesSet === 1 ? '' : 's'} (saved with the design, as the window's sliders)`] : []),
-    `${BODE_QUANTITIES[key].name}: ${trace.label}, at the Values (ω in g/C)`,
-    ...sketch.corners.map((corner) => `  ${corner.kind} at ω = ${Number(corner.w.toPrecision(3))}${corner.tex ? `: ${corner.tex}` : ''}`),
+    `${BODE_QUANTITIES[key].name}: ${trace.label}, at the Values (${gOverC ? `g = ${flags['unit-g'][0]}S, C = ${flags['unit-c'][0]}F` : 'ω in g/C'})`,
+    ...sketch.corners.map((corner) => `  ${corner.kind} at ${frequency(corner.w)}${corner.tex ? `: ${corner.tex}` : ''}`),
   ];
   let mutated = valuesSet > 0;
   for (const quantity of quantities) {
-    const plot = bodeResponsePlot([{ trace, ...sketch }], quantity, { asymptotes: bodeAsymptotesShown(circuit) });
+    const inUnits = bodeResponsePlot([{ trace, ...sketch }], quantity, { asymptotes: bodeAsymptotesShown(circuit) });
+    const plot = gOverC ? bodePlotInHz(inUnits, gOverC) : inUnits;
     if (!flags.annotate) continue;
     const { box, updated } = writeAnalysisPlot(circuit, plot, [trace], { kind: 'plot', source: 'small-signal', key: plotKey(plot) });
     lines.push(`${updated ? 'updated' : 'annotated'} the ${quantity} plot (${box.figure?.id || box.id})`);

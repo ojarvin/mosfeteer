@@ -1352,7 +1352,7 @@ function normalizeResponsePlot(plot) {
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   const band = (Array.isArray(plot.band) ? plot.band : []).filter((f) => finite(f) && f > 0).slice(0, 2).map((f) => round(f, 6));
-  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces, ...(band.length ? { band } : {}), ...(plot.quantity === 'phase' ? { quantity: 'phase' } : {}), ...(plot.units === 'dBFS' ? { units: 'dBFS' } : {}), ...markersOf(plot), ...(plot.role === 'loop' ? { role: 'loop' } : {}), ...sourceOf(plot), ...viewOf(plot, { positiveX: true }), ...extraOf(plot, { positiveX: true }), ...cursorsOf(plot) };
+  return { kind: 'response', axis: plot.axis === 'normalized' || plot.axis === 'hz' ? plot.axis : 'relative', range: { low, high }, traces, ...(band.length ? { band } : {}), ...(plot.quantity === 'phase' ? { quantity: 'phase' } : {}), ...(plot.units === 'dBFS' ? { units: 'dBFS' } : {}), ...markersOf(plot), ...(plot.role === 'loop' ? { role: 'loop' } : {}), ...sourceOf(plot), ...viewOf(plot, { positiveX: true }), ...extraOf(plot, { positiveX: true }), ...cursorsOf(plot) };
 }
 
 /** What a plot was drawn from, so it can be drawn again at new numbers:
